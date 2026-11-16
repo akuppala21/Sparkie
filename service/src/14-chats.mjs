@@ -175,8 +175,9 @@ async function runChoice(viewer, conv, id, by) {
   conv.messages.push(message);
   conv.updatedAt = message.createdAt;
   saveChats();
-  // (a press that ran what a parked task asked about wakes it: taskAnswered, 14-tasks.mjs)
-  if (c.action && !asked) taskAnswered(conv);
+  // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
+  // agent's press, nor one of another request's button)
+  if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
@@ -509,12 +510,13 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task);
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task, asked);
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
-  // nothing started in it, nothing of its chat still running, no job of it still to end): the request is done, and its
-  // record goes, so neither a restart nor a later result takes it up again. A turn that failed is no such end.
+  // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
+  // posted while it answered, which finish() then wakes it for): the request is done, and its record goes, so neither
+  // a restart nor a later result takes it up again. A turn that failed is no such end.
   if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
-    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task)) conv.task = null;
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task) && !resultSince(conv)) conv.task = null;
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.

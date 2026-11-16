@@ -71,6 +71,8 @@ test('a task\'s hours and turns come from the owner\'s own instruction, bounded,
   made.pasted = await tasked('Here is the log:\nretrying for 72 hours before giving up\nRead the workflows, then tell me which one stops a model');
   made.overnight = await tasked('Work through the workflows overnight, then tell me which one stops a model');
   made.away2 = await tasked('Read the workflows while I’m away, then tell me which one stops a model');
+  // (a word of time that is the subject of a look, not part of an instruction to work)
+  made.lookAt = await tasked('Look at what happened overnight, then tell me which one stops a model');
   assert.deepEqual(limits(taskOf(made.guarded)), { hours: 2, turns: 8 });
   assert.equal(taskOf(made.guarded).noStops, true, 'the guard is kept on disk');
   assert.deepEqual(limits(taskOf(made.away)), { hours: 4, turns: 60 });
@@ -83,6 +85,7 @@ test('a task\'s hours and turns come from the owner\'s own instruction, bounded,
   assert.deepEqual(limits(taskOf(made.pasted)), { hours: 2, turns: 8 }, 'a pasted log line');
   assert.deepEqual(limits(taskOf(made.overnight)), { hours: 4, turns: 60 });
   assert.deepEqual(limits(taskOf(made.away2)), { hours: 4, turns: 60 });
+  assert.deepEqual(limits(taskOf(made.lookAt)), { hours: 2, turns: 8 }, 'what happened overnight is what to look at');
   for (const id of Object.values(made)) assert.equal(taskOf(id).carry, true, 'each waits for its carry-on turn');
 });
 
@@ -230,10 +233,14 @@ test('(E6b) a task whose chat is full stops, said in a line of its own past its 
 // lookup wouldn't end its reply at a budget)
 test('(E6b) the owner’s “carry on” in a chat stopped at its 120 commands: the same request, a fresh 6 hours and 90 turns', { timeout: 120000 * SLOW }, async () => {
   assert.ok(made.g, 'set-up');
+  const before = chatsOf(B).find(c => c.id === made.six).task;
   const said = await bPost(`/chats/${made.six}/messages`, { text: 'carry on' });
   assert.equal(said.status, 200, said.text);
   const t = chatsOf(B).find(c => c.id === made.six).task;
   assert.deepEqual([t?.request, t?.continuations, t?.steps, t?.stopped ?? null, t?.hours, t?.turns], ['read the workflows again for 6 hours, then tell me which one stops a model', 0, 0, null, 6, 90]);
+  // (its hours start again, and it waits at the button its turn asked)
+  assert.ok(Date.parse(t.at) > Date.parse(before.at), `its hours start again: ${before.at} → ${t.at}`);
+  assert.ok(t.parked, JSON.stringify(t));
 });
 
 test('a task’s 120 commands are one count: the carry-on turn that reaches them is stopped by it, the task stops at its limit with that reply, and its record holds 120', { timeout: 120000 * SLOW }, async () => {

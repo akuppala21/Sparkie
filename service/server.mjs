@@ -3677,8 +3677,9 @@ async function runChoice(viewer, conv, id, by) {
   conv.messages.push(message);
   conv.updatedAt = message.createdAt;
   saveChats();
-  // (a press that ran what a parked task asked about wakes it: taskAnswered, 14-tasks.mjs)
-  if (c.action && !asked) taskAnswered(conv);
+  // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
+  // agent's press, nor one of another request's button)
+  if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
@@ -4011,12 +4012,13 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task);
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task, asked);
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
-  // nothing started in it, nothing of its chat still running, no job of it still to end): the request is done, and its
-  // record goes, so neither a restart nor a later result takes it up again. A turn that failed is no such end.
+  // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
+  // posted while it answered, which finish() then wakes it for): the request is done, and its record goes, so neither
+  // a restart nor a later result takes it up again. A turn that failed is no such end.
   if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
-    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task)) conv.task = null;
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task) && !resultSince(conv)) conv.task = null;
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
@@ -4387,7 +4389,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   return { role: 'tool', tool_call_id: calls[i].id || `call_${round}_${i}`, content: out };
 }
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
-// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs
+// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs
 // Owns: none        Timers: none        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
@@ -4406,29 +4408,40 @@ async function runOne(turn, { round, calls, steps }, c, i) {
 // which wakes it as a result would.
 // (a task's 120 commands, TASK_STEPS, are E5b's: 14-rounds.mjs)
 const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72;
-const TASK_WORDS = /\b(?:on\s+your\s+own|by\s+yourself|unattended|overnight|while\s+i(?:'m|\s+am)\s+away|as\s+a\s+task)\b/i;
-const TASK_HOURS = /\b(?:for|up\s+to|over\s+the\s+next)\s+(\d{1,4})\s*(?:hours?|hrs?)\b/i;
+const TASK_WORDS = /\b(?:on\s+your\s+own|by\s+yourself|unattended|overnight|while\s+i(?:'m|\s+am)\s+away|as\s+a\s+task)\b/gi;
+const TASK_HOURS = /\b(?:for(?:\s+the\s+next)?|up\s+to|over\s+the\s+next)\s+(\d{1,4})\s*(?:hours?|hrs?)\b/gi;
 // An instruction's opening ("please", "could you", "I want you to", …), then a verb of working on it or carrying on.
 const TASK_OPENER = /^(?:(?:ok(?:ay)?|so|now|just|also|and|then|please|kindly)[\s,]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like)\s+you\s+to\s+|i'd\s+like\s+you\s+to\s+|go\s+ahead\s+and\s+)?(?:please\s+)?/i;
 const TASK_VERB = /^(?:work|keep\s+(?:at|on|going|working|trying|digging|looking)|carry\s+on|continue|go\s+on|do|handle|sort|fix|try|dig|look|investigate|figure|find|research|explore|debug|troubleshoot|deal|take\s+care|finish|tune|test|benchmark|compare|clean|tidy|organi[sz]e|set\s+up|build|train|fine-?tune|check|go\s+through|monitor|watch|measure|analy[sz]e|read|review|study|search|prepare|plan)\b/i;
 const TASK_NOT = /\b(?:don'?t|do\s+not|didn'?t|did\s+not|doesn'?t|never|no\s+need\s+to|without|not|avoid|stop\s+yourself\s+from)\b/i;
+// (words that make what follows the subject of the work, not how long or how it is done: "what happened overnight",
+// "the logs from overnight", "why it ran for 70 hours")
+const TASK_ABOUT = /\b(?:what|why|whether|that|which|who|how|when|where|if|from|of|about|since)\b/i;
 // The limits the owner's words give a new task, clause by clause (sentences, and the parts "then" and "; " join): only
-// a clause that is an instruction counts, and only words in it after its verb with no "not" before them. Text in quotes
-// or backticks, a quoted line ("> …") and the sentence after one ending in ":" are no instruction. An agent's request
-// gets the ordinary limits.
+// a clause that is an instruction counts (it opens with a verb of working, and is no question), and only words of time
+// that end it, as part of that instruction ("work on it overnight", "for the next 3 hours"): none with a "not" before
+// them, or a word between the verb and them that makes them its subject ("look at what happened overnight"), or a word
+// after them ("the overnight logs"). Text in quotes or backticks, a quoted line ("> …") and the lines after one ending
+// in ":" up to the next blank line (a pasted log) are no instruction. An agent's request gets the ordinary limits.
 function taskBudget(text, agent = null) {
   if (agent) return { ...TASK_PLAIN };
-  const own = normQuotes(String(text || '').replace(/```[\s\S]*?(?:```|$)/g, '\n').replace(/`[^`\n]*`/g, ' ').replace(/^\s*>.*$/gm, ' ')).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ');
-  let away = false, hours = null, before = '';
+  const quoted = normQuotes(String(text || '').replace(/```[\s\S]*?(?:```|$)/g, '\n').replace(/`[^`\n]*`/g, ' ').replace(/^\s*>.*$/gm, ' ')).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ');
+  let pasted = false;
+  const own = quoted.split('\n').filter(line => {
+    if (pasted) { if (!line.trim()) pasted = false; return false; }
+    if (/:\s*$/.test(line)) pasted = true;
+    return true;
+  }).join('\n');
+  let away = false, hours = null;
   for (const raw of own.split(/(?<=[?!\n;:])|\.(?=\s|$)|,?\s+(?:and\s+)?then\s+/i)) {
-    const reported = /:\s*$/.test(before);
-    before = raw.trim() ? raw : before;
-    const clause = raw.trim().replace(TASK_OPENER, '');
-    if (reported || !TASK_VERB.test(clause)) continue;
-    const ok = m => m && !TASK_NOT.test(clause.slice(0, m.index));
-    if (ok(TASK_WORDS.exec(clause))) away = true;
-    const h = TASK_HOURS.exec(clause);
-    if (ok(h)) hours = Math.min(TASK_HOURS_MAX, Math.max(1, Number(h[1])));
+    if (/[?:]\s*$/.test(raw)) continue;
+    const clause = raw.trim().replace(TASK_OPENER, ''), verb = TASK_VERB.exec(clause);
+    if (!verb) continue;
+    const ok = m => !TASK_NOT.test(clause.slice(0, m.index)) && !TASK_ABOUT.test(clause.slice(verb[0].length, m.index))
+      && !clause.slice(m.index + m[0].length).replace(/^[\s,]*(?:please|thanks|thank\s+you)?[\s,.!]*$/i, '');
+    if ([...clause.matchAll(TASK_WORDS)].some(ok)) away = true;
+    const h = [...clause.matchAll(TASK_HOURS)].find(ok);
+    if (h) hours = Math.min(TASK_HOURS_MAX, Math.max(1, Number(h[1])));
   }
   if (hours) return { hours, turns: hours * TASK_TURNS_AN_HOUR };
   return { ...(away ? TASK_AWAY : TASK_PLAIN) };
@@ -4552,25 +4565,28 @@ function taskRetryLines(conv) {
 // (contract 4.8), and a request with a next step whose first change came back as a button is made a task parked there
 // (keepTask): it does not carry on by itself, its hours stop, and one needs-you line stands (tasksNeeds). Its
 // owner-only questions went to the paired Telegram chat as asks when approvals from there are on (tgAsk); the needs
-// line goes there by itself when the needs-me line is on (needsMeTick). A press that runs the button wakes it with the
-// hours it waited given back (taskAnswered); "No" ends it (endTask); "carry on" makes Sparkie ask again (taskAgain).
+// line goes there by itself when the needs-me line is on (needsMeTick). A press that runs its own button (the question
+// it waits at, kept on it as `asks`; never an agent's press) wakes it with the hours it waited given back
+// (taskAnswered); "No" ends it (endTask); "carry on" makes Sparkie ask again (taskAgain).
 const taskAsked = asked => (asked || []).some(q => (q.choices || []).some(c => c.choice && pendingChoices.get(c.choice)?.action));
-function taskPark(t) {
+function taskPark(t, asked) {
   if (!t || t.parked) return;
   t.parked = new Date().toISOString();
+  t.asks = [...new Set((asked || []).filter(q => (q.choices || []).some(c => c.choice && pendingChoices.get(c.choice)?.action)).map(q => q.group))];
   delete t.carry;
 }
 // (the hours a parked task waited are given back: its hours run from a later start)
 function taskUnpark(t) {
   if (!t?.parked) return;
+  delete t.asks;
   const waited = Math.max(0, Date.now() - Date.parse(t.parked));
   if (Number.isFinite(waited) && Number.isFinite(Date.parse(t.at))) t.at = new Date(Date.parse(t.at) + waited).toISOString();
   delete t.parked;
 }
 // A button pressed in a parked task's chat that runs something: the task carries on after it.
-function taskAnswered(conv) {
+function taskAnswered(conv, group) {
   const t = conv?.task;
-  if (!t?.parked) return;
+  if (!t?.parked || !(t.asks || []).includes(group)) return;
   taskUnpark(t);
   t.answered = true;
   saveChats();
