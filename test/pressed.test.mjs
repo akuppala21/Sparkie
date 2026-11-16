@@ -6,7 +6,8 @@
 // says nothing was written; one ended at its time limit says so. A task parked at the button and woken by a failed press
 // reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
 // them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
-// only for a task begun there, without the failure lines (C-8, R32).
+// only for a task begun there, without the failure lines (C-8, R32). In the paired chat a /key message past the
+// minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
 // on Spark 4, the stand-in brain told by a script which tools to call, and the paired Telegram chat (test/mock/
 // telegram.mjs) with approvals from there on. Linux only: run it on a Spark with tools/test-on-spark.sh.
@@ -14,9 +15,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
+import { startMock } from './start-mock.mjs';
 
 const SECONDS = 6, TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
 const ANSWERED = '^\\[Spark Console\\] The owner answered your question';
@@ -233,4 +235,24 @@ test('the words from each kind of result: the page’s pressRan and Telegram’s
     'Done: it ran inside the lock-out net and is kept.', `It ran inside the lock-out net and is kept, but the command itself ended with exit code 3. ${MORE}`,
     `It ran inside the lock-out net and is kept, but the command itself was ended before it finished. ${MORE}`, `It ran inside the lock-out net and was put back. ${MORE}`,
     `It wasn’t kept: if it ran, Spark 3’s own timer puts it back. ${MORE}`]);
+});
+
+// K6 (R51): tgKeys first, before the minute's limit, as /lock is: a message holding a key is always taken and deleted.
+test('in the paired chat, a /key message past the minute’s limit is still kept, and deleted from the chat', { timeout: 180000 * SLOW }, async () => {
+  const value = `k6/${randomBytes(12).toString('hex')}`;
+  const F = await startMock({ telegram: true, watchMs: 600000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1,1000,1000' }, prepare: ({ dir }) => {
+    mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() } }), { mode: 0o600 });
+  } });
+  try {
+    const calls = () => lines(join(F.dir, 'telegram-calls.jsonl'));
+    await waitFor(async () => (await (await fetch(`${F.base}/telegram`, { headers: { 'x-spark-console': '1', origin: F.origin } })).json()).state === 'ok', { what: 'Telegram polling' });
+    const msg = (id, text) => ({ message: { message_id: id, date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } });
+    // (the first fills the minute; the key comes second, past it)
+    await fetch(`http://127.0.0.1:${F.telegramPort}/__push`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify([msg(901, '/status'), msg(902, `/key K6_KEY ${value}`)]) });
+    const kept = await waitFor(() => calls().find(c => c.method === 'sendMessage' && /^Kept your key K6_KEY\./.test(c.body?.text || '')), { timeout: 60000, what: 'the key kept, and said so' });
+    assert.match(kept.body.text, /Your message that held it was deleted from this chat\.$/);
+    assert.deepEqual(calls().filter(c => c.method === 'deleteMessage').map(c => c.body), [{ chat_id: OWNER_TG, message_id: 902 }]);
+    assert.equal(JSON.parse(readFileSync(F.secretsFile, 'utf8')).keys?.K6_KEY?.value, value);
+  } finally { await F.stop(); }
 });

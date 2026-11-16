@@ -195,14 +195,15 @@ async function tgUpdate(u) {
   // /lock only ever turns approvals off, so it counts however late it is read and however full the minute is: neither
   // rule below may drop it while approvals are on (20-tg-approve.mjs).
   if (m && tgApproveOn() && typeof m.text === 'string' && /^\/lock(?:@\w+)?(?:\s|$)/i.test(m.text.trim())) return tell('system', tgLock());
+  // A key in the owner's words is taken out first, an old message's too and one past the minute's limit: it is kept and
+  // the message deleted, never left in the chat (20-keys.mjs, R51).
+  if (m && await tgKeys(m)) return;
   // At most 20 messages a minute from the owner's chat; then one line and silence until the minute frees.
   tg.inHits = tg.inHits.filter(t => Date.now() - t < 60000);
   if (tg.inHits.length >= TELL_LIMITS.in) { if (!tg.toldTooMany) { tg.toldTooMany = true; await tell('system', 'Too many messages. Wait a minute.'); } return; }
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
-  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
-  if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot) return tell('system', 'Type it in your own words: forwarded messages aren’t read here.');
