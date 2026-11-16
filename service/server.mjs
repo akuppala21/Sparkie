@@ -16965,8 +16965,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs, keys });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
-  // (a key's first use on a Spark or with an address is asked, R51)
-  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted);
+  // (a command given a key is always asked, R51: the button names each key and each new place)
+  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted) || 'it is given a key, which is always asked';
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
@@ -18106,9 +18106,9 @@ const power = Object.freeze({ state: sparkPowerState, wake: wakeSpark, wallW: wa
 // command that names none, where the sorter says it reaches by itself (its reach: the internet, the home network,
 // another Spark). A new value starts with none. A command given a key is never plain at
 // once by that fact alone (a walled plain change may read the project's files and send them out, the wall's analyst
-// found): it runs at once only when the sorter calls it a look or a plain change, the ladder clears it as any change,
-// AND every place it names, its Spark too, is one that key has gone before. Otherwise it is asked, on a button that
-// names each key and each new place; after the owner's yes and the run, those places are kept with the key.
+// found, and the text check and the mask can't hold back every form of a key a command may print or send): it is
+// always asked, on a button that names each key and each place it hasn't gone to before, and it runs only on the
+// owner's press of that button (never at once, never on a go-ahead); after the run, those places are kept with it.
 const RUNKEY_MAX = 8, RUNKEY_PLACES = 50, RUNKEY_HOSTS = 16;
 // Names a key is never handed under: what decides what programs run, load or fetch (the sorter's own list), or what
 // bash itself sets or reads.
@@ -18211,12 +18211,13 @@ function runKeysWhy(node, command, keys, sorted) {
   if (!fresh.length) return null;
   return fresh.map(x => `it gives the key ${x.key} to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' and ')}, where it hasn’t gone before`).join('; ');
 }
-// The button's own lines for a command given keys: which keys, their new places, what a $NAME on a command line shows.
+// The button's own lines for a command given keys: which keys, what the mask does and doesn't hold back, their new
+// places, what a $NAME on a command line shows.
 function runKeysLabel(node, command, keys, sorted) {
   if (!keys?.length) return '';
   const fresh = runKeysNew(node, command, keys, sorted), names = keys.join(', '), one = keys.length === 1;
   const spelled = keys.filter(k => new RegExp(`\\$(?:${k}\\b|\\{${k}\\})`).test(command));
-  return ['', `It is given the key${one ? '' : 's'} ${names}, in its environment by name for this run only; ${one ? 'its value is' : 'their values are'} never shown.`,
+  return ['', `It is given the key${one ? '' : 's'} ${names}, in its environment by name for this run only. ${one ? 'Its value is' : 'Their values are'} hidden where the command prints ${one ? 'it' : 'them'} as ${one ? 'it is' : 'they are'} (or %-encoded, or in base64); a command can still show ${one ? 'it' : 'them'} another way, write ${one ? 'it' : 'them'} to a file, or send ${one ? 'it' : 'them'} to any address on the internet: read the command.`,
     ...fresh.map(x => `${x.key} hasn’t gone to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' or ')} before: after your yes and the run, ${x.places.length === 1 ? 'that place is' : 'those places are'} kept with it.`),
     'Where a program sends a key by its own settings isn’t read here: only the hosts the command names, or, naming none, where it reaches by itself.',
     ...(spelled.length ? [`${spelled.map(k => `$${k}`).join(', ')} on a program’s command line shows in ${sparkName(node)}’s process list while that program runs.`] : [])].join('\n');
@@ -18227,12 +18228,13 @@ function runKeysLabel(node, command, keys, sorted) {
 function runKeysOutside(outside) {
   if (outside?.length) throw new HttpError(403, `Not run: ${String(outside[0]).slice(0, 200)}, so it would run outside the plain wall, where every key and token in your home is open to it; a key is never given to such a command. Nothing ran.`);
 }
-// At the run (21-runner.mjs): the names and the command checked again, and, at once (no yes), every place known. The
-// unit's first line and its input: NAME=value lines and an empty one. { prefix, payload, places, sums }.
+// At the run (21-runner.mjs): the names and the command checked again, and only on the owner's press of its button
+// (ctx.button and ctx.ownerConfirmed: never at once, and no go-ahead or other "asked" counts). The unit's first line
+// and its input: NAME=value lines and an empty one. { prefix, payload, places, sums }.
 function runKeysGive(node, command, sorted, keys, ctx, asked, outside = []) {
   runKeysNever(node, command, sorted, ctx, keys);
   runKeysOutside(outside);
-  if (!asked) { const why = runKeysWhy(node, command, keys, sorted); if (why) throw new HttpError(409, `Not run: ${why}, and that is always asked first. Nothing ran.`); }
+  if (!(ctx.button && ctx.ownerConfirmed)) throw new HttpError(409, 'Not run: a command given a key runs only after the owner presses its button, which names the key. Nothing ran.');
   const kept = runKeysKept(), sums = {};
   for (const k of keys) sums[k] = createHash('sha256').update(kept[k].value).digest('hex');
   return { prefix: RUNKEY_PREFIX, payload: `${keys.map(k => `${k}=${kept[k].value}\n`).join('')}\n`, places: runKeysPlaces(node, command, sorted), sums };
@@ -20534,7 +20536,7 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
-    keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only, and never shown. A key’s first use on a Spark or with an address is asked.' },
+    keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only. A command given a key is always asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });

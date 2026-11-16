@@ -5,10 +5,12 @@
 // a quarter held back: more than the longest form of the key), the state,
 // the copies, what the stand-in brain was sent, the unit's settings as the helper gave them, which systemctl show would
 // show, and the process list the command itself wrote while it ran): only the secrets file holds it, and the held
-// folder that carried it is gone. A key's first use on a Spark is asked on a button that names it and the Spark; after
-// the yes and the run the Spark is kept with the key, and the same plain change then runs at once. An address the key
-// hasn't gone to is asked, the button naming it; the owner's own call is told so and nothing runs. A command that only
-// reads, given a key, runs as a change. Refused in plain words, nothing run: a command whose own text prints the
+// folder that carried it is gone. A command given a key is always asked, on a button that names it and each place it
+// hasn't gone to (its Spark, an address), and runs only on that press: after one yes the same plain change is asked
+// again, and so are a command printing the key in a form the mask doesn't know and a script that was there before
+// (review/a14b-run-keys.md fix 1); the owner's own call is told so and nothing runs. After the press the places are
+// kept with the key. A command that only reads, given a key, runs as a change. Refused in plain words, nothing run: a
+// command whose own text prints the
 // environment (env, printenv, set, export -p, declare -p, a shell's -x, /proc/…/environ, ps e), root, what the sorter
 // calls open, a change that would run outside the plain wall after a yes, a delete that can't be put back, a script that
 // changed after its ask, and a name that isn't kept, has a home of its own or is one the shell reads.
@@ -69,6 +71,8 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUT
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('notes/usekey.sh', `${USE}\n`);
     put('notes/sum.sh', 'printf "%s" "$DEMO_KEY" | sha256sum | cut -d" " -f1 > notes/keysum.txt\necho summed\n');
+    // (a script that was there before the request: it prints the key with a space after each sign, the reader's)
+    put('notes/show.sh', 'printf "%s\\n" "$DEMO_KEY" | sed "s/./& /g"\n');
     put('notes/other.sh', 'printf "%s" "$OTHER_KEY" | sha256sum | cut -d" " -f1 > notes/othersum.txt\n');
     put('notes/a.tmp', 'a\n');
   } }, async () => {
@@ -116,7 +120,7 @@ test('a key named on run: its first use on a Spark is asked on a button that nam
   assert.equal(r.tools[0].tail, 'Asked first, with a button: nothing ran yet.', JSON.stringify(r.tools));
   const [asked] = sentBack(words);
   assert.match(asked.question, /\nAsked because it gives the key DEMO_KEY to Spark 3, where it hasn’t gone before\.\n/, asked.question);
-  assert.match(asked.question, /\nIt is given the key DEMO_KEY, in its environment by name for this run only; its value is never shown\.\nDEMO_KEY hasn’t gone to Spark 3 before: after your yes and the run, that place is kept with it\./);
+  assert.match(asked.question, /\nIt is given the key DEMO_KEY, in its environment by name for this run only\. Its value is hidden where the command prints it as it is \(or %-encoded, or in base64\); a command can still show it another way, write it to a file, or send it to any address on the internet: read the command\.\nDEMO_KEY hasn’t gone to Spark 3 before: after your yes and the run, that place is kept with it\./);
   assert.ok(!existsSync(at3('notes/keysum.txt')), 'nothing ran');
   assert.equal(keyEntry('DEMO_KEY').hosts, undefined);
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
@@ -138,14 +142,34 @@ test('a key named on run: its first use on a Spark is asked on a button that nam
   assert.deepEqual(holding(VALUE), [], 'only the secrets file holds it');
 });
 
-test('the same key on the same Spark, a plain change the owner asks for: it runs at once, with no button', { timeout: 120000 * SLOW }, async () => {
+test('the same key on the same Spark, a plain change the owner asks for: asked again (a command given a key is always asked), nothing ran', { timeout: 120000 * SLOW }, async () => {
   rmSync(at3('notes/keysum.txt'), { force: true });
-  const chat = await newChat();
-  const r = await turn(chat, 'update the notes on spark 3 with the demo key again', [[RUNK('bash notes/usekey.sh', ['DEMO_KEY'])]]);
-  assert.deepEqual(r.choices, [], 'no button');
-  assert.equal(r.tools[0].ok, true, JSON.stringify(r.tools));
-  assert.equal(text('notes/keysum.txt').trim(), sha(VALUE));
-  assert.deepEqual(holding(VALUE), []);
+  const chat = await newChat(), words = 'update the notes on spark 3 with the demo key again';
+  const r = await turn(chat, words, [[RUNK('bash notes/usekey.sh', ['DEMO_KEY'])]]);
+  assert.ok(r.choices.some(c => c.label === 'Run it'), JSON.stringify(r.tools));
+  const [asked] = sentBack(words);
+  assert.match(asked.question, /\nAsked because it is given a key, which is always asked\.\n/, asked.question);
+  assert.ok(!existsSync(at3('notes/keysum.txt')), 'nothing ran');
+  const api = await run('bash notes/usekey.sh', ['DEMO_KEY']);
+  assert.equal(api.status, 409, api.text);
+  assert.match(api.json.error, /^Not run at once: it is given a key, which is always asked\. Ask for it in your chat with Sparkie/);
+  assert.ok(!existsSync(at3('notes/keysum.txt')), 'nothing ran');
+});
+
+// (the reader's of A14b, review/a14b-run-keys.md fix 1: after one yes on that Spark, a command that prints the key in a
+// form the mask doesn't know, or a script that was there before, ran at once and the key reached Sparkie and the record)
+test('after that yes, a command that prints the key in another form, and a script that was already there, are asked: nothing ran, Sparkie and the record get no key', { timeout: 180000 * SLOW }, async () => {
+  for (const [words, command, form] of [['update the notes on spark 3 with the demo key in pieces', 'echo $DEMO_KEY | fold -w 8', `${VALUE.slice(0, 8)}\n${VALUE.slice(8, 16)}`],
+    ['update the notes on spark 3 with the show script', 'bash notes/show.sh', [...VALUE.slice(0, 12)].join(' ')]]) {
+    const chat = await newChat(), r = await turn(chat, words, [[RUNK(command, ['DEMO_KEY'])]]), [back] = sentBack(words);
+    assert.ok(r.choices.some(c => c.label === 'Run it'), `${command}: ${JSON.stringify(r.tools)}`);
+    assert.equal(back?.outcome, 'needs-ok', `${command}: ${JSON.stringify(back)}`);
+    for (const f of [form, JSON.stringify(form).slice(1, -1)]) {
+      for (const file of [join(T.fleet.stateDir, 'chats.json'), join(T.fleet.dir, 'model-requests.jsonl'), ...readdirSync(T.fleet.journalDir).map(x => join(T.fleet.journalDir, x))]) {
+        assert.ok(!(existsSync(file) && readFileSync(file).includes(Buffer.from(f))), `${command}: ${file}`);
+      }
+    }
+  }
 });
 
 test('an address the key hasn\'t gone to is asked, the button naming the key and that address; the owner\'s own call is told so and nothing runs', { timeout: 120000 * SLOW }, async () => {
@@ -161,10 +185,14 @@ test('an address the key hasn\'t gone to is asked, the button naming the key and
   assert.ok(!existsSync(at3('notes/host.txt')), 'nothing ran');
 });
 
-test('a command that only reads, given a key, runs as a change (only a change\'s wall takes input)', { timeout: 60000 * SLOW }, async () => {
-  const r = await run('cat notes/keysum.txt', ['DEMO_KEY']);
-  assert.equal(r.status, 200, r.text);
-  assert.deepEqual([r.json.change, r.json.outcome, r.json.output.trim()], [true, 'change', sha(VALUE)]);
+test('a command that only reads, given a key, is asked and after the press runs as a change (only a change\'s wall takes input)', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at3('notes/plain.txt'), 'plain\n');
+  const chat = await newChat();
+  const r = await turn(chat, 'update the notes on spark 3 by reading them', [[RUNK('cat notes/plain.txt', ['DEMO_KEY'])]]);
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.deepEqual([p.json.outcome, p.json.message.content], ['change', 'Run it: done.'], p.text);
+  const start = journalLines().filter(x => x.k === 'cmd' && x.start && x.args?.command === 'cat notes/plain.txt').at(-1);
+  assert.deepEqual([start.class, start.keys], ['change', ['DEMO_KEY']]);
 });
 
 test('never into a command whose own text prints the environment: refused in plain words, nothing run', { timeout: 60000 * SLOW }, async () => {
@@ -192,7 +220,7 @@ test('a change that would fail in the plain wall but runs with the top of the ho
   const chat = await newChat(), words = 'update the notes on spark 3 into the home';
   const r = await turn(chat, words, [[RUNK('bash notes/sum.sh > top.txt', ['DEMO_KEY'])]]);
   const [asked] = sentBack(words);
-  assert.match(asked.question, /\nIt is given the key DEMO_KEY, in its environment by name for this run only; its value is never shown\./, asked.question);
+  assert.match(asked.question, /\nIt is given the key DEMO_KEY, in its environment by name for this run only\. Its value is hidden where the command prints it as it is \(or %-encoded, or in base64\); a command can still show it another way, write it to a file, or send it to any address on the internet: read the command\./, asked.question);
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.deepEqual([p.json.outcome, p.json.message.content], ['change', 'Run it: done.'], p.text);
   assert.equal(text('notes/keysum.txt').trim(), sha(VALUE));

@@ -207,8 +207,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs, keys });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
-  // (a key's first use on a Spark or with an address is asked, R51)
-  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted);
+  // (a command given a key is always asked, R51: the button names each key and each new place)
+  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted) || 'it is given a key, which is always asked';
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }

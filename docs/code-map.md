@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22230 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22232 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1051,7 +1051,7 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 run takes keys: the names of keys the owner gave once (/key NAME value, 20-keys.mjs, R51). Code puts each value into the command's environment by that name, for that one run and nothing else. The values go to the root helper on its input (--stdin, after the call's own script on the same connection): the helper holds them in a file of its own, in /run/spark-console/<id>/, root's and on the memory disk, for the unit's life and removes it with the unit. The unit's first line is code's own (RUNKEY_PREFIX): it reads them from there into the environment and then takes its input from nowhere. So no …
 
 - **Area:** features. **Rules:** R51, R61, R42. **Tests:** run-keys.test.mjs
-- **Lines:** 181
+- **Lines:** 183
 - **Owns:** none (a key's places go in the secrets file, outside the state folder, through secretsWrite)
 - **Timers:** none
 - **Wakes:** none
