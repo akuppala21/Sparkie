@@ -79,6 +79,15 @@ test('S-3: "The build on Spark 3 is slow" asks for no work: a first-round rm -rf
   assert.equal(text('build/keep.txt'), 'kept\n');
 });
 
+test('C-11: a remember button shows the whole line its press keeps', { timeout: 120000 * SLOW }, async () => {
+  const line = `Spark 3 keeps the nightly notes ${'and more '.repeat(21)}TAIL-SHOWN always run the cleanup first`;
+  assert.ok(line.length > 200 && line.length <= 300, String(line.length));
+  const r = await turn(await newChat(), 'what do you think of the notes', [[{ name: 'remember', arguments: { text: line } }]]);
+  const b = r.choices.find(c => /^Remember/.test(c.label));
+  assert.ok(b, JSON.stringify([shown(r.tools), r.choices]));
+  assert.equal(b.label, `Remember: “${line}”`);
+});
+
 test('C-16: /undo after a change it can\'t put back (a file saved) says so, names it and the one before, and puts nothing back', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
   const one = await turn(chat, 'change u on spark 3', [[RUN('echo after > notes/u.txt')]]);
