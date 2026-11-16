@@ -6,7 +6,11 @@
 #   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once.
 #                                                             Root's switch is left as it is, and said: off there unless
 #                                                             --with-root turned it on for this same helper
-#   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md)
+#   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md):
+#                                                             Sparkie asks you before each root command, but the helper
+#                                                             runs one for any program that runs as you on that Spark;
+#                                                             each inside the net, which puts back only the ways in.
+#                                                             Never on Spark 2: --with-root --hub is refused
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
 #                                                             (not while the lock-out net holds a change there)
@@ -49,6 +53,8 @@ for a in "$@"; do
   esac
 done
 [ -n "$N" ] || usage
+# (root is never on Spark 2: the console refuses it there, so a switch would only be a door. R70)
+[ "$MODE$HUB" != with-root1 ] || stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there, so --with-root --hub would only open a door. Set Spark 2 up without --with-root."
 FLAGS=''
 [ "$MODE" = install ] || FLAGS="--$MODE "
 [ "$HUB" = 0 ] || FLAGS+='--hub '
@@ -337,8 +343,11 @@ root_switch() {   # $1 on or off: root's switch on this Spark (on only after a p
     printf 'on %s helper %s\n' "$(date -u +%Y-%m-%d)" "$2" | sudo tee "$ROOT_ON.new" > /dev/null
     sudo chmod 0600 "$ROOT_ON.new"
     sudo mv -f "$ROOT_ON.new" "$ROOT_ON"
-    note "root is on here: Sparkie may run a command as root on $(hostname), each time inside the put-back net, after your"
-    note "press. Turn it off again with --without-root."
+    note "root is on here: Sparkie asks you before each root command it runs on $(hostname). The helper runs every root"
+    note "command inside the put-back net, which puts back only the ways in (SSH, Tailscale, the firewall, the sign-in"
+    note "files) unless they are kept, never anything else the command changed. The helper cannot tell who calls it: any"
+    note "program that runs as you on $(hostname) can now run a command as root through it, with no press. Turn it off"
+    note "again with --without-root."
   else
     sudo rm -f "$ROOT_ON" "$ROOT_ON.new"
     note "root is off here: the helper refuses every root command on $(hostname)."
@@ -379,6 +388,7 @@ main() {
   [[ $mid =~ ^[0-9a-f]{32}$ ]] || stop "couldn't read this Spark's machine id, so nothing was done"
   if [ "$mid" = "$hub_id" ] && [ "$hub" != 1 ]; then stop "this is Spark 2, the hub: it is set up last, and only with --hub."; fi
   if [ "$mid" != "$hub_id" ] && [ "$hub" = 1 ]; then stop "--hub is only for Spark 2 itself, and this is another Spark."; fi
+  if [ "$mode" = with-root ] && { [ "$hub" = 1 ] || [ "$mid" = "$hub_id" ]; }; then stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there."; fi
   case "$mode" in
     check) check "$sha" ;;
     install) install "$sha" && note "root here: ${ROOT_NOW:-not known}" ;;

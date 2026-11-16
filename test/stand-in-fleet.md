@@ -75,6 +75,8 @@ covers, is in `test/README.md`.
     every call as one JSON line in the rehearsal's `calls.log` and reads its settings from the rehearsal's `standin/`
     folder (each file's head lists them). They build no wall: a look or a change runs unwalled, the wall proof's units
     are played, not run, and the lock-out net's timer is armed but never fires (a test runs the put-back itself).
+    `standin/home` (`rehearse(…, { home: true })`, the eval's practice Spark only) makes `systemd-run` give a run, look
+    or root unit the made-up root's view of the home, so `~` is the Spark's folder; a real Spark needs none of it.
   - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,
@@ -99,7 +101,8 @@ covers, is in `test/README.md`.
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
     listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while
-    `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC).
+    `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC);
+    `secrets-full` and `secrets-fsync-fail` do the same to the secrets file's folder (a write, a sync).
   - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs` and `pull.test.mjs`: only the routes the
     installers ask (`/health`, `/whoami`, `/auth/signin/begin`, `/mcp`, `/v1/models`, `/main`, `/chats` and a chat
     turn's stream) on `$HOME/.local/state/spark-console/api.sock`; the test puts `const MODE = '…'` in front of it

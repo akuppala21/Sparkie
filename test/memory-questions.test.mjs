@@ -58,7 +58,7 @@ for (const name of ['memory', 'memory-held-out']) {
       assert.deepEqual(rec.cases.map(c => c.id), set.cases.map(c => c.id));
       assert.deepEqual(rec.memorySwitches.off, []);
       assert.deepEqual(Object.entries(held).filter(([, ok]) => !ok).map(([id]) => `${id}: ${JSON.stringify([runs[id].missing, runs[id].unwanted])}`), [], r.out);
-      assert.deepEqual(Object.values(runs).map(x => [x.wrong, x.changed]).filter(([w, ch]) => w || ch.length), [], 'no change made');
+      assert.deepEqual(Object.values(runs).map(x => [x.wrong, x.changed]).filter(([w, ch]) => w || ch.some(x => x.action !== 'remember')), [], 'no change made');
       assert.deepEqual(rec.cases.map(c => [c.id, c.kind, c.switch ?? null]), set.cases.map(c => [c.id, c.kind, c.switch ?? null]));
       assert.match(r.out, /^By case: runs passed, rounds and seconds/m);
       for (const c of set.cases) assert.match(r.out, new RegExp(`^ {2}${c.id} +${c.kind} +${c.switch ?? ''} *\\d+/1 {2}[\\d.]+ rounds {2}[\\d.]+ s$`, 'm'), c.id);
