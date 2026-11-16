@@ -312,8 +312,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
+    // (its pinned scripts: the helper's own copies, bound over their paths for the whole run (--script, P-5); the unit's
+    // own first lines check them once more, a second check of those same copies, R72)
     const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const scripts = pins && !as ? Object.entries(pins).filter(([p, h]) => /^[0-9a-f]{64}$/.test(String(h)) && workHelperPins(p, node)).map(([p, h]) => `${h}:${p}`) : [];
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, scripts, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
@@ -347,6 +350,12 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+      // (a pinned script that changed before the helper copied it: nothing ran, and it is asked again, 21-ladder.mjs)
+      const changedScript = a.kind === 'refused' ? /^the script (.+) changed: its SHA-256 is not the one asked, so nothing ran$/.exec(why) : null;
+      if (changedScript) {
+        return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'pinned',
+          why: `A script it runs (${maskSecrets(changedScript[1]).slice(0, 200)}) changed after the owner was asked, so the root helper ran nothing.` };
+      }
       // (a protect folder whose link leads to no folder there: never run without it unasked; the ladder asks, R61)
       if (a.kind === 'protect' && RUNNER_PROTECT.includes(why)) {
         return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'protect', protect: why,

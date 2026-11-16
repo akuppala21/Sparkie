@@ -61,6 +61,11 @@ const GUARD_SAYS = {
 // its count. Kept apart from GUARD_SAYS, which own-programs.test holds to what the helper prints today.
 const GUARD_PART = /\bin part\b|\b[1-9]\d* (?:could not|couldn’t|couldn't)\b/i;
 const GUARD_PART_SAID = /^(?:net:? |already |refused: )?(?:the )?put[- ]back (?:is |was |went back )?(?:only )?in part:? ?(?:at )?(.*)$/i;
+// The helper's count when a put-back did not finish (A-14; restore.sh's last failure, after its time and try: "<ts>
+// attempt 3: N went back, M could not: <the first>"), in putback's refusal "the put-back failed: …" and in the net's line
+// at once "net: the put-back failed: …". A put-back in part, whatever N is: never put back, and never a whole failure
+// (that has no count: nothing of it is known to have gone back). Its guard stays open until it is put back or kept.
+const GUARD_COUNT = /(\d+) went back, (\d+) could not(?:: (.*))?$/;
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
 // so a line the command printed is never read as the helper's. keep and putback print the helper's lines alone.
@@ -75,7 +80,9 @@ function guardAnswer(id, out) {
   // (a put-back: whole, in part, or failed, three different things; from the net's line, or putback's own answer)
   const refusedText = !end && last.startsWith('refused: ') ? last.slice('refused: '.length) : null;
   const back = after(GUARD_SAYS.putBack), partSaid = GUARD_PART_SAID.exec(net)?.[1] ?? (refusedText != null ? GUARD_PART_SAID.exec(refusedText)?.[1] : null) ?? null;
-  const part = partSaid ?? (back && GUARD_PART.test(back) ? back : null);
+  const failed = after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null);
+  const counted = failed != null && GUARD_COUNT.test(failed) ? failed : null;
+  const part = partSaid ?? counted ?? (back && GUARD_PART.test(back) ? back : null);
   // (why a put-back came at once: the helper's line just before its result, which it prints only then)
   const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net) || partSaid != null) ? own(lines.at(-3)) ?? '' : '';
   return {
@@ -86,7 +93,7 @@ function guardAnswer(id, out) {
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: part == null ? back : null,
     part,
-    failed: after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null),
+    failed: counted == null ? failed : null,
     sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
     timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),

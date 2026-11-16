@@ -334,6 +334,17 @@ test('the root ask, end to end, says in one line that Sparkie doesn’t know the
   } finally { await press(chat, a.no.id); }
 });
 
+// The helper's round two: its one-time command refuses --with-root --hub (root is never on Spark 2). The console never
+// gives it: the owner's command for Spark 2 has no --with-root, whatever is asked; another Spark's keeps it.
+test('the owner’s one-time command never carries --with-root for Spark 2, which it refuses; for another Spark it does', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8'), fn = /^function ownerCommand\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'ownerCommand');
+  const ownerCommand = new Function('consoleOrigin', 'CONFIG', 'q', `${fn}\nreturn ownerCommand;`)(() => '', { user: 'owner' }, s => `'${s}'`);
+  assert.equal(ownerCommand({ id: 'spark2', host: 'local' }, true), 'bash ~/spark-console-src/deploy/root-for-sparkie.sh --hub 2');
+  assert.equal(ownerCommand({ id: 'spark2', host: 'local' }), 'bash ~/spark-console-src/deploy/root-for-sparkie.sh --hub 2');
+  assert.equal(ownerCommand({ id: 'spark3', host: '100.64.0.3' }, true), 'bash ~/spark-console-src/deploy/root-for-sparkie.sh --with-root 3');
+});
+
 // Round two with the outside reviewer (root's own half): rootChange sorted a root command as the owner's (runnerSortOpts
 // sets root: false), so the sorter's root-only rules never applied there: kill -9 812 or kill 1 as root, where a number
 // can be any process (a way in among them), was asked as plain ROOT, outside the lock-out class's own path. Sorted as
