@@ -65,7 +65,8 @@ function dangerBack(f) {
   return [];
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
-// that it isn't known: differs null), what the brain reads; why it runs outside the wall.
+// that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built
+// by code (lines: what its wall lets it do, what it reaches, a script's hash), each one line.
 function dangerMore(f) {
   const out = [];
   if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
@@ -77,6 +78,7 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));
   return out;
 }
 
@@ -97,9 +99,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
-// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
-// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, lines, whoApproves, switchBrain, wall, recheck});
+// shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call:
+// {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the
+// brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');

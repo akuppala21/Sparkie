@@ -158,6 +158,8 @@ async function runChoice(viewer, conv, id, by) {
     // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
+      // (the button pressed: run's ladder keeps what its ask showed under it, 21-ladder.mjs)
+      pressed: String(id),
       // (what a pressed change writes joins its request's task, so a later command of that request that runs it is
       // asked, A7c: the task's list in, kept after)
       written: conv.task && !conv.task.ended ? workTask(conv.task).written : [],

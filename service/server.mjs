@@ -3660,6 +3660,8 @@ async function runChoice(viewer, conv, id, by) {
     // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
+      // (the button pressed: run's ladder keeps what its ask showed under it, 21-ladder.mjs)
+      pressed: String(id),
       // (what a pressed change writes joins its request's task, so a later command of that request that runs it is
       // asked, A7c: the task's list in, kept after)
       written: conv.task && !conv.task.ended ? workTask(conv.task).written : [],
@@ -8619,7 +8621,8 @@ function dangerBack(f) {
   return [];
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
-// that it isn't known: differs null), what the brain reads; why it runs outside the wall.
+// that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built
+// by code (lines: what its wall lets it do, what it reaches, a script's hash), each one line.
 function dangerMore(f) {
   const out = [];
   if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
@@ -8631,6 +8634,7 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));
   return out;
 }
 
@@ -8651,9 +8655,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
-// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
-// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, lines, whoApproves, switchBrain, wall, recheck});
+// shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call:
+// {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the
+// brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
@@ -16888,53 +16893,79 @@ function workScriptPaths(scripts, dir, command) {
   for (const s of scripts) for (const p of (ok(s) ? [s] : bases.map(b => `${b}/${s.replace(/^(?:\.\/)+/, '')}`))) if (!paths.includes(p)) paths.push(p);
   return { paths: paths.slice(0, WORK_SCRIPTS), bases, odd };
 }
-// The scripts a command runs, hashed on the Spark now where it reads them: {sums: {path: SHA-256, or null when it
-// isn't a plain file there}, bases, odd}.
+// The scripts a command runs, hashed on the Spark now where it reads them, through the root helper's look (R42): what
+// the look wall hides reads as not there, and a key's name is refused before it, so a hash never says more of a file
+// than a look may. {sums: {path: SHA-256, or null when it isn't a file there}, bases, odd, names}; or, when the look
+// gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no sums and unread: why.
 async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   const list = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s)).slice(0, WORK_SCRIPTS);
   if (!list.length) return { sums: {}, bases: [dir], odd: [] };
   const { paths, bases, odd } = workScriptPaths(list, dir, command);
-  const word = s => (s === '~' || s.startsWith('~/') ? `"$HOME"${q(s.slice(1))}` : q(s));
-  const r = await run(node, `cd -- "$HOME" 2>/dev/null; ${paths.map(s => `if [ -f ${word(s)} ] && [ ! -L ${word(s)} ]; then sha256sum < ${word(s)}; else echo -; fi`).join('; ')}`, { timeout: 20000 });
-  if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `The scripts it runs on ${sparkName(node)} couldn’t be read, so nothing was asked or run.`);
-  const sums = r.out.trim().split('\n').map(l => /^([0-9a-f]{64})\b/.exec(l)?.[1] || null);
-  return { sums: Object.fromEntries(paths.map((s, i) => [s, sums[i] ?? null])), bases, odd, names: list };
+  // (a look starts in the home: a ~ path is read from there)
+  const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
+  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null); then printf 'h${i} %s\\n' "\${h%% *}"; else echo 'h${i} -'; fi`).join('; ');
+  const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
+  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) ([0-9a-f]{64}|-)$/gm)].map(m => [Number(m[1]), m[2]]));
+  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, bases, odd, names: list, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
+  return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), bases, odd, names: list };
 }
-// The asks waiting for a press (by chat, Spark, folder and command): the scripts' hashes when asked. Gone after 15
-// minutes, as the buttons are.
+// Why the scripts couldn't be read, by the look's answer, for the button.
+const WORK_UNREAD = { none: 'the root helper isn’t set up there yet', unknown: 'its root helper is one this build doesn’t know', nosudo: 'the root helper’s sudo line isn’t there',
+  proof: 'the root helper’s walls aren’t proven there', failed: 'the root helper’s walls aren’t proven there', proving: 'its walls are being proven right now',
+  key: 'one of them is a key file, which a look never reads', walk: 'one of them is a key file, which a look never reads', slow: 'the check for keys took too long',
+  refused: 'the look wall refused it', unreachable: 'the Spark didn’t answer', ended: 'the Spark didn’t answer in time' };
+// The asks waiting for a press, each under its yes button's own id (pendingChoices; a dangerous ask's too): the Spark,
+// folder and command, the wall its button showed, and the scripts' hashes then (or that they couldn't be read). Gone
+// after 16 minutes: the buttons' 15, and the minute a dangerous ask may open late.
 const workAsks = new Map();
-const workKey = (node, command, ctx, dir = RUNNER_DIR) => createHash('sha256').update(`${ctx.conv || ''}\n${node.id}\n${dir}\n${command}`).digest('hex');
+function workRecord(args, record) {
+  for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS + DANGER_LATE_MS) workAsks.delete(k);
+  for (const [id, c] of pendingChoices) if (c.args === args) workAsks.set(id, record);
+}
+const WORK_WALLS = { plain: 'in the plain wall', home: 'with the top of your home writable', open: 'outside the plain wall' };
 
-// The button's words, built by code: the exact command, the Spark, why it is asked, what put-back covers, what it
-// would run outside the wall or widen after the yes, what Sparkie read before proposing it, each script's hash.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, widen = {}, topDirs = []) {
-  const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {}, bases = [dir], odd = [], names = [] } = scripts;
-  const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
-  for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
-  if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
+// What both asks show of the wall it runs in after the yes, built by code: outside the plain wall, its stark words; the
+// top of the home writable, what that leaves; and what it widens and reaches. wall: the one it runs in.
+function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topDirs = []) {
   const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
   const wideLines = [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean);
-  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
-    // (outside the plain wall, with its stark words; or the top of the home writable, keys still hidden; or what widens)
-    ...(walls.open.length ? [`Runs outside the plain wall: ${[...walls.open, ...walls.home].join('; ')}.`, RUNNER_OPEN_HOLDS]
-      : walls.home.length ? [`Runs with the top of your home writable: ${walls.home.join('; ')}. Keys stay hidden and it cannot reach Docker.`, ...wideLines] : wideLines),
-    ...(wide.internet ? [RUNNER_WIDE.internet] : []),
+  return { walls, wall: walls.open.length ? 'open' : walls.home.length ? 'home' : 'plain',
+    outside: walls.open.length ? [...walls.open, ...walls.home].join('; ') : null,
+    lines: [...(walls.open.length ? [RUNNER_OPEN_HOLDS] : walls.home.length ? [...runnerHomeLines(node, walls, wide), ...wideLines] : wideLines),
+      ...(wide.internet ? [RUNNER_WIDE.internet] : [])] };
+}
+// Each script's hash, or why it has none.
+function workScriptLines(scripts, dir = RUNNER_DIR) {
+  const { sums = {}, bases = [dir], odd = [], names = [], unread = null } = scripts;
+  if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`];
+  const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
+  for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a file in ${bases.join(' or ')} now.`);
+  if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
+  return lines;
+}
+
+// The button's words, built by code: the exact command, the Spark, why it is asked, the wall it runs in after the yes
+// and what that lets it do, what put-back covers, what Sparkie read before proposing it, each script's hash.
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir)) {
+  const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
+  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`, ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts, dir)].join('\n');
 }
 async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
-  const scripts = await workScripts(node, sorted.scripts, dir, command);
-  for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
-  workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
+  const scripts = await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs);
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
-  if (dangerous.length) {
-    return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
-      facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
-  }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
+  const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
+    facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts, dir)] } })
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
+  workRecord(call.args, { spark: node.id, command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  return out;
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
@@ -16945,19 +16976,24 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
-  // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63)
+  // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63. A look that
+  // fails stops here: "none is there" would widen the wall)
   const topDirs = await runnerTopDirs(node, sorted);
-  // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
+  if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
+  // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
+  // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
-    const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
-    if (was && Object.keys(was.sums).length) {
-      const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) {
-        workAsks.delete(key);
-        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs);
-      }
+    const was = workAsks.get(String(ctx.pressed || ''));
+    workAsks.delete(String(ctx.pressed || ''));
+    const again = why => workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${why}, so that yes was void`, dir, widen, topDirs);
+    if (!was || was.spark !== node.id || was.command !== command || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
+    const wall = workWallLines(node, command, sorted, dir, widen, topDirs).wall;
+    if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
+    if (!was.unread && Object.keys(was.sums).length) {
+      const now = await workScripts(node, sorted.scripts, dir, command);
+      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
+      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again('a script it runs changed after you were asked');
     }
-    workAsks.delete(key);
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
@@ -18143,10 +18179,14 @@ const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
 // any write the sorter didn't place (a file an option names). The result never says all a command wrote was kept.
 const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program (an install, a build) writes on its own isn’t copied first, so undo can’t put that back.';
-// Git in a change runs with no hooks and no file-system monitor (A7c): code's own first line of the unit's command, so
-// a repository the change works in can't run a program of its own through git. Setting or unsetting these in a
-// command is the sorter's to ask.
-const RUNNER_GIT = 'export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false\n';
+// Git in a change (A7c): code's own first lines of the unit's command. It reads no settings of the owner's or the
+// system's (a .gitconfig an earlier change with the top of the home writable left would give it an ssh command, an
+// editor, a credential helper, filters, includes, another source for a pull), no system attributes file, and runs with
+// no hooks and no file-system monitor, so a repository the change works in can't run a program of its own through git.
+// Only the owner's name and mail are carried over, read first, as plain values. Setting or unsetting these in a command
+// is the sorter's to ask.
+const RUNNER_GIT = ['c=3; for k in name email; do v=$(git config --global --get "user.$k" 2>/dev/null) && [ -n "$v" ] && export "GIT_CONFIG_KEY_$c=user.$k" "GIT_CONFIG_VALUE_$c=$v" && c=$((c + 1)); done; unset k v',
+  'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=$c GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2=/dev/null; unset c', ''].join('\n');
 // After its time limit systemd gives a unit 5 seconds to stop (TimeoutStopSec=5, the helper's), and a second more here.
 const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
@@ -18174,8 +18214,18 @@ function runnerWiden(node, command, widen = {}, sorted = null) {
   const fleet = widen.fleet === true || reach.includes('fleet') || words.some(w => names.includes(w));
   return { fleet, gpu: widen.gpu === true || sorted?.gpu === true, home: !fleet && reach.includes('home'), internet: reach.includes('internet') };
 }
-// What still holds outside the plain wall (run --open, R42 and R63, as the helper builds it), said on its button.
-const RUNNER_OPEN_HOLDS = 'There it still can’t gain root by itself, and the ways in (~/.ssh) and the start files stay read-only; but it runs as you with all your groups (Docker’s too), and the keys and tokens in your home are open to it.';
+// What a change outside the plain wall can do (run --open, R42 and R63, as the helper builds it), said on its button:
+// it keeps every group, Docker's too, and Docker on a Spark is root.
+const RUNNER_OPEN_HOLDS = 'There it runs as you with all your groups, Docker’s too, and Docker on a Spark is as good as root: it can do anything there that root can. Every address (the other Sparks, your home network) and the GPU are open to it, and so are the keys and tokens in your home. ~/.ssh and the start files stay read-only, but not to what it does through Docker.';
+// What a change with the top of the home writable can do (run --home, R63), said on its button by code: where it writes
+// that a plain change can't (named from the command); that it runs walled, but what it leaves where a terminal looks
+// runs at the owner's next terminal there, outside every wall; that it may fill the disk (the helper's floor and watch
+// are off for it). What it changed there is listed afterwards by a later step (A7c's home note), which adds its sentence.
+function runnerHomeLines(node, walls, wide = {}) {
+  return [`It writes where a plain change can’t: ${walls.at.join('; ')}.`,
+    `It runs walled: no Docker, no keys${wide.fleet ? '' : ', no other Spark'}. But it may add or replace programs and settings that your own terminal on ${sparkName(node)} runs by itself. If the command is not what it says, your next terminal there runs what it left.`,
+    'It may fill the disk.'];
+}
 // The signs a program prints when it finds no GPU (the plain wall gives a change no devices, R63): said after it.
 const RUNNER_NO_DEVICE = /no CUDA-capable device is detected|No CUDA GPUs are available|CUDA_ERROR_NO_DEVICE|cudaErrorNoDevice|Found no NVIDIA driver|couldn't communicate with the NVIDIA driver|Failed to initialize NVML|\/dev\/nvidia[a-z0-9-]*: No such file/;
 const RUNNER_NO_GPU = 'The GPU isn’t open to a plain change (it gets no devices): GPU work is a job (keep_running with once and gpu), or ask for this again with gpu, which is asked first.';
@@ -18196,25 +18246,28 @@ const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'
 // them; --open (nothing hidden, every group, design A 2.13) for what the sorter calls open, another dot folder at the
 // top, the system's own folders (npm -g) or anything outside the home but the temporary folders.
 const RUNNER_HOME_WRITE = ['~/.local', '~/bin', '~/.cargo/bin'];
+// at: the places a --home change writes, in the button's words.
 function runnerWalls(sorted, command, dir = RUNNER_DIR, topDirs = []) {
-  const open = [], home = [];
+  const open = [], home = [], at = [];
   if (sorted?.open) open.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
   // (a place the command only reads is no write there, R64's reads: the copy first still covers it)
   const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
   for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
     if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
-    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
-    else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) home.push(`it writes ${p}, which the plain wall keeps read-only`);
+    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) {
+      home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
+      at.push(p === '~' ? 'your home folder itself' : `${p} at the top of your home`);
+    } else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) { home.push(`it writes ${p}, which the plain wall keeps read-only`); at.push(p); }
     else if (parts && parts[0].startsWith('.')) open.push(`it writes ${p}, which the plain wall keeps read-only`);
     else if (!parts && p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p)) open.push(`it writes ${p}, outside the home, which the plain wall keeps read-only`);
   }
   // (an install that puts programs where the plain wall keeps them read-only, the sorter's installs, R64)
   for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) {
     if (w === 'npm -g') open.push('it installs into the system’s own folders (npm -g), which the plain wall keeps read-only');
-    else home.push(`it installs into ${w}, which the plain wall keeps read-only`);
+    else { home.push(`it installs into ${w}, which the plain wall keeps read-only`); at.push(`what it installs into ${w}`); }
   }
-  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4) };
+  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4), at: [...new Set(at)].slice(0, 4) };
 }
 // The would-fail reasons, those that need --open first.
 function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
@@ -18228,13 +18281,15 @@ function runnerMemoryCap(available) {
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
 // The folders at the top of the home a change names that are there now, real and not ~/bin (one look): a write inside
-// one is inside the plain wall's writable folders, not at the top (R63).
+// one is inside the plain wall's writable folders, not at the top (R63). null when the look gave no whole answer: never
+// "none is there", which would widen the wall.
 async function runnerTopDirs(node, sorted) {
   const tops = [...new Set([...(sorted?.placed || []), ...(sorted?.wide || [])].filter(p => typeof p === 'string' && /^~\/[^/.][^/]*$/.test(p) && p !== '~/bin' && !/[*?[\]{}\\]/.test(p)))].slice(0, 16);
   if (!tops.length) return [];
   const w = p => `"$HOME"${q(p.slice(1))}`;
-  const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
-  return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
+  const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; echo looked`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
+  const out = String(r.out).split('\n');
+  return r.code === 0 && out.includes('looked') ? out.filter(l => tops.includes(l)) : null;
 }
 async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
@@ -18244,7 +18299,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen, sorted), walls = runnerWalls(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted)), outside = [...walls.open, ...walls.home];
+  const tops = topDirs ?? await runnerTopDirs(node, sorted);
+  if (!tops) throw new HttpError(503, `Which folders at the top of the home it names are there on ${sparkName(node)} couldn’t be read, so nothing ran.`);
+  const wide = runnerWiden(node, command, widen, sorted), walls = runnerWalls(sorted, command, dir, tops), outside = [...walls.open, ...walls.home];
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs ${walls.open.length ? 'outside that wall' : 'with the top of the home writable'}, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;

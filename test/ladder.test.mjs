@@ -1,18 +1,20 @@
 // Covers: run's ladder for a change on a compute Spark (21-ladder.mjs, with 21-runner.mjs; R61, R55, R54; design A
 // 2.5 and 2.8, step A7c), end to end on the stand-in fleet: a plain change the owner's words ask for runs at once with
 // no button and undo puts it back; a risky one is a button, built by code, and the owner's press runs it; a file this
-// request wrote and then runs is asked (the sorter's written); a script that changed after its ask voids the press; a
-// risky delete is the dangerous ask, which names what came from what the request read; an agent's change is a
-// button; not done, the lock-out class and Spark 2 are refused; what put-back does not cover is said; the run unit
-// gets git with no hooks; the claim is held past a change whose end is unknown; /undo works while changes are paused;
-// the memory cap's working-out; what the page's line for a command shows; with no eval on record (the rail, R52),
-// Sparkie's plain change is a button too, and the owner's press runs it.
+// request wrote and then runs is asked (the sorter's written); a script that changed after its ask voids the press,
+// each button by its own ask, and is hashed through the root helper's look; the press runs in the wall its button
+// showed; a risky delete is the dangerous ask, which names what came from what the request read and says its wall; an
+// agent's change is a button; not done, the lock-out class and Spark 2 are refused; what put-back does not cover is
+// said; the run unit's git reads none of the owner's settings but name and mail; the claim is held past a change whose
+// end is unknown, "unknown" too; the protect folders stay read-only with the top of the home writable; /undo works
+// while changes are paused; the memory cap's working-out; what the page's line for a command shows; with no eval on
+// record (the rail, R52), Sparkie's plain change is a button too, and the owner's press runs it.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true), the
 // stand-ins in test/mock/bin, and the stand-in brain told by a script which tools to call. Linux only: run it on a
 // Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
@@ -22,8 +24,9 @@ import { startMock } from './start-mock.mjs';
 const SECONDS = 6;
 const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const keys = {};
-// (the tailnet is read every second here, so a test that changes what it says is seen soon)
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
+// (the tailnet is read every second here, so a test that changes what it says is seen soon; a dangerous ask is never
+// sent a minute late, as the tests raise several inside ten minutes)
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
@@ -177,11 +180,23 @@ test('what put-back does not cover is said: on the button, and in the result whe
   await choose(chat, r.choices.find(c => c.label === 'No').id);
 });
 
-test('a change runs git with no hooks and no file-system monitor, from the unit\'s own first line', { timeout: 60000 * SLOW }, async () => {
-  // (that a command setting or unsetting these is asked is the sorter's row: step A7a-git)
-  const r = await run('printenv GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 > notes/git.txt');
+test('a change runs git with none of the owner\'s or the system\'s settings but their name and mail, no attributes file, no hooks and no file-system monitor, from the unit\'s own first lines', { timeout: 60000 * SLOW }, async () => {
+  // (that a command setting or unsetting these is asked is the sorter's row: step A7a-git. A .gitconfig an earlier change
+  // with the top of the home writable could have left: an editor, an attributes file, another source for a pull)
+  writeFileSync(at3('.gitconfig'), '[user]\n\tname = Stand In\n\temail = owner@example.invalid\n[core]\n\teditor = planted-editor\n\tattributesFile = ~/planted-attributes\n[url "https://example.invalid/"]\n\tinsteadOf = https://github.com/\n');
+  let r, env;
+  try {
+    r = await run('git config --list > notes/git.txt');
+    env = await run('printenv GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_ATTR_NOSYSTEM > notes/git-env.txt');
+  } finally { rmSync(at3('.gitconfig'), { force: true }); }
   assert.equal(r.status, 200, r.text);
-  assert.equal(text('notes/git.txt'), '2\ncore.hooksPath\n/dev/null\ncore.fsmonitor\nfalse\n');
+  assert.equal(text('notes/git.txt'), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\nuser.name=Stand In\nuser.email=owner@example.invalid\n');
+  assert.equal(env.status, 200, env.text);
+  assert.equal(text('notes/git-env.txt'), '/dev/null\n1\n1\n');
+  // (no name or mail of the owner's: none is carried over, so git says so itself rather than take an empty one)
+  const none = await run('git config --list > notes/git-none.txt');
+  assert.equal(none.status, 200, none.text);
+  assert.equal(text('notes/git-none.txt'), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\n');
 });
 
 test('a change whose end is unknown holds its Spark until the root helper says it has ended: no second change starts beside it', { timeout: 120000 * SLOW }, async () => {
@@ -198,6 +213,32 @@ test('a change whose end is unknown holds its Spark until the root helper says i
   await waitFor(() => existsSync(at3('notes/held-done')), { every: 200, what: 'the change to end on the Spark' });
   await waitFor(async () => (await run('touch notes/beside.txt')).status === 200, { every: 500, timeout: 5000, what: 'the Spark to be let go once its unit is gone' });
   assert.ok(Date.now() - t0 < (SECONDS + 6) * 1000, 'let go before the time limit');
+});
+
+test('a held change the root helper has no mark of ("unknown") is over with its outcome unknown, never "never": its Spark stays held until its time limit has passed', { timeout: 120000 * SLOW }, async () => {
+  const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo unk > notes/unk.txt && sleep 2 && touch notes/unk-done';
+  writeFileSync(drops, '');
+  let first;
+  try { first = await run(command); } finally { rmSync(drops, { force: true }); }
+  assert.equal(first.status, 503, first.text);
+  const start = startOf(command), t0 = Date.parse(start.at);
+  // (its mark can't be read from now on, as after state sweeps it at 130 minutes or a restart of the Spark: the helper
+  // answers "unknown". A folder in its place, so the call's own last mark, written when its unit is gone, goes inside)
+  const calls = join(H3(), '.rehearsal', 'run', 'spark-console', '.calls'), id = start.unit.slice('sw-run-'.length);
+  await waitFor(() => existsSync(join(calls, id)), { every: 100, what: 'the call\'s mark' });
+  mkdirSync(join(H3(), '.rehearsal', 'marks-aside'), { recursive: true });
+  renameSync(join(calls, id), join(H3(), '.rehearsal', 'marks-aside', id));
+  mkdirSync(join(calls, id));
+  await waitFor(() => existsSync(at3('notes/unk-done')), { every: 200, what: 'the change to end on the Spark' });
+  // (its unit has ended, but the helper can't say so: still held, as "never" or "ended" would not be)
+  await sleep(3000);
+  const beside = await run('touch notes/unk-beside.txt');
+  assert.equal(beside.status, 409, beside.text);
+  assert.match(beside.json.error, /^Something is already changing on Spark 3 \(a command Sparkie is running there\)/);
+  assert.ok(Date.now() < t0 + (SECONDS + 6) * 1000, 'still inside its time limit');
+  // (once its time limit has surely passed: let go)
+  await waitFor(async () => (await run('touch notes/unk-beside.txt')).status === 200, { every: 1000, timeout: 30000, what: 'the Spark to be let go after the time limit' });
+  assert.ok(Date.now() >= t0 + (SECONDS + 6) * 1000, 'not before its time limit');
 });
 
 test('/undo, the owner\'s word, puts back this chat\'s last change while changes are paused', { timeout: 120000 * SLOW }, async () => {
@@ -438,7 +479,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   const chat = await newChat(), cmd = 'echo top > top.txt';
   const r = await turn(chat, 'fix the top note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the top note on spark 3');
-  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nRuns with the top of your home writable: it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only\. Keys stay hidden and it cannot reach Docker\.\n/, JSON.stringify(asked));
+  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nIt writes where a plain change can’t: ~\/top\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt may fill the disk\.\n/, JSON.stringify(asked));
   assert.ok(!existsSync(at3('top.txt')), 'nothing ran');
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
@@ -452,7 +493,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   mkdirSync(at3('.myapp'), { recursive: true });
   const rd = await turn(c3, 'fix the app config on spark 3', [[RUN(dot)]]);
   const [askedDot] = sentBack('fix the app config on spark 3');
-  assert.match(askedDot?.question || '', /\nAsked because it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only\.\nThere it still can’t gain root by itself, and the ways in \(~\/\.ssh\) and the start files stay read-only; but it runs as you with all your groups \(Docker’s too\), and the keys and tokens in your home are open to it\.\n/, JSON.stringify(askedDot));
+  assert.match(askedDot?.question || '', /\nAsked because it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only\.\nThere it runs as you with all your groups, Docker’s too, and Docker on a Spark is as good as root: it can do anything there that root can\. Every address \(the other Sparks, your home network\) and the GPU are open to it, and so are the keys and tokens in your home\. ~\/\.ssh and the start files stay read-only, but not to what it does through Docker\.\n/, JSON.stringify(askedDot));
   const pd = await choose(c3, rd.choices.find(c => c.label === 'Run it').id);
   assert.equal(pd.status, 200, pd.text);
   const openWall = propsOf(dot);
@@ -499,6 +540,88 @@ test('a script is hashed where the change reads it (dir, ~/work by default): the
   assert.equal(p2.status, 200, p2.text);
   assert.match(p2.json.message.content, /Asked because a script it runs changed after you were asked, so that yes was void\./);
   assert.equal(text('work/ran-here.txt'), 'from work\n', 'the changed script did not run on the old yes');
+});
+
+test('each button keeps its own ask: of two buttons for one command in a chat, the second, pressed after its script changed, is asked again', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('work'), { recursive: true });
+  writeFileSync(at3('work/twice.sh'), 'echo first >> twice.txt\n');
+  const chat = await newChat();
+  const a = await turn(chat, 'fix it with the twice script', [[RUN('bash twice.sh', null)]]);
+  const b = await turn(chat, 'fix it once more with the twice script', [[RUN('bash twice.sh', null)]]);
+  const yesA = a.choices.find(c => c.label === 'Run it'), yesB = b.choices.find(c => c.label === 'Run it');
+  assert.ok(yesA && yesB && yesA.id !== yesB.id, JSON.stringify([a.choices, b.choices]));
+  const pa = await choose(chat, yesA.id);
+  assert.equal(pa.status, 200, pa.text);
+  assert.equal(text('work/twice.txt'), 'first\n');
+  writeFileSync(at3('work/twice.sh'), 'echo changed >> twice.txt\n');
+  const pb = await choose(chat, yesB.id);
+  assert.equal(pb.status, 200, pb.text);
+  assert.match(pb.json.message.content, /Asked because a script it runs changed after you were asked, so that yes was void\./);
+  assert.equal(text('work/twice.txt'), 'first\n', 'the changed script did not run on the other button\'s yes');
+  await choose(chat, pb.json.message.choices.find(c => c.label === 'No').id);
+});
+
+test('the press runs in the wall its button showed: a folder at the top of the home gone since the ask makes it asked again, with the new wall\'s words', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('proj3'), { recursive: true });
+  const chat = await newChat(), cmd = 'cp notes/e.txt proj3';
+  const r = await turn(chat, 'fix the project copy', [[RUN(cmd)]]);
+  const [asked] = sentBack('fix the project copy');
+  assert.equal(asked?.outcome, 'needs-ok', JSON.stringify(asked));
+  assert.ok(!/top of your home|outside the plain wall/.test(asked.question), asked.question);
+  rmSync(at3('proj3'), { recursive: true });
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.match(p.json.message.content, /\nAsked because it would run with the top of your home writable now, and you were asked for it in the plain wall, so that yes was void\.\nIt writes where a plain change can’t: ~\/proj3 at the top of your home\.\n/, p.json.message.content);
+  assert.ok(!existsSync(at3('proj3')) && !startOf(cmd), 'nothing ran');
+  await choose(chat, p.json.message.choices.find(c => c.label === 'No').id);
+});
+
+test('the dangerous ask says the wall it runs in after the yes and what that lets it do, and its press runs there', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at3('notes/b.tmp'), 'b\n');
+  const chat = await newChat(), cmd = 'rm ~/notes/*.tmp && echo x > top2.txt';
+  await turn(chat, 'clean the tmp files and write the top note on spark 3', [[RUN(cmd)]]);
+  const ask = (await chatMessages(chat)).findLast(m => m.danger);
+  assert.ok(ask, 'the dangerous ask');
+  const shown = ask.danger.lines.join('\n');
+  assert.match(shown, /^DELETES FOR GOOD on Spark 3/);
+  assert.match(shown, /\nIt writes where a plain change can’t: ~\/top2\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt may fill the disk\.(?:\n|$)/, shown);
+  const pair = (await api(`/chats/${chat}`)).json.messages.find(m => m.danger?.ask === ask.danger.ask)?.pair;
+  const p = await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: ask.choices.find(c => c.pair).id, pair } });
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('top2.txt'), 'x\n');
+  assert.equal(startOf(cmd)?.wall, 'home');
+  // Docker: outside the plain wall, with its stark words.
+  const c2 = await newChat();
+  await turn(c2, 'remove the web container on spark 3', [[RUN('docker rm -f web')]]);
+  const ask2 = (await chatMessages(c2)).findLast(m => m.danger);
+  assert.ok(ask2, 'the dangerous ask');
+  assert.match(ask2.danger.lines.join('\n'), /\nRuns outside the wall: “docker” needs the Docker socket, which the run wall hides \(Docker is root by another name\): free-form, it is always asked\.\nThere it runs as you with all your groups, Docker’s too, and Docker on a Spark is as good as root: it can do anything there that root can\. Every address \(the other Sparks, your home network\) and the GPU are open to it, and so are the keys and tokens in your home\. ~\/\.ssh and the start files stay read-only, but not to what it does through Docker\.(?:\n|$)/, ask2.danger.lines.join('\n'));
+  await choose(c2, ask2.choices.find(c => c.label === 'No').id);
+});
+
+test('a script is hashed through the root helper\'s look; when that look gives no answer of its own, the button says none is hashed, and the press runs as it said', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('work'), { recursive: true });
+  writeFileSync(at3('work/s6.sh'), 'echo s6 > s6.txt\n');
+  const chat = await newChat();
+  const r = await turn(chat, 'fix it with the s6 script', [[RUN('bash s6.sh', null)]]);
+  const [asked] = sentBack('fix it with the s6 script');
+  assert.ok((asked?.question || '').includes(`\nIt runs ~/work/s6.sh (SHA-256 ${sha('echo s6 > s6.txt\n').slice(0, 12)}…)`), JSON.stringify(asked));
+  const ran = join(H3(), '.rehearsal', 'standin', 'ran'), cmdOf = u => (existsSync(join(ran, u, 'command')) ? readFileSync(join(ran, u, 'command'), 'utf8') : '');
+  assert.ok(readdirSync(ran).some(u => u.startsWith('sw-look-') && cmdOf(u).includes("sha256sum < './work/s6.sh'")), 'hashed inside a look unit');
+  await choose(chat, r.choices.find(c => c.label === 'No').id);
+  // The look gives no answer of its own (systemd refuses its unit): no hash, no word of whether the file is there.
+  const refuse = join(H3(), '.rehearsal', 'standin', 'refuse'), c2 = await newChat();
+  writeFileSync(refuse, 'sw-look-');
+  let r2;
+  try { r2 = await turn(c2, 'fix it with the s6 script again', [[RUN('bash s6.sh', null)]]); } finally { rmSync(refuse, { force: true }); }
+  const [asked2] = sentBack('fix it with the s6 script again');
+  assert.match(asked2?.question || '', /\nThe scripts it runs couldn’t be read here \([^)\n]+\), so none is hashed: a change to one after this ask isn’t seen\.$/, JSON.stringify(asked2));
+  assert.ok(!/SHA-256|isn’t a file in/.test(asked2.question), asked2.question);
+  // (the press runs it as that button said: unchecked)
+  writeFileSync(at3('work/s6.sh'), 'echo s6 changed > s6.txt\n');
+  const p = await choose(c2, r2.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('work/s6.txt'), 's6 changed\n');
 });
 
 test('what a pressed change wrote joins its request\'s task, so a later command of that request that runs it is asked', { timeout: 180000 * SLOW }, async () => {
@@ -620,4 +743,17 @@ test('with no eval on record, a plain change Sparkie proposes is a button like a
     Object.assign(T, was);
     await fleet.stop();
   }
+});
+
+test('a change with the top of the home writable still gets the model store, the Hugging Face cache and the shared folder read-only', { timeout: 120000 * SLOW }, async () => {
+  const kept = ['models', '.cache/huggingface', '.local/share/spark-portal/workspaces/shared'];
+  for (const d of kept) mkdirSync(at3(d), { recursive: true });
+  const chat = await newChat(), cmd = 'echo p > top-protect.txt';
+  const r = await turn(chat, 'write the protect note on spark 3', [[RUN(cmd)]]);
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('top-protect.txt'), 'p\n');
+  assert.equal(startOf(cmd)?.wall, 'home');
+  const props = propsOf(cmd);
+  for (const d of kept) assert.ok(props.includes(`ReadOnlyPaths=/spark3/${d}`), `${d}: ${JSON.stringify(props)}`);
 });
