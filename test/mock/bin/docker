@@ -236,8 +236,8 @@ case "$cmd" in
     lineOf "$name" >/dev/null && { echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2; exit 125; }
     if [ -f "$M/ids-per-run" ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
     [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
-    if [ "$ours" = box ]; then cp "$M/last-run-args" "$M/run-$name"; echo $(( $(date +%s) + $(tail -n 1 "$M/last-run-args") )) > "$M/box-until-$name"; fi
     runArgs "$M/last-run-args" > "$M/args-$name"
+    if [ "$ours" = box ]; then cp "$M/last-run-args" "$M/run-$name"; echo $(( $(date +%s) + $(tail -n 1 "$M/last-run-args") )) > "$M/box-until-$name"; fi
     if [ "$ours" = app ] && [ -f "$M/app-port-taken" ]; then
       echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
       echo "docker: Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1 failed: port is already allocated." >&2; exit 125

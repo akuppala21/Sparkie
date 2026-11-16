@@ -190,10 +190,14 @@ function jobEnded(node, w) {
   const conv = /^sc_[0-9a-f]{16}$/.test(chat) ? chatData().conversations.find(c => c.id === chat && c.login === accessList().owner) : null;
   if (!conv) return;
   const now = new Date().toISOString();
-  conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: now, notice: true });
+  conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: now, notice: true, jobEnd: name });
+  // (no longer owed to the task that started it: taskJobsOwed, 14-tasks.mjs)
+  if (conv.task?.jobs) conv.task.jobs = conv.task.jobs.filter(j => !(j.spark === node.id && j.container === name));
   conv.updatedAt = now;
   saveChats();
   if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  // (its end wakes the request it was started for, as an operation's result does: wakeWork, 14-chats.mjs)
+  wakeWork(conv.id);
 }
 // Waiting for a job's end (keep_running with once, A13; the self-test's job): one fixed `docker inspect` of exactly that
 // container through `run` every JOB_WAIT_MS (10 s), first at once, until it isn't running or `limitMs` has passed. It
@@ -550,7 +554,7 @@ action({
     await appRoom(node, gb, container);
     const a = { container, image: input.image, port: input.port || null, volumes: input.volumes || [], env: input.env || [], memoryGB: gb, gpu: Boolean(input.gpu), once: Boolean(input.once), command: appCommand(input) };
     const url = hp ? `http://${sp.tsip}:${hp}` : null, open = devBox(a) ? ` ${DEV_BOX_WORDS}` : '';
-    const job = claimed([spark], `starting ${container}`, () => newJob('deploy', { ...meta, model: container, image: input.image, ...(hp ? { port: hp } : {}), memoryGB: gb }));
+    const job = claimed([spark], `starting ${container}`, () => newJob('deploy', { ...meta, model: container, image: input.image, ...(hp ? { port: hp } : {}), memoryGB: gb, ...(a.once ? { once: true } : {}) }));
     runJob(job, async j => {
       pausedCheck(ctx);
       j.checkPause = () => { cancelCheck(j); pausedCheck(ctx); };
