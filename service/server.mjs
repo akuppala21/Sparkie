@@ -8637,6 +8637,8 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  // (run with minutes, A6: how long the press lets it run, as the plain ask's button says, 21-long.mjs)
+  if (Number.isInteger(f.minutes) && f.minutes > 0) out.push(`It may run for up to ${f.minutes} minute${f.minutes === 1 ? '' : 's'} as an operation.`);
   return out;
 }
 
@@ -8657,9 +8659,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
-// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
-// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, minutes, whoApproves, switchBrain, recheck}); shown:
+// the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action,
+// args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an
+// agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
@@ -16946,7 +16949,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
-      facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
+      facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
+        ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } });
   }
   return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }

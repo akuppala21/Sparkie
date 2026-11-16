@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22200 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22204 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -472,7 +472,7 @@ Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its by
 Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes. One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text (the Telegram …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 323
+- **Lines:** 326
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1011,7 +1011,7 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when hostClear holds, which …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
-- **Lines:** 221
+- **Lines:** 222
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

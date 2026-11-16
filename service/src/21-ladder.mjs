@@ -177,7 +177,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
-      facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
+      facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
+        ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } });
   }
   return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }

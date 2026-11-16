@@ -2,10 +2,10 @@
 // 21-runner.mjs; R23, R13; design A 2.10 and step 6, A6), end to end on the stand-in fleet: the call answers at once
 // with the operation; an exit code other than 0 is a result and the operation completes; its end is posted in the
 // chat that asked, built by code (how long, the exit code, its record) with none of the output, and the request's
-// carry-on turn runs; a look is held to 1 minute and a change that runs at once to 10, each said; an asked change
-// keeps what was asked (its button says how long); the limit stops it with everything it started; one long command
-// a Spark at a time; cancel_operation stops its unit by id; a console killed while it runs stops it by id after the
-// restart, says so once, and never runs it again.
+// carry-on turn runs; a look is held to 1 minute and a change that runs at once to 10, each said; an asked change keeps
+// what was asked (its button, and the dangerous ask's facts, say how long); the limit stops it with everything it
+// started; one long command a Spark at a time; cancel_operation stops its unit by id; a console killed while it runs
+// stops it by id after the restart, says so once, and never runs it again.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true), the
 // stand-ins in test/mock/bin (systemd-run ends a unit at its time limit with everything it started; systemctl stop
 // ends one that runs), and the stand-in brain told by a script which tools to call. A minute here is 3 seconds.
@@ -30,6 +30,8 @@ useFleet({ env: { SPARK_CONSOLE_MINUTE_SECONDS: String(MINUTE), SPARK_CONSOLE_RU
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('notes/a.txt', 'a before\n');
     put('notes/c.txt', 'c before\n');
+    put('notes/todo.txt', 'to do: rm ~/notes/*.tmp\n');
+    put('notes/a.tmp', 'a\n');
   } }, async () => {
   // (the console's looks at the tailnet, the first 1.5 s after it starts: until one has read it, no change runs at once,
   // A7c. The Sparks' tailnet addresses come with the first request, so two looks after this one count)
@@ -183,6 +185,23 @@ test('in the chat that asked: its end is posted, built by code with none of the 
   const start = startOf(cmd2);
   assert.deepEqual([start.minutes, start.gate], [30, 'asked']);
   assert.ok(unitProps(start.unit).includes(`RuntimeMaxSec=${30 * MINUTE}`), 'asked, it keeps 30 minutes: held only at once');
+});
+
+test('the dangerous ask says how long it may run: one line among its own facts, the lines the paired Telegram chat is sent too', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), words = 'clean up the tmp files on spark 3';
+  script([{ match: `^${words}$`, rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'cat notes/todo.txt', dir: '~' } }],
+    [{ name: 'run', arguments: { on: 'spark3', command: 'rm ~/notes/*.tmp', dir: '~', minutes: 30 } }]] }]);
+  try { await say(chat, words); } finally { noScript(); }
+  const ask = (await chatMessages(chat)).find(m => m.danger);
+  assert.ok(ask, 'the dangerous ask');
+  const shown = ask.danger.lines.join('\n');
+  assert.match(shown, /^DELETES FOR GOOD on Spark 3/, shown);
+  // (one line, among the ask's facts: the same lines the paired Telegram chat is sent, 20-danger.mjs)
+  assert.equal(ask.danger.lines.filter(l => /minutes? as an operation/.test(l)).length, 1, shown);
+  assert.ok(ask.danger.lines.includes('It may run for up to 30 minutes as an operation.'), shown);
+  assert.ok(existsSync(at3('notes/a.tmp')), 'nothing ran');
+  // (closed again, so the next test asks nothing open)
+  await choose(chat, ask.choices.find(c => c.label === 'No').id);
 });
 
 // Last: it ends this file's console.
