@@ -1282,6 +1282,25 @@ describe('the lock-out net (R60)', () => {
     assert.match(readFileSync(join(G(t, q.id), 'result'), 'utf8').split('\n')[0], /: nothing differed$/);
   });
 
+  test('a way-in unit on its way down at the put-back is waited for and counted by where it is headed: started again; one on its way up, stopped (second read, fix 2)', { timeout: 120000 }, () => {
+    const s = netted();
+    s.put('standin/units/tailscaled.service', 'active enabled\n');
+    const r = net(s, 'true');
+    writeFileSync(join(s.R, 'standin/units/tailscaled.service'), 'deactivating enabled\n');
+    let before = calls(s).length;
+    assert.equal(fire(s, r.id).status, 0);
+    let asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.ok(asked.includes('start tailscaled.service'), asked.join(' | '));
+    const t = netted();
+    t.put('standin/units/tailscaled.service', 'inactive disabled\n');
+    const q = net(t, 'true');
+    writeFileSync(join(t.R, 'standin/units/tailscaled.service'), 'activating disabled\n');
+    before = calls(t).length;
+    assert.equal(fire(t, q.id).status, 0);
+    asked = calls(t).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.ok(asked.includes('stop tailscaled.service'), asked.join(' | '));
+  });
+
   test('putback that fails leaves the timer to try again', { timeout: 120000 }, () => {
     const s = netted();
     const r = net(s, SSH_CHANGE);
@@ -1615,11 +1634,11 @@ describe('what bounds a plain change (R63)', () => {
 
   test("the tools' key folders are hidden in both walls", () => {
     const s = proven();
-    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
     s.put('home/owner/.claude.json', '{}');
     const r = change(s, 'true'), l = look(s, 'true');
     for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
+      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
       assert.ok(c.includes('InaccessiblePaths=/home/owner/.claude.json'));
     }
   });
@@ -1701,15 +1720,31 @@ describe('what bounds a plain change (R63)', () => {
     const b = handed();
     s.put(`standin/active/sw-run-${b}.service`, '');
     assert.equal(st(b), `${b} state running: it runs, or may still start\n`);
-    // "inactive" for one, no answer at all for the other: ended.
+    // "inactive" for one, no answer at all for the other: the silent one may still run (second read).
     const c = handed();
     s.put(`standin/silent/sw-look-${c}.service`, '');
-    assert.equal(st(c), `${c} state ended: its call is gone and nothing of it runs\n`);
+    assert.equal(st(c), `${c} state running: it runs, or may still start\n`);
+    const c2 = handed();
+    s.put(`standin/silent/sw-run-${c2}.service`, '');
+    assert.equal(st(c2), `${c2} state running: it runs, or may still start\n`);
     // No answer for either (systemd not answering): it may still run, so never "ended" on that.
     const d = handed();
     s.put(`standin/silent/sw-run-${d}.service`, '');
     s.put(`standin/silent/sw-look-${d}.service`, '');
     assert.equal(st(d), `${d} state running: it runs, or may still start\n`);
+  });
+
+  test('systemd silent for a minute after the unit ran: the call leaves its mark "handed", and state asks systemd, never "ended" unasked (second read)', { timeout: 200000 }, () => {
+    const s = proven();
+    const id = newId();
+    s.put(`standin/silent/sw-run-${id}.service`, '');
+    const r = spawnSync(join(s.R, 'usr/local/sbin/spark-console-root'), ['run', '--id', id, '--sha256', sha('true'), '--seconds', '60', '--dir', s.work, '--', 'true'],
+      { env: s.env, encoding: 'utf8', timeout: 180000 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(readFileSync(join(s.R, 'run/spark-console/.calls', id), 'utf8'), /^handed /);
+    assert.equal(run(s, ['state', '--id', id]).stdout, `${id} state running: it runs, or may still start\n`);
+    rmSync(join(s.R, `standin/silent/sw-run-${id}.service`));
+    assert.equal(run(s, ['state', '--id', id]).stdout, `${id} state ended: its call is gone and nothing of it runs\n`);
   });
 
   test('--home: the plain wall with the top of the home, ~/.local, ~/bin and ~/.cargo/bin writable; never with --open, never a look', () => {
@@ -1729,18 +1764,32 @@ describe('what bounds a plain change (R63)', () => {
     refused(look(s, 'true', { extra: ['--home'] }), '--home is for run: a look writes nothing');
   });
 
-  test('the hidden list keeps the listeners\' tokens, browsers, more tool keys and only ollama\'s key; more download caches are writable', () => {
+  test('the hidden list keeps the listeners\' tokens, browsers and more tool keys, and Ollama\'s folder whole with its models put back read-only; more download caches are writable', () => {
     const s = proven();
     for (const d of ['.local/share/jupyter/runtime', '.jupyter', '.mozilla', '.config/sops', '.ollama/models', '.m2', '.gradle']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
-    for (const f of ['.ollama/id_ed25519', '.env', '.cargo/credentials.toml']) s.put(`home/owner/${f}`, 'k');
+    for (const f of ['.ollama/id_ed25519', '.ollama/history', '.env', '.cargo/credentials.toml']) s.put(`home/owner/${f}`, 'k');
     const r = change(s, 'true'), l = look(s, 'true');
     for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
       for (const d of ['.local/share/jupyter', '.jupyter', '.mozilla', '.config/sops']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
-      for (const f of ['.ollama/id_ed25519', '.env', '.cargo/credentials.toml']) assert.ok(c.includes(`InaccessiblePaths=/home/owner/${f}`), f);
-      assert.ok(!c.some(a => a.endsWith('/home/owner/.ollama:ro')), "ollama's models stay in view");
+      for (const f of ['.env', '.cargo/credentials.toml']) assert.ok(c.includes(`InaccessiblePaths=/home/owner/${f}`), f);
+      // (its key and what the owner typed to models stay hidden with the folder; the models are in view, read-only)
+      assert.ok(c.includes('TemporaryFileSystem=/home/owner/.ollama:ro') && c.includes('BindReadOnlyPaths=/home/owner/.ollama/models'), "Ollama's folder");
+      assert.ok(!c.some(a => /\.ollama\/(id_ed25519|history)/.test(a)), 'neither its key nor its history is put back');
     }
     const rw = unitCall(s, `sw-run-${r.id}`).filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));
     for (const p of ['/home/owner/.m2', '/home/owner/.gradle']) assert.ok(rw.includes(p), p);
+  });
+
+  test('Bun\'s, Yarn\'s and pnpm\'s folders are never writable whole (each holds a folder on the PATH): only the cache inside (second read, fix 1)', () => {
+    const s = proven();
+    for (const d of ['.bun/bin', '.bun/install/cache', '.yarn/bin', '.yarn/berry', '.local/share/pnpm/store']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    for (const extra of [[], ['--home']]) {
+      const r = change(s, 'true', { extra });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const rw = unitCall(s, `sw-run-${r.id}`).filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));
+      for (const p of ['.bun/install/cache', '.yarn/berry', '.local/share/pnpm/store']) assert.ok(rw.includes(`/home/owner/${p}`), `${extra} ${p}`);
+      for (const p of ['.bun', '.yarn', '.bun/bin', '.yarn/bin', '.local/share/pnpm']) assert.ok(!rw.includes(`/home/owner/${p}`), `${extra} ${p} is not named writable`);
+    }
   });
 
   test('a plain change answers at once: the disk watch holds none of the caller\'s pipes', () => {
@@ -1881,6 +1930,18 @@ describe("the owner's one-time command", () => {
     const steps = sudoCalls(f);
     assert.deepEqual(steps.slice(-2), ['rm -f /etc/sudoers.d/spark-console-root', 'rm -f /usr/local/sbin/spark-console-root']);
     assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved'));
+  });
+
+  test('--check names what bash and the owner\'s start files read in the home that is not there, and the home folders they put on the PATH (second read)', () => {
+    const f = fleet();
+    const home = join(f.T, 'spark3');
+    writeFileSync(join(home, '.profile'), 'if [ -d "$HOME/.local/bin" ] ; then\n    PATH="$HOME/.local/bin:$PATH"\nfi\n');
+    writeFileSync(join(home, '.bashrc'), '[ -f ~/.extra_env ] && . ~/.extra_env\nexport PATH="$HOME/.bun/bin:$PATH"\n');
+    writeFileSync(join(home, '.inputrc'), '');
+    const r = f.cmd(['--check', '3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, / {2}read by bash or your start files, but not there \(a --home change could make them\): \.bash_completion \.local\/share\/bash-completion \.extra_env \.bun\/bin \.local\/bin\n/);
+    assert.match(r.stdout, / {2}folders in your home your start files put on the PATH \(a --home change may put programs there\): ~\/\.local\/bin ~\/\.bun\/bin\n/);
   });
 
   test("--with-root turns root on after a passing proof (root's switch: 0600, the day and this helper's SHA-256); --without-root and --undo turn it off; a plain run leaves it as it is", () => {
