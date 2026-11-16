@@ -40,6 +40,10 @@ const shown = m => JSON.stringify(m.map(x => [x.role, Boolean(x.auto), (x.tools 
 const carryOn = chat => waitFor(async () => { const x = await chatMessages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x[i + 1]; }, { timeout: 120000 * SLOW, what: 'the carry-on turn' });
 const noCarryOn = async chat => { await sleep(7000 * SLOW); const m = await chatMessages(chat); assert.equal(m.filter(x => x.auto).length, 0, `no carry-on turn: ${shown(m)}`); };
 const BUDGET_END = /\nCarrying on with your request in a fresh turn\.$/;
+// (a reply that offered a button parks its task, contract 4.8: it waits with one needs-you line until the owner answers)
+const WAITING = 'Sparkie is waiting for your answer to a question in one of your chats before it carries on with your request. Press a button there, say “carry on” to be asked again, or anything else to leave it.';
+const waitingLines = async () => (await api('/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner.filter(l => l === WAITING);
+const stopIn = chat => api(`/chats/${chat}/messages`, { method: 'POST', body: { text: '/stop' } });
 
 test('a start that only fits by stopping a model is refused in the carry-on turn too', { timeout: 400000 * SLOW }, async () => {
   assert.equal(stateOf('spark3', GGUF), 'running');
@@ -60,7 +64,7 @@ test('a start that only fits by stopping a model is refused in the carry-on turn
   } finally { noScript(); }
 });
 
-test('“don’t stop anything”, then a task whose reply reaches a budget: its carry-on turn still offers the saved workflow that stops a model as a button, and the model runs', { timeout: 400000 * SLOW }, async () => {
+test('“don’t stop anything”, then a task whose reply reaches a budget and offers a button: it waits there, and when the owner says “carry on” the saved workflow that stops a model is still a button, and the model runs', { timeout: 400000 * SLOW }, async () => {
   await save('night mode', [{ action: 'stop_model', args: { spark: 'spark4', container: RADIX } }]);
   assert.equal(stateOf('spark4', RADIX), 'running');
   const before = (await changes()).length, words = 'run night mode, then tell me how it went', chat = await newChat(), RUN = { name: 'run_workflow', arguments: { name: 'night mode' } };
@@ -70,26 +74,76 @@ test('“don’t stop anything”, then a task whose reply reaches a budget: its
     const r = await say(chat, words);
     assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['run_workflow', 'needs-ok'], ['workflows', null]], r.text);
     assert.match(r.text, BUDGET_END, r.text.slice(-300));
+    // The reply offered a button: the task waits for the owner's answer, with one needs-you line.
+    await noCarryOn(chat);
+    assert.deepEqual(await waitingLines(), [WAITING]);
+    // The owner's "carry on": the same request, and the guard holds there.
+    script([{ match: '^carry on$', rounds: [[RUN]] }, ...QUIET]);
+    const next = (await say(chat, 'carry on')).message;
+    script(QUIET);
+    assert.deepEqual(next.tools.map(t => [t.name, t.outcome]), [['run_workflow', 'needs-ok']], shown(await chatMessages(chat)));
+    await settled();
+    assert.equal(stateOf('spark4', RADIX), 'running', 'the owner said not to stop anything');
+    assert.equal((await changes()).length, before, 'no saved workflow ran and nothing was stopped');
+  } finally { noScript(); await stopIn(chat); }
+});
+
+test('the same when an operation’s end comes: the task waits at its button, and after “carry on” the saved workflow is still a button and the model runs', { timeout: 600000 * SLOW }, async () => {
+  await save('morning mode', [{ action: 'stop_model', args: { spark: 'spark3', container: GGUF } }]);
+  assert.equal(stateOf('spark3', GGUF), 'running');
+  const FIND = { name: 'find_setups', arguments: { model: 'glm-5.3-flash' } }, words = 'refresh the setups for glm-5.3-flash, then run morning mode';
+  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${esc(words)}$`, rounds: [[FIND, { name: 'run_workflow', arguments: { name: 'morning mode' } }]] },
+    { match: `${FINISHED}.*run morning mode`, rounds: [[{ name: 'run_workflow', arguments: { name: 'morning mode' } }]] }, { match: CARRIED, calls: [] }]);
+  const chat = await newChat();
+  try {
+    const before = (await changes()).length;
+    await say(chat, 'Don’t stop anything.');
+    const r = await say(chat, words);
+    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome]), [['find_setups', 'started'], ['run_workflow', 'needs-ok']], r.text);
+    // The lookup ends and its result comes; the reply offered a button, so the task waits, with one needs-you line.
+    await waitFor(async () => (await chatMessages(chat)).some(x => x.notice && x.operation && x.status), { timeout: 240000 * SLOW, what: 'the lookup’s result' });
+    await noCarryOn(chat);
+    assert.deepEqual(await waitingLines(), [WAITING]);
+    // The owner's "carry on": the same request, and the guard holds there.
+    script([{ match: '^carry on$', rounds: [[{ name: 'run_workflow', arguments: { name: 'morning mode' } }]] }, ...QUIET]);
+    const next = (await say(chat, 'carry on')).message;
+    script(QUIET);
+    assert.deepEqual(next.tools.map(t => [t.name, t.outcome]), [['run_workflow', 'needs-ok']], shown(await chatMessages(chat)));
+    await settled();
+    assert.equal(stateOf('spark3', GGUF), 'running', 'the owner said not to stop anything');
+    assert.equal((await changes()).length, before, 'no saved workflow ran and nothing was stopped');
+  } finally { noScript(); await stopIn(chat); }
+});
+
+// The cases tests 2 and 3 reached by themselves before a task waited at a button: a carry-on turn that a budget, or an
+// operation's end, starts after a reply that only looked things up still keeps "don't stop anything".
+test('after a reply with no button, the carry-on turn a budget starts keeps “don’t stop anything”: the saved workflow that stops a model is a button, and the model runs', { timeout: 400000 * SLOW }, async () => {
+  const words = 'read the workflows, then run night mode', chat = await newChat(), RUN = { name: 'run_workflow', arguments: { name: 'night mode' } };
+  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${words}$`, rounds: [[LONG]] }, { match: CARRIED, rounds: [[RUN]] }, { match: FINISHED, calls: [] }]);
+  try {
+    const before = (await changes()).length;
+    await say(chat, 'Don’t stop anything.');
+    const r = await say(chat, words);
+    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['workflows', null]], r.text);
+    assert.match(r.text, BUDGET_END, r.text.slice(-300));
     const next = await carryOn(chat);
     script(QUIET);
     assert.deepEqual(next.tools.map(t => [t.name, t.outcome]), [['run_workflow', 'needs-ok']], shown(await chatMessages(chat)));
     await settled();
     assert.equal(stateOf('spark4', RADIX), 'running', 'the owner said not to stop anything');
     assert.equal((await changes()).length, before, 'no saved workflow ran and nothing was stopped');
-  } finally { noScript(); }
+  } finally { noScript(); await stopIn(chat); }
 });
 
-test('the same when an operation’s end starts the carry-on turn', { timeout: 600000 * SLOW }, async () => {
-  await save('morning mode', [{ action: 'stop_model', args: { spark: 'spark3', container: GGUF } }]);
-  assert.equal(stateOf('spark3', GGUF), 'running');
-  const FIND = { name: 'find_setups', arguments: { model: 'glm-5.3-flash' } }, words = 'refresh the setups for glm-5.3-flash, then run morning mode';
-  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${esc(words)}$`, rounds: [[FIND, { name: 'run_workflow', arguments: { name: 'morning mode' } }]] },
+test('after a reply with no button, the carry-on turn an operation’s end starts keeps it too', { timeout: 600000 * SLOW }, async () => {
+  const FIND = { name: 'find_setups', arguments: { model: 'glm-5.3-flash' } }, words = 'refresh the setups for glm-5.3-flash again, then run morning mode';
+  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${esc(words)}$`, rounds: [[FIND]] },
     { match: `${FINISHED}.*run morning mode`, rounds: [[{ name: 'run_workflow', arguments: { name: 'morning mode' } }]] }, { match: CARRIED, calls: [] }]);
   try {
     const before = (await changes()).length, chat = await newChat();
     await say(chat, 'Don’t stop anything.');
     const r = await say(chat, words);
-    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome]), [['find_setups', 'started'], ['run_workflow', 'needs-ok']], r.text);
+    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome]), [['find_setups', 'started']], r.text);
     const m = await waitFor(async () => { const x = await chatMessages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && [x[i], x[i + 1]]; }, { timeout: 240000 * SLOW, what: 'the carry-on turn after the lookup ended' });
     script(QUIET);
     assert.match(m[0].content, new RegExp(FINISHED), 'the carry-on turn an operation’s end starts');
@@ -97,6 +151,7 @@ test('the same when an operation’s end starts the carry-on turn', { timeout: 6
     await settled();
     assert.equal(stateOf('spark3', GGUF), 'running', 'the owner said not to stop anything');
     assert.equal((await changes()).length, before, 'no saved workflow ran and nothing was stopped');
+    await stopIn(chat);
   } finally { noScript(); }
 });
 
