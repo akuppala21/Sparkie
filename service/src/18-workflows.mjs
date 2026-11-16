@@ -56,6 +56,7 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  alreadyStarting,
   stopChecked,
   stopLook,
   STOPPED_STATES,

@@ -7,6 +7,8 @@
 // what it started, and a model self-healing brought back during the run is still the run's and is stopped.
 // From a chat, the clean-up's stop that left the model running says so there and never "finished", and isn't counted
 // as a run of stop_model (its validation).
+// The owner's start or restart while the run's own step is still starting it (loading) is their newest wish, so the run
+// leaves it once the step has ended.
 //
 // The stand-in fleet as in the round-two check (a2-cleanup): Spark 3 with none of Spark Console's models running and a
 // new id for each container made there; on Spark 4 a job (rc-long) that runs until the test ends it, and start times
@@ -45,6 +47,9 @@ const listed = async () => (await api('/desired')).json.running.map(x => `${x.sp
 const done = async r => { assert.equal(r.json?.outcome, 'started', r.text); return opEnd(r.json.operation, 'an operation'); };
 const ownerStop = async () => { const s = await api('/stop', { method: 'POST', body: { node: 'spark3', container: GPT20 } }); assert.equal(s.status, 202, s.text); assert.equal((await opEnd(s.json.id, 'the owner’s stop')).status, 'completed'); };
 const LEFT = 'Left running: sc-gpt-oss-20b on Spark 3 was started again since, not by this run.';
+const WISHED = 'Left running: sc-gpt-oss-20b on Spark 3 was asked for by the owner while being started.';
+// (~/.mock/serve-down on Spark 3: a model started there stays loading until it is gone)
+const loading = on => (on ? writeFileSync(mockFile('spark3', 'serve-down'), '') : rmSync(mockFile('spark3', 'serve-down'), { force: true }));
 const stopRecord = () => { try { return JSON.parse(readFileSync(join(T.fleet.stateDir, 'validations.json'), 'utf8')).stop_model || null; } catch { return null; } };
 
 // Before each run: the job runs, and gpt-oss-20b is stopped and off the list, so the run's step 1 starts it.
@@ -126,6 +131,28 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
       assert.ok(!String(o.cleanUp).includes('Stopped what this run had started: sc-gpt-oss-20b'), o.cleanUp);
       assert.equal(stateOf('spark3', GPT20), 'running', 'the owner’s model runs');
       assert.equal(idOf('spark3', GPT20), id0, 'the same container');
+      assert.ok((await listed()).includes(`spark3/${GPT20}`), 'and stays on the list');
+    });
+  }
+
+  for (const ask of ['start', 'restart']) {
+    test(`the owner asks to ${ask} it while the run's own step is still starting it (loading): that wish outlives the step's end, and the run leaves it running and on the list`, { timeout: 600000 * SLOW }, async () => {
+      await ready();
+      loading(true);
+      let id;
+      try {
+        const r = await act('run_workflow', { name: 'rc eval' });
+        assert.equal(r.json?.outcome, 'started', r.text);
+        id = r.json.operation;
+        await waitFor(async () => stateOf('spark3', GPT20) === 'running' && /^Step 1\b/.test((await opNow(id)).step), { timeout: 240000 * SLOW, what: 'step 1 loading the model', every: 250 });
+        const a = ask === 'start' ? await act('start_model', { model: 'gpt-oss-20b', spark: 'spark3' }) : await act('restart_model', { spark: 'spark3', container: GPT20 });
+        assert.equal(a.json?.outcome, ask === 'start' ? 'already-starting' : 'already', a.text);
+      } finally { loading(false); }
+      await atStep2(id);
+      const o = await finish(id, 'well');
+      assert.ok(String(o.cleanUp).includes(WISHED), `${o.cleanUp}`);
+      assert.ok(!String(o.cleanUp).includes('Stopped what this run had started: sc-gpt-oss-20b'), o.cleanUp);
+      assert.equal(stateOf('spark3', GPT20), 'running', 'the owner’s model runs');
       assert.ok((await listed()).includes(`spark3/${GPT20}`), 'and stays on the list');
     });
   }

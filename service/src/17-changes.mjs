@@ -522,8 +522,13 @@ function startingNow(names, where = null) {
   return [...jobs.values()].find(j => j.status === 'running' && ['deploy', 'deploy-cluster', 'start-model', 'power-on'].includes(j.type) && !j.handedOver && want.has(String(j.model || '').toLowerCase())
     && (!where?.length || where.every(id => (j.nodes || [j.node]).includes(id))));
 }
-const alreadyStarting = (j, model) => ({ outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
-  note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` });
+// (the owner's own ask for one already being started is their newest wish for it: that operation says so, so a saved
+// workflow's run whose step it is leaves it at its clean-up, A-22: startedReceipts)
+function alreadyStarting(j, model, viewer, ctx) {
+  if (ownersAsk(viewer, ctx)) j.ownersWish = true;
+  return { outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
+    note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` };
+}
 // Sparkie's Spark (Spark 2) is the brain's: no other workload starts there, named or not (docs/contract.md 8.3).
 // The brain's Spark: where Sparkie's model runs, and the one Spark Console itself runs on.
 function brainSparks() { return [...new Set([MAIN?.node, NODES.find(n => n.host === 'local')?.id].filter(Boolean))]; }
@@ -573,7 +578,7 @@ async function startModel(args, viewer, ctx) {
   if (!ctx.poweredOn) {
     // (a Spark being turned on for this very model: that operation, not a second one)
     const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
-    if (early) return alreadyStarting(early, model);
+    if (early) return alreadyStarting(early, model, viewer, ctx);
     const first = powerFirst(args, viewer, ctx);
     if (first) return first;
   }
@@ -598,7 +603,7 @@ async function startModel(args, viewer, ctx) {
   if (found.lib) {
     const m = found.lib, running = inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => ({ spark: sp.id, endpoint: d.endpoint })));
     const going = startingNow([m.name, m.repo], spark ? [spark] : sparks);
-    if (going) return alreadyStarting(going, m.repo || m.name);
+    if (going) return alreadyStarting(going, m.repo || m.name, viewer, ctx);
     // Already running: anywhere when no Spark was named, or exactly where the request names it. (A start that names a
     // setup and a place goes on as before: which setup the running copy uses isn't known here.)
     const there = !setup && runsWhereNamed(inv, m.name, spark, sparks);
@@ -662,7 +667,7 @@ async function startModel(args, viewer, ctx) {
   // model address: a call doesn't download models.
   if (ctx.via === 'gateway') throw new HttpError(409, `${found.repo || model} isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
   const fetching = startingNow([found.repo, ...(found.recipe?.variants || []).map(x => x.repo)], spark ? [spark] : sparks);
-  if (fetching) return alreadyStarting(fetching, fetching.model);
+  if (fetching) return alreadyStarting(fetching, fetching.model, viewer, ctx);
   if (sparks && found.outsideRecipes) throw new HttpError(409, `${found.repo} isn’t in Recipes, and only models from Recipes run across two Sparks.`);
   if (found.outsideRecipes && !confirmOutside && !namedInFull(ctx, found.repo)) {
     return question(viewer, ctx, `${found.repo} isn’t in your recipes. Download it from Hugging Face, add it to your recipes and start it with the best setup found for it (no code of its own)?`, [
@@ -677,7 +682,7 @@ async function startModel(args, viewer, ctx) {
   mustUse(viewer);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
   const going = startingNow([v.repo, found.repo], spark ? [spark] : sparks);
-  if (going) return alreadyStarting(going, v.repo);
+  if (going) return alreadyStarting(going, v.repo, viewer, ctx);
   if (v.gated) throw new HttpError(409, `${v.repo} is gated on Hugging Face: sign in on ${target.id} (hf auth login) and accept its license, then ask again.`);
   const job = newJob('start-model', { model: v.repo, node: target.id, ...(pick.two ? { nodes: pick.nodes } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, total: v.sizeGB ? Math.round(v.sizeGB * 1e9) : null });

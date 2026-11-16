@@ -7215,8 +7215,13 @@ function startingNow(names, where = null) {
   return [...jobs.values()].find(j => j.status === 'running' && ['deploy', 'deploy-cluster', 'start-model', 'power-on'].includes(j.type) && !j.handedOver && want.has(String(j.model || '').toLowerCase())
     && (!where?.length || where.every(id => (j.nodes || [j.node]).includes(id))));
 }
-const alreadyStarting = (j, model) => ({ outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
-  note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` });
+// (the owner's own ask for one already being started is their newest wish for it: that operation says so, so a saved
+// workflow's run whose step it is leaves it at its clean-up, A-22: startedReceipts)
+function alreadyStarting(j, model, viewer, ctx) {
+  if (ownersAsk(viewer, ctx)) j.ownersWish = true;
+  return { outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
+    note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` };
+}
 // Sparkie's Spark (Spark 2) is the brain's: no other workload starts there, named or not (docs/contract.md 8.3).
 // The brain's Spark: where Sparkie's model runs, and the one Spark Console itself runs on.
 function brainSparks() { return [...new Set([MAIN?.node, NODES.find(n => n.host === 'local')?.id].filter(Boolean))]; }
@@ -7266,7 +7271,7 @@ async function startModel(args, viewer, ctx) {
   if (!ctx.poweredOn) {
     // (a Spark being turned on for this very model: that operation, not a second one)
     const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
-    if (early) return alreadyStarting(early, model);
+    if (early) return alreadyStarting(early, model, viewer, ctx);
     const first = powerFirst(args, viewer, ctx);
     if (first) return first;
   }
@@ -7291,7 +7296,7 @@ async function startModel(args, viewer, ctx) {
   if (found.lib) {
     const m = found.lib, running = inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => ({ spark: sp.id, endpoint: d.endpoint })));
     const going = startingNow([m.name, m.repo], spark ? [spark] : sparks);
-    if (going) return alreadyStarting(going, m.repo || m.name);
+    if (going) return alreadyStarting(going, m.repo || m.name, viewer, ctx);
     // Already running: anywhere when no Spark was named, or exactly where the request names it. (A start that names a
     // setup and a place goes on as before: which setup the running copy uses isn't known here.)
     const there = !setup && runsWhereNamed(inv, m.name, spark, sparks);
@@ -7355,7 +7360,7 @@ async function startModel(args, viewer, ctx) {
   // model address: a call doesn't download models.
   if (ctx.via === 'gateway') throw new HttpError(409, `${found.repo || model} isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
   const fetching = startingNow([found.repo, ...(found.recipe?.variants || []).map(x => x.repo)], spark ? [spark] : sparks);
-  if (fetching) return alreadyStarting(fetching, fetching.model);
+  if (fetching) return alreadyStarting(fetching, fetching.model, viewer, ctx);
   if (sparks && found.outsideRecipes) throw new HttpError(409, `${found.repo} isn’t in Recipes, and only models from Recipes run across two Sparks.`);
   if (found.outsideRecipes && !confirmOutside && !namedInFull(ctx, found.repo)) {
     return question(viewer, ctx, `${found.repo} isn’t in your recipes. Download it from Hugging Face, add it to your recipes and start it with the best setup found for it (no code of its own)?`, [
@@ -7370,7 +7375,7 @@ async function startModel(args, viewer, ctx) {
   mustUse(viewer);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
   const going = startingNow([v.repo, found.repo], spark ? [spark] : sparks);
-  if (going) return alreadyStarting(going, v.repo);
+  if (going) return alreadyStarting(going, v.repo, viewer, ctx);
   if (v.gated) throw new HttpError(409, `${v.repo} is gated on Hugging Face: sign in on ${target.id} (hf auth login) and accept its license, then ask again.`);
   const job = newJob('start-model', { model: v.repo, node: target.id, ...(pick.two ? { nodes: pick.nodes } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, total: v.sizeGB ? Math.round(v.sizeGB * 1e9) : null });
@@ -8057,16 +8062,17 @@ function savedStepAgent(viewer, ctx) {
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere) and every operation it handed over to, in turn (a power-on, a second
 // power-on inside it for a model across two whose files are only on sleeping Sparks, then the start, R56), each once,
-// by its first part. Nothing for a step that answered anything else (already, kept, a stop).
+// by its first part. Nothing for a step that answered anything else (already, kept, a stop). Each names the operations
+// that started it (ops), for the owner's wish while they ran (startedReceipts).
 function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
   const id = v => sparkIdOf(v) || String(v), ops = [];
   if (action === 'start_model') {
     for (let o = jobs.get(out.operation); o && !ops.includes(o) && ops.length < 5; o = o.inner ? jobs.get(o.inner) : null) ops.push(o);
-    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
+    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep, ops: ops.map(o => o.id) }));
   }
-  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
-  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep, ops: [out.operation] }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep, ops: [out.operation] }];
   return [];
 }
 // What a step started, and what makes it the run's (A-22): the container's Docker id when the step's operation ended, and
@@ -8074,7 +8080,10 @@ function startedBy(action, args, out, keep = false) {
 // but self-healing's moves it, 20-desired.mjs, and so does the owner's ask answered "already"); for a job, which has no
 // entry, its start time (a run again by hand moves it). The clean-up stops it only while these still match
 // (startedStill).
-// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before.
+// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before. One the owner asked for
+// while its step's operation was starting it (alreadyStarting, desiredWish: the operation's ownersWish) is theirs: it is
+// marked wish, and the clean-up leaves it. The mark is read after the since, in the same tick as desiredWish's own
+// writes, so an ask just as the step ends is never lost between the two.
 const RECEIPT_LOOK = name => `printf 'id\t%s\n' "$(docker inspect -f '{{.Id}}' ${q(name)} 2>/dev/null)"; printf 'at\t%s\n' "$(docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.State.ExitCode}}' ${q(name)} 2>/dev/null | head -1)"`;
 async function receiptOf(spark, container) {
   const r = await run(nodeById(spark), RECEIPT_LOOK(container), { timeout: 20000 }).catch(() => null);
@@ -8087,9 +8096,10 @@ async function startedReceipts(items) {
   for (const x of items) {
     const seen = await receiptOf(x.spark, x.container);
     const entry = x.kind === 'job' ? null : desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    const { ops = [], ...item } = x, wish = ops.some(id => jobs.get(id)?.ownersWish);
     // (a model or an app: its id and its entry's since, so self-healing's restart, which moves neither, is still the run's;
     // a job: its id and its start time)
-    out.push(seen ? { ...x, seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : x);
+    out.push({ ...item, ...(wish ? { wish: true } : {}), ...(seen ? { seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : {}) });
   }
   return out;
 }
@@ -8113,7 +8123,7 @@ function startedListed(items, before) {
 // the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
 // was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [], back = [], left = [];
+  const stopped = [], kept = [], failed = [], back = [], left = [], wished = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -8121,6 +8131,8 @@ async function stopWhatRan(ran, viewer, ctx, title) {
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
     if (x.keep) { kept.push(name); continue; }
+    // (the owner asked for it while it was being started, by this run's step or by a bring-back: theirs now, A-22)
+    if (x.wish) { wished.push(name); continue; }
     try {
       // (a job that already ended has nothing to stop)
       if (x.kind === 'job') {
@@ -8147,6 +8159,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
     ...(left.length ? [`Left running: ${left.join(', ')} ${left.length > 1 ? 'were' : 'was'} started again since, not by this run.`] : []),
+    ...(wished.length ? [`Left running: ${wished.join(', ')} ${wished.length > 1 ? 'were' : 'was'} asked for by the owner while being started.`] : []),
     ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
@@ -8320,6 +8333,7 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  alreadyStarting,
   stopChecked,
   stopLook,
   STOPPED_STATES,
@@ -9999,9 +10013,11 @@ function desiredAfter(job) {
 }
 // The owner's own ask for what already runs (a start, a restart or a keep answered "already", A-22): their newest wish
 // for it, so its entry's since moves (no revision), and a saved workflow's clean-up leaves it (startedStill). Not a run's
-// step, self-healing, an agent or the self-test.
+// step, self-healing, an agent or the self-test. An operation that started it, or is still starting it (a run's step
+// loading it), is marked too, in the same tick: the run takes its receipt when that ends, so the wish outlives it.
 const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
 function desiredWish(keys) {
+  for (const j of jobs.values()) if ((j.ranHere || []).some(k => keys.includes(k)) || (j.node && j.container && keys.includes(`${j.node}/${j.container}`))) j.ownersWish = true;
   try {
     const d = readKept(DESIRED_FILE);
     if (!d || !Array.isArray(d.running)) return;
