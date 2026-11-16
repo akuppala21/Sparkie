@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22056 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22072 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -274,7 +274,7 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
-- **Lines:** 606
+- **Lines:** 608
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
@@ -299,8 +299,8 @@ The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them i
 
 A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made, and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work on its own ("sort it out on your own", "work through it overnight", "while I'm away") has 4 hours and 60 turns; hours the owner asks it to work for ("work on this for 6 hours") give those hours, 1 to 72, and 15 turns an hour. Only an instruction …
 
-- **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
-- **Lines:** 326
+- **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
+- **Lines:** 340
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
