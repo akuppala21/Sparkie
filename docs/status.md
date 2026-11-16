@@ -74,7 +74,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R59](rules/R59.md) | partly | `test/memory-reads.test.mjs` (“Telegram: recall there gives back no words”, “Telegram: forget_memory with the id of a line no longer live”, “an agent that may change things”, “a chat an agent started”, “a kept key in a memory line”, “a value given as a key after a lesson card was made”); `test/recall.test.mjs` (“never: a retired line to an agent's key, an agent's chat or Telegram”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”); `test/digest.test.mjs`; `test/work.test.mjs` (“recall {id, find} on a look's record”) | falls short today: its file says where |
 | [R60](rules/R60.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 | [R61](rules/R61.md) | partly | `test/runner.test.mjs`; `test/ladder.test.mjs`; `test/prune.test.mjs` | falls short today: its file says where |
-| [R62](rules/R62.md) | partly | `test/box.test.mjs` | falls short today: its file says where |
+| [R62](rules/R62.md) | partly | `test/box.test.mjs`; `test/box-fill.test.mjs` | falls short today: its file says where |
 | [R63](rules/R63.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 | [R64](rules/R64.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
 | [R66](rules/R66.md) | partly | `test/tasks.test.mjs`; `test/tasks-telegram.test.mjs`; `test/tasks-more.test.mjs`; `test/tasks-wake.test.mjs`; `test/carry-keeps.test.mjs` | falls short today: its file says where |
