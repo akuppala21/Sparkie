@@ -88,6 +88,12 @@ test('with minutes a change is an operation: the call answers at once, exit code
   assert.equal(hj.status, 'completed', JSON.stringify(hj));
   assert.match(hj.cleanUp, / Held to 10 minutes: a change that runs without your yes is kept short \(asked first, it may have up to 120\)\.$/);
   assert.ok(unitProps(startOf('echo held > notes/c.txt').unit).includes(`RuntimeMaxSec=${10 * MINUTE}`));
+  // Not on Spark 2 yet, a look or a change.
+  for (const command of ['cat notes/a.txt', 'echo hub > notes/hub.txt']) {
+    const hub = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command, dir: '~', minutes: 5 } });
+    assert.equal(hub.status, 403, hub.text);
+    assert.equal(hub.json.error, 'minutes isn’t on Spark 2 yet: a long command runs on a compute Spark. Nothing ran.');
+  }
   // minutes is a whole number from 1 to 120: anything else is refused, the bounds named, and nothing runs.
   for (const minutes of [121, 0, 2.5, '5']) {
     const bad = await run({ command: 'echo bad > notes/c.txt', minutes });

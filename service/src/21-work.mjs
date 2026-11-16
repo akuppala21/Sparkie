@@ -283,6 +283,8 @@ async function runCommand(input, viewer, ctx = {}) {
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
   if (Number.isInteger(input.minutes) && !ctx.long) ctx = { ...ctx, long: { minutes: input.minutes } };
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = ctx.long?.job ? ctx.long.seconds : LOOK_SECONDS;
+  // (not on Spark 2 yet: a long command there would run outside the lock-out net its changes run in, A11)
+  if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
