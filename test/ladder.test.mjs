@@ -355,9 +355,15 @@ test('a change the sorter places in the model store is asked and runs after the 
   mkdirSync(at3('work'), { recursive: true });
   rmSync(at3('work/model'), { force: true });
   symlinkSync('../models/m1', at3('work/model'));
-  const l = await run('sed -i s/a/b/ model/config.json', 'spark3', null);
+  // (a rewrite in place through the link runs nothing: the file under a link can't be copied first, and its old content
+  // would be gone, S-1; a write that removes nothing runs, and the wall holds the store)
+  const s = await run('sed -i s/a/b/ model/config.json', 'spark3', null);
+  assert.equal(s.status, 200, s.text);
+  assert.equal(s.json.ran, false, s.text);
+  assert.equal(startOf('sed -i s/a/b/ model/config.json'), undefined, 'nothing ran');
+  const l = await run('touch model/config.json', 'spark3', null);
   assert.equal(l.status, 200, l.text);
-  assert.ok(propsOf('sed -i s/a/b/ model/config.json').includes('ReadOnlyPaths=/spark3/models'), JSON.stringify(propsOf('sed -i s/a/b/ model/config.json')));
+  assert.ok(propsOf('touch model/config.json').includes('ReadOnlyPaths=/spark3/models'), JSON.stringify(propsOf('touch model/config.json')));
   // Starting in the model store (make, npm install: nothing placed there) is asked; the owner's own call is refused.
   const m = await run('make', 'spark3', '~/models/m1');
   assert.equal(m.status, 409, m.text);
