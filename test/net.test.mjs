@@ -29,8 +29,9 @@ const ADDED = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINetAdded added@net';
 const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 // (a lock-out change on a compute Spark is done only as root, R70: root's switch on here, as the one-time command with
-// --with-root writes it, and root's time limit this file's SECONDS)
-useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_ROOT_SECONDS: String(SECONDS), SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
+// --with-root writes it, and root's time limit this file's SECONDS; the journal's full-disk stand-in, mock/disk-full.mjs,
+// acts only while its flag is there)
+useFleet({ env: { NODE_OPTIONS: `--import=${join(REPO, 'test', 'mock', 'disk-full.mjs')}`, SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_ROOT_SECONDS: String(SECONDS), SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const sw = join(root, 'var/lib/spark-console/root-on');
@@ -335,6 +336,23 @@ test('as the owner, a lock-out change on a compute Spark asks nothing and runs n
     assert.match(off.json.ownerCommand || '', /root-for-sparkie\.sh --with-root 3'?$/, off.text);
   } finally { renameSync(`${sw}.away`, sw); }
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+});
+
+// R1-10 (the check of the answer to round 1): a change inside the net is refused when its journal start line can't be
+// written (netGuarded's JOURNAL_REFUSED; Spark 2's and root's changes go through the same seam).
+test('when the journal can’t be written, a change inside the net runs nothing: refused in plain words, and nothing reaches the Spark', { timeout: 120000 * SLOW }, async () => {
+  keysReset();
+  const chat = await newChat(), a = await ask(chat, 'add my key on spark 3 while the disk is full', ADD);
+  assert.ok(a.m, 'the dangerous ask');
+  const before = calls().length;
+  writeFileSync(join(T.fleet.dir, 'disk-full'), '');
+  let p;
+  try { p = await press(chat, a.yes.id, a.pair); } finally { rmSync(join(T.fleet.dir, 'disk-full'), { force: true }); }
+  assert.equal(p.status, 200, p.text);
+  assert.match(p.json.message.content, /Couldn’t write the record of this change on Spark 2 \(its disk may be full\), so nothing was changed\./, p.json.message.content);
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  assert.deepEqual(calls().slice(before).filter(c => c.some(x => /^--unit=sw-(?:guard|root|run)-/.test(String(x)))), [], 'no guard armed and no command run on Spark 3');
+  assert.equal(newest().state, 'never', JSON.stringify(newest()));
 });
 
 test('with no root helper on a Spark, a lock-out change answers with the owner’s one command, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
