@@ -141,30 +141,71 @@ function workScriptPaths(scripts, dir, command) {
     const p = ok(s) ? s : `${base}/${s.replace(/^(?:\.\/)+/, '')}`;
     if (!paths.includes(p)) paths.push(p);
   }
-  return { paths: paths.slice(0, WORK_SCRIPTS), unpinned };
+  // (past the eighth a script is neither read nor pinned: said so, as any other not pinned is)
+  return { paths: paths.slice(0, WORK_SCRIPTS), unpinned: [...unpinned, ...paths.slice(WORK_SCRIPTS)] };
 }
 // The scripts a command runs, hashed on the Spark now where it reads them, through the root helper's look (R42): what
 // the look wall hides reads as not there, and a key's name is refused before it, so a hash never says more of a file
-// than a look may. {sums: {path: SHA-256, or null when it isn't a file there}, unpinned (the names not pinned)}; or,
-// when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no sums and unread:
-// why.
+// than a look may. With each hash, the script's text as that look read it (its first WORK_TEXT bytes; for a script no
+// longer than that the hash is of those very bytes), and how many lines it has, for the button (workScriptLines).
+// {sums: {path: SHA-256, or null when it isn't a file there}, texts: {path: {text, lines, whole}}, unpinned (the names
+// not pinned)}; or, when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no
+// sums and unread: why. Every script named is in sums or unpinned, past the eighth too.
+const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40;
 async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
-  const list = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s)).slice(0, WORK_SCRIPTS);
-  if (!list.length) return { sums: {}, unpinned: [] };
-  const { paths, unpinned } = workScriptPaths(list, dir, command);
-  if (!paths.length) return { sums: {}, unpinned };
+  const named = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s));
+  const list = named.slice(0, WORK_SCRIPTS), past = named.slice(WORK_SCRIPTS);
+  if (!list.length) return { sums: {}, texts: {}, unpinned: past };
+  const r = workScriptPaths(list, dir, command), paths = r.paths, unpinned = [...r.unpinned, ...past];
+  if (!paths.length) return { sums: {}, texts: {}, unpinned };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
-  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null); then printf 'h${i} %s\\n' "\${h%% *}"; else echo 'h${i} -'; fi`).join('; ');
+  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}); then printf 'h${i} %s %s\\n' "\${h%% *}" "\${n// /}"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
-  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) ([0-9a-f]{64}|-)$/gm)].map(m => [Number(m[1]), m[2]]));
-  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
-  return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), unpinned };
+  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), bytes: Buffer.from(m[4], 'base64') } : null]));
+  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
+  const sums = {}, texts = {};
+  for (const [i, s] of paths.entries()) {
+    const g = got.get(i);
+    if (!g) { sums[s] = null; continue; }
+    // (read whole: the hash is of the bytes read, so the text shown is what was hashed; one that changed between the
+    // two reads of the look is said not pinned)
+    const whole = g.bytes.length < WORK_TEXT;
+    if (whole && createHash('sha256').update(g.bytes).digest('hex') !== g.sha) { unpinned.push(s); continue; }
+    sums[s] = g.sha;
+    texts[s] = { text: g.bytes.toString('utf8'), lines: g.lines, whole };
+  }
+  return { sums, texts, unpinned };
 }
 // What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
 // 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
 // (runnerPins, 21-runner.mjs), and run by its path.
-const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again.'] : []);
+const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again. A script is read as it runs, so what is written to it while it runs is run unchecked.'] : []);
+// Each pinned script's text on a plain button (P-5): its first WORK_TEXT_LINES lines as the ask's look read them, each
+// after "│ " (as a command's own lines are, workCommandText), then how many more; the whole text as read is one journal
+// record, which the button names (workScriptRecord). Masked as every ask is.
+function workScriptText(scripts) {
+  const out = [], h = scripts?.sums || {};
+  for (const [p, t] of Object.entries(scripts?.texts || {})) {
+    const lines = t.text.split(/\r\n|[\r\n\v\f\x85\u2028\u2029]/);
+    if (lines.at(-1) === '') lines.pop();
+    const more = Math.max(0, (t.whole ? lines.length : t.lines) - WORK_TEXT_LINES), whole = t.whole ? '' : `, read to its first ${WORK_TEXT / 1024} KB`;
+    out.push(`The script ${p} as read for this ask (${t.lines} line${t.lines === 1 ? '' : 's'}${whole}, SHA-256 ${String(h[p]).slice(0, 12)}…), each line after │:`,
+      ...lines.slice(0, WORK_TEXT_LINES).map(l => `│ ${l.slice(0, 300)}`),
+      ...(more ? [`│ … and ${more} more line${more === 1 ? '' : 's'}${scripts.record ? `: all of it as read is record ${scripts.record} (recall {"id":"${scripts.record}"} reads it)` : ''}.`] : []));
+  }
+  return out;
+}
+// The scripts' texts as the ask read them, kept whole in one journal record (masked as a look's output is), so the
+// button can name it; its id on scripts.record. None when no script's text was read.
+function workScriptRecord(node, ctx, scripts) {
+  const texts = Object.entries(scripts?.texts || {});
+  if (!texts.length) return scripts;
+  const id = journal('cmd', { act: 'run', where: 'host', class: 'look', gate: 'ask', chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null,
+    args: { spark: node.id, command: `(the scripts read for an ask) ${texts.map(([p]) => p).join(' ')}`.slice(0, 600) }, ok: true, outcome: 'ran', sub: jSub(node.id) },
+  texts.map(([p, t]) => `--- ${p} (SHA-256 ${scripts.sums[p]})${t.whole ? '' : `, its first ${WORK_TEXT / 1024} KB`} ---\n${lookClean(t.text)}`).join('\n'));
+  return id ? { ...scripts, record: id } : scripts;
+}
 // Why the scripts couldn't be read, by the look's answer, for the button.
 const WORK_UNREAD = { none: 'the root helper isn’t set up there yet', unknown: 'its root helper is one this build doesn’t know', nosudo: 'the root helper’s sudo line isn’t there',
   proof: 'the root helper’s walls aren’t proven there', failed: 'the root helper’s walls aren’t proven there', proving: 'its walls are being proven right now',
@@ -214,7 +255,7 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts)), ...(spec ? [] : workScriptText(scripts))];
   return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
 // The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
@@ -238,6 +279,13 @@ function workUnshownLines(sorted) {
   const w = typeof u === 'string' ? u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '').slice(0, 200) : '';
   return [`What runs is in a file this button doesn’t show${w ? ` (${w})` : ''}.`];
 }
+// A program the sorter doesn't know (its unknownProgram): one line on either ask, nothing when the field is absent.
+function workUnknownLines(sorted) {
+  const n = typeof sorted?.unknownProgram === 'string' ? sorted.unknownProgram.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').trim().slice(0, 80) : '';
+  return n ? [`It runs “${n}”, a program the sorter doesn’t know, so what it does isn’t read: only you can judge it.`] : [];
+}
+// On the dangerous ask, whose lines are one line each: where each script's text as read is kept (workScriptRecord).
+const workScriptRecordLines = scripts => (scripts?.record ? Object.entries(scripts.texts || {}).map(([p, t]) => `The script ${p}, ${t.lines} line${t.lines === 1 ? '' : 's'}: its text as read for this ask is record ${scripts.record} (recall reads it).`) : []);
 // A change that names a key file (S-8): asked, the button saying so, and what it prints never shown back (21-runner.mjs).
 const workKeyed = command => lookWords(String(command)).words.find(keyWord) || null;
 const workKeyLines = (command, spec = null) => { const k = spec ? null : workKeyed(command); return k ? [`It names a key file (${k.slice(0, 120)}): what it prints isn’t shown back or kept, and the file’s content never is.`] : []; };
@@ -248,7 +296,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
-  const scripts = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
+  const scripts = spec ? { sums: spec.sums } : workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command)), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
   // (a key goes only to a script pinned by its hash, R51: one whose text isn't, or couldn't be read, is refused)
   if (keys.length && (scripts.unread || scripts.unpinned?.length)) throw new HttpError(409, RUNKEY_SCRIPT_UNPINNED);
   const call = spec ? { action: 'write_file', args: spec.args }
@@ -265,7 +313,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const sorterWhy = String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, ''), whyShown = (dangerous.includes('delete') && !more.gone?.length) || String(shown.outside || '').includes(sorterWhy.replace(/\.$/, ''));
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : sorterWhy } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...(dangerous.includes('brain') && sorterWhy && !whyShown ? [`Why it is asked: ${sorterWhy}`] : []), ...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...workPinLines(scripts), workStartsIn(dir)])],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...(dangerous.includes('brain') && sorterWhy && !whyShown ? [`Why it is asked: ${sorterWhy}`] : []), ...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...workPinLines(scripts), ...workScriptRecordLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
@@ -280,6 +328,47 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
 // Whether a press may run what the sorter says now: a delete it can't see, or the brain's names (the dangerous kinds),
 // only from the dangerous ask's own press, which carries its two digits (ctx.danger, runChoice, 14-chats.mjs).
 const workPressCovers = (sorted, ctx) => !(sorted?.kinds || []).some(k => ['delete', 'brain'].includes(k)) || Boolean(ctx?.danger);
+// An installer run from an address as it is fetched (curl … | sh, wget -O- … | bash, bash <(curl …), sh -c "$(curl …)"):
+// no ask can show or pin what it runs, so it is answered how to do it instead (P-5): download it to a file, one change;
+// then run the file, asked with its text shown and pinned. Read from the command's words as bash splits them: a fetcher
+// whose pipeline ends in a shell or an interpreter (past sudo, env and their kin), or a shell or an interpreter handed a
+// fetcher's output by <( … ), $( … ) or backticks. A pipe into an interpreter handed its code another way (-c, -m, -e,
+// a file) hands it data (curl … | python3 -m json.tool), and is no installer.
+const WORK_FETCHERS = /^(?:curl|wget|fetch|aria2c)$/, WORK_INTERP = /^(?:(?:ba|da|z|k|a|mk|fi)?sh|python[\d.]*|perl|ruby|node|php|source|\.)$/;
+const WORK_FETCHRUN = 'Not run: it runs code it fetches from the network as it runs, so no ask could show you that code or pin it. Download it to a file first (for example: curl -fsSL -o install.sh <address>), then run that file: the download is one change, and the run is asked with the file’s text shown and pinned. Nothing ran.';
+function workFetchRun(command) {
+  const t = shellWords(String(command)), base = w => String(w).split('/').pop(), word = j => t[j] && t[j].w !== undefined;
+  let fetched = false;
+  for (let i = 0; i < t.length; i++) {
+    const x = t[i];
+    if (x.op && x.op !== '|') fetched = false;
+    if (word(i) && WORK_FETCHERS.test(base(x.w))) fetched = true;
+    if (x.op === '|' && fetched) {
+      let j = i + 1;
+      while (word(j) && (/^(?:sudo|doas|env|nice|nohup|time|command|exec|stdbuf|ionice|timeout)$/.test(base(t[j].w)) || /^-|^[A-Za-z_]\w*=|^\d+[smhd]?$/.test(t[j].w))) j++;
+      // (an interpreter handed code by -c, -m, -e or a file reads what comes in as data, not code; -s or - reads code)
+      if (word(j) && WORK_INTERP.test(base(t[j].w))) {
+        let k = j + 1, data = false;
+        for (; word(k); k++) if (/^-(?:\w*[cme]\w*)$/.test(t[k].w) && !/^-s$/.test(t[k].w) || (!t[k].w.startsWith('-') && t[k].w !== '-')) { data = true; break; }
+        if (!data) return true;
+      }
+    }
+    if (word(i) && WORK_INTERP.test(base(x.w))) {
+      if (t[i + 1]?.op === '<' && t[i + 2]?.op === '(' && word(i + 3) && WORK_FETCHERS.test(base(t[i + 3].w))) return true;
+      for (let j = i + 1; word(j); j++) if (/(?:\$\(|`)\s*(?:\S*\/)?(?:curl|wget|fetch|aria2c)\b/.test(t[j].w)) return true;
+    }
+  }
+  return false;
+}
+// A key goes only to code the owner is shown (R51; P-5, A-16's "beside it"): never to a command the sorter says runs
+// code it doesn't show (a module run by name, a build tool's or a package's own scripts, a one-liner's file, what a pipe
+// hands a shell), but a script it names, which the ask reads, shows and pins (workScripts). The sorter keeps the first
+// such code it meets: "the file <script>" counts as shown only when that script is one it named.
+function workKeyCode(sorted) {
+  const u = typeof sorted?.unshown === 'string' ? sorted.unshown : null;
+  if (!u || (sorted.scripts || []).some(s => u === `the file ${s}`)) return;
+  throw new HttpError(409, `Not run: it runs code the command doesn’t show (${u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160)}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+}
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
 // refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
 // (S-12). run is a lookup to runAction, so the ladder asks this itself; root does too (runCommand). A look is not a
@@ -293,8 +382,12 @@ function workHeld(viewer, ctx) {
 async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null, keys = []) {
   whoMayLook(viewer, ctx);
   workHeld(viewer, ctx);
-  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
+  // (an installer run from an address as it is fetched: download it first, workFetchRun)
+  if (!spec && workFetchRun(command)) throw new HttpError(409, WORK_FETCHRUN);
+  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs; then code it runs
+  // unseen, workKeyCode)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
+  if (keys.length) workKeyCode(sorted);
   const at = sparkName(node);
   // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below. Never a write_file's
   // plain write nor a command given a key, which the hub would run bare: those are refused there, as below)

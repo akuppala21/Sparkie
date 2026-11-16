@@ -157,7 +157,7 @@ function hubCommandLines(command) {
 }
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
-  const scripts = await workScripts(node, sorted.scripts, dir, command);
+  const scripts = workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command));
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
   const starts = `It starts in ${dir}.`;
@@ -165,10 +165,10 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
-      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: workScriptLines(scripts) } })
+      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: [...workScriptLines(scripts), ...workScriptRecordLines(scripts)] } })
     : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
       'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
-      ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n'),
+      ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts), ...workScriptText(scripts)].join('\n'),
     [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
   // (kept under the yes button's own id, as the ladder keeps its asks: the press reads it back, workRecord)
   workRecord(call.args, { spark: node.id, command, dir, wall: 'hub', sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
