@@ -1,0 +1,3 @@
+Sparkie's memory loses a Spark when the owner names two together: "Sparks 3 and 4 are busy tonight" is about Spark 3 only, and Spark 4 never finds that line. The test test/trial-sparks-in-words.test.mjs shows it and fails now.
+
+Fix it in Spark Console's code, the way AGENTS.md says to change it, so that test passes. Don't change or remove any line of an existing test, that one included; add tests if you like. Make the generated files with the build (node tools/make.mjs), never by hand. Leave .github/, AGENTS.md, docs/architecture.md and docs/contract.md alone. When you're done, say in a few lines what you changed.

@@ -75,7 +75,7 @@ const ROUTES = ['/actions', '/actions/fleet_status', '/agents', '/agents/0123456
   '/auth/passkeys', `/auth/passkeys/${'A'.repeat(20)}`, '/auth/putback', '/auth/putback/keep', '/auth/recovery', '/auth/device/approve', '/auth/sessions', '/auth/anything-else', '/bootstrap', '/chats',
   '/chats/sc_0123456789abcdef', '/chats/sc_0123456789abcdef/messages', '/chats/sc_0123456789abcdef/choose', '/connections', '/deploy', '/deploy/cluster',
   '/deploy/cluster-plan', '/deploy/options', '/deploy/plan', '/deploy/plans', '/desired', '/desired/bring-back', '/desired/forget', '/fabric', '/gpu',
-  '/heartbeat', '/jobs', '/jobs/0123456789ab', '/jobs/0123456789ab/cancel', '/main', '/main/check', '/main/choices', '/main/eval', '/main/plan', '/main/route',
+  '/heartbeat', '/jobs', '/jobs/0123456789ab', '/jobs/0123456789ab/cancel', '/main', '/main/check', '/main/choices', '/main/eval', '/main/trial', '/main/plan', '/main/route',
   '/main/start', '/main/stop', '/main/use', '/mcp', '/metrics', '/models', '/nodes/spark3/workloads', '/nodes/spark3/diagnostics', '/nodes/spark3/logs/console',
   `/nodes/spark3/logs/container-${'a'.repeat(64)}`, '/recipes', '/recipes/add', '/recipes/add-list', '/recipes/dig', '/recipes/download',
   '/recipes/search', '/rollback', '/status', '/stop', '/telegram', '/telegram/approve', '/telegram/needs', '/telegram/pair', '/verified', '/v1/models', '/v1/chat/completions',

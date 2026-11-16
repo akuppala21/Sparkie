@@ -3827,7 +3827,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     Object.assign(turn, turnRequest(turn));
     Object.assign(turn, brainContext(turn));
     Object.assign(turn, howAsked(turn));
-    Object.assign(turn, turnBudgets(turn));
+    // (the limits of the brain's profile: its own once checked, else the careful ones, turnLimits in 21-brain-rail.mjs)
+    Object.assign(turn, turnBudgets({ ...turn, limits: await turnLimits(turn) }));
     // What the rounds add to as they go (each was one of the turn’s own variables).
     Object.assign(turn, { answer: '', thinking: false, finishReason: null, changes: 0, used: [], pastes: [] });
     Object.assign(turn, turnGroups(turn));
@@ -3838,6 +3839,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
+      taskStepsKept(turn);
       journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }
@@ -4069,31 +4071,50 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
-// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
-// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
-// its rounds, at most 30); the tool output it may read (40% of its context, budgetContext, at 3 characters a token);
-// and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4, held to 40 and 12 (design E 2.3). And the
+// loop's budgets (design A 2.10, R50), each counted by code on this turn, so per message and per chat, and each set
+// beside a setup's ask block, never in it (askBlock leaves them out): work steps, the run calls one message may make
+// (the setup's workSteps, else twice its rounds, at most 30), and one task may make over all its turns (120); the tool
+// output it may read (40% of its context, budgetContext, at 3 characters a token); and three refused calls in a row.
+// Reaching one makes the next round the last, as overBudget does. Which of them a turn gets is the brain's profile's
+// (turnLimits, 21-brain-rail.mjs: a brain not checked gets the careful ones).
+const ROUNDS_MOST = 40, CHANGES_MOST = 12;   // limits: tool rounds and changes in one message, whatever a setup says
 const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const TASK_STEPS = 120;            // limit: run calls in one task, over all its turns (design A 2.10)
 const CONTEXT_TOKENS = 32768;      // limit: the context of a setup that says none
 const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
 // (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
 const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
-function turnBudgets({ tuned }) {
-  const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
+// A setup's own limits, each held to the most any setup may have.
+function setupLimits(tuned) {
+  const rounds = Math.min(ROUNDS_MOST, Math.max(1, Math.floor(Number(tuned.toolRounds)) || 6)), changes = Math.min(CHANGES_MOST, Math.max(1, Math.floor(Number(tuned.maxChanges)) || 4));
   const steps = Number(tuned.workSteps);
-  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
-  const TOOL_OUTPUT = Math.floor(budgetContext(tuned) * 12 / 10);
-  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+  return { rounds, changes, steps: Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * rounds), output: Math.floor(budgetContext(tuned) * 12 / 10) };
 }
-// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
-// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
-// else 32,768.
-const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+// What one task has left of its 120 run calls (task.steps: those its turns made, taskStepsKept); 120 with no task. The one
+// place that says whether a task may run more (a task's carrying on asks it too).
+const taskStepsDone = task => (Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0);
+const taskStepsLeft = task => Math.max(0, TASK_STEPS - taskStepsDone(task));
+// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left. A task with none
+// left ends this turn's tools at once ('task').
+function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
+  const done = taskStepsDone(task), left = taskStepsLeft(task);
+  const WORK_STEPS = Math.min(limits.steps, left);
+  return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
+    works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
+}
+// After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
+// has only what is left of the 120. A new request starts a new task, and with it a new count.
+function taskStepsKept({ conv, task, agent, works = 0 }) {
+  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = taskStepsDone(task) + works;
+}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
+// the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup
+// saying it); one from 1,000 to 1,048,576, or else 32,768.
 function budgetContext(setup) {
-  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576, args = Array.isArray(setup?.args) ? setup.args.map(String) : [];
+  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576;
   if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);
-  const at = args.findIndex(a => BUDGET_CONTEXT_FLAG.test(a)), n = at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+  const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
@@ -4107,14 +4128,15 @@ function budgetCarries({ spent, agent, task, text, now, conv }) {
 }
 // What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
-// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
-// step that reaches them makes the next round the last.
+// One run call is one work step (runOne, before it is handed over): past the message's steps (or what its task has
+// left) it is not run, and the step that reaches them makes the next round the last.
 function workStep(turn) {
   if (turn.works >= turn.WORK_STEPS) {
     turn.notRun++;
-    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
+    throw new HttpError(429, turn.taskBound ? `Not run: one task may run ${TASK_STEPS} commands, and this one has. Answer now with what you found and what is left.`
+      : `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
   }
-  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= turn.taskBound ? 'task' : 'steps';
 }
 // After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
 // refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
@@ -4146,7 +4168,10 @@ function budgetReport(turn) {
   if (!turn.spent) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
-  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${more}.`);
+  // (a task's last: no carrying on, and the owner's next message is a new request with its own 120)
+  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
@@ -4482,8 +4507,9 @@ async function sparkieApi(req, res, path, viewer = null) {
   if (req.method === 'GET' && path === '/v1/models') {
     const running = await runningModels(viewer).catch(() => []);
     const seen = new Set();
-    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52)
-    if (MAIN) await brainRanLook().catch(() => null);
+    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52; apps poll this,
+    // so a look up to 5 seconds old does)
+    if (MAIN) await brainRanLook({ within: 5000 }).catch(() => null);
     return send(res, 200, { object: 'list', ...(MAIN ? { spark_console: { brain: brainInUse() } } : {}), data: [
       agents ? { id: SPARKIE_ID, object: 'model', created: 0, owned_by: 'spark-console', title: agents.title } : null,
       main ? { id: main.model, object: 'model', created: 0, owned_by: 'spark-console', title: main.title } : null,
@@ -4764,6 +4790,7 @@ function changeIntent(text) {
 const PAGE_ONLY = new Set([
   'undo_update',
   'keep_eval_result',
+  'keep_trial_result',
   'remember',
   'forget_memory',
   'save_workflow',
@@ -5014,6 +5041,8 @@ const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200)
 async function runAction(name, viewer, args, ctx = {}) {
   // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
   if (name === EVAL_YES) return evalYes(args, viewer, ctx);
+  // (a coding trial result waiting for the owner's yes, the same way: 21-brain-trial.mjs)
+  if (name === TRIAL_YES) return trialYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
@@ -5055,7 +5084,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail()).checked) {
+    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
@@ -10794,12 +10823,20 @@ const pickWords = text => nameWords(text).filter(w => w.length >= 3 && !/^\d+$/.
 // The eval's switch (test/eval.mjs --memory-off names, on the stand-in fleet only): with it the picker is off and the
 // brain is sent what it was before the picker (memoryPrompt as it was, nothing picked).
 const memoryPicking = () => !(ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes('names'));
+// The number after a setup's serving flag for its context (--context-length for SGLang, --max-model-len for vLLM,
+// --ctx-size for llama.cpp), the last when one is given twice, as an engine reads it; NaN with none. Both the sizes
+// below and the loop's output budget (budgetContext, 14-rounds.mjs) read it.
+const CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+function contextFlag(setup) {
+  const args = Array.isArray(setup?.args) ? setup.args.map(String) : [], at = args.findLastIndex(a => CONTEXT_FLAG.test(a));
+  return at < 0 ? NaN : Number(CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+}
 // The three sizes (design G 3.4), in characters: the block of lines in the system prompt (today's 4,000), the lines
 // picked for one message (1,500) and a recall answer (6,000, G3). A brain with a small context gets less: the block is
 // at most 4% of its tokens, at 3 characters a token (3,932 at 32,768 tokens), and the other two shrink with it.
+// (its context from the same flags as the output budget's, budgetContext in 14-rounds.mjs)
 function memorySizes(setup = chatTarget()?.kind === 'main' ? MAIN : {}) {
-  const a = Array.isArray(setup?.args) ? setup.args : [], at = a.indexOf('--context-length');
-  const tokens = askOf(setup).tokenBudget || (at >= 0 ? Number(a[at + 1]) || 0 : 0);
+  const tokens = askOf(setup).tokenBudget || contextFlag(setup) || 0;
   const k = tokens > 0 ? Math.min(1, (tokens * 0.04 * 3) / MEMORY_CHARS) : 1;
   return { block: Math.floor(MEMORY_CHARS * k), picks: Math.floor(1500 * k), cards: Math.floor(900 * k), recall: Math.floor(6000 * k) };
 }
@@ -11553,7 +11590,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
-    if (t === '--' && !w.unknown) { rest(k + 1); break; }
+    // (after --, a word is a name whatever its first sign)
+    if (t === '--' && !w.unknown) { for (const x of args.slice(k + 1)) x.literal = true; rest(k + 1); break; }
     if (!t.startsWith('-') || t === '-' || (plainRe && !w.unknown && plainRe.test(t))) {
       if (first) { rest(k); break; }
       if (w.unknown && (!t || w.split)) unknown ??= w.text || '$…';
@@ -11890,6 +11928,8 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
 // (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
 // apart, R64)
+// (a redirection's word, and a word after --, is a name whatever its first sign: the word itself is a place too, R64)
+const sortCandsOf = (w, t) => (w?.literal ? [...new Set([t, ...sortCands(t)])] : sortCands(t));
 function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
@@ -11898,15 +11938,15 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
   const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
-  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
+  for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
-  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
-  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCandsOf(w, t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
@@ -11944,7 +11984,7 @@ function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
     const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
@@ -12939,6 +12979,7 @@ function sortCmd(cmd, ctx, r, inPipe) {
         continue;
       }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
+      d.w.literal = true;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
       raise(c, 'change', `It writes ${sortQ(d.w.text || 'a file')} (a redirection).`);
@@ -12973,7 +13014,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
-    else if (sortCands(w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
+    else if (sortCandsOf(w, w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
   }
   if (dir?.unknown) unsure('It runs code in a folder named by a $ or a command.');
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
@@ -14980,10 +15021,12 @@ function brainProfiles() {
 }
 // (an entry counts only under its own key: one copied under another brain's name is no profile of that brain, R52)
 const brainProfileOf = m => { const k = brainKey(m), p = brainProfiles()[k]; return p && p.key === k ? p : null; };
-// The one writer of brain-profiles.json (R22). A new check of a setup keeps what the eval stored for it (evals), and
-// the newest 50 setups are kept. evals: the eval's results, given only by storeBrainEval (21-brain-eval.mjs).
-function saveBrainProfile(p, evals = null) {
-  const kept = Object.fromEntries(Object.entries(brainProfiles()).filter(([k, x]) => x?.key === k)), all = { ...kept, [p.key]: { ...p, evals: evals || kept[p.key]?.evals || {} } };
+// The one writer of brain-profiles.json (R22). A new check of a setup keeps what the eval stored for it (evals) and the
+// coding trial's results (trial), and the newest 50 setups are kept. evals: the eval's results, given only by
+// storeBrainEval (21-brain-eval.mjs); trial: the trial's, given only by keepTrialRecord (21-brain-trial.mjs).
+function saveBrainProfile(p, evals = null, trial = null) {
+  const kept = Object.fromEntries(Object.entries(brainProfiles()).filter(([k, x]) => x?.key === k)), was = trial || kept[p.key]?.trial;
+  const all = { ...kept, [p.key]: { ...p, evals: evals || kept[p.key]?.evals || {}, ...(Array.isArray(was) ? { trial: was } : {}) } };
   const newest = Object.values(all).filter(x => x && typeof x === 'object').sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 50);
   writePrivate(BRAIN_PROFILES_FILE, { profiles: Object.fromEntries(newest.map(x => [x.key, x])) });
 }
@@ -15059,8 +15102,10 @@ async function brainCheckAsk(m, key, messages, tools) {
   const r = await brainAsk(m, messages, tools);
   // (still loading or overloaded: not an answer to judge)
   if (r.status === 503) throw new Error('Sparkie’s model answered 503 (loading or busy)');
-  // (a server error is no answer either: never "it never calls a tool", R52)
+  // (a server error is no answer either: never "it never calls a tool", R52; nor any status but 200 and a refusal of
+  // the request itself, 400 or 422: a 429 or a 404 says the server was busy or the route missing, not how it calls tools)
   if (r.status >= 500) throw new Error(`Sparkie’s model answered ${r.status}, a server error, so the check couldn’t be made: ${r.error || 'no reason given'}`);
+  if (![200, 400, 422].includes(r.status)) throw new Error(`Sparkie’s model answered ${r.status}, so the check couldn’t be made: ${r.error || 'no reason given'}`);
   return r;
 }
 
@@ -15298,7 +15343,8 @@ function keepEvalRecord(p, rec, setupId) {
   if (stored) saveBrainProfile(p, evals);
   audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
   return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
-    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
+    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.${sealKey ? '' : ' It isn’t sealed (the eval seal’s key, eval-seal.json beside the secrets file, can’t be read or made), so it counts for nothing.'}`
+      : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
 
 // What sparkie_setup shows for the brain in use (p: its profile, or null): the newest result on record for what this
@@ -15347,26 +15393,65 @@ function brainEvalView(p) {
 const EVAL_MAIN_SET = 'test/eval/cases.json';
 const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'))}/eval-seal.json` : null) : `${homedir()}/.config/spark-console/eval-seal.json`;
 
-// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's). The
-// last look is kept (brainRanOf reads it for the key); every caller that decides something looks again first.
-let brainRan = null;
-async function brainRanLook() {
-  const m = MAIN, node = m ? mainNode(m) : null;
+// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's) that
+// the container loaded: the commit in its weights' path among the container's own arguments, or, for a setup served
+// from an overlay (rope settings), in the overlay's links its start made; for a model in the models folder, the folder.
+// Never the snapshot a start would serve now: one downloaded later moves no key until a start loads it. The last look is
+// kept (brainRanOf reads it for the key); every caller that decides something looks again first, and GET /v1/models,
+// which apps poll, takes one up to 5 seconds old (within). One look runs at a time (the others share it), and the chat's
+// callers wait for it at most 3 seconds (wait, RAIL_LOOK_WAIT_MS): a Docker that doesn't answer by then gives "not seen,
+// slow" (slow: true), and the look goes on to its end by itself.
+const RAIL_LOOK_WAIT_MS = 3000;    // limit: how long a reply or a change waits for the look at what Sparkie's model runs
+let brainRan = null, brainRanAt = 0, brainLooking = null;
+const brainRanScript = m => `c=${q(m.container)}; ov="$HOME/.cache/spark-console/overlay/"${q(m.served)}
+a=$(docker inspect -f '{{json .Args}}' "$c" 2>/dev/null | head -1)
+snap() {
+  case "$a" in *'"/overlay/'"$1"'"'*) l=$(find "$ov/$1" -maxdepth 1 -type l 2>/dev/null | head -1); [ -n "$l" ] && readlink "$l" ;; *) printf '%s\\n' "$a" ;; esac |
+    awk -v p="/hf/$2/snapshots/" '{ i = index($0, p); if (i) { s = substr($0, i + length(p)); split(s, x, "/"); s = x[1]; sub(/".*/, "", s); print s; exit } }'
+}
+model=${m.store === 'models' ? q(m.model) : `$(snap model ${q(`models--${m.model}`)})`}; draft=${m.draft && m.store !== 'models' ? `$(snap draft ${q(`models--${m.draft}`)})` : ''}
+printf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' "$c" 2>/dev/null | head -1)" "$model" "$draft"`;
+async function brainRanLook({ within = 0, wait = 0 } = {}) {
+  const m = MAIN;
   if (!m) return null;
+  if (within && brainRan?.id === m.id && Date.now() - brainRanAt < within) return brainRan;
+  if (brainLooking?.id !== m.id) {
+    const p = brainLookNow(m).finally(() => { if (brainLooking?.p === p) brainLooking = null; });
+    brainLooking = { id: m.id, p };
+  }
+  if (!wait) return brainLooking.p;
+  const look = brainLooking.p, late = new Promise(r => { setTimeout(() => r(null), wait).unref?.(); });
+  return (await Promise.race([look, late])) || { id: m.id, image: null, model: null, draft: null, slow: true };
+}
+async function brainLookNow(m) {
+  const node = mainNode(m);
   let seen = { id: m.id, image: null, model: null, draft: null };
   if (node) {
     try {
-      const r = await run(node, `${mainSnapshots(m)}\nprintf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' ${q(m.container)} 2>/dev/null | head -1)" "$model" "$draft"`, { timeout: 20000 });
+      const r = await run(node, brainRanScript(m), { timeout: 20000 });
       const [image, model, draft] = fields(r.out, 'ran')[0] || [];
-      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: model || null, draft: draft || null };
+      const name = v => (/^[\w.-]{1,200}$/.test(v || '') ? v : null);
+      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: name(model), draft: name(draft) };
     } catch {}
   }
-  if (MAIN === m) brainRan = seen;
+  if (MAIN === m) { brainRan = seen; brainRanAt = Date.now(); }
   return seen;
 }
 const brainRanOf = m => (brainRan && brainRan.id === m?.id && brainRan.image && brainRan.model ? { image: brainRan.image, model: brainRan.model, draft: brainRan.draft } : null);
-// The console's own limits for this brain: what turnBudgets and toolCap give its chats.
-const brainLimits = m => { const b = turnBudgets({ tuned: m }); return { toolRounds: b.ROUNDS, maxChanges: b.CHANGES, toolCap: String(toolCap(m)) }; };
+// The console's own limits for this brain (setupLimits, 14-rounds.mjs: tool rounds, changes, work steps and tool output a
+// message) and its tool cap: part of its key, so a profile and an eval belong to the limits they were made with.
+const brainLimits = m => { const l = setupLimits(m); return { toolRounds: l.rounds, maxChanges: l.changes, workSteps: l.steps, toolOutput: l.output, toolCap: String(toolCap(m)) }; };
+// The loop's limits for one turn (E5b; design E 2.3): a brain checked for this setup and build (brainRail: its check
+// passed and the eval on record met the bar) gets the limits its profile was made with (its key holds them, so they are
+// its setup's own); any other, and a chat routed to another model, the careful ones: at most 8 rounds and 16 work steps
+// a message. (Its changes are each a button then anyway: R52.) The look it judges by may be 5 seconds old, and it waits
+// for one at most 3 seconds: a Docker that doesn't answer makes the reply careful, never late.
+const CAREFUL_LIMITS = { rounds: 8, steps: 16 };
+async function turnLimits({ target, tuned }) {
+  const own = setupLimits(tuned), careful = { ...own, rounds: Math.min(own.rounds, CAREFUL_LIMITS.rounds), steps: Math.min(own.steps, CAREFUL_LIMITS.steps) };
+  if (target?.kind !== 'main' || tuned !== MAIN) return careful;
+  return (await brainRail({ within: 5000, wait: RAIL_LOOK_WAIT_MS }).catch(() => null))?.checked && tuned === MAIN ? own : careful;
+}
 // The setup's key without what runs now: the eval's runner compares it with its own stand-in console's (test/eval.mjs).
 const brainSetupKey = m => { const { ran, ...declared } = brainSetupOf(m); return createHash('sha256').update(JSON.stringify(declared)).digest('hex').slice(0, 16); };
 
@@ -15404,9 +15489,11 @@ function evalSealed(profileKey, x) {
   return timingSafeEqual(Buffer.from(seal, 'hex'), Buffer.from(evalSealOf(key, profileKey, rec), 'hex'));
 }
 
-// A record of the main case set with every memory addition on: the only kind that can count (and the only kind kept in
-// a slot's five that count).
-const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length;
+// A record of the main case set with every memory addition on (each of the runner's switches named on, none off): the
+// only kind that can count (and the only kind kept in a slot's five that count).
+const EVAL_SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
+const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length
+  && Array.isArray(x.memorySwitches.on) && [...x.memorySwitches.on].map(String).sort().join() === [...EVAL_SWITCHES].sort().join();
 // What could let Sparkie change things without asking once stored: a full run of the main set, with no cap, that met
 // the bar (counted here from the runs). Storing one needs the owner's passkey (needsPasskey, 22-passkey.mjs).
 const evalCouldUnlock = r => !evalRecordProblem(r) && r.cap === null && evalMainSet(r) && evalScore(r).met === true;
@@ -15419,14 +15506,16 @@ function evalCounts(x, key, reads, set, sealed = true) {
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
-async function brainRail() {
+async function brainRail({ within = 0, wait = 0 } = {}) {
   const no = why => ({ checked: false, why });
   try {
     if (!MAIN) return no('Sparkie has no model set up');
-    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look)
-    const ran = await brainRanLook();
+    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look; a reply's may be a
+    // few seconds old, and the chat waits for it a few seconds at most: within, wait)
+    const ran = await brainRanLook({ within, wait });
     if (chatTarget()?.kind !== 'main') return no('Sparkie’s chat is routed to another model, which no eval has checked');
     if (mainBusy()) return no('Sparkie’s model is starting, stopping or changing');
+    if (ran?.slow) return no(`Docker didn’t say within ${Math.round(wait / 1000)} seconds what Sparkie’s model runs (its Spark may be busy or stuck), so it counts as not checked`);
     const reads = brainReadsNow(), set = evalSetLocked();
     if (!reads) return no('there is no lock for this build, so what its brain reads isn’t known');
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
@@ -15438,14 +15527,16 @@ async function brainRail() {
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
     const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => evalOrder(a, b, evalScore));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
-    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
+    // (records with no seal's key to read them by count for nothing: said, so it isn't taken for a bad run; R52)
+    const unsealed = kept.length && !counted.length && !evalSealKey() ? ': the eval seal’s key (eval-seal.json, beside the secrets file) can’t be read, so no record on file is sealed' : '';
+    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : `no eval result on record counts for this brain and build${unsealed}`);
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
     return { checked: true, why: `the brain check passed, and the eval on record for this build (${day}) ran in full and met the bar` };
   } catch (e) { return no(`its record couldn’t be read (${String(e?.message || e).slice(0, 160)})`); }
 }
 // sparkie_setup's one line about changes.
 async function railWords() {
-  const r = await brainRail();
+  const r = await brainRail({ wait: RAIL_LOOK_WAIT_MS });
   return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
     : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
 }
@@ -15521,12 +15612,199 @@ async function evalYes(args, viewer, ctx) {
   let keys = 1;
   try { keys = passkeys().length; } catch {}
   const out = keepEvalRecord(p, { ...w.rec, keptWith: keys ? 'passkey' : 'the owner’s press' }, w.setup);
-  return { outcome: 'kept', note: out.stored ? 'Kept: Sparkie makes the changes your words clearly ask for at once again.' : out.says };
+  // (what the rail says now, not what keeping it was hoped to mean: a newer failing run, or a check that says not checked)
+  return { outcome: out.stored ? 'kept' : 'not kept', note: out.stored ? `Kept. ${await railWords()}` : out.says };
 }
 // One needs-you line while a result waits (20-needs.mjs).
 function evalWaitingNeeds(add) {
   if (evalWaiting) add('eval', `A brain eval result for this build is waiting for your yes: press its button in the chat “${EVAL_CHAT}” in Spark Console. Until then Sparkie asks before every change.`);
 }
+/* ───────── the coding trial: can the brain in use change Spark Console's own code (C8a; design C 2.5) ───────── */
+// Area: features        Rules: R67, R52        Tests: trial.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// agentbar/trial.mjs gives the brain small, real tasks on a copy of this repository and scores each by code; its one
+// record of a run is kept here, the way the eval's result is (21-brain-eval.mjs): in the profile of the brain serving
+// now (brain-profiles.json, a `trial` field beside `evals`, saveBrainProfile), sealed, the newest five, tied to that
+// brain's key (model, engine, image, flags, how it is asked, what it runs), what this build's brain reads (the lock's
+// mark) and the task set's version (trialSetNow: agentbar/trial/tasks as this build has it). The bar is the contract's
+// (10.4, T100): every task of the set passes at least 2 of 3 runs. Each run's result of each task is kept, so a stricter
+// line can be read from a record later without a new run. POST /main/trial is the owner's alone; a result that meets
+// the bar, posted once a passkey is set up, is not kept but waits for the owner's press of one button in their chat, on
+// the page with the passkey, for that very record (its sha256 on the button and in the press). trialPassed() is the one
+// read (propose_update asks it, C8): yes only for a sealed full run that met the bar, for this brain, this build and
+// this task set (the newest full run decides; a partial run neither gives nor takes); no for no record, another brain,
+// build or set, only a partial run, or a newest full run that missed the bar. Nothing here is offered to the brain.
+const TRIAL_KEEP = 5;   // limit: trial results kept for one brain
+const TRIAL_RUNS = 3;   // a full run: each task this many times at least (10.4)
+const TRIAL_TASKS_DIR = ALL_LOCAL ? fileURLToPath(new URL('../agentbar/trial/tasks', import.meta.url)) : `${homedir()}/spark-console-src/agentbar/trial/tasks`;
+const TRIAL_YES = 'keep_trial_result', TRIAL_CHAT = 'The coding trial’s result';
+
+// The task set this build has: its version (as agentbar/trial-lib.mjs taskSetVersion makes it) and its task ids; null
+// when it can't be read.
+function trialSetNow() {
+  try {
+    const files = [], walk = d => { for (const n of readdirSync(d).sort()) { const p = `${d}/${n}`; if (statSync(p).isDirectory()) walk(p); else files.push(p.slice(TRIAL_TASKS_DIR.length + 1)); } };
+    walk(TRIAL_TASKS_DIR);
+    const h = createHash('sha256');
+    for (const f of files.sort((a, b) => a.localeCompare(b))) h.update(`${f}\0${createHash('sha256').update(readFileSync(`${TRIAL_TASKS_DIR}/${f}`)).digest('hex')}\n`);
+    const ids = readdirSync(TRIAL_TASKS_DIR).filter(t => existsSync(`${TRIAL_TASKS_DIR}/${t}/task.json`)).sort();
+    return ids.length ? { version: h.digest('hex'), ids } : null;
+  } catch { return null; }
+}
+// What a record lacks, said as what it needs; null when its shape fits.
+function trialRecordProblem(r) {
+  const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi, text = (v, max) => typeof v === 'string' && v.length <= max, ID = /^[a-z0-9][a-z0-9-]{0,59}$/;
+  if (!r || typeof r !== 'object' || Array.isArray(r) || r.kind !== 'spark-console-trial') return 'kind "spark-console-trial" (the record agentbar/trial.mjs writes)';
+  if (!/^[0-9a-f]{64}$/.test(String(r.reads))) return 'reads: what the brain read in the build that ran (64 hex digits)';
+  if (!/^[0-9a-f]{12}$/.test(String(r.build))) return 'build: the build the trial ran on (12 hex digits)';
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(String(r.at)) || Number.isNaN(Date.parse(r.at)) || Date.parse(r.at) > Date.now() + 300000) return 'at: when it ran, as the runner writes it';
+  const t = r.tasks;
+  if (!t || !/^[0-9a-f]{64}$/.test(String(t.version)) || !Array.isArray(t.ids) || !t.ids.length || t.ids.length > 50 || !t.ids.every(x => ID.test(String(x))) || new Set(t.ids).size !== t.ids.length) return 'tasks: {version (64 hex digits), ids}';
+  const b = r.brain;
+  if (!b || typeof b !== 'object' || typeof b.standIn !== 'boolean' || !/^[0-9a-f]{16}$/.test(String(b.key)) || !['setup', 'model', 'engine', 'image'].every(k => b[k] == null || text(b[k], 300))
+    || !Array.isArray(b.flags) || b.flags.length > 200 || !b.flags.every(f => text(f, 1000))) return 'brain: {standIn, key (16 hex digits), setup, model, engine, image, flags}';
+  if (!int(r.runs, 1, 10)) return 'runs: 1 to 10';
+  if (!Array.isArray(r.results) || r.results.length !== t.ids.length || r.results.some((x, i) => x?.id !== t.ids[i])) return 'results: one entry for each task, in the order of tasks.ids';
+  for (const x of r.results) {
+    if (!Array.isArray(x.runs) || x.runs.length !== r.runs || !x.runs.every(y => y && typeof y.passed === 'boolean' && int(y.rounds, 0, 1000) && typeof y.seconds === 'number' && y.seconds >= 0 && y.seconds <= 36000
+      && Array.isArray(y.checks) && y.checks.length <= 10 && y.checks.every(c => c && text(c.name, 200) && typeof c.pass === 'boolean'))) return `results: ${x.id}'s runs, ${r.runs} of them, each with passed, rounds, seconds and checks`;
+  }
+  return null;
+}
+// The score, counted here from the runs, never taken from the record: a full run is every task at least 3 times; the
+// bar is every task passing at least 2 of 3 runs (10.4), judged on a full run only.
+function trialScore(r) {
+  const need = Math.ceil((2 * r.runs) / 3), passes = r.results.map(x => ({ id: x.id, passed: x.runs.filter(y => y.passed).length }));
+  const full = r.runs >= TRIAL_RUNS;
+  return { full, need, passes, met: full ? passes.every(x => x.passed >= need) : null };
+}
+// The record's own sha256, as the runner prints it (evalCanon: its fields in name order): what the button shows.
+const trialHash = r => createHash('sha256').update(evalCanon(r)).digest('hex');
+const trialLine = rec => `${rec.score.passes.map(x => `${x.id} ${x.passed} of ${rec.runs}`).join(', ')}: ${rec.score.full ? `the bar ${rec.score.met ? 'met' : 'not met'}` : `a partial run (${rec.runs} run${rec.runs === 1 ? '' : 's'})`} (${String(rec.at).slice(0, 10)}, build ${rec.build})`;
+
+// POST /main/trial: keeps one record in the profile of the brain serving now, or makes it wait for the owner's press.
+function storeBrainTrial(r, viewer = null) {
+  if (!MAIN) throw new HttpError(404, 'No main model is configured.');
+  if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Keep the result once that’s done.');
+  const problem = trialRecordProblem(r);
+  if (problem) throw new HttpError(400, `That isn’t a coding trial result Spark Console can keep. It needs ${problem}.`);
+  if (r.dry || r.tried) throw new HttpError(409, `That was ${r.dry ? 'a dry run, with no brain' : 'a try of the runner (another short check, or commands outside a box)'}: it is no trial, so it isn’t kept.`);
+  if (r.brain.standIn !== ALL_LOCAL) throw new HttpError(409, r.brain.standIn ? 'That result is from the stand-in brain, not Sparkie’s model, so it isn’t kept.' : 'That result is from a real brain, and this console’s brain is the stand-in, so it isn’t kept.');
+  const now = brainInUse();
+  if (r.brain.key !== now.key) throw new HttpError(409, `That result is for another brain setup than the one serving now (${now.setup}). It isn’t kept.`);
+  const p = brainProfileOf(MAIN);
+  if (!p) throw new HttpError(409, 'No brain check is on record for the brain serving now, and the trial’s result is kept in that profile. Ask for a check first (POST /console/api/main/check), then keep the result.');
+  const set = trialSetNow();
+  if (set && r.tasks.version === set.version && r.tasks.ids.join() !== set.ids.join()) throw new HttpError(400, 'That result’s tasks aren’t its task set’s.');
+  const hash = trialHash(r), keep = ({ kind, at, build, reads, tasks, runs, brain, results }) => ({ kind, at, build, reads, tasks: { version: tasks.version, ids: tasks.ids }, runs,
+    brain: { standIn: brain.standIn, key: brain.key, setup: brain.setup ?? null, model: brain.model ?? null, engine: brain.engine ?? null, image: brain.image ?? null, flags: brain.flags },
+    results: results.map(x => ({ id: x.id, runs: x.runs.map(y => ({ passed: y.passed, rounds: y.rounds, seconds: y.seconds, checks: y.checks.map(c => ({ name: c.name, pass: c.pass })) })) })) });
+  const rec = { ...maskDeep(keep(r)), hash, score: trialScore(r), keptAt: new Date().toISOString() };
+  let keys = 1;
+  try { keys = passkeys().length; } catch {}
+  // (a result that meets the bar, once a passkey is set up, waits for the owner's press on the page)
+  if (rec.score.met && keys) return trialWait(rec, p, now, viewer);
+  return keepTrialRecord(p, { ...rec, keptWith: rec.score.met ? 'no passkey set up' : 'owner' }, now.setup);
+}
+// Keeps one record in the profile p, sealed: the store above, and the owner's press for a waiting result.
+function keepTrialRecord(p, rec, setupId) {
+  if (!MAIN || p.key !== brainKey(MAIN)) throw new HttpError(409, 'Kept nothing: the brain check on record isn’t this brain’s.');
+  const kept = (Array.isArray(p.trial) ? p.trial : []).filter(x => x && typeof x === 'object');
+  if (kept.some(x => x.hash === rec.hash)) return { stored: false, passed: rec.score.met === true, setup: setupId, says: 'Already kept: this same result is on record. Nothing changed.' };
+  const sealKey = evalSealKey(true);
+  if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
+  const trial = [rec, ...kept].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, TRIAL_KEEP), stored = trial.includes(rec);
+  if (stored) saveBrainProfile(p, null, trial);
+  audit({ via: 'page', actor: 'owner', action: 'brain-trial-kept', args: { reads: rec.reads, tasks: rec.tasks.version, build: rec.build, setup: setupId, met: rec.score.met, hash: rec.hash, keptWith: rec.keptWith }, ok: stored });
+  return { stored, passed: rec.score.met === true, setup: setupId,
+    says: stored ? `Kept with the profile of ${setupId}: ${trialLine(rec)}.` : `${TRIAL_KEEP} newer trial results are kept for this brain, so this older one wasn’t kept.` };
+}
+
+// The owner's press (R67, as the eval's, R52): one result at a time waits, in memory only (a restart forgets it), for
+// this build's mark, its task set and the brain serving now; a newer post replaces it and voids the old button. The
+// button is owner-only, in the owner's chat "The coding trial’s result", built here from the record, with the record's
+// sha256; the press carries it, and keeps only the record held here with that sha256. Its call, TRIAL_YES, is no
+// action: runAction hands it to trialYes, which takes only that button's press on the page. In PAGE_ONLY.
+let trialWaiting = null;
+function trialWait(rec, p, now, viewer) {
+  const reads = brainReadsNow(), set = trialSetNow();
+  const no = why => { throw new HttpError(409, `Kept nothing: ${why}. Only a full result for this build’s brain, what it reads and its task set can wait for your yes.`); };
+  if (!reads || rec.reads !== reads) no('that result is for another version of what the brain reads than this build’s');
+  if (!set || rec.tasks.version !== set.version) no('that result is for another task set than this build’s');
+  trialWaitingGone();
+  const owner = accessList().owner, at = new Date().toISOString(), token = randomBytes(16).toString('hex');
+  let conv = chatData().conversations.find(c => c.login === owner && !c.agent && c.title === TRIAL_CHAT && c.messages.length < LIMITS.messages);
+  if (!conv) { conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: owner, title: TRIAL_CHAT, spark: null, createdAt: at, updatedAt: at, messages: [] }; chatData().conversations.push(conv); }
+  const from = clean(viewer?.from, 60), how = viewer?.session ? 'from a device signed in as you' : 'over the tailnet as you';
+  const text = [`A coding trial result is waiting for your yes: sha256 ${rec.hash}. It is for build ${rec.build}, ${clean(now.model, 200)} with ${clean(now.engine, 40)}, image ${clean(now.image, 200)} (the setup ${clean(now.setup, 60)} serving now), on the trial's ${rec.tasks.ids.length} tasks, run on ${checkWhen(rec.at)}.`,
+    `${rec.score.passes.map(x => `${x.id}: ${x.passed} of ${rec.runs} runs passed`).join('; ')}. The bar is every task passing at least ${rec.score.need} of ${rec.runs}.`,
+    `Spark Console can’t check that this run happened, or that it ran on this brain: it has only the post, sent ${how}${from ? ` from ${from}` : ''}. Keep it only for a run you started, and only if the sha256 above is the one the runner printed.`,
+    'Keeping it is what later lets Sparkie propose changes to its own code, each still asked of you. Until then it can’t.'].join('\n\n');
+  let asked = null;
+  question({ ...viewer, login: owner, role: 'owner' }, { via: 'page', conv: conv.id, chat: conv.id, onQuestion: q => { asked = q; } }, text,
+    [{ label: `Keep it (sha256 ${rec.hash.slice(0, 12)}…)`, call: { action: TRIAL_YES, args: { token, hash: rec.hash, keep: true } } }, { label: 'No, drop it', call: { action: TRIAL_YES, args: { token, hash: rec.hash, keep: false } } }],
+    'question', { ownerOnly: true });
+  // (it stays until it is answered, replaced or forgotten at a restart: not the 15 minutes of a chat's buttons)
+  for (const c of asked.choices) if (pendingChoices.has(c.choice)) pendingChoices.get(c.choice).at = Date.now() + 30 * 86400000;
+  conv.messages.push({ role: 'assistant', content: text, createdAt: at, notice: true, choices: sparkieMessageChoices(asked) });
+  conv.updatedAt = at;
+  saveChats();
+  trialWaiting = { token, rec, profileKey: p.key, conv: conv.id, group: asked.group, setup: now.setup };
+  audit({ via: 'page', actor: 'owner', action: 'brain-trial-waiting', args: { reads: rec.reads, tasks: rec.tasks.version, build: rec.build, setup: now.setup, hash: rec.hash }, ok: true });
+  return { stored: false, waiting: true, passed: false, hash: rec.hash, setup: now.setup, chat: conv.id,
+    says: `Waiting for the owner’s yes: a button in the chat “${TRIAL_CHAT}” in Spark Console, pressed with the passkey; it names sha256 ${rec.hash}.` };
+}
+function trialWaitingGone() {
+  if (!trialWaiting) return;
+  for (const [k, c] of pendingChoices) if (c.group === trialWaiting.group) pendingChoices.delete(k);
+  const conv = chatData().conversations.find(c => c.id === trialWaiting.conv);
+  for (const m of conv?.messages || []) for (const x of m.choices || []) if (x.group === trialWaiting.group && x.state === 'open') x.state = 'gone';
+  trialWaiting = null;
+  saveChats();
+}
+// The press (runAction hands TRIAL_YES here): only its own owner-only button, pressed by the owner on the page, for the
+// record with that sha256.
+async function trialYes(args, viewer, ctx) {
+  if (!(ctx.button && ctx.trusted && ctx.ownerConfirmed && ctx.via === 'page' && viewer?.role === 'owner')) throw new HttpError(404, `No action called ${TRIAL_YES}.`);
+  const w = trialWaiting, token = String(args?.token || ''), same = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (!w || !same(token, w.token) || !same(String(args?.hash || ''), w.rec.hash)) throw new HttpError(409, 'That result isn’t waiting any more: a newer one came, it was answered, or Spark Console restarted. Nothing was kept.');
+  trialWaiting = null;
+  if (args.keep !== true) {
+    audit({ via: 'page', actor: 'owner', action: 'brain-trial-dropped', args: { reads: w.rec.reads, build: w.rec.build, hash: w.rec.hash }, ok: true });
+    return { outcome: 'dropped', note: 'Dropped: that coding trial result wasn’t kept.' };
+  }
+  await brainRanLook();
+  const p = MAIN && !mainBusy() ? brainProfileOf(MAIN) : null;
+  if (!p || p.key !== w.profileKey || brainReadsNow() !== w.rec.reads || trialSetNow()?.version !== w.rec.tasks.version) throw new HttpError(409, 'Kept nothing: Sparkie’s model or this build changed since that result was posted. Run the trial again.');
+  const out = keepTrialRecord(p, { ...w.rec, keptWith: 'passkey' }, w.setup);
+  return { outcome: 'kept', note: out.stored ? `Kept: ${trialLine(w.rec)}.` : out.says };
+}
+
+// The read (C8's propose_update asks it): { passed, says }. Never throws.
+function trialPassed() {
+  const no = says => ({ passed: false, says });
+  try {
+    if (!MAIN) return no('Sparkie has no model set up.');
+    const p = brainProfileOf(MAIN), reads = brainReadsNow(), set = trialSetNow();
+    if (!p) return no('No brain check is on record for the brain serving now, so no trial result is either.');
+    if (!reads) return no('What this build’s brain reads isn’t known (there is no lock for this build), so no trial result can count for it.');
+    if (!set) return no('This build’s task set for the coding trial can’t be read, so no trial result can count for it.');
+    // (newest first; of two at one moment, the one that missed the bar)
+    const all = (Array.isArray(p.trial) ? p.trial : []).filter(x => x && typeof x === 'object' && !trialRecordProblem(x) && x.brain.key === p.key && x.brain.standIn === ALL_LOCAL && evalSealed(p.key, x))
+      .map(x => ({ ...x, score: trialScore(x) })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || (a.score.met === false ? -1 : 0) - (b.score.met === false ? -1 : 0));
+    if (!all.length) return no('No coding trial result is on record for this brain. Run node agentbar/trial.mjs on the real brain, then keep it with --store.');
+    const mine = all.filter(x => x.reads === reads && x.tasks.version === set.version && x.tasks.ids.join() === set.ids.join());
+    if (!mine.length) return no(`The coding trial on record for this brain (${String(all[0].at).slice(0, 10)}, build ${all[0].build}) was for another build or task set, not this one. Run it again.`);
+    // (the newest full run decides; a partial run neither gives nor takes)
+    const newest = mine.find(x => x.score.full);
+    if (!newest) return no(`The coding trial on record for this build is only a partial run: ${trialLine(mine[0])}. The bar needs every task 3 times.`);
+    if (!newest.score.met) return no(`The newest full coding trial on record for this build didn’t meet the bar: ${trialLine(newest)}.`);
+    return { passed: true, says: `The coding trial passed for this brain and build: ${trialLine(newest)}.` };
+  } catch (e) { return no(`The trial’s record couldn’t be read: ${String(e?.message || e).slice(0, 160)}`); }
+}
+// GET /main/trial: the read, and whether a result waits for the owner's press.
+const trialView = () => ({ ...trialPassed(), waiting: trialWaiting ? { hash: trialWaiting.rec.hash, chat: trialWaiting.conv } : null, tasks: trialSetNow() });
 /* ───────── compare_models: a saved workload run with each candidate model, and the winner kept (D8) ───────── */
 // Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs, compare-brain.test.mjs
 // Owns: none (saved-workflows.json's `compared` and `best`, through writeSaved in 18-workflows.mjs)
@@ -16684,14 +16962,30 @@ function offeredNames(groups) {
   return [...ACTIONS.values()].filter(a => groups.cap === Infinity || open.has(a.group)).map(a => a.name);
 }
 // What the brain can be sent beyond one turn's prompt and tools: the cap, the groups and their words, the prompt lines
-// that follow tools, and the brain's setup's sampling and limits. GET /actions shows it; test/lock.mjs marks it.
+// that follow tools, the brain's setup's sampling and limits, and the fixed words of its other messages (words). GET
+// /actions shows it; test/lock.mjs marks it.
 function brainCatalog() {
   const s = MAIN || {};
   return { toolCap: TOOL_CAP, groupSize: GROUP_SIZE, groups: GROUP_WORDS.map(([group, about, re]) => ({ group, about, words: re.source, tools: groupActions(group).map(a => a.name) })),
     core: groupActions('core').map(a => a.name), lines: TOOL_LINES.map(([tools, text]) => ({ tools, text })),
     setup: { sampling: s.sampling || null, thinking: Boolean(s.thinking), templateKwargs: s.templateKwargs || null, maxTokens: s.maxTokens || null,
-      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) } };
+      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) },
+    words: brainWords() };
 }
+// The fixed words the brain is sent outside the system prompt and the tools, by the code that writes them: the carry-on
+// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines (budgetReport),
+// the digest's words (digestOut), the cards' heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
+// (lessonSeenBefore); a card and "Seen before" say what was tried and how it failed with lessonTried and lessonFailWords,
+// from the failures' titles (START_FAILURES', 17-changes.mjs, and LESSON_APP_FAILS). Each is a hash of that code with its
+// whole-line comments left out, and of those titles as JSON, so a change to any of them is another mark and owes an eval
+// (R52); a change to the code around them does too.
+const BRAIN_WORDS = () => {
+  const lesson = [lessonTried, lessonFailWords, START_FAILURES.map(f => [f.id, f.title]), LESSON_APP_FAILS];
+  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
+    cards: [memoryPickBlock, lessonCard, ...lesson], seenBefore: [lessonSeenBefore, ...lesson] };
+};
+const brainWordsOf = parts => createHash('sha256').update(parts.map(f => (typeof f === 'function' ? String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n') : JSON.stringify(f))).join('\n\n')).digest('hex').slice(0, 16);
+const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([k, fns]) => [k, brainWordsOf(fns)]));
 
 action({
   name: 'guide', title: 'Guide to the tools', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
@@ -21259,6 +21553,16 @@ const handler = async (req, res) => {
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
     // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
+    // The coding trial's result (agentbar/trial.mjs --store), kept the same way (21-brain-trial.mjs); GET: the read.
+    if (path === '/main/trial') {
+      ownerOnly();
+      if (req.method !== 'GET' && req.method !== 'POST') throw new HttpError(405, 'Use GET or POST.');
+      const body = req.method === 'POST' ? await readBody(req) : null;
+      await brainRanLook();
+      if (req.method === 'GET') return send(res, 200, trialView());
+      const kept = storeBrainTrial(body, { ...viewer, from: clientAddress(req) });
+      return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept);
+    }
     if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, { ...viewer, from: clientAddress(req) }); return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
