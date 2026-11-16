@@ -11,7 +11,9 @@
 // pull.sh ends, git with it. With no git on Spark 2 (~/.mock/off-path-git, as the stand-in fleet marks a program
 // missing) it says so and what to install, on the needs-you list too. The fifth read: a lock for another build than the
 // code's, or a tree without a code file, is not offered (check works the build out from git, as install does); a bad
-// tag on main's head is said once; a lock a cut-off fetch left in Spark 2's copy is named, with the rm for it.
+// tag on main's head is said once; a lock a cut-off fetch left in Spark 2's copy is named, with the rm for it. The
+// final read: never newer when the installed build's commit can't be told (its lock names no tree or commit on main),
+// and a lock's tree alone is placed on main; a newer build says to ask for it in chat (install_update), not "later".
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -303,5 +305,49 @@ describe('check_update', { concurrency: 1 }, () => {
     } finally { rmSync(off, { force: true }); }
     assert.equal((await check()).problem, undefined);
     assert.ok(!(await needs()).some(l => /git isn’t installed/.test(l)));
+  });
+
+  // (the final read's U1: a lock written by a whole run on a Spark named no tree and no commit, and an older tested
+  // build was offered as newer)
+  test('never newer when the installed build’s commit can’t be told: a lock with no tree (as before) or a tree not on main says so and offers nothing; a tree only (as a run on a Spark writes it now) is placed on main', async () => {
+    const lock = join(HOME, 'spark-console-service', 'workflows.lock.json'), was = readFileSync(lock, 'utf8');
+    const older = commit('Installed from the Mac before GitHub marked anything after it');
+    const newer = commit('Newer, and tested');
+    mark(newer, READS_A, buildOf(newer));
+    const top = commit('Newest, installed from the Mac, not tested yet');
+    const as = fields => writeFileSync(lock, JSON.stringify({ build: 'aaaaaaaaaaaa', brainReads: READS_A, ...fields }));
+    try {
+      for (const fields of [{}, { tree: 'e'.repeat(40) }, { tree: 'e'.repeat(40), commit: 'e'.repeat(40) }]) {
+        as(fields);
+        const x = await check();
+        assert.equal(x.newer, false, `${JSON.stringify(fields)}: ${JSON.stringify(x)}`);
+        assert.equal(x.brain, null);
+        assert.match(x.says, new RegExp(`^The newest tested build on GitHub is tree ${newer.t12}, but whether it is newer than the build installed now can’t be told: that build’s lock names no commit or tree on main \\(it was installed from the Mac\\)\\. So it isn’t offered\\.`));
+        assert.doesNotMatch(x.says, /A newer tested build|pull\.sh install|No newer tested build/);
+      }
+      // (installed: main's head, ahead of the newest tested build; then a build before it)
+      as({ tree: top.tree });
+      let x = await check();
+      assert.equal(x.newer, false, JSON.stringify(x));
+      assert.match(x.says, new RegExp(`^No newer tested build: the newest with the tested mark \\(tree ${newer.t12}\\) isn’t newer than the one installed\\.`));
+      as({ tree: older.tree });
+      x = await check();
+      assert.equal(x.newer, true, JSON.stringify(x));
+      assert.equal(x.newest.tree, newer.t12);
+      assert.deepEqual(x.commits.lines.map(l => l.replace(/^\w+ /, '')), ['Newer, and tested']);
+    } finally { writeFileSync(lock, was); }
+  });
+
+  // (the final read's U3: a newer build's answer said installing it from chat "comes later" and gave only a terminal
+  // command, while install_update is built and offered with check_update)
+  test('a newer build says how to install it from chat (install_update, in the same group as check_update), not that it comes later', async () => {
+    const c = commit('A build to install from chat');
+    mark(c, READS_A, buildOf(c));
+    const x = await check();
+    assert.equal(x.newer, true, JSON.stringify(x));
+    assert.match(x.says, new RegExp(`To install it, ask for it in your own chat: you are asked first, in a message of its own, and only your yes installs it\\. Or, in a terminal on Spark 2: bash ~/\\.local/share/spark-console/pull\\.sh install ${c.t12}$`));
+    assert.doesNotMatch(x.says, /comes later/);
+    const { actions } = (await api('/actions')).json;
+    assert.deepEqual(['check_update', 'install_update'].map(name => actions.find(a => a.name === name)?.group), ['updates', 'updates']);
   });
 });

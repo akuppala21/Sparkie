@@ -93,16 +93,25 @@ jobs:
           build=$(cat service/server.mjs service/dig.mjs service/passkey.mjs | sha256sum | cut -c1-12)
 
           # The lock came from a job that ran the repository's code: it is data, taken only in its known shape and
-          # only for this commit, tree, run and build.
+          # only for this commit, tree, run and build. Its keys are the ones test/lock.mjs's lockFor writes
+          # (test/lock.test.mjs holds the two lists equal); evalSet is the eval's case set: its version, its file and
+          # each case's id and expect, as the console reads it (21-brain-rail.mjs evalSetLocked).
           if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ "$(wc -c < "$LOCK")" -gt 65536 ]; then echo "::error::No lock came from the suite."; exit 1; fi
           if ! jq -e -s --arg build "$build" --arg tree "$tree" --arg commit "$commit" --arg run "$run" '
               length == 1 and (.[0] | type == "object"
-                and ((keys - ["brainReads", "build", "commit", "run", "testedAt", "tree", "versions"]) == [])
+                and ((keys - ["brainReads", "build", "commit", "evalSet", "run", "testedAt", "tree", "versions"]) == [])
                 and .build == $build and .tree == $tree and .commit == $commit and .run == $run
                 and (.testedAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$"))
                 and (.brainReads | type == "string" and test("^[0-9a-f]{64}$"))
                 and (.versions | type == "object" and length > 0
-                  and all(to_entries[]; (.key | test("^[a-z][a-z0-9_]{0,63}$")) and (.value | type == "string" and test("^[0-9a-f]{12}$")))))
+                  and all(to_entries[]; (.key | test("^[a-z][a-z0-9_]{0,63}$")) and (.value | type == "string" and test("^[0-9a-f]{12}$"))))
+                and (.evalSet | type == "object" and ((keys - ["cases", "file", "version"]) == [])
+                  and (.version | type == "string" and test("^[0-9a-f]{64}$"))
+                  and .file == "test/eval/cases.json"
+                  and (.cases | type == "array" and length > 0 and length <= 500
+                    and all(.[]; type == "array" and length == 2
+                      and (.[0] | type == "string" and test("^[a-z0-9][a-z0-9-]{0,79}$"))
+                      and (.[1] | . == "act" or . == "ask" or . == "no-change" or . == "answer")))))
             ' "$LOCK" > /dev/null; then
             echo "::error::The lock isn't for commit $commit, tree $tree, build $build and this run, so nothing was marked."
             stop=$(sha256sum "$LOCK" | cut -c1-32)
