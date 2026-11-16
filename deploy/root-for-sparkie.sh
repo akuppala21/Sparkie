@@ -8,7 +8,8 @@
 #                                                             --with-root turned it on for this same helper
 #   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md):
 #                                                             Sparkie asks you before each root command, but the helper
-#                                                             runs one for any program that runs as you on that Spark.
+#                                                             runs one for any program that runs as you on that Spark;
+#                                                             each inside the net, which puts back only the ways in.
 #                                                             Never on Spark 2: --with-root --hub is refused
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
@@ -342,9 +343,11 @@ root_switch() {   # $1 on or off: root's switch on this Spark (on only after a p
     printf 'on %s helper %s\n' "$(date -u +%Y-%m-%d)" "$2" | sudo tee "$ROOT_ON.new" > /dev/null
     sudo chmod 0600 "$ROOT_ON.new"
     sudo mv -f "$ROOT_ON.new" "$ROOT_ON"
-    note "root is on here: Sparkie asks you before each root command it runs on $(hostname), and runs it inside the"
-    note "put-back net. The helper itself cannot tell who calls it: any program that runs as you on $(hostname) can now"
-    note "run a command as root through it, inside the net, with no press. Turn it off again with --without-root."
+    note "root is on here: Sparkie asks you before each root command it runs on $(hostname). The helper runs every root"
+    note "command inside the put-back net, which puts back only the ways in (SSH, Tailscale, the firewall, the sign-in"
+    note "files) unless they are kept, never anything else the command changed. The helper cannot tell who calls it: any"
+    note "program that runs as you on $(hostname) can now run a command as root through it, with no press. Turn it off"
+    note "again with --without-root."
   else
     sudo rm -f "$ROOT_ON" "$ROOT_ON.new"
     note "root is off here: the helper refuses every root command on $(hostname)."
