@@ -57,12 +57,13 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
+| `propose_update` | change | `21-selfchange` | updates | code, cancel | yes | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `install_update` | change | `21-updates` | updates | install | — | no | — |
 | `check_update` | read | `21-updates` | updates | — | — | yes | outside |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
-| `run` | read | `21-work` | core | — | — | no | outside |
+| `run` | read | `21-work` | core | work | — | no | outside |
 
 ## State files and their writers
 
@@ -107,6 +108,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
+| `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |
 | `update-asked.json` | `21-updates` | `updInstallStart`, `updResultLook`; `updInstallStart` is called by `updInstallRun`; `updResultLook` is called by `updAfterRestart` | yes | no |
 | `update-note.json` | `18-workflows` | none; the installer writes it, noteUpdate reads it | yes | no |
 | `update-result.json` | `21-updates` | none; pull.sh writes it | yes | no |
@@ -134,6 +136,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
+| `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |
 | `selfTestRecover` | `21-selftest` | 5 s after start, then each minute while the Spark doesn’t answer |
 | `tgLoop` | `21-telegram` | the long poll, one at a time, with a pause after a failure |
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |
@@ -168,7 +171,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
 | `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updTell` (21-updates), `updInstallStart` (21-updates), `counterNote` (22-passkey), `putBackAtStart` (22-putback), `putBackRoute` (22-putback), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `wayCheck` (21-runner), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updTell` (21-updates), `updInstallStart` (21-updates), `counterNote` (22-passkey), `putBackAtStart` (22-putback), `putBackRoute` (22-putback), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
 
 | Operation | Started by |
 |---|---|

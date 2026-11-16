@@ -1,4 +1,4 @@
-/* ───────── the owner's words: /status, /pause, /restart sparkie, /stop, /undo update, /help (round two, 2026-11-11) ───────── */
+/* ───────── the owner's words: /status, /pause, /restart sparkie, /stop, /undo, /undo update, /help (round two, 2026-11-11) ───────── */
 // Area: safety        Rules: R34        Tests: words.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -6,12 +6,12 @@
 // with Sparkie's model down or stuck (docs/analysis-2026-11-11/10-round-two-report.md, item 1; contract 8.13). They are
 // not tools: no agent, no /mcp or /v1, no carry-on turn. They can only look, pause agents' changes, bring back the
 // brain's own container (restart it, or start it again when it is stopped or gone: the same container, or the saved
-// setup; never another model), end Sparkie's answer in that chat (/stop), or go back a build. /undo update is the one
-// word that runs an action (undo_update, through runAction as the page, so that action's own guard decides, R31).
-// In the paired Telegram chat (21-telegram.mjs) /status, /pause, /restart sparkie, /stop and /help work too; /undo
-// update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
+// setup; never another model), end Sparkie's answer in that chat (/stop), put back its last change (/undo) or go back a
+// build. /undo and /undo update are the words that run an action (undo_last_change, also while changes are paused;
+// undo_update, through runAction as the page, so that action's own guard decides, R31). In the paired Telegram chat
+// (21-telegram.mjs) /status, /pause, /restart sparkie, /stop, /undo and /help work too; /undo update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
 // is saved as one Spark Console notice quoting the word, so Sparkie later reads it as data.
-const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo update', '/help'];
+const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/help'];
 // The whole message, trimmed and lowercased ("/restart_sparkie" too); "/pause now" or "please /pause" is not a word.
 function ownerWord(text) {
   const t = String(text).trim().toLowerCase().replace(/_/g, ' ');
@@ -138,12 +138,26 @@ async function undoWord(viewer, conv) {
   } catch (e) { return { reply: e.message }; }
 }
 
+// /undo: this chat's last change put back (undo_last_change: a command's files on a Spark, or a model change), typed.
+// The owner's own word, answered by code on the page and in the paired Telegram chat, so it works while changes are
+// paused (ownerWord, runAction's pause): a pause must never keep the owner from putting a change back (A7c).
+async function undoChangeWord(viewer, conv, via) {
+  let asked = null;
+  try {
+    const out = await runAction('undo_last_change', viewer, {}, { via, actor: 'owner', request: '/undo', chat: conv.id, conv: conv.id, canChange: true, ownerWord: true,
+      ...(via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}), onQuestion: q => { asked = q; } });
+    if (asked) return { reply: asked.question, choices: sparkieMessageChoices(asked) };
+    return { reply: out?.note || 'Undoing the last change.' };
+  } catch (e) { return { reply: e.message }; }
+}
+
 function helpWord() {
   const lines = ['These work even when Sparkie can’t answer. Type the word alone:',
     '/status: where things stand, from Spark Console’s own record',
     '/pause: pause agents’ changes (resume in your account menu → Agents and Telegram, with your passkey)',
     '/restart sparkie: restart Sparkie’s model when it’s stuck, or start it again when it’s stopped',
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
+    '/undo: put back this chat’s last change (works while changes are paused)',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
     '/help: this list'];
   lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
@@ -158,7 +172,7 @@ function helpWord() {
 // The page's chat route calls this for the owner's own chat (never one that carries `agent`). The answer comes back in
 // the same event stream as Sparkie's, so the page needs nothing new.
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
-  const undo = word === '/undo update' ? await undoWord(viewer, conv) : null;
+  const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
     : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;

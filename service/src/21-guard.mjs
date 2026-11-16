@@ -2,17 +2,19 @@
 // Area: features        Rules: R60, R42        Tests: root-helper.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// The lock-out net (R60; design A 2.8, step A13a). The root helper's `run --net` copies the ways in, writes restore.sh
-// beside them and arms a timer in the Spark's own systemd before the change runs; when nothing differs afterwards it
-// disarms by itself, and otherwise what differs goes back when the timer fires unless `keep` stopped it. Nothing in the
-// console calls these yet (A13b turns the net on): guardScript builds the one script a call runs on a Spark, as
-// helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came back.
-// The guard's id is the call's own, and keep names it again.
+// The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes
+// restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; it disarms only on the
+// console's word (`keep`, after the check from outside), and otherwise what differs goes back when the timer fires, or
+// at once with `putback`. Nothing in the console calls these yet (A13b's console half turns the net on): guardScript
+// builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
+// ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
 function guardScript(node, verb, { id, command = '', seconds = 60 }) {
+  // (the id goes into a shell line: only the shape every helper call has)
+  if (!/^[a-z0-9]{8,40}$/.test(String(id))) throw new Error('A guard id is 8 to 40 of a-z and 0-9.');
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const call = verb === 'run'
     ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir "$HOME" -- ${q(command)}`
-    : 'keep --id "$id"';
+    : verb === 'putback' ? 'putback --id "$id"' : 'keep --id "$id"';
   return [
     `id=${id}; h=${HELPER_AT}`,
     "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
@@ -22,22 +24,33 @@ function guardScript(node, verb, { id, command = '', seconds = 60 }) {
     `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
-// What the helper said of the net: armed (and when it goes back), disarmed (nothing differed), open (what differs),
-// kept, already put back (and when), or refused (why); for run, the command's own end. Only lines that begin with the
-// call's id count: what the command printed is never read as the helper's.
+// The helper's sentences the net reads (what follows "<id> " on its line), kept here so this part stands alone (the
+// tests load it by itself); own-programs.test checks each against deploy/spark-console-root, as it does the look's.
+const GUARD_SAYS = {
+  end: /^end (\d{1,3}|time)$/,
+  netArmed: /^net armed: the ways in go back at (\S+) /,
+  netOpen: /^net open: (.*)$/,
+  kept: /^kept: |^kept already: /,
+  putBack: /^(?:net |already )?put back at (.*)$/,
+};
+// What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
+// own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
+// so a line the command printed is never read as the helper's. keep and putback print the helper's lines alone.
 function guardAnswer(id, out) {
-  const own = String(out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1));
-  const find = p => own.find(l => l.startsWith(p))?.slice(p.length);
-  const end = own.map(l => /^end (\d{1,3}|time)$/.exec(l)).filter(Boolean).pop();
-  const said = find('console '), refused = find('refused: ');
+  const lines = String(out).split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  const own = l => (String(l).startsWith(`${id} `) ? String(l).slice(id.length + 1) : null);
+  const last = own(lines.at(-1)) ?? '', first = own(lines[0]) ?? '';
+  const end = GUARD_SAYS.end.exec(last);
+  const net = end ? own(lines.at(-2)) ?? '' : last;
+  const after = re => re.exec(net)?.[1] ?? null;
   return {
-    ...(said != null ? { said } : {}),
-    ...(refused != null ? { refused } : {}),
-    goesBackAt: /^the ways in go back at (\S+) /.exec(find('net armed: ') || '')?.[1] || null,
-    disarmed: find('net disarmed: ') != null,
-    open: find('net open: ') ?? null,
-    kept: find('kept: ') != null || find('kept already: ') != null,
-    putBackAt: find('already put back at ') ?? null,
+    ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
+    ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
+    goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
+    open: after(GUARD_SAYS.netOpen),
+    kept: !end && GUARD_SAYS.kept.test(last),
+    putBackAt: after(GUARD_SAYS.putBack),
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
