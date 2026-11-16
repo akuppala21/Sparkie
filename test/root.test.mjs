@@ -220,3 +220,19 @@ test('as root, code the command doesn’t show is never run: a script it names, 
   assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: 'bash runs what comes in through < or a pipe.' }),
     'Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (bash runs what comes in through < or a pipe), so that code isn’t on the button and can change before your press.');
 });
+
+// From the helper's reviewer, root-mount: root's unit has its own mount table, so a mount, unmount or swap made in it never
+// reaches the Spark, and was told as done and kept.
+test('as root, a mount, unmount or swap is refused with how to do it instead: read by the sorter’s own reader, past wrappers and into sh -c', async () => {
+  const shell = readFileSync(join(REPO, 'service', 'src', '20-shell.mjs'), 'utf8'), src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8');
+  const grab = re => re.exec(src)?.[0];
+  assert.ok(grab(/^function rootMounts\([\s\S]*?\n\}$/m), 'rootMounts');
+  const rootMounts = new Function(`${shell}\n${grab(/^const ROOT_MOUNTS = .*;$/m)}\n${grab(/^const ROOT_WRAPS = .*;$/m)}\n${grab(/^function rootMounts\([\s\S]*?\n\}$/m)}\nreturn rootMounts;`)();
+  for (const [c, prog] of [['mount /dev/sdb1 /data', 'mount'], ['umount /data', 'umount'], ['env FOO=1 swapon /swapfile', 'swapon'], ['timeout 10 swapoff -a', 'swapoff'],
+    ["bash -c 'umount /data'", 'umount'], ['zfs mount tank/data', 'zfs mount'], ['zpool import tank', 'zpool'], ['echo $(mount -a)', 'mount'], ['cd /mnt && umount -l x', 'umount']]) assert.equal(rootMounts(c), prog, c);
+  for (const c of ['zfs list', 'findmnt', 'cat /etc/fstab', 'systemctl start data.mount', 'echo mount']) assert.equal(rootMounts(c), null, c);
+  // (end to end, the owner's own call: refused before anything is asked)
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'mount /dev/sdb1 /data', root: true } });
+  assert.equal(r.status, 403, r.text);
+  assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.');
+});

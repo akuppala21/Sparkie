@@ -31,6 +31,31 @@ function rootUnseen(sorted) {
   if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
   return null;
 }
+// A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
+// command's first word past wrappers, into $( … ) and sh -c '…'): root's unit has its own mount table, so what it mounts,
+// unmounts or swaps never reaches the Spark (systemd.exec). Its name, or null; a command the reader can't read is left to
+// the sorter, which asks it.
+const ROOT_MOUNTS = new Set(['mount', 'umount', 'swapon', 'swapoff', 'zpool']);
+const ROOT_WRAPS = new Set(['env', 'nice', 'ionice', 'nohup', 'timeout', 'stdbuf', 'setsid', 'command', 'exec', 'chrt', 'taskset', 'flock', 'xargs', 'busybox']);
+function rootMounts(command, depth = 0) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return null; }
+  const walk = list => {
+    for (const pipe of list) for (const cmd of pipe) {
+      if (cmd.group) { const g = walk(cmd.group); if (g) return g; continue; }
+      const words = cmd.words.map(w => w.text);
+      for (const w of cmd.words) for (const sub of w.subs || []) { const g = walk(sub); if (g) return g; }
+      let k = 0;
+      while (k < words.length && ROOT_WRAPS.has(words[k].split('/').pop())) { k++; while (k < words.length && /^-|^\d|^[A-Za-z_]\w*=/.test(words[k])) k++; }
+      const prog = (words[k] || '').split('/').pop(), rest = words.slice(k + 1);
+      if (ROOT_MOUNTS.has(prog) || (prog === 'zfs' && /^(?:mount|unmount|umount)$/.test(rest[0] || ''))) return prog === 'zfs' ? `zfs ${rest[0]}` : prog;
+      // (a shell given its command as a word: read that word too, twice deep)
+      if (depth < 2 && /^(?:ba|da|z|k|a)?sh$/.test(prog)) { const c = rest.findIndex(x => /^-\w*c$/.test(x)); if (c >= 0 && rest[c + 1] != null) { const g = rootMounts(rest[c + 1], depth + 1); if (g) return g; } }
+    }
+    return null;
+  };
+  return walk(items);
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -51,6 +76,9 @@ async function rootChange(input, viewer, ctx = {}) {
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
+  const mounts = rootMounts(command);
+  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });
