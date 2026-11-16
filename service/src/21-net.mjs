@@ -231,7 +231,8 @@ const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|whi
 // (a way-in word that only names another thing, "the shell script", "the users table", "a password generator", is not
 // what changes: the word after it names the thing)
 const NET_NAMED = /^(?:scripts?|tables?|apps?|applications?|generators?|extensions?|drivers?|pictures?|photos?|chats?|folders?|director(?:y|ies)|projects?|repos?|repositor(?:y|ies)|pages?|tests?|tools?|programs?|code|class(?:es)?|functions?|columns?|fields?|bots?|plugins?|themes?|games?|dashboards?|demos?|tutorials?|docs?|notebooks?|models?|datasets?)\b/i;
-function netAsks(node, text) {
+// why: told whether a change of the lock-out class was there but not as an order (why.notOrder: the order rule, A-18).
+function netAsks(node, text, why = {}) {
   // (the owner's own sentences only: a pasted log, a code block or a > quote holds no ask of theirs, ownSentences)
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
@@ -240,20 +241,24 @@ function netAsks(node, text) {
     if (NET_QUESTION.test(body) || (!opened && /\?$/.test(s)) || INFO_START.test(body.replace(new RegExp(NET_LEAD, 'i'), ''))) continue;
     for (const m of body.matchAll(NET_ASK)) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
-      if (NET_STATE.test(pre) || NET_IF.test(pre) || !netOrderAt(s, lead + m.index)) continue;
+      if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
       const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
-      for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
+      if (![...what.matchAll(new RegExp(NET_WHAT.source, 'gi'))].some(w => !NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, '')))) continue;
+      // (the change and the way in are there, but not where an order puts them: told of, reported, or after a statement)
+      if (!netOrderAt(s, lead + m.index)) { why.notOrder = true; continue; }
+      return true;
     }
   }
   return false;
 }
-// The seam for the intent sorter's order rule (A-18, round two with the outside reviewer): whether the change word that
-// starts at index `at` of the owner's sentence `s` gives an order, being the sentence's first word or after one of a
-// short closed list of openers, and not narration ("I used to restart tailscale …") or reported speech ("my colleague
-// says to turn the firewall off …"), which ask for nothing. The intent builder names that function and it is called
-// here; until it lands, every change word the checks above let through counts, as before.
-function netOrderAt(s, at) { return typeof s === 'string' && at >= 0; }
+// The intent sorter's order rule (A-18, round two with the outside reviewer; orderAt, 16-actions.mjs, one function for
+// every reader of the owner's words as an ask): whether the change word that starts at index `at` of the owner's
+// sentence `s` is where an order puts it: the sentence's first word, after nothing but a short closed list of openers
+// ("as root on Spark 3,", "please", "can you"). Narration ("I used to restart tailscale …"), reported speech ("my
+// colleague says to turn the firewall off …") and an order after a statement in one sentence ("I can't log in to
+// Spark 3, reset my password") ask for nothing here: the refusal says to give it as an order on its own.
+function netOrderAt(s, at) { return orderAt(s, at); }
 function netWhose(node, viewer, ctx) {
   if (ctx.via === 'workflow') return 'a saved workflow’s step';
   if (ctx.via === 'watcher') return 'a healing fix';
@@ -263,7 +268,8 @@ function netWhose(node, viewer, ctx) {
   // (what was read, by its record: a read that returned, workRead in 14-rounds.mjs. A call that was refused and ran
   // nothing, "set root" or "leave out sudo", read nothing, whatever the turn's readOutside says of it)
   if (Array.isArray(ctx.reads) && ctx.reads.length) return NET_READ_FIRST;
-  if (!netAsks(node, netNowSaid(ctx))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  const why = {};
+  if (!netAsks(node, netNowSaid(ctx), why)) return why.notOrder ? NET_NOT_ORDER : `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
 // The owner's message this turn began with, as the chat keeps it: '' for a carry-on turn (its newest message is marked
@@ -274,11 +280,13 @@ function netNowSaid(ctx) {
   return m && !m.auto && !m.from ? String(m.content || '') : '';
 }
 const NET_READ_FIRST = 'text Sparkie read first (a log, a page or a command’s output)';
+const NET_NOT_ORDER = 'your words, but not as an order of its own (they tell of a change, or give it after a statement in the same sentence)';
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
 // how to ask for one: after a read, ask again before Sparkie reads anything; else, say it in one sentence.
 const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. ${from === NET_READ_FIRST
   ? 'To ask, say it again in a new message: it counts only before Sparkie reads anything for it.'
-  : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
+  : from === NET_NOT_ORDER ? `To ask, say it as an order on its own, in a sentence of its own: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`
+    : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
 
 // From the ladder (workChange), for every change the sorter calls lock-out on a compute Spark, as the owner. As the
 // owner it can change nothing: the run wall keeps ~/.ssh and the shell's start files read-only, and ufw, usermod and

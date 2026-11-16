@@ -481,6 +481,26 @@ test('a change whose unit never starts runs nothing: said so, its guard taken aw
 });
 
 // It kills this file's console: only the tests that need no fleet come after it.
+// A-18, end to end: the owner's words that tell of a lock-out change, report one, or give it after a statement in the
+// same sentence are refused, never asked, nothing runs, and the refusal says to give it as an order on its own; the
+// same change given as a plain order is asked.
+test('narration, reported speech and an order after a statement are refused, never asked, saying to give it as an order on its own; a plain order is asked', { timeout: 240000 * SLOW }, async () => {
+  keysReset();
+  const NOT_ORDER = 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from your words, but not as an order of its own (they tell of a change, or give it after a statement in the same sentence). To ask, say it as an order on its own, in a sentence of its own: what to change, and on which Spark. For example: “Add my laptop’s SSH key on Spark 3.”';
+  for (const words of ['I used to restart tailscale on spark 3 every week.', 'My colleague says to turn the firewall off on spark 3.', 'I can’t log in to spark 3, reset my password']) {
+    const chat = await newChat();
+    script([{ match: `^${words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, rounds: [[RUN(ADD, { root: true })]] }]);
+    try { await say(chat, words); } finally { noScript(); }
+    assert.equal((await chatMessages(chat)).filter(x => x.danger).length, 0, `${words}: refused, never asked`);
+    assert.equal(sentBack(words)[0]?.error, NOT_ORDER, words);
+  }
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  const chat = await newChat(), a = await ask(chat, 'Reset my password on spark 3', ADD);
+  assert.ok(a.m, 'the plain order is asked');
+  await press(chat, a.no.id);
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran on No');
+});
+
 // Round two with the outside reviewer (A-14, the helper's new answers, through the rehearsed helper). What the owner can
 // do after a put-back that did not finish: see what did not go back, have it tried again, or keep it as it stands.
 const unfinishedSaid = async (chat, p, re) => waitFor(async () => [p?.json?.message?.content || '', ...(await chatMessages(chat)).map(m => m.content || '')].find(c => re.test(c)), { timeout: 150000, what: `words like ${re}` });
@@ -639,7 +659,10 @@ const wordsTest = (swap = {}) => {
   const consts = net.match(/^const NET_[A-Z_]+ = /gm).map(x => x.slice(6, -3)).filter(n => !['NET_ON', 'NET_FILE', 'NET_AFTER_S', 'NET_PROBES', 'NET_LIVE', 'NET_OPEN'].includes(n) && !/^NET_(?:SLACK|KEPT|LATE)/.test(n));
   const chats = { conversations: [] };
   const own = /^function ownSentences\([\s\S]*?\n\}$/m.exec(acts)?.[0] || 'function ownSentences(t) { return t; }';
-  const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START', 'OWN_QUOTE_WORDS', 'OWN_PASTED'].map(n => grab(acts, n)).join('') + own
+  // (the intent sorter's order rule, orderAt, with its word lists: 16-actions.mjs, A-18)
+  const order = ['ORDER_LEAD', 'ORDER_WHERE', 'ORDER_YOU', 'ORDER_OPEN', 'ORDER_OPENERS', 'ORDER_JOIN', 'ORDER_QUOTE', 'WORK_NOUN', 'ORDER_NOUN', 'ORDER_NOUN_START'].map(n => grab(acts, n)).join('')
+    + (/^function orderAt\([\s\S]*?\n\}$/m.exec(acts)?.[0] || assert.fail('orderAt'));
+  const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START', 'OWN_QUOTE_WORDS', 'OWN_PASTED'].map(n => grab(acts, n)).join('') + own + order
     + consts.map(n => grab(net, n)).join('') + ['netAsks', 'netOrderAt', 'netWhose', 'netNowSaid'].map(fn).join('\n') + '\nreturn { netAsks, netWhose };';
   return { chats, ...new Function('NODES', 'chatData', 'sparkName', '__swap', code)([{ id: 'spark3' }, { id: 'spark4' }], () => chats, n => `Spark ${n.id.slice(5)}`, swap) };
 };
@@ -661,7 +684,7 @@ test('a way-in word counts only as what the verb changes: not after a place word
     'Update my profile picture script on spark 3', 'Install the ssh extension for vscode on spark 3', 'update the network drivers on spark 3',
     'create a group chat app on spark 3', 'Rename the users table in the db on spark 3', 'make a password generator on spark 3']) assert.equal(netAsks(node, s), false, s);
   for (const s of ['open port 8022 on spark 3', 'allow user bob to sign in on spark 3', 'turn off Tailscale SSH on spark 3', 'can you add my laptop’s ssh key on spark 3?',
-    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password',
+    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'Reset my password on spark 3.',
     'add bob to the sudo group on spark 3', 'add an alias to my .bashrc on spark 3', 'change the firewall rules on spark 3', 'change the password of bob on spark 3']) assert.equal(netAsks(node, s), true, s);
 });
 
@@ -677,6 +700,23 @@ test('each change word the checks let through is put to the order rule (its seam
   // (the seam as it stands: every change word the checks let through counts, as before)
   const { netAsks: today } = wordsTest();
   for (const s of ['restart tailscale on spark 3', 'please add my key on spark 3', 'can you turn off Tailscale SSH on spark 3?']) assert.equal(today(node, s), true, s);
+});
+
+// A-18 with the intent sorter's order rule in (orderAt): narration, reported speech and an order after a statement in one
+// sentence ask for nothing, and are told apart (why.notOrder) so the refusal says to give it as an order on its own; a
+// plain order still asks.
+test('narration, reported speech and an order after a statement ask for no lock-out change, and are told as not an order; a plain order still asks', () => {
+  const { netAsks } = wordsTest(), node = { id: 'spark3' };
+  for (const s of ['I used to restart tailscale on spark 3 every week.', 'My colleague says to turn the firewall off on spark 3.', 'I can’t log in to spark 3, reset my password']) {
+    const why = {};
+    assert.equal(netAsks(node, s, why), false, s);
+    assert.equal(why.notOrder, true, s);
+  }
+  for (const s of ['Restart tailscale on spark 3.', 'Turn the firewall off on spark 3.', 'Reset my password on spark 3.', 'I can’t log in to spark 3. Reset my password on spark 3.', 'as root on spark 3, add the other key']) assert.equal(netAsks(node, s), true, s);
+  // (a question is no order either, and not this refusal: it asks to be told)
+  const why = {};
+  assert.equal(netAsks(node, 'why is ssh open on spark 3?', why), false);
+  assert.equal(why.notOrder, undefined);
 });
 
 // The final read's ssh-probe: with the console's SSH shared (a ControlMaster in its ssh settings), the check after a change
