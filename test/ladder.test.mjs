@@ -552,6 +552,22 @@ test('a script is hashed where the change reads it (dir, ~/work by default): the
   assert.equal(text('work/ran-here.txt'), 'from work\n', 'the changed script did not run on the old yes');
 });
 
+test('a script\'s hash is pinned only where the folder it is read from is plain (none, or one first cd <folder> &&); any other cd, or a name with .., says its text isn\'t pinned', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('work/a/b'), { recursive: true });
+  writeFileSync(at3('work/a/x.sh'), 'echo a > ax.txt\n');
+  writeFileSync(at3('work/a/b/x.sh'), 'echo ab\n');
+  const chat = await newChat(), r = await turn(chat, 'fix it with the a script', [[RUN('cd a && bash x.sh', null)]]);
+  const [one] = sentBack('fix it with the a script');
+  assert.ok((one?.question || '').includes(`\nIt runs ~/work/a/x.sh (SHA-256 ${sha('echo a > ax.txt\n').slice(0, 12)}…); what that script reads later isn’t checked.`), JSON.stringify(one));
+  await choose(chat, r.choices.find(c => c.label === 'No').id);
+  for (const [n, cmd] of [[1, 'cd a && cd b && bash x.sh'], [2, '{ cd a; bash x.sh; }'], [3, "bash -c 'cd a && bash x.sh'"], [4, 'mkdir -p c && cd c && bash ../a/x.sh']]) {
+    const c = await newChat(), words = `fix it with the x script ${n}`, rr = await turn(c, words, [[RUN(cmd, null)]]);
+    const [q] = sentBack(words);
+    assert.ok(/\nIt runs [^\n]*x\.sh; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen\./.test(q?.question || '') && !/SHA-256/.test(q.question), `${cmd}: ${JSON.stringify(q)}`);
+    await choose(c, rr.choices.find(x => x.label === 'No').id);
+  }
+});
+
 test('each button keeps its own ask: of two buttons for one command in a chat, the second, pressed after its script changed, is asked again', { timeout: 120000 * SLOW }, async () => {
   mkdirSync(at3('work'), { recursive: true });
   writeFileSync(at3('work/twice.sh'), 'echo first >> twice.txt\n');

@@ -16887,36 +16887,40 @@ function workTailnetSsh() {
   return { on, unknown };
 }
 
-// Where a command reads each script it runs (the A7c review, fix 1): a name as typed, from the folder the change starts
-// in (dir) and from each folder a cd or pushd in it names (from dir); a ~ or whole path as it is. A cd the ladder can't
-// read (a $, a quote, a pattern, a ..) is said on the button: what runs after it isn't hashed.
+// Where a command reads each script it runs, only where that is plain (the A7c review, fix 1): a script named as
+// written (no $, quote, pattern or ..), from the folder the change starts in (dir), or from the one folder a first
+// `cd <plain folder> &&` names; a ~ or whole path as it is. Anything else (a second cd, a cd anywhere else or with an
+// option, a script's name that isn't plain) pins nothing: the button says the script's text isn't pinned by a hash.
+const WORK_PLAIN = /^[^\s$`'"\\*?[\]{}]+$/, workPlainName = t => WORK_PLAIN.test(t) && !t.startsWith('-') && !/(?:^|\/)\.\.?(?:\/|$)/.test(t);
 function workScriptPaths(scripts, dir, command) {
-  const bases = [dir], odd = [], ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
-  for (const m of String(command).matchAll(/(?:^|[;&|(]\s*)(?:cd|pushd)(?:\s+(?:--\s+)?([^\s;&|)]+))?/g)) {
-    const t = m[1] ?? '~';
-    if (/[$`'"\\*?[\]{}]|(?:^|\/)\.\.?(?:\/|$)/.test(t)) { odd.push(t); continue; }
-    const b = ok(t) ? t : `${dir}/${t}`.replace(/\/+$/, '');
-    if (!bases.includes(b)) bases.push(b);
+  const c = String(command), cds = [...c.matchAll(/(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])/g)].length;
+  const first = /^\s*cd\s+(\S+)\s*&&/.exec(c), ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
+  const base = cds === 0 ? dir : cds === 1 && first && workPlainName(first[1]) ? (ok(first[1]) ? first[1] : `${dir}/${first[1]}`).replace(/\/+$/, '') : null;
+  const paths = [], unpinned = [];
+  for (const s of scripts) {
+    if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null)) { unpinned.push(s); continue; }
+    const p = ok(s) ? s : `${base}/${s.replace(/^(?:\.\/)+/, '')}`;
+    if (!paths.includes(p)) paths.push(p);
   }
-  const paths = [];
-  for (const s of scripts) for (const p of (ok(s) ? [s] : bases.map(b => `${b}/${s.replace(/^(?:\.\/)+/, '')}`))) if (!paths.includes(p)) paths.push(p);
-  return { paths: paths.slice(0, WORK_SCRIPTS), bases, odd };
+  return { paths: paths.slice(0, WORK_SCRIPTS), unpinned };
 }
 // The scripts a command runs, hashed on the Spark now where it reads them, through the root helper's look (R42): what
 // the look wall hides reads as not there, and a key's name is refused before it, so a hash never says more of a file
-// than a look may. {sums: {path: SHA-256, or null when it isn't a file there}, bases, odd, names}; or, when the look
-// gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no sums and unread: why.
+// than a look may. {sums: {path: SHA-256, or null when it isn't a file there}, unpinned (the names not pinned)}; or,
+// when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no sums and unread:
+// why.
 async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   const list = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s)).slice(0, WORK_SCRIPTS);
-  if (!list.length) return { sums: {}, bases: [dir], odd: [] };
-  const { paths, bases, odd } = workScriptPaths(list, dir, command);
+  if (!list.length) return { sums: {}, unpinned: [] };
+  const { paths, unpinned } = workScriptPaths(list, dir, command);
+  if (!paths.length) return { sums: {}, unpinned };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
   const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null); then printf 'h${i} %s\\n' "\${h%% *}"; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
   const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) ([0-9a-f]{64}|-)$/gm)].map(m => [Number(m[1]), m[2]]));
-  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, bases, odd, names: list, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
-  return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), bases, odd, names: list };
+  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
+  return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), unpinned };
 }
 // Why the scripts couldn't be read, by the look's answer, for the button.
 const WORK_UNREAD = { none: 'the root helper isn’t set up there yet', unknown: 'its root helper is one this build doesn’t know', nosudo: 'the root helper’s sudo line isn’t there',
@@ -16944,13 +16948,10 @@ function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topD
       ...(wide.internet ? [RUNNER_WIDE.internet] : [])] };
 }
 // Each script's hash, or why it has none.
-function workScriptLines(scripts, dir = RUNNER_DIR) {
-  const { sums = {}, bases = [dir], odd = [], names = [], unread = null } = scripts;
+function workScriptLines(scripts) {
+  const { sums = {}, unpinned = [], unread = null } = scripts, not = n => `It runs ${n}; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen.`;
   if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`];
-  const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
-  for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a file in ${bases.join(' or ')} now.`);
-  if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  return lines;
+  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120)))];
 }
 
 // The button's words, built by code: the exact command, the Spark, why it is asked, the wall it runs in after the yes
@@ -16959,7 +16960,7 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`, ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts, dir)].join('\n');
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
 async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
@@ -16970,7 +16971,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts, dir)] } })
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts)] } })
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
