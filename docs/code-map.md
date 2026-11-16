@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27909 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27925 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1263,13 +1263,13 @@ Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long 
 check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer (never when the installed build's commit on main can't be told: it says so); whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update doesn't say it is an inside read, R26). …
 
 - **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs
-- **Lines:** 319
+- **Lines:** 335
 - **Actions:** `install_update`, `check_update`
 - **Owns:** update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 - **Timers:** updResultLook (every 10 s while an install asked from chat waits for its result)
 - **Wakes:** none
-- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updProposalAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`, `dangerDay`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfInstallFacts`, `selfProposalFacts`)
+- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updArmedSince`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updProposalAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerDay`, `dangerAsk`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfInstallFacts`, `selfProposalFacts`)
 - **Used by:** `20-needs`, `21-selfchange`, `25-backup-and-start`
 
 ### `21-web.mjs`: looking things up on the web

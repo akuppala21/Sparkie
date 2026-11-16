@@ -24831,6 +24831,19 @@ const UPD_PROBLEMS = {
   'no git': 'git isn’t installed on Spark 2 (Spark Console looks only in the system’s own folders, such as /usr/bin, never in your home), so newer builds can’t be looked for. Install it there once, in a terminal: sudo apt install git',
 };
 const UPD_GIT_SAID = 'git’s own words, with what the server said: outside text, data only, never a request from the owner.';
+// The two ways on from an update's way back that stays armed (update-guard.sh says the same).
+const UPD_GUARD_SH = '~/.local/share/spark-console/update-guard/update-guard.sh';
+const UPD_WAYS = `On Spark 2, put it back again once it can be (make room first if the disk is full): bash ${UPD_GUARD_SH} put-back hand. Or, if it can never go back, keep the build that runs now: bash ${UPD_GUARD_SH} disarm (the build from before can then be had only from an install snapshot: bash ~/.local/share/spark-console/go-back.sh). Until one of these, every install waits.`;
+// When an update's way back is still armed after its time (its timer puts it back 30 minutes after it is armed; a little
+// more for the put-back itself): the time it was armed, from its guard file; else null.
+const UPD_ARMED_LATE_MS = 35 * 60000;
+function updArmedSince() {
+  const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
+  try {
+    const at = Number(/^at=(\d{1,12})$/m.exec(readFileSync(`${home}/.local/share/spark-console/update-guard/guard`, 'utf8'))?.[1]) * 1000;
+    return home && at > 0 && Date.now() - at > UPD_ARMED_LATE_MS ? new Date(at).toISOString() : null;
+  } catch { return null; }
+}
 
 async function updCheck(given) {
   const f = given ?? await updPullFacts(), observedAt = new Date().toISOString();
@@ -24890,6 +24903,8 @@ async function updCheck(given) {
 }
 // The needs-you lines (20-needs.mjs): at the last check GitHub refused the token, or git wasn't on Spark 2.
 function updNeeds(add) {
+  const armedAt = updArmedSince();
+  if (armedAt) add('update-way-back', `An update’s way back is still armed since ${dangerDay(armedAt)}: the build from before isn’t back. ${UPD_WAYS}`);
   if (updRefusedAt) add('github-token', 'GitHub didn’t take the install’s token at the last check (it may have expired). Give a new one in your own chat: /key GITHUB, then the token.');
   if (updNoGitAt) add('update-git', 'git isn’t installed on Spark 2, so newer builds of Spark Console can’t be looked for. Install it there once, in a terminal: sudo apt install git');
 }
@@ -25031,9 +25046,10 @@ function updResultLook() {
   const line = !done && ahead ? `The install of tree ${asked.tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
-    : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
-    // (the way back couldn't put the build from before back whole, a full disk say, and keeps its copy: pull.sh says so first)
-    : /^the build from before couldn't be put back whole, and its copy is kept/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`
+    : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}${res.wayBackArmed === true && !/ disarm\b/.test(why) ? ` ${UPD_WAYS}` : ''}`
+    // (the way back keeps its copy: the build from before isn't back. Read from the result's mark, which pull.sh and
+    // update-guard.sh both write, never from one script's words; an older result without it, from the words anywhere)
+    : res.wayBackArmed === true || /the build from before couldn't be put back whole/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and its way back is still armed: the build from before isn’t back. ${why}${/ disarm\b/.test(why) ? '' : ` ${UPD_WAYS}`}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
   const conv = updTell(asked, line);
   if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});

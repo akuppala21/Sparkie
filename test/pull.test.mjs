@@ -1033,6 +1033,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
       const r2 = await byHand(push(treeFiles(81), 'From outside, while that way back stays armed'));
       assert.notEqual(r2.code, 0, r2.out);
       assert.match(r2.out, /That update's way back is still armed: its build from before couldn't be put back whole .*This install changed nothing\./);
+      assert.match(r2.out, /Or, if it can never go back, give it up and keep the build that runs now: bash \S+\/update-guard\.sh disarm/);
       assert.equal((await health(home))?.build, buildOf(base.files));
       assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
     } finally {
@@ -1041,6 +1042,30 @@ describe('the way back for an update from GitHub, armed by the build installed n
     }
     assert.equal(r.status, 0, r.stdout + r.stderr);
     await fromBefore({ out: r.stdout }, mk);
+  });
+
+  // (the final read of round two, S-4: an install from chat was told only "couldn't be armed (see above)")
+  test('an install from GitHub while an earlier way back stays armed is refused with that reason, and both ways on, in its result; disarm is the way on when it can never go back', CASE, async () => {
+    needs('kept');
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    try {
+      const g = push(treeFiles(82), 'While an earlier way back stays armed');
+      mark(g);
+      const was = installedNow(home), p = await pull(home, ['install', g.t12]);
+      assert.equal(p.code, 1, p.out);
+      assert.match(p.out, /The way back couldn't be armed \(see above\), so the new build wasn't installed\. Nothing was changed\./);
+      const res = resultOf(home);
+      assert.deepEqual([res.tree, res.result, res.wayBackArmed], [g.t12, 'refused', true]);
+      assert.match(res.why, /^The way back couldn't be armed: An earlier update's way back is still armed \(\S+\)\. To go on: put it back again .*bash \S+\/update-guard\.sh put-back hand\. Or, if it can never go back, give the way back up and keep the build that runs now: bash \S+\/update-guard\.sh disarm/);
+      assert.deepEqual(installedNow(home), was);
+    } finally {
+      // (the way on when a copy can never go back: the build that runs now stays)
+      r = bash(share('update-guard', 'update-guard.sh'), 'disarm');
+    }
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    nothingArmed();
+    assert.equal((await health(home))?.build, buildOf(base.files));
   });
 
   test('an install made outside an armed update (from the Mac, or by hand) disarms that update\'s way back first, so its timer can\'t undo it', CASE, async () => {
@@ -1615,11 +1640,13 @@ describe('the way back when its copy back fails or its lock is held (A-13)', { c
     newBuild(h);
     let r = putBack(h, { limit: true });
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /couldn't be put back whole: it couldn't be copied back \(is the disk full\?\), so nothing was changed and the new build still runs\. Its copy is kept, and the way back stays armed\./);
+    assert.match(r.stdout, /couldn't be put back whole: it couldn't be copied back \(is the disk full\?\), so this run changed none of its files\. Its copy is kept, and the way back stays armed\. To go on: put it back again .*put-back hand\. Or, if it can never go back, .*bash \S+\/update-guard\.sh disarm/);
     assert.deepEqual([server(h), get(h, 'spark-console/index.html'), get(h, 'spark-console-service/config.json')], ['new, whole', 'new page\n', '{"new":true}\n'], 'the live files are the new build, whole');
     assert.ok(armed(h) && existsSync(gshare(h, 'update-guard', 'service', 'server.mjs')), 'the copy and its guard file are kept');
     assert.deepEqual(calls(h).filter(l => /stop spark-console-api|disable --now/.test(l)), [], 'the service wasn’t stopped, and the timer is still on');
-    assert.match(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).why, /^a test; the build from before couldn't be put back whole: .*Its copy is kept: bash \S+\/update-guard\.sh put-back hand$/);
+    const res = JSON.parse(get(h, '.local/state/spark-console/update-result.json'));
+    assert.match(res.why, /^a test; The build from before the update couldn't be put back whole: .*Its copy is kept, and the way back stays armed\. To go on: put it back again/);
+    assert.equal(res.wayBackArmed, true);
     assert.ok(!existsSync(join(h, '.spark-console-service.putback')) && !existsSync(join(h, '.spark-console.putback')), 'nothing left beside');
     // Room again: the same command puts the build from before back whole; nothing answers here, and the copy goes.
     r = putBack(h);
