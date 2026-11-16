@@ -77,6 +77,19 @@ test('C-6, R1-08: a later sentence that calls the work off wins, for every kind 
   }
 });
 
+test('S-3: a work word asks for work only as an order; words that describe or ask about a build, an update or a change ask for none', () => {
+  for (const words of ['Summarize the build log on Spark 3', 'The build on Spark 3 is slow', 'I think the last update broke something on Spark 3',
+    'Spark 3 seems slow. Any change since yesterday?', 'Build failed on spark 3', 'Spark 3’s update broke the notes']) {
+    assert.ok(!asks(words, 'work'), `${words}: ${JSON.stringify(changeIntent(words))}`);
+  }
+  for (const words of ['fix the notes on spark 3', 'please clean up ~/work on spark 3', 'can you update the packages on spark 3', 'go ahead and install htop on spark 3',
+    'Spark 3: set up the venv', 'stop gemma on spark 4 and then build the docs on spark 3', 'I want you to change the config on spark 3', 'second change on spark 3']) {
+    assert.ok(asks(words, 'work'), `${words}: ${JSON.stringify(changeIntent(words))}`);
+  }
+  // ("don't fix …" still rules work out, wherever the word stands)
+  assert.deepEqual(changeIntent('fix the notes on spark 3 but don\'t fix the config').mixed, ['work']);
+});
+
 test('the reader stays short work on megabytes of the worst input', () => {
   const n = 400000;
   for (const text of ['wait '.repeat(n), 'no wait, '.repeat(n), '`'.repeat(n), '"a '.repeat(n), '```'.repeat(n), 'a:\n'.repeat(n), '2026-11-15 10:00 x\nplain\n'.repeat(n / 10),

@@ -73,3 +73,8 @@ test('C-6, R1-08: a change called off in the next sentence is asked, never run a
   assert.ok(p.choices.length > 0, 'a button');
 });
 
+test('S-3: "The build on Spark 3 is slow" asks for no work: a first-round rm -rf build is asked, and the folder stays', { timeout: 120000 * SLOW }, async () => {
+  const r = await turn(await newChat(), 'The build on Spark 3 is slow', [[RUN('rm -rf build')]]);
+  assert.ok(['needs-ok', 'question'].includes(r.tools[0]?.outcome), shown(r.tools));
+  assert.equal(text('build/keep.txt'), 'kept\n');
+});
