@@ -205,7 +205,7 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workScriptLines(scripts)];
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts)];
   return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
 // The text of a command's button, built by code (Spark 2's too: 21-hub.mjs calls this): its first line, then the
@@ -217,6 +217,15 @@ const WORK_UNPLAIN = /(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u
 function workCommandText(head, command, lines, more = '') {
   const c = String(command);
   return WORK_UNPLAIN.test(c) ? `${[head, ...lines].join('\n')}${more}\nThe exact command:\n${c}` : `${[head, `$ ${c}`, ...lines].join('\n')}${more}`;
+}
+// What it runs that the command doesn't show, by the sorter's own words (unshown: a script fed by a redirect or a pipe,
+// -m module, a build tool's or a package's own scripts, start-file variables): one line on either ask, nothing when the
+// sorter says nothing. Never a reason to ask by itself.
+function workUnshownLines(sorted) {
+  const u = sorted?.unshown;
+  if (!u) return [];
+  const w = typeof u === 'string' ? u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '').slice(0, 200) : '';
+  return [`What runs is in a file this button doesn’t show${w ? ` (${w})` : ''}.`];
 }
 // A change that names a key file (S-8): asked, the button saying so, and what it prints never shown back (21-runner.mjs).
 const workKeyed = command => lookWords(String(command)).words.find(keyWord) || null;
@@ -242,7 +251,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workScriptLines(scripts), workStartsIn(dir)])],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),

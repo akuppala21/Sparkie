@@ -290,7 +290,8 @@ test('S-8: a change that names a key file is asked, its button saying a key file
 const ladderAlone = () => {
   const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
   return new Function('sparkName', 'longHeld', 'RUNNER_NOT_COVERED', 'workKeyLines', 'RUNNER_DIR',
-    [one('workStartsIn'), one('WORK_UNPLAIN'), fnOf(src, 'workCommandText'), fnOf(src, 'workScriptLines'), fnOf(src, 'workLabel'), 'return { workLabel, workCommandText };'].join('\n'))(
+    [one('workStartsIn'), one('WORK_UNPLAIN'), fnOf(src, 'workCommandText'), fnOf(src, 'workScriptLines'), fnOf(src, 'workUnshownLines') || 'const workUnshownLines = () => [];',
+      fnOf(src, 'workLabel'), 'return { workLabel, workCommandText };'].join('\n'))(
     () => 'Spark 3', () => ({ minutes: 0 }), 'Not covered.', () => [], '~/work');
 };
 test('S-4: a command with a line break, or a sign that doesn\'t show, is put last on its button under a label of its own; a plain one keeps its $ line', () => {
@@ -318,4 +319,17 @@ test('S-4: on the stand-in fleet a two-line command\'s button holds code\'s line
   assert.ok(asked.question.endsWith(`\nThe exact command:\n${cmd}`), asked.question);
   assert.ok(!asked.question.split('\nThe exact command:\n')[0].includes('notes folder only'), asked.question);
   await choose(chat, t.choices.find(c => c.label === 'No').id);
+});
+
+// The sorter's unshown (its builder's step): a button raised for a command whose code runs from a file it doesn't
+// show says so, in one plain line; with the field absent nothing changes. A stand-in sorted object, as the field may
+// land on main after this.
+test('unshown: a button for a command whose code runs unseen says what runs is in a file it doesn\'t show; nothing when the sorter says nothing', () => {
+  const { workLabel } = ladderAlone(), shown = { lines: [], outside: null }, node = { id: 'spark3' };
+  const label = sorted => workLabel(node, 'make', { scripts: [], ...sorted }, 'your words don’t name Spark 3', { reads: [] }, { sums: {} }, '~/work', shown);
+  assert.ok(label({ unshown: 'make runs the recipes in the Makefile.' }).split('\n').includes('What runs is in a file this button doesn’t show (make runs the recipes in the Makefile).'), label({ unshown: 'x' }));
+  assert.ok(label({ unshown: true }).split('\n').includes('What runs is in a file this button doesn’t show.'));
+  assert.ok(label({ unshown: 'a\nline‮break' }).split('\n').includes('What runs is in a file this button doesn’t show (a line break).'));
+  for (const sorted of [{}, { unshown: null }, { unshown: '' }]) assert.ok(!label(sorted).includes('doesn’t show'), JSON.stringify(sorted));
+  assert.match(part('21-ladder.mjs'), /lines: \[[^\n]*\.\.\.workUnshownLines\(sorted\)/, 'the dangerous ask says it too');
 });
