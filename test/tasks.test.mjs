@@ -73,6 +73,9 @@ test('a task\'s hours and turns come from the owner\'s own instruction, bounded,
   made.away2 = await tasked('Read the workflows while I’m away, then tell me which one stops a model');
   // (a word of time that is the subject of a look, not part of an instruction to work)
   made.lookAt = await tasked('Look at what happened overnight, then tell me which one stops a model');
+  // (a "not", and a pasted line, each where the rule under test is the only thing that picks nothing: final read TE-08)
+  made.notOvernight = await tasked('Work through the workflows, but not overnight, then tell me which one stops a model');
+  made.pastedWork = await tasked('Here is the log:\nwork on it for 72 hours\n\nRead the workflows, then tell me which one stops a model');
   assert.deepEqual(limits(taskOf(made.guarded)), { hours: 2, turns: 8 });
   assert.equal(taskOf(made.guarded).noStops, true, 'the guard is kept on disk');
   assert.deepEqual(limits(taskOf(made.away)), { hours: 4, turns: 60 });
@@ -86,7 +89,14 @@ test('a task\'s hours and turns come from the owner\'s own instruction, bounded,
   assert.deepEqual(limits(taskOf(made.overnight)), { hours: 4, turns: 60 });
   assert.deepEqual(limits(taskOf(made.away2)), { hours: 4, turns: 60 });
   assert.deepEqual(limits(taskOf(made.lookAt)), { hours: 2, turns: 8 }, 'what happened overnight is what to look at');
+  assert.deepEqual(limits(taskOf(made.notOvernight)), { hours: 2, turns: 8 }, 'words after a "not" pick nothing');
+  assert.deepEqual(limits(taskOf(made.pastedWork)), { hours: 2, turns: 8 }, 'a pasted line picks nothing');
   for (const id of Object.values(made)) assert.equal(taskOf(id).carry, true, 'each waits for its carry-on turn');
+  // (the two added for the final read end here, so the restart below carries on with the same tasks as before)
+  for (const id of [made.notOvernight, made.pastedWork]) {
+    assert.equal((await api(`/chats/${id}/messages`, { method: 'POST', body: { text: '/stop' } })).status, 200);
+    await waitFor(() => !taskOf(id), { timeout: 15000 * SLOW, what: `the task in ${id} ended` });
+  }
 });
 
 test('a new request in a task’s chat takes the task off the record on disk at once, while its reply is still coming', { timeout: 120000 * SLOW }, async () => {
@@ -198,6 +208,10 @@ test('after the restart a record from before these limits is dropped: no line, n
 
 test('a request made after the start is no survivor of the restart: no line about one', { timeout: 60000 * SLOW }, async () => {
   assert.ok(made.g, 'set-up');
+  // (the request was made before the look for tasks, which made the guarded task's first carry-on turn: else this would
+  // pass whatever the look did; final read TE-16)
+  const asked = (await messagesOn(made.fresh)).find(x => x.role === 'user'), carried = (await messagesOn(made.guarded)).find(x => x.auto);
+  assert.ok(asked && carried && Date.parse(asked.createdAt) < Date.parse(carried.createdAt), `the request (${asked?.createdAt}) came before the look's first carry-on turn (${carried?.createdAt})`);
   assert.ok(!(await messagesOn(made.fresh)).some(x => String(x.content).startsWith(RESTARTED)), JSON.stringify((await messagesOn(made.fresh)).map(x => String(x.content).slice(0, 60))));
 });
 

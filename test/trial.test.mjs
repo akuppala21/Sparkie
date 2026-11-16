@@ -400,10 +400,16 @@ describe('where a result is kept, and the read', { concurrency: 1 }, () => {
     assert.deepEqual([w.open.length, w.keep.label, (await trial()).waiting.hash], [2, `Keep it (sha256 ${recordHash(B).slice(0, 12)}…)`, recordHash(B)]);
     // (Sparkie's own call, on the page and from Telegram)
     script([{ match: '^keep the coding trial result$', calls: [{ name: 'keep_trial_result', arguments: { token: 'ab'.repeat(16), hash: recordHash(B), keep: true } }] }]);
-    await say(await newChat(), 'keep the coding trial result');
+    const onPage = await say(await newChat(), 'keep the coding trial result');
+    assert.match(onPage.text, /keep_trial_result said: \[error\] No tool called keep_trial_result\./, onPage.text);
     const tgFrom = tgSent().length;
     await tgSay('keep the coding trial result');
     await waitFor(() => tgSent().length > tgFrom, { timeout: 60000, what: 'Sparkie’s answer on Telegram' });
+    assert.ok(tgSent().slice(tgFrom).some(c => /No tool called keep_trial_result\./.test(c.body.text)), JSON.stringify(tgSent().slice(tgFrom).map(c => c.body.text)));
+    // (the owner's own call of it, which reaches the yes itself: only its button's press on the page keeps; final read TE-07)
+    const own = await api('/actions/keep_trial_result', { method: 'POST', body: { token: 'ab'.repeat(16), hash: recordHash(B), keep: true } });
+    assert.equal(own.status, 404, own.text);
+    assert.match(own.json.error, /^No action called keep_trial_result\.$/);
     // (an agent's call, and its press of the owner's button)
     const door = await call(act.token, 'keep_trial_result', { token: 'ab'.repeat(16), hash: recordHash(B), keep: true });
     assert.match(door.json?.error?.message || '', /^No tool called keep_trial_result for this agent\./, door.raw);
