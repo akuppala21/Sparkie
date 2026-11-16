@@ -518,7 +518,7 @@ test('the root helper\'s disk floor is said plainly: under 50 GB free nothing ru
   let r;
   try { r = await run('echo d > notes/d.txt', 'spark3', '~'); } finally { rmSync(free, { force: true }); }
   assert.equal(r.status, 409, r.text);
-  assert.equal(r.json.error, 'Nothing ran: Spark 3’s disk has 49 GB free; a change needs 50 GB free. Free some space there first.');
+  assert.equal(r.json.error, 'Nothing ran: Spark 3’s disk has 49 GB free, and a change in the plain wall needs 50 GB free (the root helper’s floor), asked or not. Free space there first: stop or remove a model, or delete files yourself.');
   assert.ok(!existsSync(at3('notes/d.txt')));
 });
 
