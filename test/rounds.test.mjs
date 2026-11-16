@@ -8,28 +8,37 @@
 // ran" or asked does not, so the change after it runs at once. Past the rounds a message may take, the brain is told
 // its tools are put away, a call it makes all the same is answered "not run" and nothing runs, the reply ends with
 // code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call). The steps' note
-// counts only the commands that ran, and those asked first apart, as waiting for the owner's yes.
+// counts only the commands that ran, and those asked first apart, as waiting for the owner's yes. The
+// brain's mark covers the last round's note. The brain's token budget ends a turn as the others do: the brain is told,
+// code's own line ends the reply, and a task carries on. Calls past the 4 one round runs are not run, and each says so.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
 // tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, mkdtempSync, cpSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { pathToFileURL } from 'node:url';
+import { T, REPO, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 // (a change may run 60 seconds here, so one can go on past the 50 seconds a tool call has)
 useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '60', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0',
   SPARK_CONSOLE_NET: '0', SPARK_CONSOLE_HUB: '0', SPARK_CONSOLE_CONTINUE_MS: '300' },
-  prepare: ({ root }) => {
+  prepare: ({ root, stateDir }) => {
     rehearse(root, 'spark3', { run: true });
     rehearse(root, 'spark4');
     const put = (spark, p, data) => { mkdirSync(dirname(join(root, spark, p)), { recursive: true }); writeFileSync(join(root, spark, p), data); chmodSync(join(root, spark, p), 0o644); };
     put('spark3', 'notes/w.txt', 'w before\n');
     put('spark3', 'notes/present.txt', 'present\n');
     put('spark4', 'docs/plain.txt', 'hello from spark4\n');
+    // (a setup with a token budget, for the test that reaches it by the stand-in brain's own count of tokens)
+    const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
+    m.presets['rounds-tokens'] = { ...m.presets[m.current], title: 'A token budget', tokenBudget: 4000 };
+    writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   } }, async () => {
   // (no change runs at once until the console has read the tailnet: two looks after a request, A7c)
   const looks = () => (existsSync(join(T.fleet.dir, 'tailscale-calls')) ? readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').split('\n').filter(l => l === 'status --json').length : 0);
@@ -209,4 +218,74 @@ test('the steps’ note counts only the commands that ran, and says how many wai
   for (const n of [1, 2, 3, 4]) assert.equal(text(`notes/k${n}.txt`), `${n}\n`);
   for (const n of [5, 12]) assert.ok(!existsSync(at3(`notes/k${n}.txt`)), `k${n} waits`);
   assert.ok(r.text.endsWith('\n\nStopped here: one message may run 12 commands, and 12 were tried and 4 ran; 8 wait for your yes.\nSay “go on” to carry on.'), r.text.slice(-300));
+});
+
+// The last round's note (toolsAway) is among the fixed words the brain's mark hashes (BRAIN_WORDS, 21-guide.mjs), with
+// the report's lines: a build whose note says one word otherwise has another mark there, and the same elsewhere.
+test('the brain’s mark covers the last round’s note: a build whose note says one word otherwise has another report mark', { timeout: 300000 * SLOW }, async () => {
+  const words = (await api('/actions')).json.brain.words, TMP = mkdtempSync(join(tmpdir(), 'rounds-words-')), copy = join(TMP, 'tree');
+  try {
+    for (const d of ['service', 'test', 'tools', 'deploy', 'public']) cpSync(join(REPO, d), join(copy, d), { recursive: true, verbatimSymlinks: true });
+    const part = join(copy, 'service', 'src', '14-rounds.mjs'), was = readFileSync(part, 'utf8');
+    assert.ok(was.includes('Your tools are put away for this message'));
+    writeFileSync(part, was.replace('Your tools are put away for this message', 'Your tools are put aside for this message'));
+    const made = spawnSync(process.execPath, [join(copy, 'tools', 'build-server.mjs')], { cwd: copy, encoding: 'utf8', timeout: 120000 });
+    assert.equal(made.status, 0, made.stdout + made.stderr);
+    const { startMock: startCopy } = await import(pathToFileURL(join(copy, 'test', 'start-mock.mjs')).href);
+    const other = await startCopy({ evalOnRecord: false });
+    let theirs;
+    try { theirs = (await (await fetch(`${other.base}/actions`, { signal: AbortSignal.timeout(30000) })).json()).brain.words; } finally { await other.stop(); }
+    assert.notEqual(theirs.report, words.report, 'the report mark moved');
+    assert.deepEqual({ ...theirs, report: null }, { ...words, report: null }, 'the other words are the same');
+  } finally { rmSync(TMP, { recursive: true, force: true }); }
+});
+
+// Calls past the 4 one round runs were dropped unseen: now each is answered "not run", on the page, in the journal, to
+// the brain in its next round, and in the reply's last lines.
+test('calls past the 4 one round runs are not run, and each says so: on the page, in the journal, to the brain and in the reply’s last lines', { timeout: 180000 * SLOW }, async () => {
+  const chat = await newChat(), from = journal().length, NOT = 'Not run: one round runs at most 4 calls. Ask for it again in the next one.';
+  const r = await turn(chat, 'fix the five notes on spark 3', [[GUIDE, GUIDE, GUIDE, GUIDE, RUN('echo five > notes/five.txt'), RUN('echo six > notes/six.txt')]]);
+  assert.deepEqual(r.message.tools.map(t => [t.name, t.ok]), [...Array(4).fill(['guide', true]), ['run', false], ['run', false]], shown(r.message.tools));
+  for (const t of r.message.tools.slice(4)) assert.equal(t.tail, NOT);
+  assert.ok(!existsSync(at3('notes/five.txt')) && !existsSync(at3('notes/six.txt')), 'nothing ran');
+  assert.deepEqual(toolRecords(chat, from).map(x => [x.act, x.ok]), [...Array(4).fill(['guide', true]), ['run', false], ['run', false]]);
+  // (the brain's next request carries every call's result, the two past the four saying they did not run)
+  assert.equal(r.back.length, 6, JSON.stringify(r.back).slice(0, 400));
+  assert.deepEqual(r.back.slice(4), [{ error: NOT }, { error: NOT }]);
+  assert.ok(r.text.endsWith('\n\n2 more calls were asked for past the 4 calls one round runs, and not run (run).'), r.text.slice(-300));
+  assert.doesNotMatch(r.text, /Stopped/);
+});
+
+// The brain's token budget (R50) ended a turn with no line from code and no carry-on: now it is a budget as the others.
+// (it switches the brain's setup and back: keep it last in this file)
+const ended = id => waitFor(async () => { const j = (await api(`/jobs/${id}`)).json; return j.status !== 'running' && j; }, { timeout: 180000, what: `operation ${id} to end` });
+const answering = () => waitFor(async () => { const m = (await api('/main')).json; return m.state === 'running' && m.healthy === true; }, { timeout: 90000, what: 'Sparkie answering' });
+async function use(preset) {
+  const r = await api('/main/use', { method: 'POST', body: { preset } });
+  assert.equal(r.status, 202, r.text);
+  assert.equal((await ended(r.json.id)).status, 'completed');
+  await answering();
+}
+test('past the brain’s token budget: the brain is told its tools are put away, the reply ends with code’s own line, and a task carries on', { timeout: 400000 * SLOW }, async () => {
+  const habits = h => (h ? writeFileSync(join(T.fleet.dir, 'model-habits.json'), JSON.stringify(h)) : rmSync(join(T.fleet.dir, 'model-habits.json'), { force: true }));
+  const was = JSON.parse(readFileSync(join(T.fleet.stateDir, 'main.json'), 'utf8')).current, words = 'look over the past, then tell me what you found';
+  await use('rounds-tokens');
+  let r, m, chat;
+  try {
+    // (5,000 tokens by the brain's own count, over the setup's 4,000: one round of tools, then the last)
+    habits({ usage: 5000 });
+    script([{ match: `^${esc(words)}$`, rounds: [[GUIDE], [GUIDE], [GUIDE]] }, { match: CARRIED, rounds: [] }]);
+    chat = await newChat();
+    r = await say(chat, words);
+    m = await waitFor(async () => { const x = await chatMessages(chat); return x.length >= 4 && x.at(-1).role === 'assistant' && x; }, { timeout: 120000, what: 'the carry-on turn' });
+  } finally { noScript(); habits(null); await use(was); }
+  const asked = requests(words);
+  assert.deepEqual(asked.map(x => [x.round, x.tools.length > 0]), [[0, true], [1, false]]);
+  assert.ok(asked.at(-1).system.endsWith('\n\n[Spark Console] Your tools are put away for this message (one message may use 4,000 of your tokens). A tool you call now is not run: answer with what the tools said, and say what is left to do.'), asked.at(-1).system.slice(-400));
+  assert.deepEqual(r.tools.map(t => [t.name, t.ok]), [['guide', true]], shown(r.tools));
+  assert.ok(r.text.endsWith('\n\nStopped here: one message may use 4,000 of the brain’s tokens (what it reads and writes), and this one has.\nCarrying on with your request in a fresh turn.'), r.text.slice(-400));
+  assert.equal(m[2].role, 'user');
+  assert.ok(m[2].auto, 'Spark Console’s own turn');
+  const budgets = journal().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets && [x.budgets.spent ?? null, x.budgets.carried ?? null]);
+  assert.deepEqual(budgets[0], ['tokens', true], JSON.stringify(budgets));
 });
