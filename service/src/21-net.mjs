@@ -168,7 +168,7 @@ function netOutput(id, out) {
 
 // The dangerous ask's line for a change inside the net (line 3): what goes back, when, and what can't (root's too, 21-root.mjs,
 // with its own time limit).
-const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. What goes back: the ways-in files and units the net copied before it ran. What doesn’t: live firewall and network state (iptables, nft, ip, nmcli), which a restart of ${at} clears, and anything else it changes, which a restart doesn’t.`;
+const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Only the ways-in files and units copied first go back: not live firewall or network state (iptables, nft, ip, nmcli), which a restart clears, nor anything else it changes.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
 // page or a fix suggested it): null when the owner's current message asks for it on that Spark (netAsks) with nothing
 // read from outside since, or for the owner's own call (the page, POST /actions). Only the current message counts, never

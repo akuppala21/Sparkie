@@ -98,7 +98,7 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
   try {
     const shown = a.m.danger.lines.join('\n');
     assert.match(shown, /^ROOT on Spark 3 · CAN LOCK YOU OUT\n/);
-    assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. What goes back: the ways-in files and units the net copied before it ran. What doesn’t: live firewall and network state (iptables, nft, ip, nmcli), which a restart of Spark 3 clears, and anything else it changes, which a restart doesn’t.'), shown);
+    assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Only the ways-in files and units copied first go back: not live firewall or network state (iptables, nft, ip, nmcli), which a restart clears, nor anything else it changes.'), shown);
     assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
     assert.equal(a.m.danger.code, ADD);
     assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
