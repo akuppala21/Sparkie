@@ -110,3 +110,15 @@ test('work started later is marked later, so root refuses it, whatever it runs; 
   assert.deepEqual(each(['crontab -l', 'systemctl list-timers', 'atq', 'systemctl restart docker', "sed -i 's/a/b/' /etc/systemd/journald.conf", 'systemctl daemon-reload',
     'cat /etc/crontab', 'systemctl status cron'], r => (r.later ? `later: ${r.later}` : null)), []);
 });
+
+// Item 3: a way-in program's own file, and kill as root.
+test('changing or removing a way-in program\'s own file is the lock-out class; kill as root is too, when the sorter is told it is root', () => {
+  const FILES = ['mv /usr/sbin/sshd /usr/sbin/sshd.bak', 'chmod -x /usr/sbin/tailscaled',
+    // (and spellings of our own: the other place a merged /usr keeps it, other way-in programs, the login shell, PAM's modules, a whole folder)
+    'mv /sbin/sshd /tmp/x', 'rm /usr/bin/tailscale', 'chmod -x /bin/bash', 'cp /tmp/x /usr/lib/openssh/sftp-server', 'chmod 000 /usr/lib/aarch64-linux-gnu/security',
+    'ln -sf /bin/false /usr/bin/sudo', 'chmod -R 755 /usr/sbin', 'truncate -s 0 /usr/sbin/ufw', 'mv /lib/systemd/systemd-logind /tmp/'];
+  assert.deepEqual(each(FILES, r => (['lockout', 'notdone'].includes(r.class) ? null : 'not lock-out')), []);
+  for (const c of ['ls -l /usr/sbin/sshd', 'sha256sum /usr/sbin/tailscaled']) assert.equal(sort(c).class, 'look', c);
+  // (as root a number can be any process: lock-out when the sorter is told it is root, which rootChange is to say)
+  for (const c of ['kill -9 812', 'kill 1', 'kill -HUP 4321']) { assert.equal(sort(c, { root: true }).class, 'lockout', c); assert.notEqual(sort(c).class, 'lockout', c); }
+});

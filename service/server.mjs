@@ -12693,6 +12693,12 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
 LOCK_PATHS.push(...LOCK_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
+// The ways in's own programs, by each place the system keeps them (merged /usr or not): moved, removed, rewritten or made
+// not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next start (A-16's "beside").
+LOCK_PATHS.push(...['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
+  'sbin/wpa_supplicant', 'sbin/tailscaled', 'sbin/netplan', 'sbin/sudo', 'bin/sudo', 'bin/su', 'bin/login', 'bin/passwd', 'bin/tailscale', 'bin/nmcli', 'bin/netplan', 'bin/bash', 'bin/sh',
+  'bin/dash', 'bin/zsh', 'lib/openssh', 'lib/systemd/systemd', 'lib/systemd/systemd-logind', 'lib/systemd/systemd-networkd', 'lib/systemd/systemd-resolved',
+  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security'].flatMap(p => [`/${p}`, `/usr/${p}`]));
 const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
@@ -14168,6 +14174,20 @@ function sortFile(name, kind, args, ctx, r) {
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
+// A key carried out (the second checker, cmd-refused): a command that names a key and writes a place that isn't itself a
+// key's (a copy, a move, an archive, a link, a redirection, dd, tee), or sends one to another machine (a word of the key
+// beside an address: not ssh's -i or IdentityFile, which use it), puts the key where a look shows it back. The place, or
+// null. A move or copy to another key's name (.env.example to .env, id_x to ~/.ssh/id_x.old) and chmod stay asked.
+function sortKeyOut(text, ctx) {
+  // (a key's own place, by its name or its folder: ~/.ssh's other files too)
+  const keyPlace = p => { const x = p.replace(/^~(?=\/|$)/, '/~').replace(/\/+$/, ''); return KEYFILE_NAME_RE.test(x.split('/').pop()) || KEYFILE_PLACE_RE.test(x) || KEYFILE_NOT_RE.test(x); };
+  const out = [...ctx.wrote].find(p => ctx.changes?.has(p) && !keyPlace(p) && !/^\/dev\/(?:null|stdout|stderr)$/.test(p));
+  if (out) return out;
+  if (!ctx.reach?.size) return null;
+  const used = new Set([...text.matchAll(/(?:^|\s)-i\s*(\S+)|IdentityFile[=\s]+(\S+)/gi)].map(m => (m[1] ?? m[2]).replace(/^['"]|['"]$/g, '')));
+  const sent = [...lookWords(text).words, ...ctx.seen].filter(w => keyWord(w) && !used.has(w));
+  return sent.length ? 'another machine' : null;
+}
 // After the parts: on Spark 2 a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
 function sortAt(r, ctx) {
   if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', 'It changes Spark 2, which runs the console and the brain: anything that changes Spark 2 is asked first.');
@@ -14226,6 +14246,7 @@ function sortCommand(command, opts) {
       for (const w of new Set([...lw.words, ...ctx.seen])) { if ((budget -= w.length) < 0) { raise(r, 'risky', 'It names more than the sorter reads for a key.'); break; } if (keyWord(w)) { key = w; break; } }
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
+      else if (key && sortKeyOut(text, ctx)) raise(r, 'notdone', `It would put ${sortQ(key)}, which is a key or holds one, where it can be shown back (${sortQ(sortKeyOut(text, ctx))}): a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
       // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
       if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
@@ -14240,6 +14261,9 @@ function sortCommand(command, opts) {
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     unshown: (r.class === 'look' && !ctx.root) || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    // (work it starts later, outside the button and the net; a program the sorter doesn't know, by name)
+    later: r.class === 'look' || r.later == null ? null : r.later.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    unknownProgram: r.class === 'look' || typeof ctx.unknownProgram !== 'string' ? null : ctx.unknownProgram,
     placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses,
     // (with deletes: the places whose old content it removes or writes over, placed less what it only reads, and wide)
     overwrites: r.deletes ? changes.filter(([p, w]) => w || !uses.reads.includes(p)).map(([p]) => p) : [] };
