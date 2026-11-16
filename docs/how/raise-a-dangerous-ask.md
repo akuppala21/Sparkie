@@ -13,11 +13,12 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
   that one line would change, with a line break, a tab, two spaces together or over 400 characters, is refused);
   `{script}` for a script's text. None for an install.
 - `facts`, each optional and typed: `asked` (the gate's own answer, when the raiser knows it better), `backAt` (the
-  net's time), `kept` (files copied first), `gone` (`{what, bytes}`: cannot be put back), `waysIn` (paths), `install`
-  (`{tree, testedAt, differs, brainReads, proposal}`; `differs` null when what differs isn't known), `outsideWall` (why), `lines`
-  (code's own sentences, one line each: what its wall lets it do, what it reaches), `whoApproves` (it changes passkeys,
-  recovery codes, the pairing or the switch: page only), `switchBrain`, `wall`, `recheck` (a function giving the
-  script's bytes again at the press).
+  net's time), `net` (code's own line for the net on a compute Spark, kept by its check from outside: 21-net.mjs),
+  `lockWhy` (the sorter's why), `kept` (files copied first), `gone` (`{what, bytes}`: cannot be put back), `waysIn`
+  (paths), `install` (`{tree, testedAt, differs, brainReads, proposal}`; `differs` null when what differs isn't known),
+  `outsideWall` (why), `lines` (code's own sentences, one line each: what its wall lets it do, what it reaches),
+  `whoApproves` (it changes passkeys, recovery codes, the pairing or the switch: page only), `switchBrain`, `wall`,
+  `recheck` (a function giving the script's bytes again at the press).
 - `ctx.reads`: what this request read, newest first (`{id, label, at}`: a journal id and a label built by code).
 
 ## Also update

@@ -7,11 +7,12 @@
 // not tools: no agent, no /mcp or /v1, no carry-on turn. They can only look, pause agents' changes, bring back the
 // brain's own container (restart it, or start it again when it is stopped or gone: the same container, or the saved
 // setup; never another model), end Sparkie's answer in that chat (/stop), put back its last change (/undo) or go back a
-// build. /undo and /undo update are the words that run an action (undo_last_change, also while changes are paused;
+// build, or put back the newest change made inside the lock-out net (/putback, 21-net.mjs). /undo and /undo update are
+// the words that run an action (undo_last_change, also while changes are paused;
 // undo_update, through runAction as the page, so that action's own guard decides, R31). In the paired Telegram chat
 // (21-telegram.mjs) /status, /pause, /restart sparkie, /stop, /undo and /help work too; /undo update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
 // is saved as one Spark Console notice quoting the word, so Sparkie later reads it as data.
-const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/help'];
+const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/putback', '/help'];
 // The whole message, trimmed and lowercased ("/restart_sparkie" too); "/pause now" or "please /pause" is not a word.
 function ownerWord(text) {
   const t = String(text).trim().toLowerCase().replace(/_/g, ' ');
@@ -165,6 +166,7 @@ function helpWord() {
     '/undo: put back this chat’s last change (works while changes are paused)',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
     '/allowed: what is always allowed in your chats; /allowed off 2 takes one away, /allowed off all every one',
+    '/putback: put back the newest change made inside the lock-out net, unless it was kept (21-net.mjs)',
     '/help: this list'];
   lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
   lines.push('', 'By hand, in a terminal:');
@@ -180,7 +182,7 @@ function helpWord() {
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
   const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
-    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word.startsWith('/allowed') ? allowedWord(word, via) : helpWord();
+    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word.startsWith('/allowed') ? allowedWord(word, via) : word === '/putback' ? await netPutbackWord() : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;
   const message = { role: 'assistant', content: `${maskSecrets(head)}\n${maskSecrets(reply)}`, createdAt: new Date().toISOString(), notice: true, word: true,
     ...(undo?.choices?.length ? { choices: undo.choices } : {}) };

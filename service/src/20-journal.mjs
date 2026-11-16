@@ -353,6 +353,8 @@ function journalAfterRestart() {
       // (a change on a Spark may still run there: that Spark is held until its time limit has passed, 21-runner.mjs)
       if (r.k === 'cmd' && r.act === 'run' && r.class === 'change') runnerHold(r);
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
+      // (one inside the lock-out net is put back at start, and that is what is said: netRecover, 21-net.mjs)
+      if (r.net) continue;
       // (a long command, run with minutes: its unit is stopped by id when its Spark answers, then its notice says so,
       // 21-long.mjs)
       if (r.k === 'cmd' && r.act === 'run' && r.minutes && longCutOff(r, conv)) continue;

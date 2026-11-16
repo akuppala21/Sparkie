@@ -222,6 +222,8 @@ async function tgUpdate(u) {
   if (word === '/undo') return tell('system', (await undoChangeWord(tgOwner(), tgConv(), 'telegram')).reply);
   // (/allowed lists what is always allowed and takes it away; adding one is the page's: 21-ahead.mjs)
   if (word?.startsWith('/allowed')) return tell('system', allowedWord(word, 'telegram'));
+  // (/putback: the newest change made inside the lock-out net put back, by code, with no brain, 21-net.mjs)
+  if (word === '/putback') return tell('system', await netPutbackWord());
   const cmd = /^\/(new|status|unpair|start|help|lock)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
   if (cmd === 'unpair') { tgForget(); return; }
   // (approvals from here off at once, also while Sparkie answers: 20-tg-approve.mjs)

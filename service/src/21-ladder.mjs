@@ -5,7 +5,7 @@
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the
-// brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At
+// brain (asked first, a later build); the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
 // once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
 // placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
@@ -244,7 +244,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
-  if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  // (the lock-out class: the net's, 21-net.mjs; while the net is off it waits for it, as before)
+  if (sorted.class === 'lockout') return netChange(node, command, sorted, viewer, ctx, dir);
   // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63. A look that
   // fails stops here: "none is there" would widen the wall)
   const topDirs = await runnerTopDirs(node, sorted);

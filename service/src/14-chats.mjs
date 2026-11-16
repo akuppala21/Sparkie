@@ -164,6 +164,8 @@ async function runChoice(viewer, conv, id, by) {
       // asked, A7c: the task's list in, kept after)
       written: conv.task && !conv.task.ended ? workTask(conv.task).written : [],
       ...(c.covers ? { covers: c.covers } : {}),
+      // (a dangerous ask's yes, its two digits checked: the lock-out net runs only from one, 21-net.mjs)
+      ...(c.danger ? { danger: c.danger } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
