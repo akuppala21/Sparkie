@@ -194,11 +194,11 @@ const handler = async (req, res) => {
       if (req.method === 'DELETE' && gone) {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
-        savePasskeys(keys.filter(x => x !== k));
-        putBackRemoved('passkey', k.id, k.name);
+        // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+        const unnoted = putBackRemoval({ kind: 'passkey', id: k.id, name: k.name }, () => savePasskeys(keys.filter(x => x !== k)));
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }
@@ -228,13 +228,13 @@ const handler = async (req, res) => {
         for (const k of ['halted', 'selfHeal']) if (body[k] !== undefined) { if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} should be true or false.`); change[k] = body[k]; }
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
-        const next = setAgentSettings(change);
-        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
+        let next;
+        const unnoted = change.halted !== undefined ? putBackRemoval({ kind: change.halted ? 'paused' : 'resumed' }, () => { next = setAgentSettings(change); }) : ((next = setAgentSettings(change)), null);
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
         if (change.halted !== undefined) fleetEvent({ type: 'operation', operation: change.halted ? 'agents paused' : 'agents resumed', status: 'completed', by: 'owner' });
-        return send(res, 200, { settings: next });
+        return send(res, 200, { settings: next, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       if (req.method === 'POST' && path === '/agents') {
         const name = clean((await readBody(req, 4000)).name, 60);
@@ -262,13 +262,13 @@ const handler = async (req, res) => {
         const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
-        writePrivate(AGENTS_FILE, { keys });
         // A right taken away counts as a removal (R23): a state put back from before takes it away again.
         const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
-        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
+        const unnoted = Object.keys(took).length ? putBackRemoval({ kind: 'narrowed', id: key.id, name: key.name, extra: took }, () => writePrivate(AGENTS_FILE, { keys }))
+          : (writePrivate(AGENTS_FILE, { keys }), null);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
-        return send(res, 200, agentView(key));
+        return send(res, 200, { ...agentView(key), ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
       // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
@@ -278,11 +278,10 @@ const handler = async (req, res) => {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
-        writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
-        putBackRemoved('agent', gone.id, gone.name);
+        const unnoted = putBackRemoval({ kind: 'agent', id: gone.id, name: gone.name }, () => writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) }));
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }

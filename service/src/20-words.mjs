@@ -64,15 +64,15 @@ async function statusText() {
 
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
-  setAgentSettings({ halted: true, autoPaused: false });
+  // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said below)
+  const unnoted = putBackRemoval({ kind: 'paused' }, () => setAgentSettings({ halted: true, autoPaused: false }));
   // (an open dangerous ask closes: 20-danger.mjs)
   dangerPaused();
-  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
+${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}${unnoted ? `\n${unnoted}` : ''}`;
 }
 
 async function restartWord(via) {
