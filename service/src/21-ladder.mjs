@@ -151,7 +151,14 @@ function workScriptPaths(scripts, dir, command) {
 // {sums: {path: SHA-256, or null when it isn't a file there}, texts: {path: {text, lines, whole}}, unpinned (the names
 // not pinned)}; or, when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no
 // sums and unread: why. Every script named is in sums or unpinned, past the eighth too.
-const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40;
+const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40, WORK_SCRIPT_MAX = 4 * 1024 * 1024;
+// Whether the root helper can pin a script (its --script, deploy/spark-console-root): ~/ and a file, or a whole path in
+// the owner's home, each part of A-Z a-z 0-9 . _ @ + -, no . or .. part.
+function workHelperPins(path, node = null) {
+  const p = String(path), home = `/home/${node?.user || CONFIG.user}`;
+  const rest = p.startsWith('~/') ? p.slice(2) : p.startsWith(`${home}/`) ? p.slice(home.length + 1) : null;
+  return rest !== null && rest.split('/').every(x => /^[A-Za-z0-9._@+-]+$/.test(x) && x !== '.' && x !== '..');
+}
 async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   const named = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s));
   const list = named.slice(0, WORK_SCRIPTS), past = named.slice(WORK_SCRIPTS);
@@ -160,9 +167,9 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   if (!paths.length) return { sums: {}, texts: {}, unpinned };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
-  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}); then printf 'h${i} %s %s\\n' "\${h%% *}" "\${n// /}"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
+  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}) && z=$(stat -c %s -- ${word(s)}); then printf 'h${i} %s %s %s\\n' "\${h%% *}" "\${n// /}" "$z"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
-  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), bytes: Buffer.from(m[4], 'base64') } : null]));
+  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), size: Number(m[4]), bytes: Buffer.from(m[5], 'base64') } : null]));
   if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   const sums = {}, texts = {};
   for (const [i, s] of paths.entries()) {
@@ -172,6 +179,8 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
     // two reads of the look is said not pinned)
     const whole = g.bytes.length < WORK_TEXT;
     if (whole && createHash('sha256').update(g.bytes).digest('hex') !== g.sha) { unpinned.push(s); continue; }
+    // (only what the root helper can copy is pinned: a file in the owner's home, a plain path, 4 MB at most)
+    if (!workHelperPins(s, node) || g.size > WORK_SCRIPT_MAX) { unpinned.push(s); continue; }
     sums[s] = g.sha;
     texts[s] = { text: g.bytes.toString('utf8'), lines: g.lines, whole };
   }
@@ -180,7 +189,7 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
 // What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
 // 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
 // (runnerPins, 21-runner.mjs), and run by its path.
-const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again. A script is read as it runs, so what is written to it while it runs is run unchecked.'] : []);
+const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'] : []);
 // Each pinned script's text on a plain button (P-5): its first WORK_TEXT_LINES lines as the ask's look read them, each
 // after "│ " (as a command's own lines are, workCommandText), then how many more; the whole text as read is one journal
 // record, which the button names (workScriptRecord). Masked as every ask is.

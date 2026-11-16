@@ -19606,7 +19606,14 @@ function workScriptPaths(scripts, dir, command) {
 // {sums: {path: SHA-256, or null when it isn't a file there}, texts: {path: {text, lines, whole}}, unpinned (the names
 // not pinned)}; or, when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no
 // sums and unread: why. Every script named is in sums or unpinned, past the eighth too.
-const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40;
+const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40, WORK_SCRIPT_MAX = 4 * 1024 * 1024;
+// Whether the root helper can pin a script (its --script, deploy/spark-console-root): ~/ and a file, or a whole path in
+// the owner's home, each part of A-Z a-z 0-9 . _ @ + -, no . or .. part.
+function workHelperPins(path, node = null) {
+  const p = String(path), home = `/home/${node?.user || CONFIG.user}`;
+  const rest = p.startsWith('~/') ? p.slice(2) : p.startsWith(`${home}/`) ? p.slice(home.length + 1) : null;
+  return rest !== null && rest.split('/').every(x => /^[A-Za-z0-9._@+-]+$/.test(x) && x !== '.' && x !== '..');
+}
 async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   const named = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s));
   const list = named.slice(0, WORK_SCRIPTS), past = named.slice(WORK_SCRIPTS);
@@ -19615,9 +19622,9 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   if (!paths.length) return { sums: {}, texts: {}, unpinned };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
-  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}); then printf 'h${i} %s %s\\n' "\${h%% *}" "\${n// /}"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
+  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}) && z=$(stat -c %s -- ${word(s)}); then printf 'h${i} %s %s %s\\n' "\${h%% *}" "\${n// /}" "$z"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
-  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), bytes: Buffer.from(m[4], 'base64') } : null]));
+  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), size: Number(m[4]), bytes: Buffer.from(m[5], 'base64') } : null]));
   if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   const sums = {}, texts = {};
   for (const [i, s] of paths.entries()) {
@@ -19627,6 +19634,8 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
     // two reads of the look is said not pinned)
     const whole = g.bytes.length < WORK_TEXT;
     if (whole && createHash('sha256').update(g.bytes).digest('hex') !== g.sha) { unpinned.push(s); continue; }
+    // (only what the root helper can copy is pinned: a file in the owner's home, a plain path, 4 MB at most)
+    if (!workHelperPins(s, node) || g.size > WORK_SCRIPT_MAX) { unpinned.push(s); continue; }
     sums[s] = g.sha;
     texts[s] = { text: g.bytes.toString('utf8'), lines: g.lines, whole };
   }
@@ -19635,7 +19644,7 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
 // What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
 // 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
 // (runnerPins, 21-runner.mjs), and run by its path.
-const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again. A script is read as it runs, so what is written to it while it runs is run unchecked.'] : []);
+const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'] : []);
 // Each pinned script's text on a plain button (P-5): its first WORK_TEXT_LINES lines as the ask's look read them, each
 // after "│ " (as a command's own lines are, workCommandText), then how many more; the whole text as read is one journal
 // record, which the button names (workScriptRecord). Masked as every ask is.
@@ -22387,8 +22396,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
+    // (its pinned scripts: the helper's own copies, bound over their paths for the whole run (--script, P-5); the unit's
+    // own first lines check them once more, a second check of those same copies, R72)
     const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const scripts = pins && !as ? Object.entries(pins).filter(([p, h]) => /^[0-9a-f]{64}$/.test(String(h)) && workHelperPins(p, node)).map(([p, h]) => `${h}:${p}`) : [];
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, scripts, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
@@ -22422,6 +22434,12 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+      // (a pinned script that changed before the helper copied it: nothing ran, and it is asked again, 21-ladder.mjs)
+      const changedScript = a.kind === 'refused' ? /^the script (.+) changed: its SHA-256 is not the one asked, so nothing ran$/.exec(why) : null;
+      if (changedScript) {
+        return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'pinned',
+          why: `A script it runs (${maskSecrets(changedScript[1]).slice(0, 200)}) changed after the owner was asked, so the root helper ran nothing.` };
+      }
       // (a protect folder whose link leads to no folder there: never run without it unasked; the ladder asks, R61)
       if (a.kind === 'protect' && RUNNER_PROTECT.includes(why)) {
         return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'protect', protect: why,
@@ -24861,7 +24879,9 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (helperProtect); bare, those the owner's yes let it run without.
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
+// scripts: a change's pinned scripts, each "<sha256>:<path>" (the helper's --script: it copies each, hashes the copy and
+// binds it read-only over the path for the whole run, P-5; R72).
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false, scripts = [] }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -24871,7 +24891,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
   // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument;
   // input, a change's keys, 21-run-keys.mjs: after this script on the same input, which --stdin reads to its end)
   const bytes = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${asked === true ? ' --asked' : ''}${bytes != null || input === true ? ' --stdin' : ''}` : '';
+  const pinned = verb === 'run' ? (scripts || []).filter(s => /^[0-9a-f]{64}:[^\s'"\\]+$/.test(String(s))).slice(0, 8).map(s => ` --script ${q(s)}`).join('') : '';
+  const more = verb === 'run' ? `${pinned}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${asked === true ? ' --asked' : ''}${bytes != null || input === true ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,

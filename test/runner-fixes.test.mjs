@@ -15,7 +15,7 @@
 // tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, symlinkSync, truncateSync, renameSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, symlinkSync, truncateSync, renameSync, mkdtempSync, realpathSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -405,7 +405,7 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
   assert.ok(held.endsWith('\nbash notes/s6a.sh'), held);
   assert.equal(recordText(end), '$ bash notes/s6a.sh\ns6a ran\n');
   // (and its button says what the press checks)
-  assert.match(sentBack('run the s6a script again')[0]?.question || '', /\nEach script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again\./);
+  assert.match(sentBack('run the s6a script again')[0]?.question || '', /\nEach script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again\./);
 });
 
 // S-12 (the final sorter read): during the hold after Spark Console's state was put back from a copy, every agent change
@@ -689,11 +689,11 @@ test('TA-9: the ports a change may find open: sshd\'s, the serve port, and the a
 test('a2: every script a command names is pinned or said not pinned, past the eighth too', async () => {
   const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
   const looked = [];
-  const P = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
-    'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts, workScriptPaths };'].join('\n'))(
+  const P = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', 'CONFIG', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
+    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts, workScriptPaths };'].join('\n'))(
     async (n, verb, o) => { looked.push(o.words); return o; },
-    o => ({ kind: 'ran', output: o.words.map((w, i) => `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1\n${Buffer.from(`echo ${i}\n`).toString('base64')}`).join('\n') }),
-    createHash, s => `'${s}'`, 30, '~/work');
+    o => ({ kind: 'ran', output: o.words.map((w, i) => `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1 7\n${Buffer.from(`echo ${i}\n`).toString('base64')}`).join('\n') }),
+    createHash, s => `'${s}'`, 30, '~/work', { user: 'owner' });
   const ten = Array.from({ length: 10 }, (_, i) => `s${i + 1}.sh`), command = ten.map(s => `bash ${s}`).join(' && ');
   assert.deepEqual(P.workScriptPaths(ten, '~/work', command).unpinned, ['~/work/s9.sh', '~/work/s10.sh']);
   const r = await P.workScripts({ id: 'spark3' }, ten, '~/work', command);
@@ -761,4 +761,21 @@ test('a2: a program the sorter doesn\'t know is said in one line on the button; 
   const label = sorted => workLabel(node, 'frobnicate --all', { scripts: [], ...sorted }, 'it is risky', { reads: [] }, { sums: {} }, '~/work', shown);
   assert.ok(label({ unknownProgram: 'frobnicate' }).split('\n').includes('It runs “frobnicate”, a program the sorter doesn’t know, so what it does isn’t read: only you can judge it.'));
   for (const sorted of [{}, { unknownProgram: null }, { unknownProgram: '' }]) assert.ok(!label(sorted).includes('doesn’t know'), JSON.stringify(sorted));
+});
+
+// P-5, the repair itself: the press runs the very bytes hashed. The root helper copies each pinned script (--script) and
+// binds the copy read-only over its path for the whole run, so a line written to the script while its unit runs is not
+// run (bash reads a script as it goes: by its path, it would be).
+test('a2 P-5: a script written to while its unit runs: what ran is what was hashed', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at3('notes/p5.sh'), 'echo first > notes/p5-out.txt\nsleep 3\necho second >> notes/p5-out.txt\n');
+  const chat = await newChat(), words = 'run the p5 script', t = await turn(chat, words, [[RUN('bash notes/p5.sh')]]);
+  const yes = t.choices.find(c => c.label === 'Run it');
+  assert.ok(yes, JSON.stringify(t.choices));
+  const pressing = choose(chat, yes.id);
+  try {
+    await waitFor(() => existsSync(at3('notes/p5-out.txt')) && text('notes/p5-out.txt').startsWith('first'), { every: 100, timeout: 20000, what: 'the script to start' });
+    appendFileSync(at3('notes/p5.sh'), 'echo injected >> notes/p5-out.txt\n');
+  } finally { const p = await pressing; assert.equal(p.status, 200, p.text); }
+  assert.equal(text('notes/p5-out.txt'), 'first\nsecond\n', 'the line written while it ran was not run');
+  assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
 });
