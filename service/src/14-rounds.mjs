@@ -49,8 +49,8 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
     works: 0, ran: 0, waitsYes: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
     // (the operations its calls started, and a call that may change something still going past its 50 seconds: roundCalls)
     ops: [], going: null,
-    // (the calls the brain made after its tools were put away, none of them run: roundDropped)
-    dropped: [] };
+    // (the calls the brain made after its tools were put away, and past the 4 a round runs, none of them run)
+    dropped: [], pastFour: [] };
 }
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
@@ -121,10 +121,10 @@ function budgetCut(turn, out, jid) {
 }
 // A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
 // results weren't read and where they are kept, or which calls were refused and why, or that the rounds were all taken;
-// the calls made after the tools were put away, none run; then that the task carries on in a fresh turn
-// (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+// the calls made past the 4 a round runs or after the tools were put away, none run; then, when a budget ended it,
+// that the task carries on in a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
 function budgetReport(turn) {
-  if (!turn.spent && !turn.dropped.length) return;
+  if (!turn.spent && !turn.dropped.length && !turn.pastFour.length) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
   const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
@@ -137,9 +137,10 @@ function budgetReport(turn) {
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
   if (turn.spent === 'tokens') lines.push(`Stopped here: one message may use ${n(Number(askOf(turn.tuned).tokenBudget))} of the brain’s tokens (what it reads and writes), and this one has.`);
-  const late = turn.dropped.length;
+  const past = turn.pastFour.length, late = turn.dropped.length;
+  if (past) lines.push(`${past === 1 ? '1 more call was' : `${past} more calls were`} asked for past the ${ROUND_CALLS} calls one round runs, and not run (${[...new Set(turn.pastFour)].join(', ')}).`);
   if (late) lines.push(`${late === 1 ? '1 more call was' : `${late} more calls were`} asked for after the tools were put away, and not run (${[...new Set(turn.dropped)].join(', ')}).`);
-  lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
+  if (turn.spent) lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
   const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
   turn.answer += text;
   turn.emit({ type: 'delta', text });
@@ -250,6 +251,7 @@ async function turnRounds(turn) {
 // in one round met "already changing" on that Spark; final read C-4, 2026-11-15: so did two commands for one Spark,
 // one refused and in no fixed order, and four in a round put the tools away.)
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
+const ROUND_CALLS = 4;              // limit: calls run in one round (each past them is answered "not run")
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
 // Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
 // (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
@@ -264,26 +266,29 @@ function readOutsideBy(c, a, { handed, ok, value, status }) {
   if (!ok) return !(status >= 400 && status < 500);
   return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
 }
-// One round’s tool calls (at most 4): on the record first; lookups together, then the rest one by one; then whether the
+// One round’s tool calls: on the record first; lookups together, then the rest one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
 async function roundCalls(turn, round, r) {
   const { ctx, messages, used, groups, link } = turn;
-  // (at most 4 calls a round, and only those are on the record, each with its result)
-  const calls = r.calls.slice(0, 4);
+  // (every call is on the record, each with its result; at most 4 a round are run, and each past them says so, as a
+  // call made after the tools were put away does: never dropped unseen, final read C-5's follow-up)
+  const calls = r.calls;
   messages.push({ role: 'assistant', content: r.content || '', tool_calls: calls.map((c, i) => ({ id: c.id || `call_${round}_${i}`, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })) });
   const steps = [], outside = [], at = { round, calls, steps, outside };
   const results = [];
-  await Promise.all(calls.map((c, i) => (roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
+  await Promise.all(calls.map((c, i) => (i < ROUND_CALLS && roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
   // From here on this turn has read text from outside (a log, an operation, a recipe, a web result, a command's
   // output: readOutsideBy): what Sparkie may keep in memory without a button gets stricter (20-memory.mjs
   // memoryClear), and a change is asked (21-ladder.mjs).
   if (outside.some(Boolean)) ctx.readOutside = true;
   for (const [i, c] of calls.entries()) {
     if (results[i]) continue;
+    if (i >= ROUND_CALLS) { results[i] = await runOne(turn, { ...at, past: true }, c, i); continue; }
     // (one before it that is still going past its 50 seconds is waited for, a while, so two never run side by side)
     for (const until = Date.now() + ROUND_WAIT_MS; turn.going && !link.gone && Date.now() < until;) await Promise.race([turn.going, sleep(1000)]);
     results[i] = await runOne(turn, at, c, i);
   }
+  turn.pastFour.push(...calls.slice(ROUND_CALLS).map(roundCallName));
   // (what a command printed counts from the next round: the brain asked for this round’s calls before any came back)
   if (outside.some(Boolean)) ctx.readOutside = true;
   used.push(...steps.filter(Boolean));
@@ -295,17 +300,19 @@ async function roundCalls(turn, round, r) {
   }
   messages.push(...results);
 }
-// The calls of a last round, made after the tools were put away (at most 4, as a round's): none is run; each is on the
+// The calls of a last round, made after the tools were put away (each of them): none is run; each is on the
 // page and in the journal as not run, and the reply's last lines name them (budgetReport).
+// (a call's name as the reply's last lines say it: a tool's name, or "a tool")
+const roundCallName = c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool');
 async function roundDropped(turn, round, r) {
-  const calls = r.calls.slice(0, 4), steps = [];
+  const calls = r.calls, steps = [];
   for (const [i, c] of calls.entries()) await runOne(turn, { round, calls, steps, away: true }, c, i);
   turn.used.push(...steps.filter(Boolean));
-  turn.dropped.push(...calls.map(c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool')));
+  turn.dropped.push(...calls.map(roundCallName));
 }
 // One tool call: the checks of this turn (a stop, the agent’s web searches, the changes a message may make), then
 // runAction with 50 seconds, the paste card set aside, the result masked, journalled (tool), cut and told.
-async function runOne(turn, { round, calls, steps, outside = [], away = false }, c, i) {
+async function runOne(turn, { round, calls, steps, outside = [], away = false, past = false }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null, value = null, handed = false, status = null;
@@ -316,6 +323,8 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false },
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
     // (a call made after the tools were put away, roundDropped: never handed over, and no refusal of its own)
     if (away) throw Object.assign(new HttpError(409, 'Not run: it was asked for after the tools were put away for this message.'), { waited: true });
+    // (one past the 4 a round runs, roundCalls: never handed over, and no refusal of its own)
+    if (past) throw Object.assign(new HttpError(429, `Not run: one round runs at most ${ROUND_CALLS} calls. Ask for it again in the next one.`), { waited: true });
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     // (the one before it is still going after the wait, roundCalls: one at a time, so this one isn't started)
     if (turn.going && !roundTogether(a)) throw Object.assign(new HttpError(409, `Not run: the call before it in this message is still going, and calls that may change something run one at a time, in the order asked. Ask for it again once that one has ended (check recent_operations or fleet_events).`), { waited: true });

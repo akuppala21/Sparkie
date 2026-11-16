@@ -10,7 +10,7 @@
 // code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call). The steps' note
 // counts only the commands that ran, and those asked first apart, as waiting for the owner's yes. The
 // brain's mark covers the last round's note. The brain's token budget ends a turn as the others do: the brain is told,
-// code's own line ends the reply, and a task carries on.
+// code's own line ends the reply, and a task carries on. Calls past the 4 one round runs are not run, and each says so.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
@@ -238,6 +238,22 @@ test('the brain’s mark covers the last round’s note: a build whose note says
     assert.notEqual(theirs.report, words.report, 'the report mark moved');
     assert.deepEqual({ ...theirs, report: null }, { ...words, report: null }, 'the other words are the same');
   } finally { rmSync(TMP, { recursive: true, force: true }); }
+});
+
+// Calls past the 4 one round runs were dropped unseen: now each is answered "not run", on the page, in the journal, to
+// the brain in its next round, and in the reply's last lines.
+test('calls past the 4 one round runs are not run, and each says so: on the page, in the journal, to the brain and in the reply’s last lines', { timeout: 180000 * SLOW }, async () => {
+  const chat = await newChat(), from = journal().length, NOT = 'Not run: one round runs at most 4 calls. Ask for it again in the next one.';
+  const r = await turn(chat, 'fix the five notes on spark 3', [[GUIDE, GUIDE, GUIDE, GUIDE, RUN('echo five > notes/five.txt'), RUN('echo six > notes/six.txt')]]);
+  assert.deepEqual(r.message.tools.map(t => [t.name, t.ok]), [...Array(4).fill(['guide', true]), ['run', false], ['run', false]], shown(r.message.tools));
+  for (const t of r.message.tools.slice(4)) assert.equal(t.tail, NOT);
+  assert.ok(!existsSync(at3('notes/five.txt')) && !existsSync(at3('notes/six.txt')), 'nothing ran');
+  assert.deepEqual(toolRecords(chat, from).map(x => [x.act, x.ok]), [...Array(4).fill(['guide', true]), ['run', false], ['run', false]]);
+  // (the brain's next request carries every call's result, the two past the four saying they did not run)
+  assert.equal(r.back.length, 6, JSON.stringify(r.back).slice(0, 400));
+  assert.deepEqual(r.back.slice(4), [{ error: NOT }, { error: NOT }]);
+  assert.ok(r.text.endsWith('\n\n2 more calls were asked for past the 4 calls one round runs, and not run (run).'), r.text.slice(-300));
+  assert.doesNotMatch(r.text, /Stopped/);
 });
 
 // The brain's token budget (R50) ended a turn with no line from code and no carry-on: now it is a budget as the others.
