@@ -263,7 +263,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   try { shown = await say(chat, words); } finally { noScript(); }
   const asked = JSON.parse(lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').at(-1).results[0].content);
   assert.equal(asked.outcome, 'needs-ok', JSON.stringify(asked));
-  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nRuns with the top of your home writable: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\. Keys stay hidden and it cannot reach Docker\.\n/);
+  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nIt writes where a plain change can’t: ~\/dots\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt may fill the disk\.\n/);
   assert.equal(text('dots.txt'), 'top dots before\n', 'nothing ran before the press');
   assert.equal(pair(top)[0], undefined, 'no start line before the press');
   const pressed = await choose(chat, shown.message.choices.find(c => c.label === 'Run it').id);

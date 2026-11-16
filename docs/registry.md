@@ -57,6 +57,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
+| `propose_update` | change | `21-selfchange` | updates | code, cancel | yes | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `install_update` | change | `21-updates` | updates | install | — | no | — |
 | `check_update` | read | `21-updates` | updates | — | — | yes | outside |
@@ -81,12 +82,12 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoved`, `putBackSeed`, `putBackRoute` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
-| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
-| `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed` | no | no |
+| `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
 | `found-setups.json` | `10-recipes` | `digModel` (11-setups); `digModel` is called by `addList`, `startDig` | yes | yes |
 | `funnel-seen.json` | `20-ways-in` | `noteFunnel`; deploy/open-to-internet.sh --undo removes it; `noteFunnel` is called by `checkRoute` | yes | no |
@@ -108,6 +109,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
+| `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |
 | `update-asked.json` | `21-updates` | `updInstallStart`, `updResultLook`; `updInstallStart` is called by `updInstallRun`; `updResultLook` is called by `updAfterRestart` | yes | no |
 | `update-note.json` | `18-workflows` | none; the installer writes it, noteUpdate reads it | yes | no |
 | `update-result.json` | `21-updates` | none; pull.sh writes it | yes | no |
