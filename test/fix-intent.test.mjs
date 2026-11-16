@@ -5,7 +5,8 @@
 // after a change it can't put back (a file saved, a change inside the lock-out net) says so and puts nothing older back
 // (C-16); an undo that put nothing back leaves its change the chat's last, so the next /undo is that change again
 // (R1-01); an agent's new conversation never drops one holding the owner's words, and is refused when none can go
-// (C-18). Linux only: run it on a Spark with tools/test-on-spark.sh.
+// (C-18); a habit told in passing ("I used to free up spark 4 every night.") stops nothing (A-18). Linux only: run it
+// on a Spark with tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
@@ -84,6 +85,24 @@ test('S-3: "The build on Spark 3 is slow" asks for no work: a first-round rm -rf
   const r = await turn(await newChat(), 'The build on Spark 3 is slow', [[RUN('rm -rf build')]]);
   assert.ok(['needs-ok', 'question'].includes(r.tools[0]?.outcome), shown(r.tools));
   assert.equal(text('build/keep.txt'), 'kept\n');
+});
+
+test('A-18: "I used to free up spark 4 every night." stops nothing: the stop the brain calls is a button, and the model keeps running; "free up spark 4" still stops it at once', { timeout: 240000 * SLOW }, async () => {
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', stateOf = name => readFileSync(join(T.fleet.root, 'spark4', '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+  assert.equal(stateOf(RADIX), 'running', 'it runs before');
+  const STOP = [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }];
+  const r = await turn(await newChat(), 'I used to free up spark 4 every night.', [STOP]);
+  assert.ok(['needs-ok', 'question'].includes(r.tools[0]?.outcome), shown(r.tools));
+  assert.ok(r.choices.length > 0, 'a button');
+  await sleep(1000);
+  assert.equal(stateOf(RADIX), 'running', 'the model still runs');
+  // (the order still runs at once; then the model is brought back for the tests after this one)
+  const o = await turn(await newChat(), 'free up spark 4', [STOP]);
+  assert.equal(o.tools[0]?.outcome, 'started', shown(o.tools));
+  await waitFor(() => stateOf(RADIX) !== 'running', { timeout: 120000, what: 'the stop' });
+  const back = await api('/actions/restart_model', { method: 'POST', body: { spark: 'spark4', container: RADIX } });
+  assert.equal(back.status, 200, back.text);
+  await waitFor(() => stateOf(RADIX) === 'running', { timeout: 120000, what: 'it running again' });
 });
 
 test('C-11: a remember button shows the whole line its press keeps', { timeout: 120000 * SLOW }, async () => {

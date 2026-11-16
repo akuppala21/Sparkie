@@ -74,3 +74,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R70](rules/R70.md): Root, only where the owner turned it on, and only inside the net.
 - [R71](rules/R71.md): The lock-out net, the console's half (A13b, `21-net.mjs`; on: `NET_ON`).
 - [R72](rules/R72.md): What the runner asks for itself, and what the press checks (moved from R61 on 2026-11-15; R61 is `run` with a change and the runner, R54 the dangerous ask).
+- [R74](rules/R74.md): Which of the owner's own words ask for a change (`changeIntent`, R25's first half; C-1, C-6, S-3, A-18).
