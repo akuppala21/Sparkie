@@ -639,7 +639,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (byAgent) {
     const hourAgo = Date.now() - 3600000;
     while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
-    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in Access → Agents.'); }
+    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in the account menu → Agents and Telegram.'); }
   }
   // Sparkie working on the owner's own words (their page chat or Telegram, a carry-on turn too; never an agent's
   // ask_sparkie): a failed operation of the owner's isn't a looping agent (runJob, R9).

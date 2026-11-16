@@ -662,7 +662,7 @@ async function startModel(args, viewer, ctx) {
     job.progress = null;
     pausedCheck(ctx);
     const fresh = await inventory(null), m = libraryModel(fresh, v.repo);
-    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Start it from Models in a minute.`);
+    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Ask Sparkie to start it again in a minute.`);
     // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
     // doesn't answer, it starts as before.
     if (found.outsideRecipes) {
