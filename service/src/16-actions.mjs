@@ -187,10 +187,36 @@ const HYPOTHETICAL = /\b(whether|if|should|would|could|can|might|may)\b[^,]*$/i;
 const KEEP = /\b(keep|leave)\b[^.;!?\n]{0,60}?\b(running|alone|up|on|going|as\s+(?:it\s+)?is)\b/i;
 // "Stop gemma, actually don't": the change in that sentence is called off.
 const CALLED_OFF = /(?:^|[\s,;–—-])(?:actually\s+)?(?:don't|do\s+not|no\s+wait|never\s*mind|nevermind|scratch\s+that|not\s+yet|hold\s+(?:on|off))[\s.!]*$/i;
+// The owner's own sentences of a message (C-1): what they pasted or quoted is not their asking. Taken out, each as a line
+// break (in a line, a space): a fenced code block (``` or ~~~), an indented line (4 spaces or a tab), a quoted line
+// ("> …"), text in quotes or backticks of more than three words (a short name or path stays: rename "old.txt" to
+// "new.txt"), a line that reads as a log, a diff or a program's output (OWN_PASTED: a time or level word first, a stack
+// frame, a prompt, JSON, a diff's header) and the plain lines between two of those, and the lines after one ending in
+// ":" up to a blank line (a pasted log, as taskBudget and saidToKeep read it). Linear: no lookbehind, no nested repeat.
+// For every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call it first).
+const OWN_QUOTE_WORDS = 3;
+const OWN_PASTED = /^\s*(?:\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d|\[?\d\d:\d\d:\d\d|[A-Z][a-z]{2} +\d{1,2} \d\d:\d\d|\[?(?:ERROR|ERR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|CRITICAL|PANIC|NOTICE)\b|Traceback \(|File "[^"\n]*", line \d|at [\w.$<>]+ \(|[\w.]*(?:Error|Exception):|\$ \S|[{}]|\[[\s{"\d[]|\]\s*,?\s*$|@@ |diff --git |\+\+\+ |--- a\/|index [0-9a-f]{6,}\.\.)/;
+function ownSentences(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g, '\n').split('\n');
+  const pasted = lines.map(l => OWN_PASTED.test(l)), ahead = lines.map(() => false);
+  // (ahead: a line that reads as output comes later in the same block, with no blank line between)
+  for (let i = lines.length - 2; i >= 0; i--) ahead[i] = Boolean(lines[i + 1].trim()) && (pasted[i + 1] || ahead[i + 1]);
+  let after = false, inLog = false, inDiff = false;
+  const kept = lines.map((line, i) => {
+    if (after) { if (!line.trim()) after = false; return ''; }
+    if (/:\s*$/.test(line)) after = true;
+    if (!line.trim()) { inLog = false; inDiff = false; return line; }
+    if (pasted[i]) { inLog = true; inDiff ||= /^(?:@@ |diff --git |\+\+\+ |--- a\/)/.test(line); return ''; }
+    // (a plain line between two that read as output is output too, and a diff's lines to its end)
+    if ((inLog && ahead[i]) || (inDiff && /^[-+ ]/.test(line))) return '';
+    return /^\s*>/.test(line) || /^(?: {4}|\t)/.test(line) ? '' : line;
+  });
+  return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
+}
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
     if (KEEP.test(sentence)) negated.add('stop');
