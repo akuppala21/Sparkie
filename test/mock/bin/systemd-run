@@ -28,6 +28,7 @@
 # <rehearsal>/standin/start-fails: "<unit name prefix> <code>": the unit is made but fails before its command runs, with
 # that code (226: a path one of its settings names is gone by its start, as systemd answers), and nothing of it runs.
 # <rehearsal>/standin/past-limit: a run or look unit is not ended at its RuntimeMaxSec (a systemd that failed to end it).
+# <rehearsal>/standin/home: a run, look or root unit's HOME is the made-up root's home (test/rehearsal.mjs, home: true).
 import json, os, shutil, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -194,6 +195,15 @@ if unit.startswith(('sw-look-', 'sw-run-', 'sw-root-')) and cmd:
                 pass
     os.environ['WALL_VIEW'] = wall_view()
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
+    # <rehearsal>/standin/home (test/rehearsal.mjs, home: true): the home the helper hands the unit (/<spark>, the
+    # made-up /etc/passwd's) is read under the made-up root, as the unit would see it there, so ~ is a folder that is there.
+    h = os.path.join(held, 'home')
+    if knob('home') is not None and os.path.isfile(h):
+        home = open(h).read()
+        if home.startswith('/') and not os.path.isdir(home) and os.path.isdir(R + home):
+            os.chmod(h, 0o640)
+            with open(h, 'w') as f: f.write(R + home)
+            os.chmod(h, 0o440)
     # Its RuntimeMaxSec, as systemd holds it: past it, the command and everything it started are ended (exit 1).
     limit = next((float(a.split('=', 1)[1]) for a in args if a.startswith('RuntimeMaxSec=')), None)
     if knob('past-limit') is not None:
