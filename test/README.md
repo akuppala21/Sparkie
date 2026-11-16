@@ -69,6 +69,23 @@ file (`// Covers: …`). A new test file needs only that comment; `node tools/ma
 Hugging Face is never reached: `start-mock.mjs` points `SPARK_CONSOLE_HF_FIXTURE` at `mock/hf-fixture.json`, a few
 made-up repos that searches and look-ups answer from (only with `SPARK_CONSOLE_ALL_LOCAL=1`; any other repo is not found).
 
+## The root helper's tests
+
+`root-helper.test.mjs`, and every file that rehearses the helper (`rehearsal.mjs`), need Linux with GNU tools and
+bash 5: on macOS about 200 of its tests fail, so run them on a Spark. **No test proves a wall:** each shows the helper
+asked the stand-in `systemd-run` for it, and the stand-in builds none; the proof's verdicts are lines the stand-in
+prints. The exceptions: the lock-out net's put-back (`restore.sh`, `guard.py`) runs for real on the rehearsal's files,
+and the last group runs the proof's own attempts with no wall, to show each one a plain account can try gets through.
+What only a real Spark proves (R63's Today has the lines to run there):
+
+- that systemd and the kernel grant each wall: the proof the one-time command runs, and the checks inside a plain change
+  (no terminal, the owner's control groups read-only, no multicast);
+- attempts 15 to 18, 20 and 22 (they need root, sudo or a network), and a dead attempt among those the helper does not
+  demand work outside;
+- the owner of a file put back, and the home's owner (the tests are not root), and every line the helper runs only as
+  root;
+- that a stopped change ends on a real systemd (the stand-in `systemctl` only marks a stop unless told otherwise).
+
 ## How it's put together
 
 The harness (`startMock`, `useFleet`, `request`), the stand-in fleet, every stand-in command and model, and the
