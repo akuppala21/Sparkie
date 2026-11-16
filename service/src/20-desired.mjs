@@ -241,20 +241,60 @@ action({
 // When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
 // (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
 const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
+// The chat's newest change undo can't put back (C-16), from the journal's two newest months: a command inside the
+// lock-out net (a lock-out change on a compute Spark, root, every change on Spark 2: its start line carries `net` and no
+// set of copies) unless it never ran, or a change other than a model's or an app's (those are the list's revisions,
+// below) that did something: power, a file saved, memory, a saved workflow, an update, a cancel. Undo's own lines and
+// what changes nothing on the Sparks (find_setups, test_changes, the self-test) are none.
+const UNDO_OWN_KINDS = new Set(['start_model', 'stop_model', 'restart_model', 'keep_running', 'undo_last_change', 'find_setups', 'test_changes', 'self_test']);
+const UNDO_NOTHING_DONE = new Set(['question', 'needs-ok', 'already', 'already-starting', 'refused', 'waiting', 'declined', 'noroom', 'failed', 'error', 'look', 'box', 'asked', 'pending']);
+function undoNotMine(conv) {
+  const tag = `"chat":${JSON.stringify(conv)}`, starts = new Map(), ends = new Map(), found = [];
+  for (const f of journalFiles().slice(0, 2)) {
+    for (const line of jLinesOf(f)) {
+      if (!line.includes(tag)) continue;
+      const r = jParse(line);
+      if (!r || r.chat !== conv || !((r.k === 'cmd' && r.act === 'run' && r.net) || (r.k === 'call' && ACTIONS.get(r.act)?.kind === 'change' && !UNDO_OWN_KINDS.has(r.act)))) continue;
+      if (r.end) ends.set(r.id, r); else if (r.start) starts.set(r.id, r); else if (r.ok && !UNDO_NOTHING_DONE.has(r.outcome)) found.push(r);
+    }
+  }
+  for (const [id, r] of starts) {
+    const e = ends.get(id);
+    if (!e || (r.k === 'cmd' ? e.ran !== false && e.outcome !== 'refused' : e.ok && !UNDO_NOTHING_DONE.has(e.outcome))) found.push(r);
+  }
+  return found.sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] || null;
+}
+const undoWhere = id => (id ? ` on ${sparkName(nodeById(id) || { id })}` : '');
+const undoRevWords = rev => [...rev.added.map(k => `started ${k.split('/')[1]}${undoWhere(k.split('/')[0])}`), ...rev.removed.map(k => `stopped ${k.split('/')[1]}${undoWhere(k.split('/')[0])}`)].join(' and ') || `changed the list (revision ${rev.revision})`;
+// What undo says when the chat's last change is one it can't put back: that one, and the older one it leaves as it is.
+function undoCantWords(r, older) {
+  const spark = r.args?.spark || (r.sub || []).find(x => nodeById(x)) || null;
+  const what = r.net ? `a command${r.root ? ' as root' : ''}${undoWhere(spark)} that ran inside the lock-out net (record ${r.id})` : `“${ACTIONS.get(r.act)?.title || r.act}”${undoWhere(spark)} (record ${r.id})`;
+  return `Nothing was undone: this chat’s last change was ${what}, and undo has no way to put that back.${r.net ? ' While its guard is still open, /putback puts back what it changed.' : ''}${older ? ` The change before it is left as it is too (${older}): undo goes back only on a chat’s last change. To change that one, say exactly what to stop, start or put back.` : ''}`;
+}
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
-    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
-    if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
-    // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).
+    // The chat's last change of any kind, newest first (C-16): a command's files (21-runner.mjs), a change still running,
+    // a model change on the list, or one undo can't put back. Never an older one in its place.
+    const since = undoSince(ctx.conv), set = runnerLatest(ctx.conv), other = undoNotMine(ctx.conv);
     const running = [...jobs.values()].find(j => j.status === 'running' && j.conv === ctx.conv && !j.undo);
-    if (running) { cancelJob(running, ctx.actor || viewer.login); return { outcome: 'cancelling', operation: running.id, note: 'It was still running, so it’s being cancelled: what it did is put back, and this chat hears when it has been.' }; }
+    const last = [[other?.at, 'other'], [set?.at, 'files'], [running?.createdAt, 'running'], [since, 'model']].filter(([at]) => at).sort((a, b) => String(b[0]).localeCompare(String(a[0])))[0]?.[1];
+    if (last === 'other') {
+      const rev = since ? [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone) : null;
+      const older = [[set?.at, set && `a command’s files${undoWhere(set.spark)}, record ${set.id}`], [running?.createdAt, running && `operation ${running.id}, still running`], [since, rev && `it ${undoRevWords(rev)}`]]
+        .filter(([at, w]) => at && w).sort((a, b) => String(b[0]).localeCompare(String(a[0])))[0]?.[1] || null;
+      throw new HttpError(409, undoCantWords(other, older));
+    }
+    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
+    if (last === 'files') { const files = await runnerUndo(viewer, ctx, since); if (files) return files; }
+    // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).
+    if (last === 'running') { cancelJob(running, ctx.actor || viewer.login); return { outcome: 'cancelling', operation: running.id, note: 'It was still running, so it’s being cancelled: what it did is put back, and this chat hears when it has been.' }; }
     const d = desired(), rev = [...d.revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone && Date.now() - Date.parse(r.at) < 24 * 3600000);
     if (!rev) return { outcome: 'already', note: 'This chat hasn’t changed anything in the last day that can be undone.' };
     if (rev.app) throw new HttpError(409, 'This chat’s last change was to an app, and undo only reverses model changes. Say "stop <app> on Spark N" or "keep <app> running" instead.');
@@ -298,6 +338,6 @@ action({
       if (problems.length) throw new Error(`Part of the undo didn’t work: ${problems.join('; ')}`);
     });
     return { outcome: 'started', operation: job.id, undoing: { stops: rev.added, startsAgain: rev.removed },
-      note: 'Putting things back as they were before that change: what it started stops, then what it stopped starts again. This chat hears when it’s done.' };
+      note: `Putting back this chat’s last change (it ${undoRevWords(rev)}): what it started stops, then what it stopped starts again. This chat hears when it’s done.` };
   },
 });

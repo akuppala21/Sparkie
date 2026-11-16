@@ -78,3 +78,36 @@ test('S-3: "The build on Spark 3 is slow" asks for no work: a first-round rm -rf
   assert.ok(['needs-ok', 'question'].includes(r.tools[0]?.outcome), shown(r.tools));
   assert.equal(text('build/keep.txt'), 'kept\n');
 });
+
+test('C-16: /undo after a change it can\'t put back (a file saved) says so, names it and the one before, and puts nothing back', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  const one = await turn(chat, 'change u on spark 3', [[RUN('echo after > notes/u.txt')]]);
+  assert.equal(one.tools[0]?.outcome, 'change', shown(one.tools));
+  const two = await turn(chat, 'save this as c16.md on spark 3', [[{ name: 'save_file', arguments: { spark: 'spark3', path: 'c16.md', text: 'c16\n' } }]]);
+  assert.equal(two.tools[0]?.ok, true, shown(two.tools));
+  assert.deepEqual(two.choices, [], 'saved at once');
+  const u = await say(chat, '/undo');
+  assert.match(u.text, /^\/undo\nNothing was undone: this chat’s last change was “Save a file” on Spark 3 \(record j_[0-9a-f]{12}\), and undo has no way to put that back\. The change before it is left as it is too \(a command’s files on Spark 3, record j_[0-9a-f]{12}\)/, u.text);
+  assert.equal(text('notes/u.txt'), 'after\n', 'the change before it was not put back');
+  // (and so again: never the older one)
+  const again = await say(chat, '/undo');
+  assert.match(again.text, /Nothing was undone/, again.text);
+  assert.equal(text('notes/u.txt'), 'after\n');
+});
+
+// (last: a change inside the lock-out net)
+test('C-16: /undo after a change inside the lock-out net says so and points to /putback; the change before it is not put back instead', { timeout: 300000 * SLOW }, async () => {
+  const chat = await newChat();
+  const one = await turn(chat, 'change v on spark 3', [[RUN('echo after > notes/v.txt')]]);
+  assert.equal(one.tools[0]?.outcome, 'change', shown(one.tools));
+  await turn(chat, 'remove my old shell aliases on spark 3', [[RUN('rm -f .bash_aliases')]]);
+  const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
+  assert.ok(m, 'the lock-out ask');
+  const yes = m.choices.find(c => c.pair);
+  const p = await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: yes.id, pair: m.pair } });
+  assert.equal(p.status, 200, p.text);
+  assert.ok(!existsSync(at3('.bash_aliases')), 'the lock-out change ran');
+  const u = await say(chat, '/undo');
+  assert.match(u.text, /^\/undo\nNothing was undone: this chat’s last change was a command on Spark 3 that ran inside the lock-out net \(record j_[0-9a-f]{12}\), and undo has no way to put that back\. While its guard is still open, \/putback puts back what it changed\./, u.text);
+  assert.equal(text('notes/v.txt'), 'after\n', 'the change before it was not put back');
+});
