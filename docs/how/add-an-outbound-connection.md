@@ -1,7 +1,6 @@
 # Add an outbound connection
 
-Anything the console fetches from outside the Sparks. From the map's "Where new things go", row "An outbound
-connection".
+Anything the console fetches from outside the Sparks.
 
 ## Touch
 

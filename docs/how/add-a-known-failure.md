@@ -1,7 +1,6 @@
 # Add a known start failure and its fix
 
-A model start that fails in a way seen before gets a fix and a retry, by code. From the map's "Where new things go",
-row "A known failure and fix".
+A model start that fails in a way seen before gets a fix and a retry, by code.
 
 ## Touch
 
@@ -12,6 +11,8 @@ row "A known failure and fix".
 - Where fixes apply: `withoutRejected`, `fixFlags`, `clusterEnv`.
 - A test in `workflows.test.mjs`.
 - Both start workflows change version (a lock run, then a validation run).
+- Its `id` and `title` are among the words the brain reads (`BRAIN_WORDS`, `21-guide.mjs`), so the tested mark changes:
+  the brain eval before the install (`docs/how/run-the-brain-eval.md`, R52).
 
 ## Never
 

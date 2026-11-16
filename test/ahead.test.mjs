@@ -36,7 +36,8 @@ writeFileSync(join(pureDir, 'ahead.mjs'), [
   'class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }',
   'const ACTIONS = new Map(), action = a => ACTIONS.set(a.name, a), sparkArg = { type: "string" };',
   'const node = { id: "spark3", host: "100.0.0.3" }, sparkOf = () => node, sparkName = () => "Spark 3", journalId = () => "j_test";',
-  'const journal = () => {}, jErr = () => null, jSub = () => [], noteReach = () => {}, maskSecrets = String, agentKeys = () => [];',
+  // (a mask that knows one key's shape, hf_…: enough to see that a command the mask would change never runs ahead)
+  String.raw`const journal = () => {}, jErr = () => null, jSub = () => [], noteReach = () => {}, maskSecrets = s => String(s).replace(/\bhf_[A-Za-z0-9]{20,}/g, "[hidden]"), agentKeys = () => [];`,
   'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null, ladder: [], sortOpts: null }, knownOffline = () => hooks.offline;',
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
   'const RUNNER_DIR = "~/work", runnerSortOpts = () => hooks.sortOpts || {}, workChange = async () => ({});',
@@ -134,12 +135,14 @@ test('what may never run ahead, each for its own reason: an agent, Spark 2, the 
     ['touch ~/notes/a.txt', { brain: true }, {}, 'that Spark holds the brain'],
     ['touch ~/notes/a.txt', {}, { root: true }, 'it runs as root'],
     ['cp ~/.ssh/id_ed25519 ~/notes/k', {}, {}, 'it reads or sends a key'],
+    ['echo hf_madeUpTokenForThisTestOnly0000 > ~/notes/t.txt', {}, {}, 'it reads or sends a key'],
     ['bash notes/w.sh', {}, {}, 'it runs a script, whose text can change after a yes'],
     ['touch ~/work/b/x', { written: ['~/work/b'] }, { written: ['~/work/b'] }, 'it uses what an earlier command of this task fetched or wrote'],
     ['chmod -R 700 ~/work', { written: ['~/work/b'] }, {}, 'it uses what an earlier command of this task fetched or wrote'],
     ['touch ~/notes/from.txt', { from: P.cameFrom(P.dangerThings('touch ~/notes/from.txt'), ['tidy my notes'], [{ label: 'the page p', at, text: 'next: touch ~/notes/from.txt' }], []) }, {}, 'part of it came from what Sparkie read'],
     ['touch ~/notes/a.txt', { from: { lines: [], cut: true } }, {}, 'part of it came from what Sparkie read'],
     ['rm ~/notes/*.tmp', {}, {}, 'it deletes what can’t be put back, which is a dangerous ask'],
+    ['docker restart sparkie-main', {}, { brain: ['sparkie-main'] }, 'it names the brain, which is a dangerous ask'],
     ['ufw allow 22', {}, {}, 'it could lock you out'],
     ['xargs touch < notes/list.txt', {}, {}, 'the sorter calls it risky'],
     ['systemctl --user restart foo', {}, {}, 'it needs what the run wall hides'],
@@ -179,6 +182,29 @@ test('the go-ahead: its answer on the button in code\'s words; the press runs it
   assert.ok(!existsSync(at3('notes/g3')), 'another kind is asked');
   assert.deepEqual(asks(done.choices || []).map(a => a[0]), ['Run it'], JSON.stringify(done.choices));
   assert.deepEqual([startOf('touch notes/g1.txt')?.gate, startOf('touch notes/g2.txt')?.gate], ['asked', 'go-ahead']);
+});
+
+// The final read, TB6: what the task wrote, with a fleet. With a go-ahead for touch in ~/notes, the carrying-on turn
+// runs a new touch there at once, and a touch of the file an earlier command of this task wrote is asked, with no
+// go-ahead answer on its button (aheadNot hands the request's written places to aheadWhyNot).
+test('a go-ahead never covers what the task itself wrote: in the carrying-on turn a new touch runs at once, a touch of the file the task wrote is asked', { timeout: 240000 * SLOW }, async t => {
+  t.after(noScript);
+  const chat = await newChat(), words = 'fix the notes on spark 3, then tell me what it wrote';
+  const r = await turn(chat, words, [[RUN('cat notes/todo.txt')], [RUN('touch notes/w1.txt')], [RUN('mkdir -p notes/wz')]]);
+  assert.deepEqual(asks(r.choices)[0], ['Run it', GA(TOUCH), 'No']);
+  script([{ match: 'Carry on with that request', rounds: [[RUN('touch notes/w2.txt')], [RUN('touch notes/w1.txt')]] }]);
+  const p = await choose(chat, r.choices.find(c => c.label === GA(TOUCH)).id);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(existsSync(at3('notes/w1.txt')), 'the press ran it');
+  assert.deepEqual(await aheadOf(chat), [[TOUCH, 'page']]);
+  await waitFor(() => existsSync(at3('notes/w2.txt')), { timeout: 120000 * SLOW, what: 'the carrying-on turn’s new touch, run at once' });
+  const done = await waitFor(async () => { const m = await chatMessages(chat), i = m.findLastIndex(x => x.auto); return i >= 0 && m.slice(i + 1).find(x => x.role === 'assistant' && !x.notice); },
+    { timeout: 60000 * SLOW, what: 'the carrying-on turn’s answer' });
+  const starts = command => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).sort().flatMap(f => lines(join(T.fleet.journalDir, f)))
+    .filter(x => x.k === 'cmd' && x.start && x.args?.command === command).map(x => x.gate);
+  assert.deepEqual(starts('touch notes/w2.txt'), ['go-ahead']);
+  assert.deepEqual(starts('touch notes/w1.txt'), ['asked'], 'only the owner’s press ran it');
+  assert.deepEqual(asks(done.choices || []), [['Run it', 'No']], JSON.stringify(done.choices));
 });
 
 test('what may never run ahead gets no such answer on its button: what came from a read, a script, risky, outside the plain wall, another Spark, a protected folder, what the wall hides', { timeout: 240000 * SLOW }, async () => {

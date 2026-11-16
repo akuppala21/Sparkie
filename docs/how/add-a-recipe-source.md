@@ -1,7 +1,6 @@
 # Add a recipe source
 
-A recipe source is a place setups for a model are read from (a recipe list, a model card). From the map's "Where new
-things go", row "A recipe source".
+A recipe source is a place setups for a model are read from (a recipe list, a model card).
 
 ## Touch
 

@@ -398,6 +398,9 @@ test('with Sparkie’s model on Spark 3, the box opens on Spark 4 and never on S
   assert.equal(none.status, 503, none.text);
   assert.equal(none.json.error, 'No compute Spark is on to hold a box: Spark 1 and Spark 4 are off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.');
   for (const spark of ['spark2', 'spark3']) assert.deepEqual([boxLines(spark, F), boxRuns(spark, F)], [[], []], spark);
+  // (and nothing runs as root on the brain's Spark: refused in its own words, the final read of the tests, TD-04)
+  const rooted = await act('run', { on: 'spark3', command: 'touch r3.txt', root: true }, F);
+  assert.deepEqual([rooted.status, rooted.json?.error], [403, 'Spark 3 holds the brain, so nothing runs there as root.'], rooted.text);
   await F.stop();
 });
 
@@ -463,6 +466,13 @@ test('the check itself, run on this machine (no walls here): each of the eleven 
     const b = runIt(some);
     assert.deepEqual(b.out.map(l => l.split(' ').slice(0, 3).join(' ')), [...NAMES.map(w => `c0ffee wall ${w}`), 'c0ffee walls end'], b.all);
     assert.deepEqual([b.out[0], b.out[7], b.out[9]], ['c0ffee wall root open can\'t tell: id is missing', 'c0ffee wall sockets open can\'t tell: find is missing', 'c0ffee wall network open can\'t tell: timeout is missing']);
+    // (the open side of three probes, which said only "ok" above: a key in the environment, a home that is there, a
+    // socket find finds; the final read of the tests, TD-11)
+    writeFileSync(join(all, 'find'), '#!/bin/sh\necho /tmp/box-check-fake.sock\n', { mode: 0o755 });
+    const c = spawnSync(join(all, 'bash'), ['-c', check, 'box-check', 'c0ffee', all, '127.0.0.1', '9'], { encoding: 'utf8', timeout: 30000 * SLOW, env: { PATH: all, HOME: all, HF_TOKEN: 'x' } }).stdout.trim().split('\n');
+    assert.equal(c[6], 'c0ffee wall home open', c.join('\n'));
+    assert.match(c[7], /^c0ffee wall sockets open \/tmp\/box-check-fake\.sock/, c.join('\n'));
+    assert.match(c[8], /^c0ffee wall secrets open HF_TOKEN/, c.join('\n'));
   } finally { rmSync(all, { recursive: true, force: true }); rmSync(some, { recursive: true, force: true }); }
 });
 

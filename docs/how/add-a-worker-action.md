@@ -1,7 +1,6 @@
 # Add a worker.py action
 
-`service/worker.py` runs on each Spark for status and file work. From the map's "Where new things go", row "A
-worker.py action".
+`service/worker.py` runs on each Spark for status and file work.
 
 ## Touch
 
@@ -19,7 +18,8 @@ worker.py action".
 ## Rules
 
 - R29: the lock is for this exact tree; a `worker.py`-only edit installs with every workflow untested.
-- R37: files are reached only in a Spark's shared folder, through the worker.
+- R37: `files` and `save_file` reach only a Spark's shared folder, through the worker. (`run` and `write_file` reach
+  other files through the root helper: R61, R68.)
 
 ## Tests
 

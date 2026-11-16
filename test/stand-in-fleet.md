@@ -40,8 +40,10 @@ covers, is in `test/README.md`.
     end: what it prints is its log, its exit code the container's), `gpu-broken` (`nvidia-smi` answers as a driver
     that doesn't, exit 9) and `hf-hold` (`hf download` waits while the file is there).
   - `manifest.json` — what git can't hold: empty folders and the zero-filled weight files' sizes (recreated sparse).
-  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `loginctl`, `ping`, `ss`, `tailscale`,
-    and `ssh`/`scp` stubs that always fail. `docker` runs, stops, starts, kills (exit 137) and removes containers like the real one: the
+  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` and `tar` (the real ones;
+    `.mock/gzip-bad` above, and `$MOCK_DIR/tar-fails` ends `tar` with 2 after a whole archive), `timeout` (the real
+    one where there is one, else no limit), `hf`, `ip`, `loginctl`, `ping`, `ss`, `tailscale`, and `ssh`/`scp` stubs
+    that always fail. `docker` runs, stops, starts, kills (exit 137) and removes containers like the real one: the
     console's model containers share the serve port (a second can't start while one runs: "port is already
     allocated"), `*gemma*` models exit with code 1 as soon as they start, a stop frees the GPU memory `.mock/gpu` lists
     for it, and "OOM" in a status means killed for memory. Like Docker, it takes a container's name or the start of its
@@ -56,14 +58,23 @@ covers, is in `test/README.md`.
     running with a key that never expires; with `$MOCK_DIR/tailscale-hangs` every call hangs. `loginctl show-user`
     (the linger look) answers Spark 2's `.mock/linger` (yes when there is none; `fail` fails). Both keep every call,
     one line each, in `$MOCK_DIR/tailscale-calls` and `$MOCK_DIR/loginctl-calls`.
-  - `bin/sudo` — only `sudo -n` with the two commands `deploy/power-setup.sh` allows (and `-l` to ask): `systemctl
-    poweroff` makes every running container there exit and puts the Spark in the offline file (the stand-in plug reads
-    it); `.mock/no-sudo` makes it ask for a password (refused), `.mock/poweroff-refused` lets `-l` say yes but refuses the
-    shutdown itself, `.mock/poweroff-hangs` keeps the Spark answering. `bin/who` gives the sessions in `.mock/who` (none
-    otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more power-off looks answer, then fails
-    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one, and with
+  - `bin/sudo` — only `sudo -n`, with the two commands `deploy/power-setup.sh` allows (and `-l` to ask) or with a
+    rehearsal's root helper: `systemctl poweroff` makes every running container there exit and puts the Spark in the
+    offline file (the stand-in plug reads it); `.mock/no-sudo` makes it ask for a password (refused),
+    `.mock/poweroff-refused` lets `-l` say yes but refuses the shutdown itself, `.mock/poweroff-hangs` keeps the Spark
+    answering. On a Spark whose `~/.rehearsal` holds a made-up root with the real helper and its sudo line
+    (`test/rehearsal.mjs`), `sudo -n` runs that helper as sudo would for root; `.mock/sudo-drops` drops the call at
+    once (255) while the helper runs on, after the helper's first line when it holds `first-line`. `bin/who` gives the
+    sessions in `.mock/who` (none otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more
+    power-off looks answer, then fails them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one, and with
     `.mock/curl-first` there adds each call's first argument to it (the console's say `-q`, R53). `.mock/off-path-<name>`
     makes the status round's look count that program as missing from the fixed path.
+  - `bin/systemd-run`, `systemctl`, `setpriv`, `unshare`, `sshd`, `visudo` — for a rehearsal of the root helper
+    (`deploy/spark-console-root`; `test/rehearsal.mjs` sets one up on a stand-in Spark). Each answers only inside a
+    rehearsal (`SPARK_CONSOLE_REHEARSAL` names its folder; `systemctl` also takes that Spark's `~/.rehearsal`), keeps
+    every call as one JSON line in the rehearsal's `calls.log` and reads its settings from the rehearsal's `standin/`
+    folder (each file's head lists them). They build no wall: a look or a change runs unwalled, the wall proof's units
+    are played, not run, and the lock-out net's timer is armed but never fires (a test runs the put-back itself).
   - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,
@@ -80,23 +91,26 @@ covers, is in `test/README.md`.
     `offered: true` on a call makes it only when it was, and `test/tools.test.mjs` tests what is offered;
     "take N seconds" makes it wait; a rule's `answerWhen` (a file name) holds the answer after its tools' results until
     `$MOCK_DIR/<that file>` is there; `$MOCK_DIR/model-fail` makes one request fail, once, in a way its head lists;
-    every request goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last user message, the
-    round and the tool results), an always-up benchmark server, and the serve-port server deploys are speed-tested on.
+    every request to Sparkie's model goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last
+    user message, the round and the tool results; the brain check's go to `$MOCK_DIR/brain-check.jsonl` instead), an
+    always-up benchmark server, and the serve-port server deploys are speed-tested on.
   - `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
     listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while
     `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC).
-  - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs`: only the routes the installer asks
-    (`/health`, `/whoami`, `/mcp`, `/v1/models`, `/main`, `/chats` and a chat turn's stream) on
-    `$HOME/.local/state/spark-console/api.sock`; the test puts `const MODE = '…'` in front of it (good, dead, dies,
-    not-owner, no-tool, tg-bad) and stages it as `server.mjs`.
+  - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs` and `pull.test.mjs`: only the routes the
+    installers ask (`/health`, `/whoami`, `/auth/signin/begin`, `/mcp`, `/v1/models`, `/main`, `/chats` and a chat
+    turn's stream) on `$HOME/.local/state/spark-console/api.sock`; the test puts `const MODE = '…'` in front of it
+    (good, dead, dies, not-owner, no-tool, tg-bad, no-begin) and stages it as `server.mjs`.
   - `telegram.mjs` — Telegram's Bot API, started when a test asks for `telegram: true` (long polling with Telegram's
     offset rules, 409 on a second poller, 4,096-character messages); `/__push` queues updates, `/__mode` makes it
     refuse (401), be in use (409), be down (502) or slow down (429); every call goes to `telegram-calls.jsonl`.
 - All tokens in the stand-ins (`hf_secret…`, `sk-abc…`, `nvapi-ABC…` and the like) are fake, to check masking.
-- What no test reaches: the real `worker.py` status code, real ssh, the Mac half of the installer, real systemd
-  and Tailscale's routes, and the locked TCP mode. `test/install.test.mjs` runs the installer's Spark 2 half,
-  `restore.sh` and the watchdog with a stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a
-  Linux run is the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14 or the
-  cable rule in R17.
+- What no test reaches: the real `worker.py` status code, real ssh and sudo, the Mac half of the installer, real
+  systemd and Tailscale's routes, the locked TCP mode, real Docker, and every wall: the root helper's (systemd's
+  settings, `unshare`, `setpriv`), the lock-out net's timer firing by itself, and the box's. The stand-ins show what
+  is asked for, not what a Spark grants. `test/install.test.mjs` runs the installer's Spark 2 half, `restore.sh` and
+  the watchdog with its own stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a Linux run is
+  the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14's stale stop list (its
+  brain switch is in `brain.test.mjs`) or the cable rule in R17.

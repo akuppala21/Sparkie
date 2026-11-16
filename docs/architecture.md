@@ -1,6 +1,6 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+Checked against the code on 2026-11-15 (the parts are in `docs/code-map.md`, timers and state writers in
 `docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
@@ -12,7 +12,7 @@ not serve the page: Tailscale serves `public/` as files and hands only `/console
 the owner opens it, port 10000 of the same name goes to a second socket, the app door (R40), which shows the owner's
 kept apps and nothing of the console. Its code is in parts in `service/src/`, joined in name order into
 `service/server.mjs`; the parts share one scope. Everything Sparkie, an agent or a script can do is a named action in
-one registry (reads and changes), called through one function, `runAction`. Many of the page's own buttons skip it and
+one registry (reads and changes), called through one function, `runAction`. Some of the page's routes skip it and
 create jobs directly. A model start runs as a job: it claims its Sparks, plans again, acts through Docker, and counts
 as done only when the model answers a test prompt. Timers sense the fleet, and a heal loop brings back what should be
 running. What the console remembers is JSON files in `~/.local/state/spark-console`; Docker on each Spark is the truth
@@ -56,7 +56,7 @@ flowchart TD
   GUARD["Update guard (pull.sh, update-guard.sh): the installed build's copy and one timer, for one install"]
   WORK["run and write_file (21-work, 21-write): the sorter (20-sort), then the ladder (21-ladder): at once, a button, the dangerous ask or refused"]
   HELPER["Root helper on each Spark (deploy/spark-console-root, R42): look wall, run wall, root"]
-  NETG["Lock-out net (21-net, R60): a timer on that Spark puts the ways in back unless kept"]
+  NETG["Lock-out net (21-net, R71): a timer on that Spark puts the ways in back unless kept"]
   BOX["The box (21-box, R62): a throw-away container on a compute Spark"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
@@ -75,21 +75,21 @@ flowchart TD
   GATE -->|"/mcp"| MCP
   GATE -->|"the owner; anyone else 401"| PGATE
   GATE -->|"sessions, passkey counts: written before or at sign-in"| STATE
-  PGATE -->|"/v1, after JSON, same-origin and chat-permission checks"| V1
+  PGATE -->|"/v1, after the JSON and same-origin checks"| V1
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
   PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
   PGATE -->|"logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
-  PGATE -->|"access, agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
+  PGATE -->|"agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
   PGATE -->|"POST /rollback"| ROLL
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
   TG -->|"polled from Spark 2: the paired chat's words, a turn with ctx.channel telegram"| CHAT
   TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
-  CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, the needs-me line when the owner switched it on (R32)"| TG
+  CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, an ask with its buttons while approvals from there are on, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
   PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
-  V1 -->|"model sparkie or the brain's served name: the agents route's model"| BRAIN
+  V1 -->|"model sparkie: the agents route's model; the brain's served name: the brain"| BRAIN
   V1 -->|"a running model's name: its own server, HTTP over the tailnet"| FLEET
   V1 -->|"a model that isn't running: startOnCall, via gateway, nothing may stop"| RUN
   CHAT -->|"prompt, fleet notes, memory. Text and tool calls back"| BRAIN
@@ -101,8 +101,8 @@ flowchart TD
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
   RUN -->|"run and write_file are lookups to runAction: the ladder makes a change's checks"| WORK
-  WORK -->|"helperCall, one script over ssh with sudo -n: a look, or a change with its copies first (21-runner)"| HELPER
-  WORK -->|"a lock-out change and root (21-root) after the dangerous ask's press, a change on Spark 2 (21-hub) after its button's"| NETG
+  WORK -->|"helperCall, one script (ssh, or local bash on Spark 2) with sudo -n: a look, or a change with its copies first (21-runner)"| HELPER
+  WORK -->|"root (21-root; a lock-out change only as root) after the dangerous ask's press, a change on Spark 2 (21-hub) after its button's"| NETG
   NETG -->|"armed in the same call; the ways in tried from outside; then keep or putback (21-guard)"| HELPER
   HELPER -->|"a short-lived systemd unit for each command; the put-back from the Spark's own timer"| FLEET
   WORK -->|"on box: docker run and exec over ssh, no helper"| BOX
@@ -140,7 +140,7 @@ flowchart TD
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
-list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
+list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the brain's other callers, `searchTerms` (`docs/recipes.md`) and the brain check (`21-brain-check.mjs`).
 
 ## 3. One sentence, start to finish
 
@@ -190,19 +190,19 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
     event.
 
 **A command instead** ("free up space in ~/work on Spark 3"). The brain calls `run`, and `runCommand` (`21-work.mjs`)
-has `sortCommand` (`20-sort.mjs`) sort it. A look runs in the root helper's look wall. Anything else goes to
+has `sortCommand` (`20-sort.mjs`) sort it. A look runs in the root helper's look wall (a few exact forms, like docker ps, as fixed text outside it). Anything else goes to
 `workChange` (`21-ladder.mjs`): a plain change the owner's own words asked for, with nothing read since, runs at once
 (`runChange` in `21-runner.mjs`: the copies, the journal's start line, the run wall); the rest is a button or the
-dangerous ask (`dangerAsk` in `20-danger.mjs`). A lock-out change, root and a change on Spark 2 run only after their
-press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still answer, else put back.
+dangerous ask (`dangerAsk` in `20-danger.mjs`). A root command (a lock-out change is done only as root) and a change on Spark 2 run only
+after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still answer, else put back.
 
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
   whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
   tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
-  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard and the power work changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
-  the restart; one `find_setups` covers that one.
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard and the power work changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers `start_model` and
+  the restart, not `start_model_across` (its own first start across two Sparks); one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up again when a start or `recipe_detail` finds its setups over a week old (never by the clock). A model
@@ -214,8 +214,9 @@ press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still 
   model start starts a job it stopped from the beginning.
 - **Not every change is a workflow.** Only five are. The other change actions, and the brain start, stop and switch,
   have no tested-and-validated gate.
-- **Many page buttons skip `runAction`** (branches of `handler` in `24-handler.mjs`): Deploy, Stop, brain start, stop
-  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line.
+- **Some page routes skip `runAction`** (branches of `handler` in `24-handler.mjs`): Deploy, Stop, brain start, stop
+  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line. The page has a button for the
+  last only.
 - **Gates differ by door.** The passkey gate covers the owner’s page routes only; the intent gate only via `sparkie`.
   `POST /actions`, `/mcp` and `/v1` rely on `runAction` and each action’s rails.
 - **Trust is a header on a socket.** Anything running as the owner’s user on Spark 2 can open `api.sock`, send the
@@ -238,16 +239,11 @@ press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still 
   pauses crash restarts there for 30 minutes; the intent gate picks a stop or restart target from the watcher’s view,
   up to a minute old.
 - **Tests skip real paths:** `test/stand-in-fleet.md` lists them (“What no test reaches”).
-- **Found by reading, not run:** `pausedCheck` (`17-changes.mjs`) has no self-healing exception, so under an automatic
-  pause a heal job fails at once.
 - **`fleetNotes` throws on an event with no `at`** (a hand-edited `events.jsonl`): that turn ends with an error and
   the chat is freed. `state.test.mjs` uses this as its setup fault; whoever makes `fleetNotes` safe gives that test
   another fault.
-- **Memory is looser than the contract.** An agent that may change things can replace or forget the owner’s lines;
-  through `ask_sparkie` its statement is stored as the owner’s (`remember` in `20-memory.mjs`).
-- **The contract describes more than exists:** no approval links, Keeper, restart backoff or Memory page (the secret
-  store is one file, for Telegram only so far); hand-started servers are never saved as recipes. `AGENTS.md` says the
-  contract wins, so check fit against this map.
+- **The contract describes more than exists:** no approval links or restart backoff; hand-started servers are never
+  saved as recipes. `AGENTS.md` says the contract wins, so check fit against this map.
 - **The app door’s apps share one origin.** Every app opened through the door (R40) is `https://<name>:10000`, so an
   app’s page in one tab can read whichever app that browser has open now (opening another switches every tab of it).
   The door refuses an app’s own page switching it, and code-server, Jupyter and other dev boxes are shells in a

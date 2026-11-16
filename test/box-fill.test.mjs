@@ -135,6 +135,22 @@ test('refused before the box is touched: a link, a submodule, a control characte
   assert.deepEqual(readdirSync(filled()), before, 'the box is as it was');
 });
 
+// The final read of the tests (TD-09): the test above sends its bad trees from a caller whose box is already open and
+// full, so "before the box is touched" held there for another reason; a fill that opened the box first would pass it.
+test('a bad tree from a caller with no box opens none: no container and no folder for it on any Spark', { timeout: 120000 * SLOW }, async () => {
+  const k = await createActKey('fill-agent-none'), name = boxName(`agent ${k.id}`);
+  for (const [tree, re] of [[T_.link, /the tree holds a link: link-to-readme\./], [T_.dotgit, /a path holds a \.git: \.git\./]]) {
+    const r = await call(k.token, 'run', { on: 'box', command: `/fill ${tree}` });
+    assert.ok(r.isError, r.text);
+    assert.match(r.text, re);
+  }
+  for (const spark of ['spark2', 'spark3', 'spark4']) {
+    const f = join(mock(spark), 'containers');
+    assert.ok(!existsSync(f) || !readFileSync(f, 'utf8').includes(name), `${spark}: no container`);
+    assert.ok(!existsSync(folder(name, spark)), `${spark}: no folder`);
+  }
+});
+
 test('read back: nothing differs right after a fill; changed, added, mode-changed and removed paths come back with their new blob ids, each blob in the bare copy', { timeout: 120000 * SLOW }, async () => {
   const same = await run('/read-back');
   assert.equal(same.status, 200, same.text);

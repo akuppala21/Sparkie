@@ -141,7 +141,7 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
-const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Open Deploy again to see the new plan.`);
+const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
   const extra = unapprovedStops(p.steps, nodeId, keep, approved);
