@@ -75,7 +75,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R60](rules/R60.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 | [R61](rules/R61.md) | partly | `test/runner.test.mjs`; `test/prune.test.mjs` | falls short today: its file says where |
 | [R64](rules/R64.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
-| [R66](rules/R66.md) | partly | `test/tasks.test.mjs`; `test/tasks-telegram.test.mjs`; `test/tasks-more.test.mjs`; `test/carry-keeps.test.mjs` | falls short today: its file says where |
+| [R66](rules/R66.md) | partly | `test/tasks.test.mjs`; `test/tasks-telegram.test.mjs`; `test/tasks-more.test.mjs`; `test/task-report.test.mjs`; `test/carry-keeps.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 

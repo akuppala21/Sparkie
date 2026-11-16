@@ -131,7 +131,10 @@ async function statusFor(viewer, fresh) {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
     return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
-  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
+  // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)
+  let tasks = [];
+  if (viewer.role === 'owner') try { tasks = tasksNow().map(({ request: _r, ...x }) => x); } catch {}
+  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView(), tasks } : {}), source: 'console' };
 }
 setTimeout(() => {
   collectStatus().catch(() => {});

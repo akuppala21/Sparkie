@@ -48,12 +48,16 @@ async function statusText() {
   const running = [...jobs.values()].filter(j => j.status === 'running').length;
   // What is waiting on the owner (20-needs.mjs): the same lines as fleet_status's needsOwner, right after Sparkie's own.
   const needs = needsLines();
+  // (the owner's requests Sparkie is carrying on with, and their counts so far from the journal: 14-tasks.mjs, E7)
+  let tasks = [];
+  try { tasks = tasksNowLines(); } catch {}
   return maskSecrets([`Sparkie: ${brain}.`,
     chat?.kind === 'endpoint' ? `Sparkie’s chat runs on ${String(chat.title || chat.model).slice(0, 80)} right now, not on its own model.${chat.node && nodeById(chat.node) && knownOffline(nodeById(chat.node)) ? ' Its Spark isn’t reachable, so chat can’t answer.' : ''}` : null,
     needs.length ? `Needs you:\n${needs.map(t => `- ${t}`).join('\n')}` : 'Needs you: nothing.',
     `Sparks online: ${online.length ? online.join(', ') : 'none'}.`, `Operations running: ${running}.`, `Spark Console build ${BUILD}.`,
     `Agents’ changes: ${s.halted ? (s.autoPaused ? 'paused automatically' : 'paused') : 'on'}.`,
-    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`].filter(Boolean).join('\n'));
+    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`,
+    tasks.length ? `Requests Sparkie is carrying on with:\n${tasks.map(t => `- ${t}`).join('\n')}` : null].filter(Boolean).join('\n'));
 }
 
 function pauseWord(via) {

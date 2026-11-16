@@ -132,8 +132,9 @@ function journal(kind, fields = {}, body = null) {
 // A change written down first: a file written on a Spark, or a container started from an image the caller named. Stop,
 // pause, cancel and put-back never wait on the journal. The runner (run, write_file) will use the same start line.
 const journalFirstFor = (name, input) => name === 'save_file' || (name === 'keep_running' && Boolean(input?.image));
+// (task: the request's id, which its task keeps, so a task's report counts its own lines: E7, 14-tasks.mjs)
 const jCall = (name, input, args, ctx) => ({ act: name, args, via: ctx.via || null, actor: ctx.actor || null, key: ctx.agentId || null, chat: ctx.chat || null,
-  allowed: ctx.button ? 'button' : ctx.auto ? 'words' : ctx.via || null, sub: jSub(input?.spark, input?.sparks, input?.container, input?.model) });
+  allowed: ctx.button ? 'button' : ctx.auto ? 'words' : ctx.via || null, sub: jSub(input?.spark, input?.sparks, input?.container, input?.model), ...(ctx.task ? { task: ctx.task } : {}) });
 function journalFirst(name, input, args, ctx) {
   if (!journalFirstFor(name, input)) return null;
   const id = journal('call', { start: true, ...jCall(name, input, args, ctx) });
@@ -143,7 +144,7 @@ function journalFirst(name, input, args, ctx) {
 // The result of a change (runAction, beside audit): the end line of one written down first, else one call record.
 function journalCalled(jid, name, input, args, ctx, { out, err, ms }) {
   const result = { ok: !err, outcome: err ? null : out?.outcome ?? null, op: out?.operation ?? null, err: jErr(err), ms };
-  journal('call', jid ? { id: jid, end: true, act: name, chat: ctx.chat || null, ...result } : { ...jCall(name, input, args, ctx), ...result });
+  journal('call', jid ? { id: jid, end: true, act: name, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), ...result } : { ...jCall(name, input, args, ctx), ...result });
 }
 // Lookups are recorded when an agent, the API or a workflow step asks (Sparkie's are its tool records).
 const journalLooks = ctx => ['agent', 'api', 'workflow'].includes(ctx.via);
@@ -162,12 +163,12 @@ function journalSaid(conv, text, agent, channel, task) {
   return journal('said', { chat: conv.id, via: channel || (agent ? 'agent' : 'page'), actor: agent?.name || null,
     words: maskSecrets(String(text).slice(0, 1200)).slice(0, 600) }, String(text).length > 600 ? text : null) || journalId();
 }
-function journalTool({ turn, chat, brain, call, ok, outcome, ms }, out) {
+function journalTool({ turn, chat, brain, call, ok, outcome, ms, task = null }, out) {
   const a = jArgs(call.args || '{}'), n = a && typeof a === 'object' ? a : {};
-  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
+  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model), ...(task ? { task } : {}) }, out);
 }
-function journalTurn({ id, conv, brain, messages, used, since, budgets = null }) {
-  journal('turn', { turn: id, chat: conv.id, brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
+function journalTurn({ id, conv, brain, messages, used, since, budgets = null, task = null }) {
+  journal('turn', { turn: id, chat: conv.id, ...(task ? { task } : {}), brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
     toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since), budgets });
 }
 // A start's failed attempt that has a next fix (startWithFixes notes it; the hook is note(), outside the workflows' code).
@@ -189,7 +190,7 @@ function journalOp(job) {
     if (START_JOBS.has(job.type) && failure) {
       journal('attempt', { op: job.id, act: job.type, n: job.log.filter(l => /Known problem: .* \(attempt \d+ of 3\)$/.test(l)).length + 1, failure, fix: null, err: jErr(job.error), model: job.model || null, sub });
     }
-    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
+    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, ...(job.task ? { task: job.task } : {}), via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
       version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub, ...opWh(job) }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }

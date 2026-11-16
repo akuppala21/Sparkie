@@ -3014,7 +3014,10 @@ async function statusFor(viewer, fresh) {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
     return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
-  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
+  // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)
+  let tasks = [];
+  if (viewer.role === 'owner') try { tasks = tasksNow().map(({ request: _r, ...x }) => x); } catch {}
+  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView(), tasks } : {}), source: 'console' };
 }
 setTimeout(() => {
   collectStatus().catch(() => {});
@@ -3658,7 +3661,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
     // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
     // the page.
-    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
+    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false, ...(conv.task?.id ? { task: conv.task.id } : {}),
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
       ...(c.covers ? { covers: c.covers } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
@@ -3753,7 +3756,7 @@ async function continueTask(id) {
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || t.parked || chatBusy(id)) return;
   // (its way in gone meanwhile, another Telegram pairing among them: it ends, and nothing of it is told there, 14-tasks.mjs)
-  if (taskGone(t)) { endTask(conv, false); saveChats(); return; }
+  if (taskGone(t)) { endTask(conv, false, 'gone'); saveChats(); return; }
   // (a try the brain never answered gives way to this one: taskRetry, 14-tasks.mjs)
   if (t.retries) taskRetryLines(conv);
   const carried = Boolean(t.carry), answered = Boolean(t.answered) && !resultSince(conv);
@@ -3808,6 +3811,7 @@ const TURN_STOPPED = 'Stopped at your word.';
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
   conv.task = null;
+  if (task) taskEnded(conv, task, 'stopped');
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
   // (written at once, also when no answer to /stop is saved: from Telegram, or in a full chat)
@@ -3858,7 +3862,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn), task: turn.ctx?.task || null });
       finish();
     }
   } finally { finish(); }
@@ -3934,13 +3938,13 @@ function markAnswering({ conv, link, slot }) {
 }
 // This message as a request: it ends the last one’s carrying on and puts refused buttons away, and it gives the gate
 // what the owner asked (`ctx`, which every tool call of the turn carries) and the questions that come back (`asked`).
-function turnRequest({ conv, text, agent, task, channel, open, said }) {
+function turnRequest({ conv, text, agent, task, channel, open, said, turnId }) {
   // "carry on" gives a task stopped at a limit a fresh budget, and this turn carries it on (taskAgain, 14-tasks.mjs).
   const again = !task && !agent ? taskAgain(conv, text) : null;
   if (again) task = again;
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
   // (written at once: a restart before this reply ends must not bring the last request back)
-  if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
+  if (!task && !agent && conv.task) { const was = conv.task; conv.task = null; taskEnded(conv, was, 'replaced'); saveChats(); }
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -3960,6 +3964,8 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
     // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
     chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
+    // (the request's id on every journal line it makes: the first turn's, which a task made of it keeps, E7)
+    task: task?.id || turnId || null,
     ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
     // "Don't stop anything" holds for this message and the next, unless this one asks to stop something; a carry-on turn
     // keeps it, and that its request's replies read outside text, from the task (keepTask).
@@ -3989,7 +3995,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
-  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { id: ctx?.task || null, since: now, request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
@@ -4009,27 +4015,32 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // 14-tasks.mjs)
   if (!agent && task && conv.task === task && !carry && ['steps', 'output'].includes(spent) && taskOver(task)) taskStopped(conv, task, taskOver(task), conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task);
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
+    taskPark(conv.task);
+    // (its question went to the paired Telegram chat as an ask: its report goes there too, E7)
+    if ([...tgAsks.values()].some(x => x.conv === conv.id)) conv.task.tgAsked = true;
+  }
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
   // nothing started in it, nothing of its chat still running, no job of it still to end): the request is done, and its
   // record goes, so neither a restart nor a later result takes it up again. A turn that failed is no such end.
   if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
-    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task)) conv.task = null;
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task)) { conv.task = null; taskEnded(conv, task, 'done'); }
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
-function endTask(conv, tell = true) {
+function endTask(conv, tell = true, how = 'no') {
   const task = conv?.task;
   if (!task) return false;
   task.ended = true;
   conv.task = null;
+  taskEnded(conv, task, how);
   if (tell && task.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return true;
 }
 // The tasks started by a way in that is gone (tgForget: channel 'telegram'; endSession: the device's session id).
 function endTasksFrom({ channel = null, session = null }) {
   let n = 0;
-  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false)) n++;
+  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false, 'gone')) n++;
   if (n) saveChats();
   return n;
 }
@@ -4349,7 +4360,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     ok = false;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
-  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started, task: ctx?.task || null }, out);
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
@@ -4361,7 +4372,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   return { role: 'tool', tool_call_id: calls[i].id || `call_${round}_${i}`, content: out };
 }
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
-// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs
+// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
 // Owns: none        Timers: none        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
@@ -4435,7 +4446,7 @@ function tasksAfterRestart() {
       if (!t || !TASKS_AT_START.has(t)) continue;
       // (a record from before these limits: a request that may long be done, taken off with no word)
       if (!Number.isInteger(t.hours)) { conv.task = null; changed = true; continue; }
-      if (taskGone(t)) { endTask(conv, false); changed = true; continue; }
+      if (taskGone(t)) { endTask(conv, false, 'gone'); changed = true; continue; }
       // (one waiting at a button keeps waiting: the restart changes nothing there)
       if (t.parked) continue;
       if (!t.carry && !resultSince(conv)) {
@@ -4470,6 +4481,8 @@ function taskStopped(conv, t, which, reply = null) {
   conv.updatedAt = new Date().toISOString();
   saveChats();
   if (t.channel === 'telegram') tell('carry', line, { last: true }).catch(() => {});
+  // (its report, E7: a stop at a limit is an end until "carry on")
+  taskEnded(conv, t, which);
 }
 // "carry on", "go on", "continue", "keep going" (the whole message): a task stopped at a limit starts again with a fresh
 // budget of the same size, and the turn that said it is its carry-on. null for anything else.
@@ -4547,6 +4560,134 @@ function taskAnswered(conv) {
   saveChats();
   wakeWork(conv.id);
 }
+
+/* E7: the report when a task ends */
+// When a task ends (its last turn owed nothing, a limit, the owner's /stop or a new request in its chat, a No at its
+// question, its way in gone, a state put back from a copy), code writes one short report: no model call, no log text.
+// Its counts come from the task's own lines in the journal (each line of its request carries the task's id: its turns,
+// their tool calls, the changes made for it and its operations' end lines), read from this month's file and the last:
+// operations (finished, failed, cancelled), the changes made at once and after the owner's yes, the questions it asked,
+// what was undone (an undo, or an operation cancelled, which puts back what it did), how long and how many turns, and
+// the watt-hours its operations' end lines give (D9), summed, with those that have no number counted as not measured,
+// never as 0; and what is still open (an operation of it still running, a job of it still to end, a button waiting in
+// its chat). Text others can write (a model or container name, a failure line, the request's words) is masked and
+// bounded before it is in it. It is kept as owed in chats.json first (conv.reports), then written in the task's chat once
+// (posted, in the same save), and sent to Telegram once (told, saved before the send) when the task began there, asked
+// there at a button, or ran over an hour; at start-up anything still owed is finished, so a restart neither loses it
+// nor tells it twice. A task stopped at a limit is reported then, and not again when it is then left.
+const TASK_REPORT_MS = Number(process.env.SPARK_CONSOLE_TASK_REPORT_MS || 2000);
+const TASK_REPORT_TG_MS = 3600000;
+const taskText = (s, n) => maskSecrets(String(s ?? '').replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g, ' ').trim()).slice(0, n);
+const TASK_ENDS = {
+  done: 'done', stopped: 'stopped by you', replaced: 'ended: you asked something new in this chat', no: 'ended: you said no to its question',
+  gone: 'ended: the way it was asked from is gone (Telegram unpaired or paired again, or the device signed out)', 'put-back': 'ended: Spark Console’s state was put back from a copy',
+  full: 'stopped: this chat is full',
+};
+// A task's lines in the journal, added up.
+function taskCounts(id) {
+  const c = { ops: 0, finished: 0, failed: [], cancelled: 0, undone: 0, atOnce: 0, afterYes: 0, asked: 0, turns: 0, wh: 0, measured: 0, unmeasured: 0 };
+  if (!id) return c;
+  const tag = `"task":${JSON.stringify(id)}`, allowed = new Map();
+  for (const f of journalFiles().slice(0, 2).reverse()) for (const line of jLinesOf(f)) {
+    if (!line.includes(tag)) continue;
+    const r = jParse(line);
+    if (r?.task !== id) continue;
+    if (r.k === 'turn') c.turns++;
+    else if (r.k === 'tool' && ['needs-ok', 'question'].includes(r.outcome)) c.asked++;
+    else if (r.k === 'call') {
+      if (r.start) { allowed.set(r.id, r.allowed); continue; }
+      if (ACTIONS.get(r.act)?.kind !== 'change' || !r.ok || ['question', 'needs-ok', 'already', 'already-starting', 'declined', 'refused'].includes(r.outcome)) continue;
+      ((r.end ? allowed.get(r.id) : r.allowed) === 'button' ? c.afterYes++ : c.atOnce++);
+      if (r.act === 'undo_last_change' || r.act === 'cancel_operation') c.undone++;
+    } else if (r.k === 'op') {
+      c.ops++;
+      if (r.outcome === 'completed') c.finished++;
+      else if (r.outcome === 'cancelled') { c.cancelled++; c.undone++; }
+      else c.failed.push(r);
+      if (typeof r.wh === 'number' && Number.isFinite(r.wh)) { c.wh += r.wh; c.measured++; } else c.unmeasured++;
+    }
+  }
+  return c;
+}
+const taskTook = ms => { const m = Math.round(ms / 60000); return m < 1 ? `${Math.max(0, Math.round(ms / 1000))} s` : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
+const taskPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// What of a task is still open: its operations still running, its jobs still to end, a button waiting in its chat.
+function taskOpen(conv, r) {
+  const open = [...jobs.values()].filter(j => j.task === r.task && j.status === 'running').slice(0, 3)
+    .map(j => `${OP_WORDS[j.type] || j.type} ${taskText(j.model || j.container || '', 80)}`.trim());
+  const owed = (r.jobs || []).filter(j => taskJobsOwed({ jobs: [j] })).slice(0, 3).map(j => `the job ${taskText(j.container, 64)} on ${sparkName(nodeById(j.spark) || { id: j.spark })}`);
+  const button = conv.messages.some(m => (m.choices || []).some(c => c.state === 'open' && pendingChoices.has(c.id)));
+  return [...open.map(x => `${x} is still running`), ...owed.map(x => `${x} hasn’t ended yet`), ...(button ? ['a button waits for you in this chat'] : [])];
+}
+// The report's lines, from the journal and what is open now.
+function taskReportText(conv, r) {
+  const c = taskCounts(r.task), took = Math.max(0, Date.parse(r.end) - Date.parse(r.since));
+  const how = TASK_ENDS[r.how] || (r.how === 'turns' ? `stopped at its ${r.turns} carry-on turns` : r.how === 'hours' ? `stopped at its ${r.hours} hours` : r.how === 'steps' ? `stopped at its ${TASK_STEPS} commands` : r.how);
+  const failed = c.failed.slice(0, 3).map(x => `${OP_WORDS[x.act] || taskText(x.act, 40)}${x.model ? ` ${taskText(x.model, 80)}` : ''}: ${taskText(String(x.err || x.outcome || 'it failed').split('\n')[0], 160)}`);
+  const ops = c.ops ? `Operations: ${c.ops} (${[c.finished && `${c.finished} finished`, c.failed.length && `${c.failed.length} failed`, c.cancelled && `${c.cancelled} cancelled`].filter(Boolean).join(', ')}).` : 'Operations: none.';
+  const energy = !c.ops ? null : c.measured ? `Energy at the wall: ${Math.round(c.wh * 10) / 10} Wh for ${taskPlural(c.measured, 'operation')}${c.unmeasured ? `; ${c.unmeasured} not measured` : ''}.` : 'Energy at the wall: not measured.';
+  const open = taskOpen(conv, r);
+  return [`Report on your request “${taskText(r.request, 120)}”: ${how}.`,
+    `${ops}${failed.length ? ` Failed: ${failed.join('; ')}.` : ''}`,
+    `Changes: ${c.atOnce} made at once, ${c.afterYes} after your yes; ${taskPlural(c.asked, 'question')} asked of you. Undone: ${c.undone}.`,
+    `Time: ${taskTook(took)}, ${taskPlural(Math.max(1, c.turns), 'turn')}.`,
+    energy, open.length ? `Still open: ${open.join('; ')}.` : 'Still open: nothing.'].filter(Boolean).join('\n');
+}
+// A task ends: its report is owed (kept on the chat first), then written and told a moment later, once the turn that
+// ended it has written its last journal line.
+function taskEnded(conv, t, how) {
+  try {
+    if (!conv || !t?.id || t.reported === how) return;
+    // (one stopped at a limit was reported then: leaving it, or a new request, adds no second report)
+    if (t.stopped && how !== t.stopped && ['replaced', 'stopped', 'no', 'gone', 'put-back'].includes(how)) return;
+    t.reported = how;
+    const end = new Date().toISOString(), since = t.since || t.at, { hours, turns } = taskLimits(t);
+    const tg = t.channel === 'telegram' || Boolean(t.tgAsked) || Date.parse(end) - Date.parse(since) > TASK_REPORT_TG_MS;
+    conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, jobs: (t.jobs || []).slice(-20) }];
+    saveChats();
+    setTimeout(() => taskReportsDue(conv.id), TASK_REPORT_MS).unref?.();
+  } catch (e) { console.error(`A task’s report: ${e.message}`); }
+}
+// The reports owed in a chat: written in it once, told on Telegram once, then taken off.
+async function taskReportsDue(id) {
+  const conv = chatData().conversations.find(c => c.id === id);
+  if (!conv?.reports?.length) return;
+  for (const r of conv.reports) {
+    if (!r.text) {
+      r.text = taskReportText(conv, r);
+      conv.messages.push({ role: 'assistant', content: r.text, createdAt: new Date().toISOString(), notice: true, report: r.task });
+      conv.updatedAt = new Date().toISOString();
+      saveChats();
+    }
+    if (r.tg && !r.told) {
+      r.told = true;
+      saveChats();
+      await tell('result', r.text, { last: true }).catch(() => false);
+    }
+  }
+  conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));
+  if (!conv.reports.length) delete conv.reports;
+  saveChats();
+}
+// (at start-up, after the chats are in: what a restart left owed)
+setTimeout(() => {
+  try { for (const c of chatData().conversations) if (c.reports?.length) taskReportsDue(c.id).catch(e => console.error(`A task’s report: ${e.message}`)); } catch {}
+}, Number(process.env.SPARK_CONSOLE_TASKS_AFTER_MS || 5000) + 1000).unref?.();
+// The tasks under way now, with their counts so far (/status, 20-words.mjs; the page's status, 12-status.mjs).
+function tasksNow() {
+  const out = [];
+  for (const c of chatData().conversations) {
+    const t = c.task;
+    if (!t || t.ended) continue;
+    const k = taskCounts(t.id), since = t.since || t.at;
+    out.push({ chat: c.id, state: t.stopped ? 'stopped' : t.parked ? 'waiting for you' : 'carrying on', request: taskText(t.request, 80),
+      operations: k.ops + [...jobs.values()].filter(j => j.task === t.id && j.status === 'running').length, running: [...jobs.values()].filter(j => j.task === t.id && j.status === 'running').length,
+      changes: k.atOnce + k.afterYes, asked: k.asked, minutes: Math.max(0, Math.round((Date.now() - Date.parse(since)) / 60000)), turns: k.turns,
+      ...(k.measured ? { wh: Math.round(k.wh * 10) / 10 } : {}), unmeasured: k.unmeasured });
+  }
+  return out;
+}
+const tasksNowLines = () => tasksNow().map(x => `“${x.request}” (${x.state}): ${taskPlural(x.operations, 'operation')}${x.running ? ` (${x.running} running)` : ''}, ${taskPlural(x.changes, 'change')}, ${taskPlural(x.turns, 'turn')}, ${taskTook(x.minutes * 60000)} so far${x.wh !== undefined ? `, ${x.wh} Wh at the wall${x.unmeasured ? ` (${x.unmeasured} not measured)` : ''}` : x.operations ? ', energy not measured' : ''}.`);
 /* ───────── choosing what Sparkie and agents use ───────── */
 // Area: brain        Rules: R5, R36        Tests: gateway.test.mjs, paste.test.mjs
 // Owns: none
@@ -5340,6 +5481,8 @@ async function runAction(name, viewer, args, ctx = {}) {
     const out = await a.run(input, viewer, ctx);
     if (byAgent && out?.operation && out.outcome !== 'already-starting') agentChanges.push(Date.now());
     if (ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).conv ||= ctx.conv;
+    // (and the request it was made for, so its task's report counts it: E7, 14-tasks.mjs)
+    if (ctx.task && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).task ||= ctx.task;
     if (ownersOwn && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).ownersOwn = true;
     // Work started from Telegram reports there when it ends (20-tell.mjs).
     if (ctx.channel && ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation) && !jobs.get(out.operation).channel) {
@@ -9919,8 +10062,9 @@ function journal(kind, fields = {}, body = null) {
 // A change written down first: a file written on a Spark, or a container started from an image the caller named. Stop,
 // pause, cancel and put-back never wait on the journal. The runner (run, write_file) will use the same start line.
 const journalFirstFor = (name, input) => name === 'save_file' || (name === 'keep_running' && Boolean(input?.image));
+// (task: the request's id, which its task keeps, so a task's report counts its own lines: E7, 14-tasks.mjs)
 const jCall = (name, input, args, ctx) => ({ act: name, args, via: ctx.via || null, actor: ctx.actor || null, key: ctx.agentId || null, chat: ctx.chat || null,
-  allowed: ctx.button ? 'button' : ctx.auto ? 'words' : ctx.via || null, sub: jSub(input?.spark, input?.sparks, input?.container, input?.model) });
+  allowed: ctx.button ? 'button' : ctx.auto ? 'words' : ctx.via || null, sub: jSub(input?.spark, input?.sparks, input?.container, input?.model), ...(ctx.task ? { task: ctx.task } : {}) });
 function journalFirst(name, input, args, ctx) {
   if (!journalFirstFor(name, input)) return null;
   const id = journal('call', { start: true, ...jCall(name, input, args, ctx) });
@@ -9930,7 +10074,7 @@ function journalFirst(name, input, args, ctx) {
 // The result of a change (runAction, beside audit): the end line of one written down first, else one call record.
 function journalCalled(jid, name, input, args, ctx, { out, err, ms }) {
   const result = { ok: !err, outcome: err ? null : out?.outcome ?? null, op: out?.operation ?? null, err: jErr(err), ms };
-  journal('call', jid ? { id: jid, end: true, act: name, chat: ctx.chat || null, ...result } : { ...jCall(name, input, args, ctx), ...result });
+  journal('call', jid ? { id: jid, end: true, act: name, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), ...result } : { ...jCall(name, input, args, ctx), ...result });
 }
 // Lookups are recorded when an agent, the API or a workflow step asks (Sparkie's are its tool records).
 const journalLooks = ctx => ['agent', 'api', 'workflow'].includes(ctx.via);
@@ -9949,12 +10093,12 @@ function journalSaid(conv, text, agent, channel, task) {
   return journal('said', { chat: conv.id, via: channel || (agent ? 'agent' : 'page'), actor: agent?.name || null,
     words: maskSecrets(String(text).slice(0, 1200)).slice(0, 600) }, String(text).length > 600 ? text : null) || journalId();
 }
-function journalTool({ turn, chat, brain, call, ok, outcome, ms }, out) {
+function journalTool({ turn, chat, brain, call, ok, outcome, ms, task = null }, out) {
   const a = jArgs(call.args || '{}'), n = a && typeof a === 'object' ? a : {};
-  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
+  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model), ...(task ? { task } : {}) }, out);
 }
-function journalTurn({ id, conv, brain, messages, used, since, budgets = null }) {
-  journal('turn', { turn: id, chat: conv.id, brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
+function journalTurn({ id, conv, brain, messages, used, since, budgets = null, task = null }) {
+  journal('turn', { turn: id, chat: conv.id, ...(task ? { task } : {}), brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
     toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since), budgets });
 }
 // A start's failed attempt that has a next fix (startWithFixes notes it; the hook is note(), outside the workflows' code).
@@ -9976,7 +10120,7 @@ function journalOp(job) {
     if (START_JOBS.has(job.type) && failure) {
       journal('attempt', { op: job.id, act: job.type, n: job.log.filter(l => /Known problem: .* \(attempt \d+ of 3\)$/.test(l)).length + 1, failure, fix: null, err: jErr(job.error), model: job.model || null, sub });
     }
-    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
+    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, ...(job.task ? { task: job.task } : {}), via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
       version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub, ...opWh(job) }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }
@@ -14350,12 +14494,16 @@ async function statusText() {
   const running = [...jobs.values()].filter(j => j.status === 'running').length;
   // What is waiting on the owner (20-needs.mjs): the same lines as fleet_status's needsOwner, right after Sparkie's own.
   const needs = needsLines();
+  // (the owner's requests Sparkie is carrying on with, and their counts so far from the journal: 14-tasks.mjs, E7)
+  let tasks = [];
+  try { tasks = tasksNowLines(); } catch {}
   return maskSecrets([`Sparkie: ${brain}.`,
     chat?.kind === 'endpoint' ? `Sparkie’s chat runs on ${String(chat.title || chat.model).slice(0, 80)} right now, not on its own model.${chat.node && nodeById(chat.node) && knownOffline(nodeById(chat.node)) ? ' Its Spark isn’t reachable, so chat can’t answer.' : ''}` : null,
     needs.length ? `Needs you:\n${needs.map(t => `- ${t}`).join('\n')}` : 'Needs you: nothing.',
     `Sparks online: ${online.length ? online.join(', ') : 'none'}.`, `Operations running: ${running}.`, `Spark Console build ${BUILD}.`,
     `Agents’ changes: ${s.halted ? (s.autoPaused ? 'paused automatically' : 'paused') : 'on'}.`,
-    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`].filter(Boolean).join('\n'));
+    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`,
+    tasks.length ? `Requests Sparkie is carrying on with:\n${tasks.map(t => `- ${t}`).join('\n')}` : null].filter(Boolean).join('\n'));
 }
 
 function pauseWord(via) {
@@ -20164,8 +20312,9 @@ function putBackAtStart() {
     try {
       const at = new Date().toISOString();
       for (const conv of chatData().conversations.filter(c => c.task)) {
-        const request = String(conv.task.request || '').slice(0, 200);
+        const request = String(conv.task.request || '').slice(0, 200), was = conv.task;
         conv.task = null;
+        taskEnded(conv, was, 'put-back');
         conv.messages.push({ role: 'assistant', content: maskSecrets(`Spark Console’s state was put back from a copy, so “${request}” isn’t carried on. Once you have looked at what came back (open Spark Console on your tailnet), say “carry on” if it’s still wanted.`), createdAt: at, notice: true });
         conv.updatedAt = at;
         parked++;
