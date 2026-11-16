@@ -197,7 +197,9 @@ function netWhose(node, viewer, ctx) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey || ctx.via === 'agent') return 'an agent';
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
-  if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
+  // (what was read, by its record: a read that returned, workRead in 14-rounds.mjs. A call that was refused and ran
+  // nothing, "set root" or "leave out sudo", read nothing, whatever the turn's readOutside says of it)
+  if (Array.isArray(ctx.reads) && ctx.reads.length) return NET_READ_FIRST;
   if (!netAsks(node, netNowSaid(ctx))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
@@ -208,9 +210,12 @@ function netNowSaid(ctx) {
   const m = conv ? conv.messages.filter(x => x.role === 'user').at(-1) : null;
   return m && !m.auto && !m.from ? String(m.content || '') : '';
 }
+const NET_READ_FIRST = 'text Sparkie read first (a log, a page or a command’s output)';
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
-// how to ask for one.
-const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`);
+// how to ask for one: after a read, ask again before Sparkie reads anything; else, say it in one sentence.
+const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. ${from === NET_READ_FIRST
+  ? 'To ask, say it again in a new message: it counts only before Sparkie reads anything for it.'
+  : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
 
 // From the ladder (workChange), for every change the sorter calls lock-out on a compute Spark, as the owner. As the
 // owner it can change nothing: the run wall keeps ~/.ssh and the shell's start files read-only, and ufw, usermod and

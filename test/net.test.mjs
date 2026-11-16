@@ -290,6 +290,22 @@ test('a lock-out ask the owner’s words let through says “You asked for this.
   assert.match(sentBack(words).at(-1)?.error || '', /^Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal, not your words asking for this on Spark 3\./);
 });
 
+// The final read's set-root-dead-end: "sudo ufw …" was answered "set root", and the same command with root set was then
+// refused as "text Sparkie read first", though the refused call ran and read nothing.
+test('a refused call reads nothing: after “leave out sudo and set root”, or “set root”, the same command as root is the dangerous ask', { timeout: 180000 * SLOW }, async () => {
+  for (const [words, first] of [['allow port 8000 through the firewall on spark 3', RUN('sudo ufw allow 8000')], ['allow port 8004 through the firewall on spark 3', RUN('ufw allow 8004')]]) {
+    const chat = await newChat(), port = words.match(/\d{4}/)[0];
+    script([{ match: `^${words}$`, rounds: [[first], [RUN(`ufw allow ${port}`, { root: true })]] }]);
+    try { await say(chat, words); } finally { noScript(); }
+    const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
+    const rounds = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').map(x => (x.results || []).map(r => String(r.content)));
+    try {
+      assert.match(rounds[0]?.[0] || '', /^\[error\] Nothing (?:ran: a command becomes root only by setting root|was asked or run: as you, a change to SSH)/, JSON.stringify(rounds));
+      assert.ok(m && m.danger.code === `ufw allow ${port}`, `the dangerous ask: ${JSON.stringify(rounds)}`);
+    } finally { const no = m?.choices.find(c => c.label === 'No' && c.state === 'open'); if (no) await press(chat, no.id); }
+  }
+});
+
 // The final read's findings net-no-copy and nonroot-lockout-noop: as the owner a lock-out change ran in the run wall,
 // which keeps ~/.ssh and the start files read-only (so it changed nothing), with no copy first and the model store
 // writable, after a dangerous press.
