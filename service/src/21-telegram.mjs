@@ -21,6 +21,8 @@ const TG_RETRY_MS = Number(process.env.SPARK_CONSOLE_TELEGRAM_RETRY_MS || 2000);
 const TG_TOKEN_RE = /^\d{6,12}:[A-Za-z0-9_-]{30,64}$/, TG_TOKEN_IN = /\b\d{6,12}:[A-Za-z0-9_-]{30,64}\b/;
 const TG_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const TG_BRAIN_DOWN = 'Sparkie’s model isn’t answering. /status shows where things stand, and /restart sparkie restarts it from here.';
+// Code's own line after a reply that broke off before it ended (the model cut off, a time-out after tools ran).
+const TG_BROKE_OFF = 'This answer broke off before it ended. The details are in Spark Console.';
 // The pairing line, also the answer to /start and /help.
 const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /lock stops approvals from here, /unpair disconnects this chat.';
 
@@ -322,7 +324,8 @@ async function tgTurn(text) {
     // (stopped with /stop: its line was the answer)
     if (message.error === TURN_STOPPED) return;
     if (message.error && !String(message.content || '').trim()) return await tell('reply', TG_BRAIN_DOWN);
-    await tell('reply', tellReplyText(message), { buttons: tellButtons(message) });
+    // (a reply that broke off part-way says so, as the page shows its error under it, C-9)
+    await tell('reply', `${tellReplyText(message)}${message.error ? `\n\n${TG_BROKE_OFF}` : ''}`, { buttons: tellButtons(message) });
   } finally {
     typing.stop();
     tg.busy = false;

@@ -7,7 +7,8 @@
 // reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
 // them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
 // only for a task begun there, without the failure lines (C-8, R32). In the paired chat a /key message past the
-// minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one. A press
+// minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one. A reply
+// there that broke off part-way says so (C-9). A press
 // whose command outlasts the press's time (50 seconds; 3 in a fleet of its own) says it is still running, never that it
 // failed, and its end is posted in the chat, and told on Telegram for a press made there (press-50s).
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
@@ -79,6 +80,8 @@ let msgId = 1;
 const tgPress = data => fetch(`http://127.0.0.1:${T.fleet.telegramPort}/__push`, { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ callback_query: { id: String(msgId++), from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, data,
     message: { message_id: msgId++, chat: { id: OWNER_TG, type: 'private' }, date: Math.floor(Date.now() / 1000) } } }) });
+const tgSay = text => fetch(`http://127.0.0.1:${T.fleet.telegramPort}/__push`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ message: { message_id: msgId++, date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } }) });
 // The ask sent to the paired chat pressed there: the line it answered with there, and the press's line on the page.
 async function pressedThere(chat, yes) {
   await waitFor(() => tgSent().some(s => JSON.stringify(s.body?.reply_markup || {}).includes(yes.id)), { what: 'the ask in the paired chat' });
@@ -200,6 +203,18 @@ test('a task begun in the paired chat: its report there says how many failed and
   assert.equal(there.split('\n')[0], `Report on your request “${TGSEED.words}”: stopped by you.`);
   assert.equal(there.split('\n')[1], 'Operations: 1 (1 failed). What failed is in Spark Console.');
   assert.ok(!there.includes('pull failed') && !there.includes('100.64.0.7') && !there.includes('/home/owner'), there);
+});
+
+// C-9 (R32): a reply in the paired chat that broke off part-way (the stand-in brain's "cut-off-200": a 200 that starts,
+// then ends with half a word) says so there, as the page shows its error under it.
+test('in the paired chat, a reply that broke off part-way says so', { timeout: 120000 * SLOW }, async () => {
+  const fail = join(T.fleet.dir, 'model-fail'), from = tgCalls().length;
+  writeFileSync(fail, 'cut-off-200\n');
+  try {
+    await tgSay('tell me how the notes look');
+    const sent = await waitFor(() => tgSent(from).find(x => /Half an ans/.test(x.body?.text || '')), { timeout: 60000, what: 'the reply in the paired chat' });
+    assert.equal(sent.body.text, 'Half an ans\n\nThis answer broke off before it ended. The details are in Spark Console.');
+  } finally { rmSync(fail, { force: true }); }
 });
 
 // The two functions, cut from their parts, for every kind of result (Telegram's approvals allow 3 presses an hour, so
