@@ -303,8 +303,8 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
   assert.deepEqual(boxLines('spark3', F), [], 'nothing opened before the press');
   const pressed = await post(`/chats/${chat}/choose`, { choice: choices[0].id });
   assert.equal(pressed.status, 200, JSON.stringify(pressed.json));
-  assert.deepEqual([pressed.json.box, pressed.json.spark], ['opened', 'spark3'], JSON.stringify(pressed.json));
-  assert.ok(hasBox('spark3', boxName(`chat ${chat}`), F));
+  assert.equal(pressed.json.message?.content, `${choices[0].label}: done.`, JSON.stringify(pressed.json));
+  assert.ok(hasBox('spark3', boxName(`chat ${chat}`), F), 'the press opened it on Spark 3');
   assert.ok(journal(F).some(j => j.where === 'box' && j.outcome === 'asked' && j.chat === chat));
   const own = await act('run', { on: 'box', command: 'true' }, F);
   assert.deepEqual([own.status, own.json.box, own.json.spark], [200, 'opened', 'spark3'], own.text);
