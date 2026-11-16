@@ -27,7 +27,7 @@ const LINES = [
   ...filler,
 ];
 const PAST = [
-  { id: DOOR, kind: 'fact', text: 'my door code is 4471', by: 'owner', at: at(300), src: { via: 'api' }, gone: { at: at(250), why: 'forgotten', who: 'owner', src: { via: 'api' } } },
+  { id: DOOR, kind: 'fact', text: 'my door code is vextrum', by: 'owner', at: at(300), src: { via: 'api' }, gone: { at: at(250), why: 'forgotten', who: 'owner', src: { via: 'api' } } },
   { id: WIFI, kind: 'fact', text: 'Spark 4 is on the quartz Wi-Fi only', by: 'owner', at: at(400), src: { via: 'api' }, gone: { at: at(198), why: 'replaced', by: ETH, who: 'owner', src: { via: 'api' } } },
 ];
 // A lesson whose image tag is given as a key only later, after its card was made (B4's cards are kept in memory).
@@ -94,7 +94,7 @@ test('Telegram: recall there gives back no words of a line the owner forgot and 
 test('Telegram: forget_memory with the id of a line no longer live (forgotten, replaced, past its day, or asked to erase) says none of its words there', { timeout: 240000 * SLOW }, async () => {
   const got = {};
   try {
-    for (const [name, id, word, erase] of [['forgotten', DOOR, '4471', false], ['replaced', WIFI, 'quartz', false], ['ended', ENDED, 'zircon', false], ['forgotten, asked to erase', DOOR, '4471', true]]) {
+    for (const [name, id, word, erase] of [['forgotten', DOOR, 'vextrum', false], ['replaced', WIFI, 'quartz', false], ['ended', ENDED, 'zircon', false], ['forgotten, asked to erase', DOOR, 'vextrum', true]]) {
       const words = `reads phone says drop the ${name} line`;
       script([{ match: `^reads phone says drop the ${name} line$`, calls: [{ name: 'forget_memory', arguments: { id, ...(erase ? { erase: true } : {}) } }] }]);
       const { sent, out } = await phone(words);
@@ -108,7 +108,7 @@ test('Telegram: forget_memory with the id of a line no longer live (forgotten, r
 test('an agent that may change things, through ask_sparkie or its own call: forget_memory with the id of a forgotten or a replaced line gives it no word of it', { timeout: 240000 * SLOW }, async () => {
   const agent = await createActKey('reads-act'), got = {};
   try {
-    for (const [name, id, word] of [['forgotten', DOOR, '4471'], ['replaced', WIFI, 'quartz']]) {
+    for (const [name, id, word] of [['forgotten', DOOR, 'vextrum'], ['replaced', WIFI, 'quartz']]) {
       script([{ match: `^reads agent says drop the ${name} line$`, calls: [{ name: 'forget_memory', arguments: { id } }] }]);
       const v = await asked(agent.token, `reads agent says drop the ${name} line`);
       got[name] = JSON.stringify(v).includes(word) ? { reply: String(v.reply).slice(0, 200), choices: v.choices ?? null } : null;
@@ -133,15 +133,15 @@ test('a chat an agent started, the owner typing in it: recall and memory {past} 
     assert.deepEqual(r.message.tools.map(t => t.name), ['recall', 'recall', 'memory'], JSON.stringify(r.message.tools));
     const sent = await resultsFor(words);
     assert.match(sent, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
-    assert.ok(!sent.includes('4471'), `in the chat the agent started, the brain was sent the forgotten line: ${sent.slice(0, 600)}`);
+    assert.ok(!sent.includes('vextrum'), `in the chat the agent started, the brain was sent the forgotten line: ${sent.slice(0, 600)}`);
     const back = (await call(agent.token, ASK, { conversation: v.conversation })).value;
-    assert.ok(!JSON.stringify(back).includes('4471'), JSON.stringify(back).slice(0, 600));
+    assert.ok(!JSON.stringify(back).includes('vextrum'), JSON.stringify(back).slice(0, 600));
   } finally { script([]); }
   // (the owner's own page chat still reads the history)
   script([{ match: '^reads owner asks on the page what was forgotten$', calls: [{ name: 'recall', arguments: { id: DOOR } }] }]);
   try {
     await say(await newChat(), 'reads owner asks on the page what was forgotten');
-    assert.match(await resultsFor('reads owner asks on the page what was forgotten'), /my door code is 4471/);
+    assert.match(await resultsFor('reads owner asks on the page what was forgotten'), /my door code is vextrum/);
   } finally { script([]); }
 });
 
