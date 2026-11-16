@@ -15,7 +15,7 @@
 // the stand-ins in test/mock/bin. Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, mkdtempSync, realpathSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
@@ -114,6 +114,26 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   assert.equal(readFileSync(at2('.ssh/authorized_keys'), 'utf8'), KEYS_LINE);
 });
 
+test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, a look and a change get the owner’s one command with --hub, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
+  const r = await run('sudo touch notes/r.txt');
+  assert.equal(r.status, 403, r.text);
+  assert.equal(r.json.error, 'Nothing ran: Spark 2 runs Spark Console and the brain, so nothing runs there as root.');
+  assert.ok(!existsSync(at2('notes/r.txt')));
+  const line = join(H2(), '.rehearsal', 'etc/sudoers.d/spark-console-root');
+  renameSync(line, `${line}.away`);
+  let n, c;
+  try {
+    n = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command: 'cat notes/a.txt' } });
+    // (a change there: the same, before anything is asked)
+    c = await run('touch notes/hub-new.txt');
+  } finally { renameSync(`${line}.away`, line); }
+  assert.equal(n.json.ran, false, n.text);
+  assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh --hub 2'?$/, n.text);
+  assert.equal(c.status, 200, c.text);
+  assert.equal(c.json.ran, false, c.text);
+  assert.ok(!existsSync(at2('notes/hub-new.txt')));
+});
+
 test('always asked, one command a press, whatever the words; from the API, with no button to show, not run', { timeout: 120000 * SLOW }, async () => {
   const api0 = await run('echo api > notes/api.txt');
   assert.equal(api0.status, 409, api0.text);
@@ -205,8 +225,8 @@ test('a command the sorter can\'t read ($ for a program, python -c, a script) is
   assert.equal(starts().filter(r => /stop/.test(r.args?.command || '')).length, 0, 'none ran');
 });
 
-test('off (no SPARK_CONSOLE_HUB): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
-  const off = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_NET: '1' } });
+test('off (SPARK_CONSOLE_HUB=0, its own fleet): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
+  const off = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_HUB: '0' } });
   later.push(off);
   const r = await fetch(`${off.base}/actions/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: off.origin },
     body: JSON.stringify({ on: 'spark2', command: 'echo hi > notes/off.txt', dir: '~' }) });

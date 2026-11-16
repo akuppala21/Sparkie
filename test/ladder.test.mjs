@@ -27,8 +27,10 @@ const SECONDS = 6;
 const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const keys = {};
 // (the tailnet is read every second here, so a test that changes what it says is seen soon; a dangerous ask is never
-// sent a minute late, as the tests raise several inside ten minutes)
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
+// sent a minute late, as the tests raise several inside ten minutes. The lock-out net and Spark 2's changes are off for
+// this fleet: its tests are their off side, net.test and hub-change.test their on side)
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0',
+  SPARK_CONSOLE_NET: '0', SPARK_CONSOLE_HUB: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');

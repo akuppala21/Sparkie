@@ -211,6 +211,13 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
 });
 
 // Last: it stops this file's console.
+test('with no root helper on a Spark, a lock-out change answers with the owner’s one command, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
+  const n = await api('/actions/run', { method: 'POST', body: { on: 'spark4', command: 'chmod 600 ~/.ssh/authorized_keys', dir: '~' } });
+  assert.equal(n.status, 200, n.text);
+  assert.equal(n.json.ran, false, n.text);
+  assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh 4'?$/, n.text);
+});
+
 test('a write_file to a way in is refused, never a net ask: the net runs only a plain command (step-train; before the restart below, which stops this fleet)', { timeout: 60000 * SLOW }, async () => {
   const w = await api('/actions/write_file', { method: 'POST', body: { on: 'spark3', path: '~/.ssh/authorized_keys', text: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\n' } });
   assert.equal(w.status, 403, w.text);
