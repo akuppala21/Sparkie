@@ -10683,30 +10683,36 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   audit({ via, actor: channel === 'telegram' ? 'owner on Telegram' : 'owner', action: 'key-given', args: { name, kept: r.kept }, ok: r.kept });
   return message;
 }
-// A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
-// (messages, titles, a carried-on request) get every kept value hidden and are saved once if one changed, so the daily
-// copy stops carrying it. A chat that never held one is left exactly as it was (nor is its time touched). Says whether
-// one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too), and
-// whether one of them was on Telegram.
+// A key just kept may already be in the owner's earlier words, typed before it was given with /key, and in what came of
+// them: a command's step line and its last lines, an ask's text, a button's label, an error, the page's snapshot, a task
+// and its report. Every string of every stored chat (all but its id and login, at any depth, so a field added later is
+// covered too) gets every kept value hidden, and the chats are saved once if one changed, so chats.json, the daily copy
+// it next makes and GET /chats/:id stop carrying it; so do the lines the page is shown whole from memory (chatWhole,
+// chatAsksWhole, 14-chats.mjs). A chat that never held one is left exactly as it was (nor is its time touched). Says
+// whether one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too),
+// and whether one of them was on Telegram.
+// (every string in o, at any depth, but its own fields named in skip, in place; true when one changed)
+function keptHiddenIn(o, skip = []) {
+  let changed = false;
+  for (const k of Object.keys(o)) {
+    const v = o[k];
+    if (skip.includes(k)) continue;
+    if (typeof v === 'string') { const t = keptHidden(v); if (t !== v) { o[k] = t; changed = true; } }
+    else if (v && typeof v === 'object' && keptHiddenIn(v)) changed = true;
+  }
+  return changed;
+}
 function hideKeptInChats(value) {
   const owner = accessList().owner, left = { said: false, telegram: false };
   let changed = false;
   for (const c of chatData().conversations) {
-    if (c.login !== owner) continue;
-    // (its title and a carried-on request are the owner's words too)
-    for (const [o, k] of [[c, 'title'], [c.task, 'request']]) {
-      if (typeof o?.[k] !== 'string') continue;
-      const t = keptHidden(o[k]);
-      if (t !== o[k]) { o[k] = t; changed = true; }
+    for (const m of Array.isArray(c.messages) ? c.messages : []) {
+      if (c.login === owner && m?.role === 'user' && !m.auto && typeof m.content === 'string' && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
+      if (chatWhole.has(m)) chatWhole.set(m, keptHidden(chatWhole.get(m)));
+      if (chatAsksWhole.has(m)) chatAsksWhole.set(m, chatAsksWhole.get(m).map(a => ({ ...a, text: keptHidden(a.text) })));
     }
-    for (const m of c.messages) {
-      if (typeof m.content !== 'string') continue;
-      const t = keptHidden(m.content);
-      if (t === m.content) continue;
-      if (m.role === 'user' && !m.auto && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
-      m.content = t;
-      changed = true;
-    }
+    // (its id and login say whose it is; everything else, messages, title, task and reports, is cleaned)
+    if (keptHiddenIn(c, ['id', 'login'])) changed = true;
   }
   if (changed) saveChats();
   return left;
@@ -19391,11 +19397,48 @@ function netOutput(id, out) {
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
-// page or a fix suggested it): null when the request is the owner's own message asking for a change on that Spark with
-// nothing read from outside since (hostClear's test for "at once", 21-ladder.mjs, with the verbs a lock-out change is
-// asked in: add, open, allow, …), or the owner's own call (the page, POST /actions); otherwise where it came from.
-const NET_ASK = /\b(?:fix|install|set\s+up|change|edit|update|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give|reset|rotate|turn\s+(?:on|off))\b/i;
-const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need)\b/i;
+// page or a fix suggested it): null when the owner's own words (this message and the one before, R25) ask for it on that
+// Spark (netAsks) with nothing read from outside since, or for the owner's own call (the page, POST /actions);
+// otherwise where it came from. netAsks: one sentence of theirs does all three. 1, it names that Spark. 2, it names what
+// is to change, in the lock-out class (NET_WHAT), in the words right after a change verb (NET_BREAK). 3, it asks for that
+// change as an instruction: the verb in its plain form (NET_ASK; not "port 22 is open", not inside "how to …" or
+// "whether to …"), no "don't" (NET_NOT), and no question about how things are: one that starts with why, is, does,
+// can … or ends in "?" (NET_QUESTION) counts only when "can you", "could you", "would you", "will you" or "please" opens
+// it; "tell me", "show me", "check" … (INFO_START, 16-actions.mjs) ask to be told. The intent sorter's `work` verbs are
+// all in NET_ASK but "try", which asks for an attempt. A word list is never perfect: what it misses is refused, never
+// run, and the refusal says how to ask.
+// What a lock-out change is about, as the owner names it (point 2): the sorter's lock-out class (20-tables.mjs,
+// 20-places.mjs) in plain words: SSH and keys, Tailscale, the firewall and ports, the network settings, users, accounts,
+// passwords, sudo and groups, the shell's start files, signing in, logging in, access.
+const NET_WHAT = /\b(?:ssh\w*|openssh\S*|authorized_keys2?|(?:pub)?keys?|tailscale\w*|tailnet|firewall\w*|ufw|iptables|ip6tables|nft(?:ables)?|ports?|network\w*|netplan|nmcli|wi-?fi|ip|dns|routes?|interfaces?|hostname|users?|usernames?|accounts?|admins?|passwords?|passwd|sudo\w*|groups?|bashrc|bash_profile|profile|zshrc|shell|sign(?:ed|ing)?[\s-]?in(?:s|to)?|log(?:ged|ging)?[\s-]?in(?:s|to)?|logon|access)\b/i;
+const NET_ASK = /\b(?:fix|install|uninstall|reinstall|set(?:\s+up)?|change|edit|update|upgrade|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give(?!\s+me\b)|reset|rotate|restart|reload|start|stop|create|make|put|copy|replace|rename|lock|unlock|configure|build|clean\s*up|(?:turn|switch)(?:\s+[\w.-]+){0,3}?\s+(?:on|off))\b/gi;
+const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need|not\s+to|shouldn'?t|should\s+not|mustn'?t|must\s+not)\b/i;
+// (a greeting or a joining word before the sentence's own start: "hey Sparkie, why …", "so can you …")
+const NET_LEAD = String.raw`^\s*(?:(?:hey|hi|hello|ok|okay|so|and|but|also|now|then|well|sparkie)\b[\s,]*)*`;
+const NET_PLEASE = new RegExp(String.raw`${NET_LEAD}(?:please\b[\s,]*)?(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*(?:please\b[\s,]*)?|please\b[\s,]*)`, 'i');
+const NET_QUESTION = new RegExp(String.raw`${NET_LEAD}(?:why|what|which|who|whom|whose|when|where|how|am|is|are|was|were|does|do|did|has|have|had|should|shall|can|could|would|will|may|might|must)(?:n't)?\b`, 'i');
+// (before a change verb: it says how things are, "is open", "isn't open", "still open"; or it is asked about, "how to
+// open", "whether to add", "should I open")
+const NET_STATE = /(?:\b(?:am|is|are|was|were|be|been|being|still|already|left|kept|stays?|remains?|not|never)|n't|(?<!\blet)'s|'m|'re)\s+$/i;
+const NET_IF = /\b(?:how|why|what|when|where|which|who|whether|if|should|would|could|can|might|may)\b(?!')[^,;:]*$/i;
+// (what the verb changes: its own words and the six after it, up to a comma or a joining word, so "start a model on
+// Spark 3 with port 8000" names no lock-out thing to change)
+const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if)\s/i;
+function netAsks(node, text) {
+  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const s = raw.trim();
+    if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
+    const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
+    if (NET_QUESTION.test(body) || (!opened && /\?$/.test(s)) || INFO_START.test(body.replace(new RegExp(NET_LEAD, 'i'), ''))) continue;
+    for (const m of body.matchAll(NET_ASK)) {
+      const pre = body.slice(Math.max(0, m.index - 120), m.index);
+      if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
+      const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
+      if (NET_WHAT.test(`${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`)) return true;
+    }
+  }
+  return false;
+}
 function netWhose(node, viewer, ctx) {
   if (ctx.via === 'workflow') return 'a saved workflow’s step';
   if (ctx.via === 'watcher') return 'a healing fix';
@@ -19403,13 +19446,12 @@ function netWhose(node, viewer, ctx) {
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
   if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
-  const said = String(ctx.said || ctx.request || ''), i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
-  const asks = (has(i.asked, 'work') && !has(i.negated, 'work') && !has(i.mixed, 'work')) || (NET_ASK.test(said) && !NET_NOT.test(said));
-  if (!asks || !tokensOf(said).has(node.id)) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  if (!netAsks(node, String(ctx.said || ctx.request || ''))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
-// The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs).
-const netNotYours = from => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}.`);
+// The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
+// how to ask for one.
+const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`);
 
 // From the ladder (workChange), for every change the sorter calls lock-out: off, as before; else not done, refused while
 // a guard is open there, refused when it isn't the owner's own (netWhose), asked, or (the dangerous ask's press) run
@@ -19423,7 +19465,7 @@ async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netRun(node, command, sorted, viewer, ctx, dir);
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);
-  if (from) throw netNotYours(from);
+  if (from) throw netNotYours(from, node);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
@@ -20799,7 +20841,7 @@ async function rootChange(input, viewer, ctx = {}) {
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
   // (a root command in the lock-out class: only the owner's own words ask for one, contract 8.3, 21-net.mjs)
-  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from); }
+  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from, node); }
   // (no helper there, one this build doesn't know, walls not proven, or root's switch off there: the owner's one command,
   // and nothing is asked)
   const first = await netHelperFirst(node);
@@ -24046,14 +24088,18 @@ function writeSplice(oldText, text, from, to) {
   return out.length ? `${out.join('\n')}${ends ? '\n' : ''}` : '';
 }
 // One line on the button: masked, cut at 200 signs and said so; a line the mask changed is marked, as it is written as
-// given. A hidden part that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >) is shown as
-// written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
+// given. A hidden part of a new line (+) that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >)
+// is shown as written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
 // hidden that way could be a command). The records (the brain's result, the journal, the chat file) mask the line again,
 // with the same mark, which then says the hidden part holds such signs; the button (the page, Telegram) shows it.
+// An old line (-) is the file on the Spark, which nothing checked (a password, a kept key): always masked, never shown
+// whole, and cleaned of signs that don't show as a look's output is (lookClean; any other such sign a space).
 const WRITE_WHOLE = ' (shown whole: what would be hidden here holds signs that run something)', WRITE_RUNS = /[$`()|;&<>]/;
-function writeLineShown(sign, l) {
+const WRITE_UNSEEN = new RegExp(DANGER_HIDDEN.source, 'gu');
+function writeLineShown(sign, line) {
+  const l = sign === '+' ? line : lookClean(String(line)).replace(WRITE_UNSEEN, ' ');
   let m = maskSecrets(l), whole = false;
-  if (m !== l && m.includes('[hidden]')) {
+  if (sign === '+' && m !== l && m.includes('[hidden]')) {
     const parts = m.split('[hidden]'), esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const got = new RegExp(`^${parts.map(esc).join('([\\s\\S]*?)')}$`).exec(l);
     if (got && got.slice(1).some(x => WRITE_RUNS.test(x))) {
@@ -24062,7 +24108,7 @@ function writeLineShown(sign, l) {
     }
   }
   const a = Array.from(m);
-  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}${whole ? WRITE_WHOLE : ''}`;
+  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m === l ? '' : sign === '+' ? ' (a value on this line is hidden here; it is written as given)' : ' (a value on this line is hidden here)'}${whole ? WRITE_WHOLE : ''}`;
 }
 // The button's first lines: what is written where, and the lines that change, old and new (design A 2.14 row 7).
 function writeShown(at, place, old, text, from, to) {
@@ -24134,7 +24180,7 @@ async function writeFile(input, viewer, ctx = {}) {
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
     // (the lines the button shows whole, for Telegram's ask and the page's copy: the records keep them masked)
-    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.endsWith(WRITE_WHOLE)),
+    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.startsWith('+ ') && l.endsWith(WRITE_WHOLE)),
     file: { path: place.shown, before: old.kind === 'file' && old.bytes ? old.bytes.toString('utf8') : '', after: bytes.toString('utf8') },
     run: writeProgram(place.rel, old),
     as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,

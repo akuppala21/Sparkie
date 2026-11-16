@@ -47,7 +47,7 @@ async function rootChange(input, viewer, ctx = {}) {
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
   // (a root command in the lock-out class: only the owner's own words ask for one, contract 8.3, 21-net.mjs)
-  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from); }
+  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from, node); }
   // (no helper there, one this build doesn't know, walls not proven, or root's switch off there: the owner's one command,
   // and nothing is asked)
   const first = await netHelperFirst(node);
