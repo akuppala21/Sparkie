@@ -2,7 +2,8 @@
 // SPARK_CONSOLE_RESTART_WAIT_MS): with the stand-in's serve-down it fails "…, so it was stopped again" and the container
 // isn't running; with Docker there answering nothing by then, it fails "…, and it couldn't be stopped: it may still be
 // running on Spark 3", that is the operation's clean-up, and nothing is said to be "missing"; as a saved workflow's
-// only step, the run fails and nothing it started is running at its end.
+// only step, the run fails and nothing it started is running at its end. The limit moves only on the stand-in fleet: on
+// any other console the variable is ignored (pure, from the limit's own line).
 //
 // The stand-in fleet: Spark 3's model of Spark Console's is stopped before the service starts, so restart_model of
 // sc-gpt-oss-20b there starts it and holds no port another model has; what should be running is seeded (Spark 4's model).
@@ -10,7 +11,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, api, waitFor, SLOW, REPO } from './lib.mjs';
 
 const GPT20 = 'sc-gpt-oss-20b', RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', LIMIT = 20000 * SLOW;
 const SINCE = '2026-11-12T08:00:00.000Z';
@@ -83,4 +84,15 @@ describe('a restart that doesn\'t answer within its limit (A-24)', { concurrency
       assert.notEqual(stateOf('spark3', GPT20), 'running', 'nothing the run started runs at its end');
     } finally { rmSync(mock('spark3', 'serve-down'), { force: true }); }
   });
+});
+
+// The limit moves only on the stand-in fleet (ALL_LOCAL, SPARK_CONSOLE_ALL_LOCAL=1, the switch every other test-only
+// setting needs): a stray SPARK_CONSOLE_RESTART_WAIT_MS on any other console moves nothing. Pure: the limit's own line, read from 17-changes.mjs.
+test('the limit moves only on the stand-in fleet: on any other console SPARK_CONSOLE_RESTART_WAIT_MS is ignored', () => {
+  const line = /^const RESTART_WAIT_MS = (.+);$/m.exec(readFileSync(join(REPO, 'service', 'src', '17-changes.mjs'), 'utf8'))?.[1];
+  assert.ok(line, 'RESTART_WAIT_MS in 17-changes.mjs');
+  const limit = (allLocal, value) => new Function('ALL_LOCAL', 'process', `return ${line};`)(allLocal, { env: value == null ? {} : { SPARK_CONSOLE_RESTART_WAIT_MS: value } });
+  assert.equal(limit(false, '20000'), 30 * 60000, 'a console that isn’t the stand-in fleet');
+  assert.equal(limit(true, '20000'), 20000, 'the stand-in fleet');
+  assert.deepEqual([limit(true, undefined), limit(true, ''), limit(true, 'soon')], [30 * 60000, 30 * 60000, 30 * 60000], 'not set, or not a number');
 });

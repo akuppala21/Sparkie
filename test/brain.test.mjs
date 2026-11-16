@@ -9,6 +9,9 @@
 // messages in a row gets none; one that prints its thinking between tags leaves none in the saved answer; thinking sent
 // as `reasoning` is read as thinking; past the setup's `tokenBudget`, by the brain's own `usage`, the next round offers no
 // tools; a Library model's spark.json `ask` block is kept with its setup, checked, and its brain is asked that way.
+// At the brain's own 45-minute limit (pure: startMain and switchMain from their part, with a clock that runs on): a
+// start leaves the container loading and says it may still be loading; a switch with a setup to go back to removes it
+// and says so, as does the setup gone back to when it too stays silent; a first switch with none leaves it loading.
 //
 // Sparkie's own model (the brain) when a change of Spark Console's goes wrong. Switching it: a setup that can't start is
 // refused before anything stops; a failed switch says whether the old model came back, and leaves no half-started
@@ -20,7 +23,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, agentSettings, auditLines, eventLines, waitFor, sleep, SLOW, newChat, say, chatMessages } from './lib.mjs';
+import { T, useFleet, api, agentSettings, auditLines, eventLines, waitFor, sleep, SLOW, newChat, say, chatMessages, REPO } from './lib.mjs';
 
 // B9: the ask blocks of a setup and of a Library model's spark.json (with fields the check leaves out: a limit, a
 // sampling key it doesn't know, tags that aren't two strings).
@@ -300,5 +303,66 @@ describe('another brain\'s habits, said by its setup', { concurrency: 1 }, () =>
     const [asked] = requests().slice(from).filter(x => x.words === 'hello from the next brain');
     assert.deepEqual(asked.params, { temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 8192, thinking: true });
     assert.equal(asked.usageAsked, true);
+  });
+});
+
+// What happens at the brain's own 45-minute limit, and what the words say (the reply's check of the landed fixes,
+// 2026-11-16): startMain leaves the container there loading, so "it may still be loading" is true; a switch that goes
+// back to the setup before removes it (the same container name, docker rm -f), so its words say that instead.
+describe('the brain’s 45-minute limit: the words say what happened to the container', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '13-main-model.mjs'), 'utf8');
+  const lift = head => { const at = src.indexOf(head); assert.ok(at >= 0, head); return src.slice(at, src.indexOf('\n}\n', at) + 2); };
+  const slow = /^const MAIN_SLOW = .*$/m.exec(src)?.[0] || '';
+  // A stand-in Spark 2: each setup either answers once started or stays silent ("loading") for good; every command is
+  // kept, in order. The clock moves a minute each time it is read.
+  function brainWith(silent, main) {
+    const cmds = [], notes = [];
+    let current = null, clock = 0;
+    const run = async (node, script) => {
+      cmds.push(script);
+      if (script.startsWith('START ')) { current = script.slice(6); return { code: 0, out: '', err: '' }; }
+      if (script.includes('curl -sf')) return { code: 0, out: silent.includes(current) ? 'running\nLoading safetensors' : 'up\n', err: '' };
+      return { code: 0, out: '', err: '' };
+    };
+    const names = ['run', 'note', 'step', 'mainPlan', 'mainNode', 'nodeById', 'stopContainer', 'copyModel', 'markBrainLeftDown', 'mainRunCommand',
+      'sleep', 'Date', 'repoOf', 'recordVerified', 'q', 'stopMain', 'ASSISTANT_NAME', 'saveMainChoice', 'ROUTES', 'saveRoutes', 'checkBrainSoon', 'initial'];
+    const make = new Function(...names, `let MAIN = initial;\n${slow}\n${lift('async function startMain(')}\n${lift('async function switchMain(')}\nreturn { startMain, switchMain };`);
+    const fns = make(run, (job, t) => notes.push(t), (job, t) => notes.push(`step: ${t}`), async m => ({ title: m.title, steps: [] }), () => ({ id: 'spark2' }), () => ({ id: 'spark2' }),
+      async () => {}, async () => {}, () => {}, m => `START ${m.title}`, async () => {}, { now: () => (clock += 60000) }, x => x, async () => {}, x => `'${x}'`,
+      async (job, m) => { cmds.push(`STOP ${m.title}`); }, 'Sparkie', () => {}, {}, () => {}, () => false, main);
+    return { ...fns, cmds, notes, job: {} };
+  }
+  const OLD = { title: 'Old', container: 'sparkie-main', node: 'spark2', port: 30100 }, NEW = { title: 'New', container: 'sparkie-main', node: 'spark2', port: 30100 };
+  const since = (cmds, from) => cmds.slice(cmds.lastIndexOf(from) + 1).filter(c => !c.includes('curl -sf'));
+
+  test('a start (the page’s Start, /restart sparkie, the brain keeper): it is left loading, and the words say it may still be loading', async () => {
+    const b = brainWith(['Old'], OLD);
+    await assert.rejects(b.startMain(b.job, [], OLD), e => /^It didn’t answer within 45 minutes\. It may still be loading; check its logs\.$/.test(e.message));
+    assert.deepEqual(since(b.cmds, 'START Old'), [], 'nothing stops or removes it after its start');
+  });
+  test('a switch with a setup to go back to: the new one is removed for it, and the words say so, never that it may still be loading', async () => {
+    const b = brainWith(['New'], OLD);
+    let err;
+    await b.switchMain(b.job, NEW, []).catch(e => { err = e; });
+    assert.equal(err?.message, 'New didn’t start, so Sparkie is back on Old. It didn’t answer within 45 minutes, so it was removed to start Old again.');
+    assert.match(since(b.cmds, 'START New')[0], /^docker rm -f 'sparkie-main'/, 'going back removes it first');
+    assert.ok(b.notes.includes('New didn’t start: It didn’t answer within 45 minutes; going back to Old removes it.'), b.notes.join('\n'));
+    assert.doesNotMatch([...b.notes, err.message].join('\n'), /may still be loading/);
+  });
+  test('a switch whose setup gone back to stays silent too: both are removed, and the words say so', async () => {
+    const b = brainWith(['New', 'Old'], OLD);
+    let err;
+    await b.switchMain(b.job, NEW, []).catch(e => { err = e; });
+    assert.equal(err?.message, 'New didn’t start, and Old didn’t come back either, so Sparkie is down. To start it again, type /restart sparkie in Spark Console’s chat. It didn’t answer within 45 minutes, so it was removed to start Old again.');
+    assert.match(since(b.cmds, 'START Old').at(-1), /^docker rm -f 'sparkie-main'/, 'the one gone back to is removed too');
+    assert.ok(b.notes.includes('Old didn’t come back either: It didn’t answer within 45 minutes; it is removed too.'), b.notes.join('\n'));
+    assert.doesNotMatch([...b.notes, err.message].join('\n'), /may still be loading/);
+  });
+  test('a first switch, with no setup before it: it is left loading, and the words say it may still be loading', async () => {
+    const b = brainWith(['New'], null);
+    let err;
+    await b.switchMain(b.job, NEW, []).catch(e => { err = e; });
+    assert.equal(err?.message, 'New didn’t start. It didn’t answer within 45 minutes. It may still be loading; check its logs.');
+    assert.deepEqual(since(b.cmds, 'START New'), [], 'nothing stops or removes it after its start');
   });
 });

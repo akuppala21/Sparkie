@@ -272,6 +272,14 @@ function readPart(file, text) {
     const name = /name: '([a-z_]+)'/.exec(text.slice(p, close.get(p)))?.[1];
     if (name) part.acts.push({ name, start: p, end: close.get(p) });
   }
+  // Whether a lookup's result is the console's own (R26): what its action says itself, `inside: true` or a function of
+  // its arguments (readInside in 14-rounds.mjs reads the same marker). One that says nothing is outside text.
+  for (const a of part.actions) {
+    const act = part.acts.find(x => x.name === a.name), m = act && /^ {2}inside: /m.exec(code.slice(act.start, act.end));
+    if (!m) continue;
+    const at = act.start + m.index + m[0].length, said = text.slice(at, text.indexOf('\n', at)).replace(/\s*\/\/.*$/, '').replace(/,\s*$/, '').trim();
+    a.inside = said === 'true' ? true : said === 'false' ? false : /=>\s*(.+)$/.exec(said)?.[1] || 'some of its arguments';
+  }
   return part;
 }
 
@@ -527,6 +535,11 @@ export function checkParts(root = ROOT, tree = readParts(root)) {
     for (const w of d.writers.filter(x => !found.includes(x))) say(d.part, 1, `declares ${w} as a writer of ${file}, but nothing by that name writes it`);
   }
   for (const [file, d] of declared) if (!files.has(file)) say(d.part, 1, `owns ${file}, which no part keeps (a state file is a top-level constant: \`\${STATE_DIR}/${file}\`)`);
+  // The names this tool reads by their text.
+  for (const n of namesGone(tree)) {
+    const as = TABLES.includes(n) ? ` table (const ${n} = new Set([…]) or = { …: […] })` : ' at the top level of a part';
+    out.push({ check: 'parts', file: 'service/src', line: 1, message: `has no ${n}${as}, which tools/parts.mjs reads for ${READ_BY_NAME[n]}: point the tool at the name the service uses now (READ_BY_NAME, and where it reads it), or put the name back` });
+  }
   // Event and operation types.
   const listed = eventTypes(tree);
   if (tree.events.length && !listed) out.push({ check: 'parts', file: 'service/src', line: 1, message: 'has no EVENT_TYPES list, so the event types sent can’t be checked' });
@@ -547,8 +560,32 @@ export function eventTypes(tree) {
   return null;
 }
 
+// The service's names this tool reads by their text, and what each is read for. What is made from a name the service
+// no longer has comes out empty without a word (the table of inside reads left the service when each action came to
+// say itself whether it is one, and the registry went on calling every lookup outside text), so checkParts says when
+// one is gone, and table reads only a name listed here. EVENT_TYPES has a check of its own.
+export const READ_BY_NAME = {
+  ACTION_KIND: 'the registry’s “Answers to” (a table)',
+  PAGE_ONLY: 'the registry’s “Page only” (a table)',
+  NOT_A_STEP: 'the registry’s “Step” (a table)',
+  action: 'each action and where it ends (its group, its inside marker, who calls what)',
+  sendCopy: 'the registry’s “Copied daily” (the names its tar leaves out)',
+  readKept: 'the registry’s “Read kept”, and who reads a file it sets aside (HELPERS)',
+  writePrivate: 'who writes each state file (WRITES, HELPERS)',
+  STATE_DIR: 'which top-level constants are state files',
+  fleetEvent: 'the event types sent',
+  newJob: 'the operation types started',
+};
+const TABLES = ['ACTION_KIND', 'PAGE_ONLY', 'NOT_A_STEP'];
+// Each name of READ_BY_NAME the parts don't have as this tool reads it: a table in the shape table reads, else a
+// top-level name.
+export function namesGone(tree) {
+  return Object.keys(READ_BY_NAME).filter(n => (TABLES.includes(n) ? table(tree, n) == null : !tree.topOf.has(n)));
+}
+
 // A Set(['a', 'b']) or { a: ['x'] } table in the parts, read as text.
 function table(tree, name) {
+  if (!TABLES.includes(name)) throw new Error(`tools/parts.mjs reads the table ${name}, which READ_BY_NAME doesn’t list as one: list it there, so checkParts says when the service no longer has it`);
   for (const p of tree.parts) {
     const s = new RegExp(`^const ${name} = new Set\\(\\[([^\\]]*)\\]\\)`, 'm').exec(p.text);
     if (s) return new Set([...s[1].matchAll(/'([a-z_]+)'/g)].map(x => x[1]));
@@ -580,7 +617,8 @@ const by = (xs, part) => [...new Set(xs.map(x => (x.part === part ? `\`${x.who}\
 export function registry(root = ROOT, tree = readParts(root)) {
   const parts = tree.parts.filter(p => p.bad == null);
   const actions = parts.flatMap(p => p.actions);
-  const kinds = table(tree, 'ACTION_KIND'), pageOnly = table(tree, 'PAGE_ONLY'), notStep = table(tree, 'NOT_A_STEP'), inside = table(tree, 'INSIDE_READS');
+  const kinds = table(tree, 'ACTION_KIND'), pageOnly = table(tree, 'PAGE_ONLY'), notStep = table(tree, 'NOT_A_STEP');
+  const textOf = a => (a.kind !== 'read' ? '—' : a.inside === true ? 'inside' : typeof a.inside === 'string' ? `inside when ${a.inside}` : 'outside');
   const files = [...new Map([...tree.state.values()].map(s => [s.file, s])).values()].sort((a, b) => a.file.localeCompare(b.file));
   // What the daily copy leaves out of the state folder: the names its tar is told to exclude in sendCopy
   // (25-backup-and-start.mjs), so the column says what the copy does, not only where the file lives (TR-6).
@@ -608,12 +646,13 @@ export function registry(root = ROOT, tree = readParts(root)) {
     '',
     'Kind: a lookup runs at once; a change goes through the checks in `runAction`. Answers to: the words of the owner’s',
     'request it may follow (`ACTION_KIND`). Page only: never run from a channel (`PAGE_ONLY`). Step: may be a step of a',
-    'saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own (`INSIDE_READS`), or text',
-    'from outside. Group: the tool group Sparkie is offered it in (R46; the core is in every round).',
+    'saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own, as its action says itself',
+    '(`inside`, R26: always, or when its arguments are the ones named), or text from outside. Group: the tool group',
+    'Sparkie is offered it in (R46; the core is in every round).',
     '',
     '| Action | Kind | Part | Group | Answers to | Page only | Step | Text |',
     '|---|---|---|---|---|---|---|---|',
-    ...actions.map(a => `| \`${a.name}\` | ${a.kind} | \`${a.file.slice(0, -4)}\` | ${a.group || '—'} | ${(kinds?.get?.(a.name) || []).join(', ') || '—'} | ${pageOnly?.has(a.name) ? 'yes' : '—'} | ${notStep?.has(a.name) ? 'no' : 'yes'} | ${a.kind === 'read' ? (inside?.has(a.name) ? 'inside' : 'outside') : '—'} |`),
+    ...actions.map(a => `| \`${a.name}\` | ${a.kind} | \`${a.file.slice(0, -4)}\` | ${a.group || '—'} | ${(kinds?.get?.(a.name) || []).join(', ') || '—'} | ${pageOnly?.has(a.name) ? 'yes' : '—'} | ${notStep?.has(a.name) ? 'no' : 'yes'} | ${cell(textOf(a))} |`),
     '',
     '## State files and their writers',
     '',

@@ -6,7 +6,9 @@
 // current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
 // header cut short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
 // declared-but-absent writer, a state file nobody owns, a helper writing a file it is given, an undeclared repeating
-// timer, an unlisted event or job type, a part outside its band, brackets it can't read). Each test file's “Covers:”
+// timer, an unlisted event or job type, a part outside its band, brackets it can't read, a table or function the tool
+// reads by its name that the service no longer has); the registry's Text column is what each lookup says itself
+// (`inside`: always, for some arguments, or nothing, so outside text). Each test file's “Covers:”
 // comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't have, a stale
 // table. `docs/status.md` (`tools/status.mjs`): a row per rule and contract requirement; built, partly from tests that
 // hold part of an acceptance test (`// T2 (part): …`), and a part mark that says no part fails. The meaning diff
@@ -25,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
 import { checkDocs, rulesIndex, coversOf, coversTable, sizesReport, sizesText, describe as say } from '../tools/check-docs.mjs';
-import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
+import { checkParts, readParts, registry, owned, READ_BY_NAME } from '../tools/parts.mjs';
 import { codeMap } from '../tools/code-map.mjs';
 import { checkStatus, statusTable } from '../tools/status.mjs';
 import { meaningDiff, treeAt } from '../tools/meaning.mjs';
@@ -276,6 +278,20 @@ test('this tree: docs/registry.md is what the parts make', () => {
   assert.equal(readFileSync(join(REPO, 'docs/registry.md'), 'utf8'), registry(REPO));
 });
 
+// The registry's Text column is what each lookup says itself (R26: `inside: true`, or a function of its arguments;
+// readInside in 14-rounds.mjs reads the same marker), never a table: a lookup that says nothing is outside text.
+test('the registry’s Text column: each lookup’s own inside marker, always, for some arguments, or none', () => {
+  const acts = [['always_in', "  inside: true,   // (code's own words)\n"], ['some_in', "  inside: ({ about } = {}) => about === 'abilities',\n"],
+    ['said_out', '  inside: false,\n'], ['no_word', ''], ['nested_in', '  run: () => ({\n    inside: true,\n  }),\n']]
+    .map(([name, line]) => `action({\n  name: '${name}', title: 'Look', kind: 'read',\n${line}  description: 'A look.',\n});\n`).join('');
+  const root = makeTree({ ...PARTS, 'service/src/16-actions.mjs': `${PARTS['service/src/16-actions.mjs']}${acts}action({\n  name: 'a_change', title: 'Change', kind: 'change',\n  inside: true,\n});\n` });
+  try {
+    const row = name => registry(root).split('\n').find(l => l.startsWith(`| \`${name}\` |`))?.split(' | ').at(-1);
+    assert.deepEqual(['always_in', 'some_in', 'said_out', 'no_word', 'nested_in', 'a_change', 'fleet_status'].map(row),
+      ['inside |', "inside when about === 'abilities' |", 'outside |', 'outside |', 'outside |', '— |', 'outside |']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 // R22 listed desired.json's six writers by hand; the scanner finds each of them in the code, and what it finds is
 // exactly what 20-desired's header declares (a new writer joins the header, not this test).
 test('this tree: desired.json’s six writers are found in the code', () => {
@@ -289,9 +305,12 @@ test('this tree: desired.json’s six writers are found in the code', () => {
 const HEAD = (title, { area = 'core', rules = 'R1', tests = 'change.test.mjs', owns = 'none', timers = 'none' } = {}) =>
   `/* ───────── ${title} ───────── */\n// Area: ${area}        Rules: ${rules}        Tests: ${tests}\n// Owns: ${owns}\n// Timers: ${timers}        Wakes: none\n`;
 const DESIRED = "const DESIRED_FILE = `${STATE_DIR}/desired.json`;\nfunction desiredAfter(job) {\n  try { writePrivate(DESIRED_FILE, { running: [] }); } catch {}\n  fleetEvent({ type: job.ok ? 'started' : 'notice' });\n}\nasync function watchHeld() {}\nsetInterval(watchHeld, 60000);\n";
+// What tools/parts.mjs reads by its name (READ_BY_NAME): the tables, and the functions and folder it finds by their name.
+const NAMED_GROUND = "const STATE_DIR = '/state';\nfunction newJob(type, o) { return { type, ...o }; }\nfunction writePrivate(file, value) {}\nfunction readKept(file) { return null; }\nfunction sendCopy() {}\n";
+const NAMED_CORE = "const ACTION_KIND = {\n  fleet_status: [],\n};\nconst PAGE_ONLY = new Set([]);\nconst NOT_A_STEP = new Set([]);\nfunction fleetEvent(e) {}\n";
 const PARTS = {
-  'service/src/07-jobs.mjs': `${HEAD('jobs', { area: 'ground' })}function runJob(job) { return newJob(job.two ? 'deploy-cluster' : 'deploy', {}); }\n`,
-  'service/src/16-actions.mjs': `${HEAD('actions')}${BASE['service/src/16-actions.mjs']}const EVENT_TYPES = ['started', 'notice'];\n`,
+  'service/src/07-jobs.mjs': `${HEAD('jobs', { area: 'ground' })}function runJob(job) { return newJob(job.two ? 'deploy-cluster' : 'deploy', {}); }\n${NAMED_GROUND}`,
+  'service/src/16-actions.mjs': `${HEAD('actions')}${BASE['service/src/16-actions.mjs']}const EVENT_TYPES = ['started', 'notice'];\n${NAMED_CORE}`,
   'service/src/17-changes.mjs': `${HEAD('changes')}${BASE['service/src/17-changes.mjs']}`,
   'service/src/20-desired.mjs': `${HEAD('what should be running', { area: 'record', owns: 'desired.json (writers: desiredAfter)', timers: 'watchHeld (every 60 s)' })}${DESIRED}`,
   'docs/rules/R13.md': RULE(13).replace('Every change goes through', 'Jobs `deploy` and `deploy-cluster` claim; every change goes through'),
@@ -330,6 +349,19 @@ describe('headers', () => {
   test('a part outside its band', () => partsFail(part('07-jobs.mjs', HEAD('jobs', { area: 'core' }), PARTS['service/src/07-jobs.mjs'].split('\n').slice(4).join('\n')), /numbered 07, but its Area, core, is the band 16–19/));
   test('an area that isn’t one', () => partsFail(part('17-changes.mjs', HEAD('changes', { area: 'workloads' }), BASE['service/src/17-changes.mjs']), /an area is one of/));
   test('a ground part with an action', () => partsFail({ 'service/src/07-jobs.mjs': `${PARTS['service/src/07-jobs.mjs']}action({\n  name: 'jobs_list', title: 'Jobs', kind: 'read',\n});\n` }, /ground part .* defines jobs_list/));
+  // (the registry once read its Text column from a table the service no longer had, and called every lookup outside
+  // text without a word: each name the tool reads by its text is checked to be there)
+  test('a table the tool reads by its name that the service no longer has', () => {
+    const [p] = partsFail({ 'service/src/16-actions.mjs': PARTS['service/src/16-actions.mjs'].replace('const PAGE_ONLY = new Set([]);\n', '') }, /has no PAGE_ONLY table/);
+    assert.match(p.message, /tools\/parts\.mjs reads for the registry’s “Page only”/);
+  });
+  test('a function the tool reads by its name that the service no longer has, each one', () => {
+    for (const [file, line] of [['07-jobs.mjs', 'function sendCopy() {}\n'], ['07-jobs.mjs', 'function readKept(file) { return null; }\n'], ['16-actions.mjs', 'function fleetEvent(e) {}\n']]) {
+      const name = /function (\w+)/.exec(line)[1];
+      partsFail({ [`service/src/${file}`]: PARTS[`service/src/${file}`].replace(line, '') }, new RegExp(`has no ${name} at the top level of a part, which tools/parts\\.mjs reads for`));
+    }
+    assert.ok(Object.keys(READ_BY_NAME).length >= 10, 'the names the tool reads by their text');
+  });
   test('a part whose brackets don’t match can’t be read', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function half() {\n` }, /can’t be read/));
   // tools/make.mjs makes the registry and the code map before it runs the check, so neither may throw on a part a
   // builder hasn't headed yet: the check is what says which lines to add.

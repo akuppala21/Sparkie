@@ -7,12 +7,13 @@ a header declares (the owner of a state file, its writers, the timers) is checke
 
 Kind: a lookup runs at once; a change goes through the checks in `runAction`. Answers to: the words of the owner’s
 request it may follow (`ACTION_KIND`). Page only: never run from a channel (`PAGE_ONLY`). Step: may be a step of a
-saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own (`INSIDE_READS`), or text
-from outside. Group: the tool group Sparkie is offered it in (R46; the core is in every round).
+saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own, as its action says itself
+(`inside`, R26: always, or when its arguments are the ones named), or text from outside. Group: the tool group
+Sparkie is offered it in (R46; the core is in every round).
 
 | Action | Kind | Part | Group | Answers to | Page only | Step | Text |
 |---|---|---|---|---|---|---|---|
-| `fleet_status` | read | `16-reads` | core | — | — | yes | outside |
+| `fleet_status` | read | `16-reads` | core | — | — | yes | inside |
 | `running_models` | read | `16-reads` | core | — | — | yes | outside |
 | `models_on_disk` | read | `16-reads` | find | — | — | yes | outside |
 | `find_recipes` | read | `16-reads` | find | — | — | yes | outside |
@@ -21,7 +22,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `where_it_fits` | read | `16-reads` | find | — | — | yes | outside |
 | `deploy_plan` | read | `16-reads` | sparks | — | — | yes | outside |
 | `cluster_plan` | read | `16-reads` | sparks | — | — | yes | outside |
-| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | outside |
+| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | inside |
 | `spark_detail` | read | `16-reads` | sparks | — | — | yes | outside |
 | `recent_operations` | read | `16-reads` | dig | — | — | yes | outside |
 | `operation_log` | read | `16-reads` | dig | — | — | yes | outside |
@@ -29,7 +30,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `spark_diagnostics` | read | `16-reads` | dig | — | — | yes | outside |
 | `service_logs` | read | `16-reads` | dig | — | — | yes | outside |
 | `files` | read | `16-reads` | reading | — | — | yes | outside |
-| `sparkie_setup` | read | `16-reads` | core | — | — | yes | outside |
+| `sparkie_setup` | read | `16-reads` | core | — | — | yes | inside when about === 'abilities' |
 | `workloads` | read | `16-reads` | core | — | — | yes | outside |
 | `fleet_events` | read | `16-reads` | past | — | — | yes | outside |
 | `start_model` | change | `17-changes` | core | start | — | yes | — |
@@ -53,7 +54,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
 | `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
 | `compare_models` | change | `21-compare` | routines | compare | — | no | — |
-| `guide` | read | `21-guide` | core | — | — | yes | outside |
+| `guide` | read | `21-guide` | core | — | — | yes | inside |
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |

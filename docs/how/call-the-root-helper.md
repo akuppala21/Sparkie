@@ -38,7 +38,7 @@ the net's `guardCall` in `21-guard.mjs` (`run --net`, `root --net`, `keep`, `put
   `--expand-environment=no` so systemd leaves `${…}` alone; the helper's hash check catches any change.)
 - Read an answer from anything but the id's lines.
 - Call it from a child of the console on Spark 2 without the owner's service manager: `sudo` fails there.
-- Let a look's output count as inside text (`INSIDE_READS`): it is the outside world.
+- Mark a look as an inside read (`inside`, R26): its output is the outside world.
 
 ## Rules
 
