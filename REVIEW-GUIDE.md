@@ -1,519 +1,548 @@
 # Review guide for Astra
 
-This is the whole Spark Console folder as of 2026-11-13, with nothing left out. It is the finished app after the final
-build-out. Please review it for bugs, gaps and suggestions. This page says what to read, what changed, what was left
-out on purpose, how it was checked, and how it gets installed.
+This is the whole Spark Console folder as of 2026-11-15, with nothing left out. The code is commit `36db95e` on
+`main`; this guide is a later commit that changes no code. Please review it for bugs, gaps and suggestions. This page
+says what to read, what changed, what was left out on purpose, how it was checked, and how it gets installed.
 
-There are two things to review. Sections 1 to 9 cover **the app as built**. Section 10 covers **the plan for the next
-phase** (`docs/design-2026-11-13/`), which matters as much: please review it in the same detail.
+Two things are new since your first review:
+
+- **Round 1 is answered.** Every finding in `docs/review-astra/findings-1.md` has its answer in
+  `docs/review-astra/reply-1.md`, and `docs/review-astra/open.md` has one row per id with who moves next. The
+  accepted fixes have been on `main` since commit `f060fff`.
+- **The next phase is built.** Section 10 used to hand you a plan. All six milestones of that plan are now code on
+  `main`: 550 commits since `f060fff`, the service grown from 37 parts to 100, the suite from 49 test files to 143.
+  Please review it as code, as hard as the first build.
+
+Sections 1 to 9 keep their numbers, so round 1's references still work.
 
 ## 1. What Spark Console is
 
-The owner has several NVIDIA DGX Sparks. Spark Console is one hub for all of them. It runs on Spark 2 and has one
-address: `https://akspark2.tailab9aa9.ts.net:8443`. It can be reached on the owner's tailnet, or from the internet
-behind a passkey sign-in.
+The owner has several NVIDIA DGX Sparks. Spark Console is one hub for all of them: one Node service on Spark 2, with
+one address, reached on the owner's tailnet or from the internet behind a passkey sign-in. The owner is its only
+user: members and sharing were taken out (`docs/sharing.md`).
 
-The owner uses it in only two ways: by talking to **Sparkie** and through the **APIs**. Sparkie is the console's chat
-brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The owner uses chat and the APIs.
-The page still shows Home, Models, Files and Access from earlier builds, and they still work.
+The owner uses it in two ways: by talking to **Sparkie** and through the **APIs**. Sparkie is the console's chat
+brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The page is now the chat,
+sign-in and status. Home, Models, Files and Access are off it (`test/page.test.mjs`); the routes behind them stay.
 
-Sparkie and the APIs run anything the owner asks for on Spark 3, Spark 4, or any Spark added later:
+What Sparkie and the APIs do:
 
-- models, started with their best setup;
-- GPU apps such as Open WebUI, Jupyter, code-server and ComfyUI;
-- dev boxes;
-- one-off jobs;
-- small stacks.
+- **As before:** start, stop and heal models with their best setup; keep GPU apps and dev boxes running; run one-off
+  jobs and small stacks; look things up on the web.
+- **New:** run a command or write a file on any Spark (`run`, `write_file`), with code deciding what runs at once,
+  what waits for a button and what waits for a dangerous ask; try code in a box; carry a long task on within limits
+  and report at its end; keep a journal and a memory; power compute Sparks off when idle and on for work; check for
+  and install its own updates.
 
-Spark 2 runs only the console and the brain. Once signed in, by whatever means, the owner reaches every Spark as one
-environment, with no second password. The owner's own agents reach Sparkie through the agent door (MCP), which uses one
-key per agent.
+Spark 2 runs only the console and the brain. Workloads run on the compute Sparks (Spark 3, Spark 4, any added
+later). The owner's own agents reach Sparkie through the agent door (MCP), one key per agent.
 
 ## 2. Reading order
 
-1. **`AGENTS.md`.** The layout, how to work, and the rules that are never broken.
-2. **`docs/architecture.md`.** How it is built today:
-   - the diagram;
-   - one sentence followed from chat to a running model;
-   - who holds each fact;
-   - rules R1–R41;
-   - where new things go;
-   - the checklist before an install;
-   - known traps.
-3. **`docs/code-map.md`.** Every part, action, state file, timer and function, generated from the code.
-4. **`docs/contract.md`.** What the product must do and why. It is long, so search it rather than reading it all.
-5. **`docs/history/analysis-2026-11-11/`.** The record of the analyses and reviews that drove this build. Start with:
-   - `README.md` (the owner's decisions);
-   - `14-trimmed-plan.md` (what was chosen to build);
-   - `17-build-specs.json` and `19-any-workload-spec.json` (the exact specs).
-6. **`docs/history/reviews-2026-11-11.md`.** The earlier reviews and their "next, in order" list.
-7. **`test/README.md`.** What each test file covers, and how the stand-in fleet works.
+1. **`AGENTS.md`.** The front door: the layout, how to work, the rules that are never broken, one card per task.
+2. **`docs/architecture.md`.** The diagram, one sentence followed from chat to a running model, the known traps.
+   Its diagram does not yet draw the root helper, the box, the ladder or the lock-out net: for those, read the
+   rules and the code.
+3. **`docs/rules.md`.** One line per rule, R1 to R70 (there is no R44). Each rule's file in `docs/rules/` says why,
+   where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
+   R55 and R60 to R70.
+4. **`docs/how/`.** One card per kind of work. For this review: `docs/how/call-the-root-helper.md`,
+   `docs/how/raise-a-dangerous-ask.md`, `docs/how/find-why-a-change-was-refused.md`,
+   `docs/how/run-the-brain-eval.md`, `docs/how/land-a-step.md`.
+5. **`docs/code-map.md`, `docs/registry.md`, `docs/status.md`.** Generated from the code: every part and function;
+   every action, state file and timer; one row per rule and contract requirement with the test that holds it.
+6. **`docs/contract.md`.** What the product must do and why. It is the owner's text. It is long, so search it;
+   its section 8 is what this build is about.
+7. **`docs/design-2026-11-13/README.md`.** The plan that was built, in one page, with the owner's 22 decisions in
+   `docs/design-2026-11-13/owner-decisions.md`. It is a dated record and still says "Nothing here is built yet".
+8. **`docs/review-astra/`.** The procedure (`README.md`), your round 1, our reply, and the open list.
+9. **`test/README.md`, `test/stand-in-fleet.md`, `test/covers.md`.** How the suite runs, what no test reaches, and
+   one row per test file.
 
-Other docs:
+Other documents: `docs/sharing.md` (sign-in), `docs/agent-door.md` (MCP), `docs/recipes.md`, `docs/multi-spark.md`,
+`docs/state.md` and `docs/state-outside.md` (who holds each fact), `docs/glossary.md`, `docs/history/` (dated).
 
-| File | Covers |
-|---|---|
-| `docs/sharing.md` | The internet sign-in and members |
-| `docs/agent-door.md` | MCP for the owner's agents |
-| `docs/recipes.md` | How setups are found for a model |
-| `docs/multi-spark.md` | One model across two Sparks |
-| `docs/history/sparkie-actions.md` | What Sparkie may do on its own |
+**Some documents lag the code.** The code is what runs; please tell us where a document is wrong. The ones we know:
+"Today" notes written before a later step landed (R3 "nothing calls it yet", R42 "`run` is today a look", R61 "No
+`minutes` yet", R64 "Dark with R55", R67 and R68 on the box); `docs/glossary.md`, which still marks `run`,
+`write_file` and the box "not built yet"; the card for the root helper ("a look today"); and the opening comment of
+`service/src/21-box.mjs`, which still says a box command is not run.
 
 ## 3. Where the code is
 
 | Path | What it is |
 |---|---|
-| `service/src/NN-*.mjs` | The service, in 37 parts. **This is the code to review.** |
+| `service/src/NN-*.mjs` | The service, in 100 parts. **This is the code to review.** Each part's first lines name its rules and tests. |
 | `service/server.mjs` | Generated: the parts joined in order. The installer and tests refuse a copy that doesn't match the parts. |
 | `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Reading setups from recipes and model cards; passkeys (WebAuthn); the worker run on each Spark. |
-| `service/config.json`, `service/catalog.json` | The Sparks, images and the brain's setups; the Recipes catalog. |
-| `service/workflows.lock.json` | Written by the full test gate. It records which workflow versions passed. |
+| `service/config.json`, `service/catalog.json` | The Sparks, images, the box's image and the brain's setups; the Recipes catalog. |
+| `deploy/spark-console-root`, `deploy/root-for-sparkie.sh` | The root helper (about 3,000 lines of bash and Python; it runs as root on a Spark), and the owner's one-time command that puts it there. |
+| `deploy/host-on-portal.sh`, `deploy/pull.sh`, `deploy/update-guard.sh` | Install from the Mac; install pulled by Spark 2; the guard that puts the old build back. |
+| `deploy/go-back.sh`, `deploy/RECOVERY.txt`, `deploy/REBUILD.txt` | The way back by hand, and rebuilding the hub. |
 | `public/` | The page: plain JavaScript, no build step. |
-| `deploy/` | Install, go-back and recovery scripts, plus the two internet switches. |
-| `tools/` | Build tools and the `console.mjs` / `spark.mjs` command-line tools. |
-| `test/` | The suite (`*.test.mjs`), the stand-in fleet (`test/mock/`, `test/start-mock.mjs`) and the gate (`test/lock.mjs`). |
-| `agentbar/` | A small benchmark that grades coding agents on a Spark. It is not part of the running console. |
+| `tools/` | `make.mjs` (build and check), `land.mjs` and `affected.mjs` (landing a step), `test-on-spark.sh`, `console.mjs`, `spark.mjs`. |
+| `test/` | The suite (143 files), the stand-in fleet (`test/mock/`, `test/start-mock.mjs`), the gate (`test/lock.mjs`), the brain eval (`test/eval.mjs`, `test/eval/cases.json`). |
+| `agentbar/` | The coding trial (`agentbar/trial.mjs`) and an older benchmark of coding agents. Not part of the running console. |
 
-## 4. What changed in this build-out (2026-11-12 and 13)
+`service/workflows.lock.json` is no longer kept in git: the full gate writes it, and on GitHub only a `tested/` tag
+carries it (R29).
 
-The items came from the trimmed plan (`docs/history/analysis-2026-11-11/14-trimmed-plan.md`), and the IDs match it. Each group
-went through the same steps:
+## 4. What changed
 
-1. Built by Opus 5.5 at extra-high effort, in its own copy of the tree.
-2. Reviewed by Fable 5.2 at extra-high effort under a strict bar: fix only what breaks real use, could lock the owner
-   out, could lose data or stop a healthy model, could leak a key, or could leave the console dead or stuck.
-3. Review findings fixed by Opus 5.5, each with a test that fails without the fix.
+### 4.1 Built since round 1: what the owner can now do
 
-### Everyday additions (A7, A8, A12)
+Each group names its rules, its parts in `service/src/` and its main tests in `test/` (a part's first lines name the
+rest). Nothing that goes through the root helper has run on a real Spark yet (section 7).
 
-- **A7. What a model runs with.** "What is GLM running with?" is answered through `running_models {detail}`.
-- **A8. Files on a Spark.** List files, read one, and save one small text file in the workspace folder.
-- **A12. Keep an app running.** "Keep Open WebUI on Spark 3 running, give me its link", for any app on Spark 3 or 4.
+**Look at anything, on any Spark.** `run` with a command that only reads runs at once, Spark 2 included, inside the
+helper's look wall: the disk read-only, no network, keys hidden. What it prints is outside text. Rules R42, R43.
+Parts `21-work.mjs`, `21-work-shown.mjs`, `20-journal.mjs`. Tests `work.test.mjs`, `root-helper.test.mjs`.
 
-### Installs (F4, H1, S5)
+**Change a compute Spark by command.** Code sorts every command: a look, a change, risky, the lock-out class, or not
+done. A plain change runs at once only when the owner's own words asked for work on that Spark and nothing was read
+since; it runs in the run wall for 30 seconds, with the files it touches copied first so undo can put them back.
+Anything else is one button with the exact command, or the dangerous ask: its own message, built by code, with two
+digits to type after the press. Rules R55 and R64 (the sorter), R61 (the ladder and the runner), R63 (what bounds a
+plain change), R54 (the ask). Parts: the sorter, `20-sort.mjs`, `20-shell.mjs`, `20-shape.mjs`, `20-options.mjs`,
+`20-places.mjs`, `20-programs.mjs`, `20-tools.mjs`, `20-remote.mjs`, `20-tables.mjs`, `20-uses.mjs`; then
+`21-ladder.mjs`, `21-runner.mjs`, `21-copies.mjs`, `21-copies-prune.mjs`, `20-danger.mjs`, `20-came-from.mjs`. Tests
+`sort.test.mjs`, `ladder.test.mjs`, `runner.test.mjs`, `prune.test.mjs`, `danger.test.mjs`.
 
-- **F4. The installer checks the new build.** It checks that the build settles, that the ways in work, and one chat
-  turn. On a miss it goes back by itself. `restore.sh` always starts the unit again.
-- **H1. By-hand recovery.** `go-back.sh` and `RECOVERY.txt` sit at a fixed path on Spark 2. The signed-in page has an
-  `/undo update` word.
-- **S5. One update record.** It reads "now build X, was Y", and the last five show in `sparkie_setup`.
-- **Review fixes:**
-  - "went back" is now told apart from a fresh install;
-  - a go-back past a broken build reaches the last good build in one step.
+**Write a file.** `write_file` writes one text file, whole or by lines, through the same ladder and runner. Rule R68.
+Part `21-write.mjs`. Test `write.test.mjs`.
 
-### Web lookup (R39)
+**Long commands and long tasks, with a report.** `run` with `minutes` (1 to 120) is an operation whose result is
+posted. A task carries on in fresh turns within limits the owner's words set (2 hours and 8 turns; 4 hours and 60
+when sent off "on your own"; 120 commands), and code writes one report at its end. Rules R61, R66. Parts
+`21-long.mjs`, `14-tasks.mjs`. Tests `long.test.mjs`, `tasks.test.mjs`, `tasks-more.test.mjs`,
+`task-report.test.mjs`, `turn-budgets.test.mjs`.
 
-- Sparkie can search the web (`search_web`) and read a page (`read_page`), so it can learn about models and tools that
-  are newer than it is, with no update needed.
-- Search terms go out with keys and the fleet's own names and addresses hidden.
-- A page is read only from an address the owner wrote or a search returned. It must be public, and that is checked as
-  each hop connects.
-- What comes back is outside text, which never counts as the owner's words.
-- **Review fixes:** three, each with a test.
+**Be asked less.** A button may answer "Run it, and don't ask again for this task", for one kind of command: a tool,
+a folder, a Spark. "Always allow" keeps a kind across tasks: page only, with the passkey; `/allowed` lists them.
+Owner-only asks can also be pressed in the paired Telegram chat, 3 an hour and 10 a day; `/lock` turns that off.
+Rules R65, R32. Parts `21-ahead.mjs`, `20-tg-approve.mjs`. Tests `ahead.test.mjs`, `allowed.test.mjs`,
+`tg-approve.test.mjs`.
 
-### Chat (F2, F3, F7, F8, F13, F25, H2, H3, A1)
+**Give a key once.** `/key NAME value` is taken out of the owner's words before the brain, the chat file or the
+journal sees it, and kept by name. `run` hands a key to a command by name; such a command is always asked. Rule R51.
+Parts `20-keys.mjs`, `21-run-keys.mjs`, `03-secrets.mjs`. Tests `app-keys.test.mjs`, `run-keys.test.mjs`.
 
-- **F2. A chat never stays stuck.** A throw or a full disk no longer leaves it "still answering".
-- **F3 and H2. The brain comes back.** `/restart sparkie` also starts a stopped or missing brain from its saved setup.
-  A brain the console left down comes back by itself.
-- **F8.** "Do X, then Y" no longer stalls.
-- **F7.** A carry-on turn from an internet sign-in still asks for the passkey before an undo.
-- **F13.** Telegram survives a bad secrets read.
-- **F25 and H3.** The owner's own failures no longer pause agents. Errors and crashes leave a record Sparkie can read.
-- **A1. Chat commands.** `/pause`, `/restart sparkie` and `/stop` work on Telegram, and `/stop` works on the page.
-- **Review fixes:**
-  - a stopped brain is started from its setup, not restarted in place;
-  - a chat save that fails during a full disk is recorded as a fault.
+**Change SSH, Tailscale, the firewall or users on a compute Spark.** Only on the owner's own words with nothing read
+since; otherwise refused, not asked. Always the dangerous ask. The press copies the ways in, arms a timer in that
+Spark's own systemd, runs the change, then tries the ways in from outside: all still work, kept; one doesn't, put
+back at once; no answer, the timer puts it back. `/putback` puts the newest one back by code. Rules R60, R3. Parts
+`21-net.mjs`, `21-guard.mjs`. Tests `net.test.mjs`, `root-helper.test.mjs`.
 
-### App door (R40)
+**Change Spark 2.** Every change there is asked, one command a press, inside the net, with the console's own ways in
+checked after it. Refused by code: a lock-out change, anything touching the brain's container or model files, any
+workload, the console's own unit, state, secrets and repository copy, and Spark 2's power. Rules R1, R61. Part
+`21-hub.mjs`. Tests `hub-change.test.mjs`, `never-on.test.mjs`.
 
-- Port `:10000` on the same name opens the apps the console runs: Open WebUI, Jupyter and the like, on any Spark except
-  Spark 2. It is for the owner only, after sign-in. It needs no second password, and the owner doesn't need Tailscale on
-  that device.
-- The door is a separate origin with its own ticket cookie. It holds one app per browser, with a confirm page when
-  switching. It is off until the owner runs `deploy/open-apps-to-internet.sh`.
-- **Review fixes:** four. Two smaller points are documented instead: 2(c), and telling tabs apart.
+**Root.** `run` with `root: true`, on a compute Spark where the owner turned root on. Always the dangerous ask,
+always inside the net, never a script, never with a key. Rule R70. Part `21-root.mjs`. Tests `root.test.mjs`,
+`root-helper.test.mjs`.
 
-### Fleet (F6, F16, F12, S1, S2, F17, H4, A2, H5)
+**Try code in a box.** `run` and `write_file` with `on: "box"` act in a throw-away container on a compute Spark: no
+network, no keys, only its own folder, 4 GB, two hours, 30 seconds a command. Opening one is a change. Rule R62.
+Parts `21-box.mjs`, `21-box-fill.mjs`. Tests `box.test.mjs`, `box-fill.test.mjs`.
 
-- **F6.** Docker not answering no longer reads as "every container removed", so it can't stop a healthy part.
-- **F16.** A powered-off Spark's containers no longer read as running.
-- **F12.** Writers no longer save over `desired.json` or `validations.json` after a failed read.
-- **S1 and S2.** State files survive a power cut: they are synced to disk and keep a previous copy. `access.json` keeps
-  a last-good copy.
-- **F17. The daily backup.** It retries, never fails silently, checks the archive, and records the last good copy.
-- **H4, A2 and H5. One "needs you" list.** It holds at most 8 lines and feeds three places:
-  - "Anything need me?";
-  - `/status`;
-  - Sparkie's notes.
+**Sparkie proposing changes to its own code: built, switched off.** `propose_update` would fill a box with the
+source, read the result back as data and open a pull request. It is refused for everyone: `SELF_CHANGE_ON` is
+`false`, and it also needs a pass of the coding trial that the owner keeps with a passkey press. Rules R69, R67.
+Parts `21-selfchange.mjs`, `21-brain-trial.mjs`; `agentbar/trial.mjs`, `agentbar/trial-lib.mjs`. Tests
+`selfchange.test.mjs`, `trial.test.mjs`.
 
-  There is also one optional "needs me" Telegram line, at most 3 a day.
-- **Review fixes:** four.
+**Updates from chat.** `check_update` says whether a newer tested build is out. `install_update` installs it after
+a dangerous ask: Spark 2 pulls it, and it goes back unless the real address answers with the new build. Rules R58,
+R29, R30. Part `21-updates.mjs`; `deploy/pull.sh`, `deploy/update-guard.sh`. Tests `check-update.test.mjs`,
+`install-update.test.mjs`, `pull.test.mjs`.
 
-### Start (A9, F9, F10, F11, F18, A3, A5, F20) and any workload (A13)
+The rest of the phase, in one table:
 
-- **A9.** "Start nvidia/<new model> with its best setup" finds setups for a model it hasn't seen before and adds the
-  model to Recipes.
-- **F9.** A one-Spark start over a running copy no longer removes the working container.
-- **F10.** A routine run twice no longer restarts a model that is already running.
-- **F11.** A yes for a two-Spark start can't start a one-Spark model.
-- **F18.** The recovery-code button shows even with no passkey on file.
-- **A3 and A5.** "What can you do?" is answered from the live action list. "Who is signed in, and how many recovery
-  codes are left?" has an answer.
-- **F20. Saving a routine from chat.** It becomes a button that lists its steps, unless the owner's own words named
-  each step. A key typed in chat is hidden.
-- **A13. Any workload.** `keep_running` now takes `gpu`, `command` and `once`. That covers:
-  - GPU apps;
-  - dev boxes with no password (the owner's choice);
-  - one-off jobs with an end line in the chat that asked;
-  - small stacks.
+| What | Rules | Parts and files | Main tests |
+|---|---|---|---|
+| **Memory and learning.** A journal of everything said, called, run and seen, never rewritten. Memory keeps every line and believes only the owner's words. `recall` looks back. A long output enters a turn as a digest cut by code. Code writes a lesson when an operation fails; a setup that failed twice the same way is passed over. | R43, R45, R48, R59 | `20-journal.mjs`, `20-recall.mjs`, `20-memory.mjs`, `20-memory-names.mjs`, `20-memory-said.mjs`, `20-memory-time.mjs`, `20-memory-tg.mjs`, `20-digest.mjs`, `20-lessons.mjs` | `journal.test.mjs`, `recall.test.mjs`, `memory.test.mjs`, `memory-reads.test.mjs`, `digest.test.mjs`, `lessons.test.mjs`, `passed-over.test.mjs` |
+| **Any brain, and only a checked one changes things by itself.** At most 24 tools a round. An eval result belongs to the build, the brain and the case set it ran on. Sparkie's change runs at once only while its brain is checked: a passing eval on record for this exact brain and build, kept with the owner's passkey press. Otherwise every change is a button. | R46, R47, R50, R52 | `13-ask.mjs`, `21-guide.mjs`, `21-brain-check.mjs`, `21-brain-eval.mjs`, `21-brain-rail.mjs` | `tools.test.mjs`, `brain.test.mjs`, `brain-check.test.mjs`, `brain-eval.test.mjs`, `brain-rail.test.mjs`, `eval-commands.test.mjs` |
+| **A hub that needs no laptop.** An outside heartbeat; a copy of the state taken when another Spark is awake; state put back from a copy lets no device or key in by itself; the ways in watched ahead; a script that clears old pieces off Spark 2. Members and sharing, the browser editor and the file browser are gone. | R49, R33, R37 | `20-beat.mjs`, `20-state-copy.mjs`, `22-putback.mjs`, `20-ways-in.mjs`; `deploy/clear-spark2.sh` | `beat.test.mjs`, `copy.test.mjs`, `putback.test.mjs`, `ways-in.test.mjs`, `clear-spark2.test.mjs`, `no-editor.test.mjs`, `no-file-browser.test.mjs` |
+| **Workloads and power.** Smart plugs; idle compute Sparks parked and powered off, and woken for work; saved workflows that place steps, wait for jobs and clean up; `compare_models`; an operation's energy at the wall. | R41, R56, R57 | `12-plugs.mjs`, `21-power.mjs`, `21-power-pair.mjs`, `18-step-jobs.mjs`, `18-run-record.mjs`, `18-job-model.mjs`, `18-saved-from.mjs`, `18-saved-yes.mjs`, `21-compare.mjs`, `20-op-energy.mjs` | `power.test.mjs`, `plugs.test.mjs`, `asleep.test.mjs`, `power-wake.test.mjs`, `workloads.test.mjs`, `compare.test.mjs` |
+| **Ground.** The self-test on real hardware (`self_test`); the suite run on a compute Spark and on GitHub; a step lands on the tests its change affects; one rule per file, and a checker that fails when documents drift. | R29 | `21-selftest.mjs`; `tools/land.mjs`, `tools/affected.mjs`, `tools/test-on-spark.sh`, `tools/check-docs.mjs` | `selftest.test.mjs`, `land.test.mjs`, `affected.test.mjs`, `spark-runner.test.mjs`, `docs.test.mjs` |
 
-  It runs on Spark 3, 4 or any Spark added later, never on Spark 2.
-- **Review fixes** (six; see section 7):
-  1. Job folders kept growing until no new job could start on that Spark.
-  2. A re-run could report the previous run's exit code.
-  3. A hostile model card could block the process for a long time.
-  4. An agent could re-run a job or start a stopped GPU app without the owner's yes.
-  5. Dev boxes (Jupyter, code-server) are now really started with no sign-in.
-  6. A key in a step's settings is masked on the save button.
+### 4.2 Round 1's fixes (2026-11-14)
 
-### Small fix found in a page check
+Eight app findings (A-1, A-2, A-3, A-4, A-5, A-7, A-8, A-9) and two harness faults (T-1, T-2) were fixed, each with
+a test that fails without it. Our own read of the fixes found five more things, fixed too. The tables at the end of
+`docs/review-astra/reply-1.md` name each commit and test, what is later and what was not accepted. Since then,
+milestone 4 took out the page views behind A-10, A-11 and A-12, and the file delete behind A-6 (R37).
 
-The home page offered "Start a model across Spark 2 + Spark 3", which could only fail, because nothing starts on
-Spark 2. Pairs that include the brain's Spark no longer show a Start button.
+### 4.3 The build-out of 2026-11-12 and 13 (what you reviewed in round 1)
 
-### Three bugs found by the last full test runs
-
-On a busy machine, the last full run of the tests failed in three files that had passed twice before. Two real races
-were behind it, and each now has a test that fails without its fix.
-
-1. **Bringing a model back after a power-on** (`service/src/20-heal.mjs`, `healReason`). Right after the owner powers
-   Sparks back on, the console may not have read their containers again yet. What it last saw, from before the power
-   went, still said the model's parts were running. Self-healing then brought the model back at once as "a part
-   stopped". It didn't wait the 2 minutes for Docker and the GPU to settle, and it skipped the guard that leaves a model
-   alone if its Spark goes down again within 30 minutes. It now reads how each part ended ("Exited (255) …") from what
-   the Spark shows now. With smart plugs turning Sparks off and on, this would have come up often. Test:
-   `test/heal-power.test.mjs`.
-2. **A false "should be running but isn't"** (`service/src/20-desired.mjs`, `desiredNow`). The list of what should be
-   running was read while a stop of one of its models was still under way. The look at the Sparks that went with it came
-   back after the stop had ended. With no operation running any more, the model showed as held, and the owner got a
-   notice that it should be running but wasn't. A Spark where an operation ended after the look began now counts as
-   "changing" until a fresh look. Test: `test/desired-look.test.mjs`. It slows the stand-in Docker so the stop ends while
-   the look is under way.
-
-A later full run passed 992 of 993 tests and failed one that had passed the run before. A third real race was behind it.
-
-3. **Two healers going for one Spark** (`service/src/20-heal.mjs`, `healPass` and `displacedBy`; `service/src/20-desired.mjs`,
-   `desiredAfter`). A two-Spark model was down, and the owner had started a newer model on one of its Sparks. When the
-   newer model crashed, the watcher went to restart it while the healing pass went to bring the older pair back. When
-   the pass got there first, the pair started in the newer model’s place, the restart was refused ("Something is already
-   changing on Spark 3"), and the owner’s newer model stayed down. Self-healing now brings back only the newest model
-   wanted on a Spark: an older entry that shares the Spark stays down while the newer one is on the list, whether that one is running or
-   down. An entry the owner starts again by hand becomes the newest, so it is healed as before. Test:
-   `test/heal-displaced.test.mjs` (its second test fails without the first half of the fix, its third without the second
-   half). The test that first showed it, `test/heal-newer.test.mjs`, now says what happened when it misses.
+Unchanged in substance. The ids are those of `docs/history/analysis-2026-11-11/14-trimmed-plan.md`: everyday
+additions (A7, A8, A12); the installer that checks the new build and goes back by itself, and by-hand recovery (F4,
+H1, S5); web lookup (R39); chat that never stays stuck and a brain that comes back (F2, F3, F7, F8, F13, F25, H2,
+H3, A1); the app door (R40); the fleet fixes (F6, F12, F16, F17, S1, S2, H4, A2, H5); starts and any workload (A9,
+A13, F9, F10, F11, F18, F20, A3, A5); and three races found by full runs (`test/heal-power.test.mjs`,
+`test/desired-look.test.mjs`, `test/heal-displaced.test.mjs`).
 
 ## 5. Owner decisions that shape the code
 
-These are the owner's choices, not oversights. Please question them only if one causes real harm.
+These are the owner's choices, not oversights. Please question how they are met, and say plainly if one carries a
+risk the owner has not been told about.
 
-- **No lock-outs.** Nothing may lock the owner out. SSH, Tailscale, the firewall and user accounts are changed only by
-  the owner, never by the console.
-- **One brain.** Sparkie's brain is Qwen on Spark 2. There is no fallback brain, and only the owner swaps in a newer
-  model.
-- **Spark 2's job.** Spark 2 runs only the console and the brain. Workloads go to Spark 3, 4 or later Sparks, and are
-  never hard-coded to Spark ids.
-- **One address and sign-in.** The console has one address. It is open to the internet only behind a passkey. The app
-  door on `:10000` is the one approved exception, and it is for apps only.
-- **No second password.** Once signed in, the owner reaches every Spark as one environment. Dev boxes run with no
-  password; they are reachable only on the Spark's own address, the tailnet, and the signed-in app door.
-- **Protected containers.** `qwen-recipe-*` containers and anything labelled `spark.protect=true` are never stopped.
-- **The owner approves changes.** Console updates and any change Sparkie makes to itself need the owner's yes. Everyday
-  requests don't.
-- **Secrets.** The owner's password and tokens are never stored. Keys are masked everywhere they could be shown.
-- **One GPU workload per Spark** for now. A model and a GPU app don't share a Spark.
+- **Sparkie is the commander** (decisions 18, 20, 22). It may do everything the owner can on the Sparks, root and
+  the lock-out class included. Nothing is refused for being powerful; the question is at once, or ask first.
+- **Never lock the owner out.** This is now the reason for a net, not a ban (contract 8.3). SSH, Tailscale, the
+  firewall and users change only on the owner's own words, after a dangerous ask, inside the net.
+- **Root** goes only through the one helper. It is off on each Spark until the owner's `--with-root` there, and
+  through the console it is always the dangerous ask.
+- **Keys** are given once and kept in one file on Spark 2. A key is never shown back.
+- **Spark 2 is the hub:** the console and the brain, nothing else. Every change there is asked. Nothing starts a
+  workload there or powers it off.
+- **Sparkie changing its own code stays off** until the coding trial passes and the owner turns it on. Turning it
+  on is a code change, so it needs a new build.
+- **The three new switches are on in this build** (`NET_ON`, `HUB_ON`, `ROOT_ON`), by decision 22. What gates each
+  is the helper on that Spark, the owner's press on the ask, and `--with-root` for root.
+- **One brain.** Qwen on Spark 2, no fallback; only the owner swaps in another. A brain that is not checked gets a
+  button for every change.
+- **One simple service, one address, one user.** Open to the internet only behind a passkey. The app door on port
+  10000 is the one approved exception, for apps only. Dev boxes run with no second password.
+- **Telegram is a place to say yes.** Whoever holds the owner's unlocked phone can do what the owner can, a few
+  presses at a time. The caps and `/lock` are the bound the owner chose.
+- **No trash.** A file is copied before a change, and a delete that cannot be put back is always asked.
+- **As before.** `qwen-recipe-*` containers and anything labelled `spark.protect=true` are never stopped. The owner
+  approves updates. GitHub holds the code and the tested mark, and never gets a way into the Sparks.
+- **The contract is the owner's text.** Builders never edit it. Where the build differs from it (section 6), the
+  owner decides which moves.
 
 ## 6. Left for later on purpose
 
-These were found and judged not to break real use under the strict bar. Suggestions on any of them are welcome.
+The lists are in four places: each rule's "Today" (what that piece does not do yet; the longest are R51, R52, R55,
+R61, R62, R69 and R70); `docs/history/later-2026-11-15.md` (the net's later lines, moved out of a full rule file);
+`docs/review-astra/reply-1.md` ("Later, in one place"); and below.
 
-**Chat**
-- A carry-on retry every minute, and a notice when it gives up.
-- A `/resume` word.
-- `/stop` on Telegram right after `/new`.
+**The build does not match three contract sentences.** It is stricter or different; the contract is the owner's to
+change.
 
-**Web lookup**
-- SearXNG and real DuckDuckGo results were only tested with stand-ins, because the sandbox has no network.
-- There is no page cache.
-- Brotli decompression keeps running after the size cut.
+- 8.11 says a change on Spark 2 is kept only by a fresh visit through the changed way in. The build keeps a Spark 2
+  change by code once the console's own ways in still answer, and refuses a lock-out change there. 8.11 also says
+  the net is armed for every command on Spark 2; a look is not armed.
+- 8.14 lists plain root commands among the changes that run at once. In the build root is always the dangerous ask.
+- 8.15 says one command for each Spark, once. Root also needs `--with-root`.
 
-**App door**
-- One app per browser at a time. An old tab's saves go to the newly opened app.
-- There is no fresh-passkey rule for the door (the owner's choice).
-- The door ticket also reaches the app on `:443`.
-- No-cors GETs can reach read routes.
-- The editor guard has only a throwaway proof.
+**Trades the owner has been told.**
 
-**Fleet**
-- `running_models` and `container_logs` still read a Spark whose Docker is down as empty.
-- No fsync yet for chats, `main.json`, energy and secrets.
-- Backups don't include a copy of the source.
-- No checks yet for Tailscale key expiry, linger, or Funnel being off.
-- The needs-me list isn't in `sparkie_setup`.
-- Self-healing's own pass (`healPass` in `20-heal.mjs`) can still use a shared look from just before an operation ended.
-  For it to act wrongly, the look must show a two-Spark model's parts down while its start was ending, and a start only
-  ends after the model answers. So the window is very narrow. The fix is the same as for `desiredNow`: a Spark where an
-  operation ended after the look began waits for the next pass.
-- Left from the review of the two-healers fix (section 4, item 3):
-  - When the newer model leaves the list (stopped, forgotten or undone), the older one may start by itself within one
-    healing pass, because it still has its two tries. During an undo it can take the Spark between the undo's stop and
-    its restart, and the restart is then refused.
-  - A GPU app or job that the owner started on the Spark since is not counted as "newer": list entries don't record
-    the GPU. There the old guard still holds (the bring-back is refused because it never stops anything else), but
-    the same race is open if that app goes down.
-  - That old guard is no longer tested for self-healing on its own: the existing test now passes on the new skip.
-  - A two-Spark entry whose model is started again on one Spark keeps both Sparks in its entry and becomes the newest,
-    so it can hold back a model on the other Spark.
-  - When the newer model is down for good, the older one waits until the owner forgets the newer one or starts the
-    older one by hand.
+- A look counts as outside text, so a change after a look in the same request is asked. The go-ahead answers that.
+- No change runs at once while any Spark has Tailscale SSH on, or while something other than sshd and the
+  console's own listens on every address of that Spark.
+- A change that runs after a yes with `--open` keeps the owner's groups, Docker's among them: as good as root.
+- A change that runs after a yes with `--home` can leave files that run at the owner's next terminal on that Spark.
+- A command given a key needs a press, and can still show, save or send that key.
+- With root on, the net puts back the ways in, and nothing else a root command changes.
 
-**Power (smart plugs), from the 2026-11-14 review of the power work (its "Later" list; 1 and 13 were fixed)**
+**Not done yet, because it needs the owner or the real Sparks** (section 8 has the order): the install of this
+build; the helper's one-time command on each Spark, and so the proof of the walls on a real systemd and kernel; the
+brain eval on the real Qwen for this build; the coding trial; the first real run of each changed start, stop and
+restart workflow; and what only a real Spark shows (a change kept by the net and one left to go back, a restart
+inside the net's window, the box's check on a real Docker, Spark 2's call through the owner's service manager, real
+plugs).
+
+**Not built.** The fresh-visit proof for the hub and for sign-in changes; `minutes` on Spark 2; a root script on
+input; adding a Spark from chat (it waits for Spark 1); a brain across Sparks (it waits for real runs); a reviewer
+for Sparkie's own proposals; removing a kept key from chat.
+
+**Existing tests changed.** Where behaviour changed on purpose, the tests that held the old behaviour changed with
+it: "root is refused on every Spark" became "refused until the owner turns it on". Every such line shows in
+`git diff f060fff 36db95e -- test/`; in the test files, 74 removed or edited lines hold an assertion. Please check
+that none was loosened to let a change pass.
+
+### Older lists
+
+As written on 2026-11-13 and 14, shortened. Marked where this build closed one; the rest were not rechecked.
+
+**Chat.** A carry-on retry, and a notice when it gives up (now R66). A `/resume` word (the contract now says
+resuming is not a word). `/stop` on Telegram right after `/new`.
+
+**Web lookup.** SearXNG and real DuckDuckGo results were tested only with stand-ins. No page cache. Brotli
+decompression keeps running after the size cut.
+
+**App door.** One app per browser at a time; an old tab's saves go to the newly opened app. No fresh-passkey rule
+for the door (the owner's choice). The door ticket also reaches the app on `:443`. No-cors GETs can reach read
+routes. The editor guard has only a throwaway proof.
+
+**Fleet.** `running_models` and `container_logs` still read a Spark whose Docker is down as empty. No fsync yet for
+chats, `main.json`, energy and secrets. Backups don't include a copy of the source. The needs-me list isn't in
+`sparkie_setup`. Checks for Tailscale key expiry, linger and Funnel being off: built since (R49). `healPass` in
+`20-heal.mjs` can still use a shared look from just before an operation ended (a narrow window: a start only ends
+after the model answers). From the two-healers fix: when the newer model leaves the list, the older one may start
+by itself within one pass, and during an undo it can take the Spark between the undo's stop and its restart; a GPU
+app or job the owner started since is not counted as "newer"; the old guard is no longer tested for self-healing on
+its own; a two-Spark entry started again on one Spark keeps both Sparks and can hold back a model on the other;
+when the newer model is down for good, the older one waits for the owner.
+
+**Power (smart plugs), from the 2026-11-14 review of the power work** (its "Later" list). The asleep and
+wake-for-work steps since (R56) may have closed some of these.
 - With the plug controller down while a Spark is off, nothing can be woken, and no needs-me line says so.
-- A shutdown slower than 4 minutes ends as "the plug may not be on Spark N" (wrong words, a needs-me line) and isn't
-  looked at again; the next power-on clears it.
-- `sudo` not set up on a Spark with a plug: every idle try is refused before anything stops, said only in the service
-  log, while `fleet_status` says idle Sparks are powered off.
+- A shutdown slower than 4 minutes ends as "the plug may not be on Spark N" (wrong words, a needs-me line) and
+  isn't looked at again; the next power-on clears it.
+- `sudo` not set up on a Spark with a plug: every idle try is refused before anything stops, said only in the
+  service log, while `fleet_status` says idle Sparks are powered off.
 - After a refused or failed shutdown, `nvidia-persistenced` stays stopped until the next boot.
-- Idle time is counted on the wall clock; a clock step forward on Spark 2 can make a few minutes count as the whole time.
+- Idle time is counted on the wall clock; a clock step forward on Spark 2 can make minutes count as the whole time.
 - A person at the Spark's own screen and keyboard isn't seen (`who` counts only remote `pts` lines).
-- `restart_model` and `stop_model` on a Spark Spark Console powered off say "isn't one of Spark Console's models"; a
-  parked model can't be taken off the list from chat while its Spark is off (the page's Forget works).
-- `power.wake` runs as via `wake`, which counts as an agent (12 an hour; three failed wakes pause agents), and waits for
-  everything parked there to come back before the caller's own work.
+- `restart_model` and `stop_model` on a Spark that Spark Console powered off say "isn't one of Spark Console's
+  models"; a parked model can't be taken off the list from chat while its Spark is off.
+- `power.wake` runs as via `wake`, which counts as an agent (12 an hour; three failed wakes pause agents), and
+  waits for everything parked there to come back before the caller's own work.
 - `keepAwake` is checked in `power_off`'s action but not again inside its operation.
-- A cancel after the shutdown was sent is ignored; a stop then waits its 2 minutes; an operation failing for another
-  reason then says "what it had changed was put back".
-- When no Spark is named and nothing fits, a start turns on every Spark Spark Console powered off, and everything parked
-  there comes back after it.
-- The idle-setting words also match "Set up Qwen with automatic tool choice", so that request counts as two kinds of
-  change and gets a carry-on turn.
+- A cancel after the shutdown was sent is ignored; a stop then waits its 2 minutes; an operation failing for
+  another reason then says "what it had changed was put back".
+- When no Spark is named and nothing fits, a start turns on every Spark that Spark Console powered off, and
+  everything parked there comes back after it.
+- The idle-setting words also match "Set up Qwen with automatic tool choice", so that request counts as two kinds
+  of change and gets a carry-on turn.
 - With every compute Spark asleep for a day, the daily copy posts its "no copy" notice each day.
 - A crash within 30 minutes of any power-on isn't restarted by itself ("was offline in the last half hour").
 - Plug readings need Node 22 or newer (the built-in WebSocket); the installer accepts 18.
-- The suite runs a path whose real form is `sudo systemctl poweroff`; only the stand-in `sudo` being first on the path
-  keeps it from the test machine.
+- The suite runs a path whose real form is `sudo systemctl poweroff`; only the stand-in `sudo` being first on the
+  path keeps it from the test machine.
 - The controller runs with debug logging; whether a 15-minute pairing code lands in its log is unknown.
-- No test yet for: an asked power-off parking a kept app and `power_on` bringing it back; `keep_running` waking a Spark;
-  a power step in a saved workflow; the question when a parked model answers Sparkie; a cancel between the stops and
-  the shutdown; two Sparks where one refuses; the low-watts branch of `plugUnproven`; the last look before the cut;
-  `power.wake`, `keepAwake`, `doneWith`.
+- No test, as listed then, for: an asked power-off parking a kept app and `power_on` bringing it back;
+  `keep_running` waking a Spark; a power step in a saved workflow; the question when a parked model answers
+  Sparkie; a cancel between the stops and the shutdown; two Sparks where one refuses; the low-watts branch of
+  `plugUnproven`; the last look before the cut; `power.wake`, `keepAwake`, `doneWith`.
 - `fleet_status` and the brain's prompt grow for every fleet, plugs or not.
 - `stop_model` cancels a power operation on its Sparks, but its version doesn't move: the fingerprint hashes
   `String(CHANGES_MODELS)`, which is `[object Set]` whatever is in it.
-- TensorRT-LLM gives no `/metrics` counter the idle power-off reads, so a Spark running one of its models never sleeps by
-  itself (its Prometheus counters need `return_perf_metrics` and another path).
-- The controller's direct attribute read (matterjs-server's `read_attribute`) wasn't checked against a real plug; the
-  one-minute hold (`POWER_HOLD_MS`) on its cached values stands in for a fresh reading.
+- TensorRT-LLM gives no `/metrics` counter the idle power-off reads, so a Spark running one never sleeps by itself.
+- The controller's direct attribute read (matterjs-server's `read_attribute`) wasn't checked against a real plug;
+  the one-minute hold (`POWER_HOLD_MS`) on its cached values stands in for a fresh reading.
 
-**Start and any workload**
-- The A13 spec's "left out" list in `19-any-workload-spec.json`:
-  - no `run_job` tool;
-  - no "then do Y when the job ends";
-  - no model and GPU app on one Spark;
-  - no app secrets;
-  - no compose or Docker networks.
-- `--auth none` is stored masked in saved chats.
+**Start and any workload.** No `run_job` tool; no "then do Y when the job ends"; no model and GPU app on one Spark;
+no app secrets; no compose or Docker networks. `--auth none` is stored masked in saved chats. A Node of its own on
+Spark 2 (the console ran on the editor's Node when this was listed).
 
-**Waiting until proven**
-- Sparkie patching its own code waits on a trial of Qwen's coding.
-- Node on Spark 2.
-- Deleting the old members, editor and setups (D12).
-
-**Skipped in the trimmed plan:** H6–H10, S3, S4, S6–S12, F14, F15, F19, F21, F22, F24, A4, A6, A10, A11, and D9–D11.
+**Skipped in the trimmed plan:** H6 to H10, S3, S4, S6 to S12, F14, F15, F19, F21, F22, F24, A4, A6, A10, A11 and
+D9 to D11.
 
 ## 7. How it was checked
 
-- **Unit and flow tests.** Every change has a test that fails without it. The suite runs against a stand-in fleet: bash
-  scripts that act like Docker, `nvidia-smi` and SSH on each Spark. It never touches the real Sparks.
-- **The full gate.** `node test/lock.mjs` runs every test file strictly and writes `service/workflows.lock.json` only if
-  all of them pass. The installer refuses a lock that doesn't match this exact code.
-  - Result for this folder: **all 996 tests passed** on 2026-11-13, in a container on Spark 3 (Linux, no network, no
-    access to Docker), four test files at a time, in 12 minutes. Build `0be65f7314ab` is marked as tested, with
-    `start_model` `0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups`
-    `f807e08bdd5d` and `restart_model` `bb7ffe5e4224`. `tools/test-on-spark.sh` is how that run is made.
-  - The smart-plug work (branch `m6-power`) changes two of those versions, on purpose. `start_model` becomes
-    `996e003946c5` and `start_model_across` `a92a8c038305` (before the merge with `main`, which may move them again):
-    `startModel` turns on a Spark Spark Console powered off and starts a parked model where it ran, `startingNow`
-    counts a power-on under way as the start, the starts add each engine's `/metrics` flag (`metricsFlags`), the
-    stand-in cable check takes its ports from the system, and the power helpers a start runs are now in its code list
-    (`powerFirst`, `parkedFor`, `wakeNames`, `offFor`, `freeLocalPorts`). `stop_model`, `find_setups` and
-    `restart_model` keep theirs. After the install both need a passing run on the Sparks: one `start_model` on one
-    Spark, and one `start_model_across` on Sparks 3 and 4. Until then the idle power-off waits.
-  - The runs before it found things worth knowing. On the Mac, one file at a time, a low battery made healthy tests
-    fail (macOS slows the processor). The first Linux runs found two faults that never show on a Mac: the stand-in
-    fleet read the real machine's memory, and `awk` on Linux rounded large numbers (the same script runs on the real
-    Sparks, so their memory figures were off by up to about a megabyte). Both are fixed.
-- **Reviews.** Each group had a Fable 5.2 review at extra-high effort, and every finding was either fixed with a test or
-  put on the later list above.
-- **Test fixes on the last day.** None loosened a check. (The three code fixes found that day are in section 4.)
-  - `test/sparkie-more.test.mjs`: Sparkie kept carrying on in one test's chat after that test had ended, and the
-    leftover turn took the next test's one-time model failure. Each carry-on test now waits for its own chat to go
-    quiet.
-  - `test/dark.test.mjs`: the test waited a fixed 5 seconds for the other Sparks to be looked at again. On a loaded
-    machine that look took longer. It now waits for the next look, with a time limit that scales with machine speed.
-  - `test/heal-newer.test.mjs`: when self-healing doesn't restart a crashed model in time, the failure now lists what
-    happened on that Spark meanwhile, not just "timed out".
-- **Page.** The page was checked in a browser against the stand-in fleet: no console errors, the "Needs you" line, the
-  Telegram and agent panels, and the pair buttons.
-- **Not checked yet: the live run.** Nothing in this build has run on the real Sparks. That happens after the install
-  (section 8).
-- **Hand checks still open:**
-  - the F18 button and the F20 line wrap on a phone;
-  - A3 and A5 with the live brain;
-  - whether `--memory` bounds GPU memory (compare `docker stats` with `nvidia-smi`);
-  - whether a container reaches its Spark's tailnet address (for stacks).
+- **Unit and flow tests.** Every change has a test that fails without it. The suite runs against a stand-in fleet:
+  scripts that act like Docker, `nvidia-smi`, SSH, `sudo`, systemd and Tailscale on each Spark. It never touches a
+  real Spark. `test/stand-in-fleet.md` lists what no test reaches.
+- **The root helper in tests.** The real helper script runs as a rehearsal under a stand-in home
+  (`test/rehearsal.mjs`), with stand-ins for `systemd-run`, `systemctl`, `unshare`, `setpriv` and `visudo` in
+  `test/mock/bin/`. That shows what the helper asks systemd for. It does not show that a kernel holds it.
+- **Landing.** Each step landed on `main` alone, on the tests its change affects (`tools/land.mjs`, R29); the whole
+  suite of the new tip follows. That order has a cost: on 2026-11-15 tests in `selfchange.test.mjs` and
+  `turn-budgets.test.mjs` had to be fixed on `main` after steps that had landed apart met there (commits `214e50d`
+  and `58d6b2b`).
+- **The full gate.** `node test/lock.mjs` runs every test file strictly and writes the lock only if all pass. It
+  runs in a container on a compute Spark, with no network and no access to Docker (`tools/test-on-spark.sh`), and
+  on GitHub on every push (`.github/workflows/full-run.yml`: the job that runs the code can only read; a second
+  job that runs none of it pushes the `tested/` tag). The installer refuses a lock that doesn't match the code.
 
-**How to run the tests yourself** (Node 22 or newer, macOS or Linux; tests bind local ports):
+TESTS_LINE
+
+- **Reviews.** Opus 5.5 built the steps and Fable 5.2 read them. The dangerous pieces were read more than once
+  before they were switched on: R64's Why names a sixth review of the sorter, R60's Today a third read of the
+  net's helper half, R70's a fourth read of root. Findings were fixed with a test or written into the rule's
+  "Later" lines.
+- **The brain eval.** `test/eval.mjs` runs 33 cases, 3 runs each; six are command cases for `run`
+  (`test/eval-commands.test.mjs` checks their grading on the stand-in). It has not run on the real Qwen for this
+  build.
+- **Not checked: the live run.** No real Spark has the root helper, and no Spark has root on (R42 and R70 say so).
+  So no look, change, lock-out change, Spark 2 change or root command of this build has run on real hardware, and
+  the walls' proof has never run on a real systemd and kernel. Section 8 says what is installed; what is not has
+  not run on a real Spark either.
+
+**How to run the tests yourself** (Node 20 or newer, Python 3, bash, tar; tests bind local ports):
 
 ```bash
 cd spark-console
-SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/apps.test.mjs
+node tools/make.mjs --check
+SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/sort.test.mjs
 SPARK_TEST_SLOW=3 SPARK_TEST_CONCURRENCY=1 node test/lock.mjs
 ```
 
-On a busy Mac, run the gate one file at a time (`SPARK_TEST_CONCURRENCY=1`). With two files at once, two stand-in fleets
-compete for the machine. Two tests that take seconds alone then ran out of time. Both pass alone and one file at a time.
-
-After changing a part, rebuild before testing: `node tools/build-server.mjs && node tools/code-map.mjs`.
+The whole suite is run on Linux. On the owner's Mac it takes hours (`test/README.md`), so there run one file at a
+time. After changing a part, run `node tools/make.mjs`.
 
 ## 8. Install and the checks after it
 
-The install runs from the owner's Mac:
+INSTALL_LINE
+
+The install runs from the owner's Mac, with a note of what changed:
 
 ```bash
-NOTE='Final build-out: installs, chat, web lookup, app door, fleet, start and any workload' bash spark-console/deploy/host-on-portal.sh
+NOTE='what changed, in plain words' bash spark-console/deploy/host-on-portal.sh
 ```
 
-What the installer does:
+The installer saves the current build and its state, installs the new one, waits for it to stay up for 40 seconds,
+checks the ways in, the agent door, the model address and one chat turn, and on any miss puts the old build back.
+If the console ever stops answering: `bash ~/.local/share/spark-console/go-back.sh` on Spark 2. Later builds can
+come from chat (`install_update`), once `deploy/pull.sh` is set up on Spark 2 with a read-only GitHub token.
 
-1. It saves the current build and its state.
-2. It installs the new build.
-3. It waits for the new build to stay up for 40 seconds.
-4. It checks the ways in, the agent door, the model address and one chat turn with Sparkie.
-5. On any miss, it puts the old build back by itself.
+After the install, in this order. Each step is the owner's.
 
-If the console ever stops answering, run `bash ~/.local/share/spark-console/go-back.sh` on Spark 2.
+1. **The brain eval on the real Qwen, and its result kept** with the passkey press
+   (`docs/how/run-the-brain-eval.md`). Until then Sparkie asks before every change (R52).
+2. **"Approve from Telegram".** It reads as off for a pairing made before the switch existed; the owner turns it
+   on once, on the page, with the passkey.
+3. **The helper's one-time command, per Spark.** First `bash spark-console/deploy/root-for-sparkie.sh --check 3`,
+   which changes nothing. Then each compute Spark, then Spark 2 last with `--hub`; `--with-root` only where the
+   owner wants root. Each run prints the proof of the walls; a failed proof removes the helper again. Until it has
+   run on a Spark, `run` and `write_file` answer with that command and run nothing there. The box does not wait
+   for it: it needs only Docker on a compute Spark.
+4. **What only a real Spark shows.** By hand inside a plain change: the top of the home read-only, no GPU, names
+   resolve, the tailnet and the home network out of reach. One lock-out change kept and one left to go back. A
+   restart inside the net's window. A root command kept and one left to go back. The box's check. On Spark 2, the
+   call through the owner's service manager (the card says it needs systemd 254).
+5. **One real run of each changed workflow:** a start, check and stop of a small model on Spark 3 or 4; a start
+   across Spark 3 and 4; "find setups for a model". Then a Jupyter box and one short job, as before.
+6. **The self-test** (`self_test`), which also proves the walls again on every Spark that has the helper.
+7. **The coding trial** (`agentbar/trial-on-spark.sh`). Self-change stays off whatever it says.
 
-To turn on the app door (optional), run this once:
-
-```bash
-bash spark-console/deploy/open-apps-to-internet.sh
-```
-
-To close the app door again, add `--undo`.
-
-**Installed on 2026-11-13, 23:52 Pacific.** Build `0be65f7314ab`: health, the ways in (sign-in, the agent door, the
-model address) and a chat turn passed, the build was kept, and the watchdog is on. "Find setups" passed its check on
-the real Sparks. The other four workflows wait for their first real run: a model was running across Spark 3 and 4, and
-the test does not stop it. Node on Spark 2 is still code-server's own (v24). Spark 1 is not reachable without a
-password, as expected.
-
-After the install, with Spark 3 or Spark 4 powered on, run these checks through Sparkie's chat:
-
-1. **One live start, check and stop** of a small model on Spark 3 or 4. This proves the new `start_model` and
-   `restart_model` versions on real hardware.
-2. **One start across Spark 3 and 4.** This proves `start_model_across`.
-3. **"Find setups for <a model>".** This proves `find_setups`.
-4. **"Give me a Jupyter box on Spark 3"**, then open its link, then "stop it". This checks no password, the link, and
-   the stop.
-5. **One short job**, for example "run `nvidia-smi` once on Spark 4". The end line should come back in the same chat.
-6. **"What should be running?"** Before this build, starting a model again by hand did not make it the newest wish for
-   its Spark. If the list shows a model that is running and, on one of its Sparks, another model that is held and was
-   started later, say "forget <the held one>". Otherwise self-healing would leave the running one down after its next
-   crash or power-on, waiting for the held one.
+To turn on the app door (optional): `bash spark-console/deploy/open-apps-to-internet.sh`; `--undo` closes it.
 
 ## 9. What would help most from a review
 
-- Anything that could **lock the owner out**:
-  - sign-in;
-  - recovery codes;
-  - the installer's go-back;
-  - the internet switches.
-- Anything that could **stop or remove a healthy model**, or a `qwen-recipe-*` container.
-- Anything that could **lose data**: chats, `access.json`, backups, the owner's files.
-- **Keys or tokens** that could show up in chat, logs, the page, Telegram or saved routines.
-- Places where Sparkie could **claim something happened** when no tool said so.
-- **Outside text** (web pages, model cards, files) that could make Sparkie act as if the owner had asked.
-- Whether the page and Sparkie's words stay **plain and calm** for a non-expert.
+The most dangerous paths first. Each names the files and what we most want attacked.
 
-## 10. The next phase: please review the plan too, as hard as the code
+**1. The root helper and its one-time command.** `deploy/spark-console-root`, `deploy/root-for-sparkie.sh`; R42,
+R63; `test/root-helper.test.mjs`.
+- The sudo line lets any program running as the owner call the helper, not only the console. What does such a
+  caller gain with `run --open`, `--home`, `--asked` or `--net`, with `keep`, `putback` or `stop --id`, and, where
+  root is on, with `root --net` and no ask at all?
+- The walls are systemd settings. Name one that DGX OS (Ubuntu 24.04) accepts and does not hold, or a way out the
+  proof's 29 attempts do not try. The proof counts a "blocked" only when the same attempt worked outside the wall:
+  find one where that is wrong.
+- The one-time command: something that can write the owner's home changes what root installs, between the check
+  and the move.
 
-After this build, the owner wants Sparkie to work the way a coding agent does: command every Spark and itself, learn
-from everything it does, run with any brain model, and stay fast and simple. That phase was designed on 2026-11-13. Its
-first milestone is being built; nothing of it is in this build unless section 4 names it. A plan is cheaper to fix than
-code, so a detailed review here is worth more than anywhere else.
+**2. The sorter.** `service/src/20-sort.mjs` and the nine parts beside it (section 4.1); R55, R64;
+`test/sort.test.mjs`.
+- A command it calls a plain change that changes a way in, runs code fetched by the same command, or writes what a
+  program outside the wall later runs. R55's Today lists the misses we know.
+- A string its reader (`shellLex`, `shellParse` in `20-shell.mjs`) and real bash read differently.
+- A "look" that is not one. A look has root's read rights: find a secret the hidden list (R63) misses. What a look
+  prints goes to the brain and the journal.
 
-**Where it is:** `docs/design-2026-11-13/`. Read in this order:
+**3. The ladder and the runner: at once, a button, or the dangerous ask.** `service/src/21-work.mjs`,
+`21-ladder.mjs`, `21-runner.mjs`, `21-copies.mjs`, `20-danger.mjs`, `20-came-from.mjs`; R61, R54;
+`test/ladder.test.mjs`, `test/runner.test.mjs`, `test/danger.test.mjs`.
+- `run` and `write_file` are registered as lookups, so `runAction` in `16-actions.mjs` hands them on before its
+  checks for a change. The ladder makes its own: who may, the pause, the rail, the claim, the journal. We did not
+  find the hourly count of changes (R9) or an audit line there. Is anything `runAction` holds for a change lost?
+- "Nothing read since": text from outside that reaches the brain without counting as read (a lookup in
+  `INSIDE_READS` that carries a container's name, a label or a file name someone else chose), then a change at once.
+- The press sorts the command again and hashes its scripts again. Find a change between the ask and the press that
+  the press misses. And the copy first: a command that removes a file the sorter did not place, where undo then
+  says everything is back.
 
-1. `README.md`: the whole phase in one page (the goal, the owner's decisions, the shape, how Sparkie's permissions
-   work, memory, six milestones, safety changes, defaults taken, risks accepted). Where a design disagrees with this
-   page, this page wins.
-2. `owner-decisions.md`: the owner's 22 decisions, in their own words.
-3. `critic-safety.md` (29 findings) and `critic-simplicity.md` (what was cut, and why).
-4. The seven designs: `a-workspace.md` (commands on the Sparks, root, the net, "always allow"), `b-learning.md` (the
-   journal and lessons), `c-github-selfchange.md` (tests and the tested mark on GitHub, installs pulled by Spark 2,
-   Sparkie changing its own code), `d-fleet-workloads.md` (adding Sparks, the self-test, workflows that place and
-   wait, a brain across Sparks), `e-unattended.md` (tasks, any brain, the heartbeat, rebuilding the hub, keys),
-   `f-structure.md` (documents, the checker, the tool cap), `g-memory.md` (memory).
-5. `ledger.md`: how the designs join and which conflicts were settled how.
+**4. The lock-out net and its put-back.** `net_arm`, `net_after`, `restore_sh`, `guard_py`, `boot_unit`, `do_keep`
+and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60; `test/net.test.mjs`;
+`docs/history/later-2026-11-15.md`.
+- A change that passes the check right after it and locks the owner out later: a unit disabled, a network file not
+  applied until a restart. Live firewall rules are said, not put back.
+- "The owner's own words" is decided by `netWhose`: a list of verbs plus the Spark's name. By our reading of the
+  code (not run), "Fix the build on Spark 3" passes it, and so does a question such as "Why is ssh open on
+  Spark 3?". A firewall change Sparkie then proposes is asked, not refused. Is that the right line for contract 8.3?
+- The timer: a way for the change to stop, delay or outlive it; a power cut at each step of arming and put-back.
 
-**What is fixed, and what is open.** The owner's decisions are fixed: please challenge how they are met, not whether.
-The ones that surprise most: Sparkie may do everything the owner can, root and the lock-out class included (decisions
-18, 20, 22); risky things are asked on Telegram; a key is given once and kept; Spark 2 stays the hub and may hold a
-part of a model only as the brain; no scheduled jobs on the Sparks; nothing that slows an ordinary reply. Everything
-else is open: the mechanisms, the order, the defaults in the one page's section 8, and what was cut.
+**5. Changes on Spark 2.** `service/src/21-hub.mjs`; R1; `test/hub-change.test.mjs`.
+- `hubRefuses` reads the command's words; the wall is what holds. A walled command still reaches, at 127.0.0.53,
+  whatever listens on every address (R63). On Spark 2, does the brain's port or the console's answer there?
+- A put-back on Spark 2 stops and starts the console itself. Find the order of events that leaves it down.
 
-**What to attack, piece by piece.**
+**6. Root.** `service/src/21-root.mjs`; `root_off` and `root_named` in the helper; R70; `test/root.test.mjs`.
+- Root has no wall, and the check on names is not one (R70 says so). Spell a command that removes the net's timer,
+  root's switch or the sudo line past it.
+- Show a difference between the bytes the ask shows and the bytes that run. And what a root command prints comes
+  back to the brain and the journal, masked only by shape.
 
-- **Commander** (`a-workspace.md`, safety findings 1, 2, 5 and 7 to 10). Root goes through one root-owned helper
-  that the owner allows once per Spark, with three walls (look, run, net).
-  - Is that sound on DGX OS (Ubuntu 24.04, systemd, Docker, the owner's user in the docker group)?
-  - Can a "look" write or send anything?
-  - Can an ordinary command reach the Docker socket, the console's socket (`api.sock` trusts a header) or the secrets?
-  - What does the first version need when a Spark has no helper yet?
-- **The confirm-or-put-back net** (`a-workspace.md` 2.8, safety finding 2). Name a change that locks the owner out
-  and still passes: one that is not live until the next restart, one that breaks the timer, one that is fine for ten
-  minutes. Is "a fresh visit through the changed way in" the right proof on the hub?
-- **Telegram as the place to say yes** (safety finding 3). What can a lost phone do in ten minutes with the caps as
-  written? What cheaper protection was missed that does not put asking back on the owner?
-- **Text that steers** (safety findings 5, 7 and 9). A log or a page says "run this". Follow it through the go-ahead,
-  "always allow", an unattended task and a root ask. Where does it get through unseen?
-- **Keys** (safety finding 4, `e-unattended.md` 2.7). Where can a kept key still leak: a container's environment on
-  disk, a command's output, the journal, a Telegram message?
-- **Memory** (`g-memory.md`). The design keeps the raw record, believes only the owner's dated lines, picks by exact
-  names, and uses no embeddings, graph or helper.
-  - Is the evidence it cites read fairly?
-  - Will the picker rule (names, rare words, newest) fail on this owner's kind of request?
-  - Are the 20 questions the right test? What would you add that beats it?
-- **Learning** (`b-learning.md`, as cut by the simplicity review). Is the masking of the journal enough when it holds
-  the output of root commands? Is "pass over a setup that failed twice" safe when the failure id comes from a log line
-  (safety finding 27)?
-- **GitHub, installs and self-change** (`c-github-selfchange.md`, safety findings 12 to 16). Can a pushed tag claim
-  a tree was tested when it was not? Can an incoming build pass its own install checks and still break sign-in? Is
-  "only new tests, generated files and status rows are free" the right line for Sparkie's own changes?
-- **Fleet, workloads and the brain across Sparks** (`d-fleet-workloads.md`, safety findings 18 to 22). Check the
-  cabling claims (three Sparks on direct cables, four needing a switch) against what you know. Can a workflow, a
-  compare or the self-test stop a healthy model? What is the longest the owner can be left without any brain?
-- **Unattended work and any brain** (`e-unattended.md`, safety finding 26). Can a task change something the owner's
-  words never named? Is one brain check with two outcomes enough to keep a weak model from doing harm?
-- **Structure** (`f-structure.md`). Would an agent with a small context find its way with one front door, one card
-  per task and one file per rule? Does the tool cap (24 a round, hidden but not forbidden) lose anything?
-- **The order** (the one page, section 6). Is each milestone useful by itself? Is anything in the wrong place? What
-  is still over-built for one owner and four machines? What is missing altogether?
+**7. Keys.** `service/src/20-keys.mjs`, `21-run-keys.mjs`, `03-secrets.mjs`; R51; `test/app-keys.test.mjs`,
+`test/run-keys.test.mjs`.
+- Only the owner's press stands before a command given a key. Get a press for a command whose leak the button does
+  not show: a host the sorter does not read as one, a file the command writes.
+- Where a key can still land: the held file on the Spark, a core dump, a copy, the journal, a Telegram message, a
+  chat saved before the key was given.
 
-**How to report.** This review is a back and forth: the builders answer every finding and you answer them, until each
-point is settled. The procedure, the numbering (`A-1` for the app, `P-1` for the plan) and where the files go are in
-`docs/review-astra/README.md`. Findings in order of severity. For each: the concrete way it goes wrong (who does what, what
-happens), where (the design and section, and the code if it depends on the code), and the smallest change that closes
-it. Mark each "must change before building", "change when that piece is built" or "accept, and tell the owner". End
-with what the plan is missing, and with any decision in the one page's section 8 you would take the other way.
+**8. `write_file`.** `service/src/21-write.mjs`; R68; `test/write.test.mjs`.
+- It is sorted as a plain `cat > path`. Find a path where the real write does more than that says: a file a
+  program outside the wall runs later, a name that means something else to the shell.
+- Lines `from` to `to`: the file changes between the read and the move.
+
+**9. The box.** `service/src/21-box.mjs`, `21-box-fill.mjs`; R62; `test/box.test.mjs`, `test/box-fill.test.mjs`.
+- It does not use the helper: the console starts it with Docker over SSH, as the owner. One wrong flag in
+  `workBoxCommand`, or a line of `BOX_CHECK` that passes when it cannot tell, and code from a web page runs with
+  more than its own folder. In tests the stand-in answers the check from the flags.
+- `tarRead`: an entry that gets a path, a link or extra bytes past the reader. And what a box command prints is
+  outside text: can it lead to a change on a Spark in the same request, unasked?
+
+**10. Sparkie changing its own code (off), and updates.** `service/src/21-selfchange.mjs`, `21-brain-trial.mjs`,
+`21-updates.mjs`, `deploy/pull.sh`, `deploy/update-guard.sh`, `agentbar/trial-lib.mjs`; R67, R69, R58;
+`test/selfchange.test.mjs`, `test/trial.test.mjs`, `test/pull.test.mjs`, `test/install-update.test.mjs`.
+- Reach `selfStart` or `selfSend` on a real console while `SELF_CHANGE_ON` is `false`. The tests turn it on with a
+  file in the state folder, on the stand-in fleet only.
+- If it were on: a proposal that gets a protected path or a weakened test merged under "Nobody else reviewed
+  this."; a file whose contents hold a key; a file that makes the installed generator do more than read it.
+- `install_update`: a `tested/` tag that names a tree that was not tested; an install that passes its checks and
+  still breaks sign-in.
+
+**11. The go-ahead and "Always allow".** `service/src/21-ahead.mjs`; R65; `test/ahead.test.mjs`,
+`test/allowed.test.mjs`. A kind is a tool, a folder and a Spark. Find a tool that may have a kind and that, with
+other arguments in that folder, runs code or reaches further than the command the owner pressed for.
+
+**Still wanted, as in round 1:** anything that could lock the owner out through sign-in, recovery codes, the
+installer's go-back or the internet switches; anything that could stop or remove a healthy model or lose data; keys
+in chat, logs, the page or Telegram; Sparkie saying something happened when no tool said so; whether the page and
+Sparkie's words stay plain and calm.
+
+## 10. The phase that was a plan is now code
+
+The plan is `docs/design-2026-11-13/README.md`: one page, six milestones, the owner's 22 decisions, seven designs
+beside it. It was left as written. The rules are the record of what was built.
+
+| Milestone | Became | Not built, or held back |
+|---|---|---|
+| 1 Ground | R29, R46, R47; `21-selftest.mjs`, `21-guide.mjs`, `21-brain-eval.mjs`; the tools in section 3 | |
+| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
+| 3 Memory | R45, R48, R59; `20-memory.mjs` and the four parts beside it, `20-recall.mjs`, `20-digest.mjs`, `20-lessons.mjs` | |
+| 4 No laptop, lighter hub | R58, R49, R37; `21-updates.mjs`, `20-beat.mjs`, `20-state-copy.mjs`, `22-putback.mjs` | Clearing Spark 2 is a script the owner runs (`deploy/clear-spark2.sh`) |
+| 5 On its own, any brain | R50, R52, R66, R62, R67, R69; `14-tasks.mjs`, `21-brain-rail.mjs`, `21-box.mjs`, `21-selfchange.mjs` | Self-change is off; the coding trial waits for the owner |
+| 6 Workloads and power | R41, R56, R57; `21-power.mjs`, `18-step-jobs.mjs`, `21-compare.mjs` | Adding a Spark from chat (waits for Spark 1) |
+| After | | A brain across Sparks |
+
+**Where the code differs from the plan, and why.** Mostly the code is stricter.
+
+- **Root is always asked, and never a script.** The plan let a plain root command run at once on the owner's
+  words. With the helper's sudo line in place, any program running as the owner could become root before the
+  console's ask exists (R70's Why). So root is off on a Spark until `--with-root`, and through the console it is
+  always the dangerous ask. A script's text is not on the button and can change before the press, so it is refused.
+- **A lock-out change is refused unless the owner's own words ask for it,** with nothing read since. The plan asked
+  about any of them. Contract 8.3 says "never because an agent, a page or a fix suggested it".
+- **Spark 2.** The plan kept a hub change only after a fresh visit through the changed way in. That proof is not
+  built. So a lock-out change on Spark 2 is refused, and any other change is kept by code once the console's own
+  ways in still answer.
+- **"At once" is narrower.** Not while a Spark has Tailscale SSH on; not while something else listens on every
+  address; not into the model store, the Hugging Face cache or the shared folder; not with the GPU, another Spark,
+  `--home` or `--open`; not after a look in the same request.
+- **Times are shorter.** A change at once has 30 seconds, or up to 10 minutes with `minutes`; more is asked. A
+  lock-out change and a change on Spark 2 have 30 seconds, where the plan allowed 10 minutes.
+- **A command given a key is always asked.** The plan asked once per new place. A command can show a key in a form
+  no mask knows, so only the press stands before it (R51).
+- **Smaller points.** The go-ahead comes only from a button, never from the owner's words. Opening a box is a
+  change, so the pause and the rail apply. The coding trial has three tasks, each a one-line slip in memory's code.
+
+**What we ask.** The same hard review as the first build, on the code, in the order of section 9. For P-1 to P-6,
+say whether the code now does what you asked: P-1 in the helper's timer (R60), P-2 in the journal's start line
+(R43, R61), P-3 in `22-putback.mjs`, P-4 in the eval's record (R47, R52), P-5 in the hashes a press checks (R54,
+R61, R70), P-6 in the install ask for a proposal (R69). P-7 was about the wording of
+`docs/design-2026-11-13/g-memory.md`.
+
+**How to report.** `docs/review-astra/README.md` has the procedure, as in round 1. Put round 2 in a new file,
+`findings-2.md`, beside round 1's. Old ids keep their numbers: for each row of `open.md`, agree or rebut. New
+findings on the code continue from A-13. For each: how bad, the concrete way it goes wrong (who does what, what
+happens), where (the file and the function or test), the smallest change that closes it, and what you ran against
+what you only read. For "how bad", everything is built now, so please use: blocks the install; must change before
+the helper's command runs on a real Spark; must change before root is turned on; later; or a suggestion. End with
+what is over-built for one owner and four machines, and what is missing.
