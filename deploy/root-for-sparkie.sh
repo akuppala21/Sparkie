@@ -8,6 +8,7 @@
 #   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md)
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
+#                                                             (not while the lock-out net holds a change there)
 #   bash spark-console/deploy/root-for-sparkie.sh --hub 2     Spark 2 itself, the hub: last, and only with --hub
 #
 # From the Mac it does one thing: it runs Spark 2's installed copy of itself over ssh
@@ -321,13 +322,28 @@ root_switch() {   # $1 on or off: root's switch on this Spark (on only after a p
 }
 
 undo() {
+  local id out g at
   note "sudo asks for your password on $(hostname), once"
   sudo -v || stop "sudo did not accept the password. Nothing was changed."
+  # (while the lock-out net holds a change here, its put-back would write the sudo line back, and a guard left with no
+  # timer would keep its restart unit with no helper to keep it or put it back: it is kept or put back first)
+  id=$(new_id)
+  if ! out=$(sudo "$HELPER" check --id "$id" 2>/dev/null); then
+    [ ! -e "$HELPER" ] || stop "the helper did not answer, so whether the lock-out net still holds a change here is not known. Nothing was changed."
+  else
+    g=$(sed -n "s/^$id net open: guard \([a-z0-9]*\) goes back at .*/\1/p" <<<"$out" | head -n 1)
+    at=$(sed -n "s/^$id net open: guard [a-z0-9]* goes back at \(.*\) unless it is kept;.*/\1/p" <<<"$out" | head -n 1)
+    if [ -n "$g" ] && grep -q "^$id net left: " <<<"$out"; then
+      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), then run --undo again. Nothing was changed."
+    elif [ -n "$g" ]; then
+      stop "the lock-out net still holds a change here (guard $g, which goes back at ${at:-its time} unless it is kept). Keep it (sudo $HELPER keep --id $g) or put it back (sudo $HELPER putback --id $g) first, then run --undo again. Nothing was changed."
+    fi
+  fi
   root_switch off
   sudo rm -f "$LINE" "$LINE.new"; note "the sudo line is gone: $LINE"
   sudo rm -f "$HELPER" "$HELPER.new"; note "the helper is gone: $HELPER"
   sudo rm -f "$MARK"; note "the proof's mark is gone: $MARK"
-  note "(copies under /var/lib/spark-console stay, and a put-back timer already armed still fires)"
+  note "(the copies of earlier changes under /var/lib/spark-console stay)"
 }
 
 main() {

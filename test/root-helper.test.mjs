@@ -2123,17 +2123,45 @@ describe("the owner's one-time command", () => {
     assert.ok(!has(f, 'var/lib/spark-console/root-on') && !sudoCalls(f).some(x => x.startsWith('tee /var/lib/spark-console/root-on')), sudoCalls(f).join('\n'));
   });
 
-  test("--undo: root's switch, then the line, then the helper, then the mark", () => {
+  test("--undo: whether the lock-out net holds a change there (the helper's check), then root's switch, then the line, then the helper, then the mark", () => {
     const f = fleet();
     assert.equal(f.cmd(['3']).status, 0);
     const n = sudoCalls(f).length;
     const r = f.cmd(['--undo', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /var/lib/spark-console/root-on /var/lib/spark-console/root-on.new',
+    // (the final read's undo-guard: the check comes first, after the password; the rest as before)
+    const steps = sudoCalls(f).slice(n);
+    assert.match(steps[1] ?? '', /^\/usr\/local\/sbin\/spark-console-root check --id [0-9a-f]{16}$/, steps.join('\n'));
+    assert.deepEqual([steps[0], ...steps.slice(2)], ['-v', 'rm -f /var/lib/spark-console/root-on /var/lib/spark-console/root-on.new',
       'rm -f /etc/sudoers.d/spark-console-root /etc/sudoers.d/spark-console-root.new',
       'rm -f /usr/local/sbin/spark-console-root /usr/local/sbin/spark-console-root.new', 'rm -f /var/lib/spark-console/proved']);
     assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved')
       && !has(f, 'var/lib/spark-console/root-on'));
+  });
+
+  // The final read's "undo-guard" (its F8: --undo while a guard was open, and the timer wrote the sudo line back).
+  test('--undo stops while the lock-out net holds a change there, open or left with no timer, says what to do, and removes nothing', () => {
+    const f = fleet();
+    assert.equal(f.cmd(['3']).status, 0);
+    const g = change(f.target, 'true', { secs: 300, extra: ['--net'] });
+    assert.match(g.stdout, /net armed: /, g.stdout);
+    const kept = ['usr/local/sbin/spark-console-root', 'etc/sudoers.d/spark-console-root', 'var/lib/spark-console/proved'], n = sudoCalls(f).length;
+    const u = f.cmd(['--undo', '3']);
+    assert.equal(u.status, 2, u.stdout + u.stderr);
+    assert.match(u.stderr, new RegExp(`Stopped on .*: the lock-out net still holds a change here \\(guard ${g.id}, which goes back at \\d{4}-\\d\\d-\\d\\dT\\S+Z unless it is kept\\)\\. Keep it \\(sudo /usr/local/sbin/spark-console-root keep --id ${g.id}\\) or put it back \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\) first, then run --undo again\\. Nothing was changed\\.\n`));
+    for (const p of kept) assert.ok(has(f, p), p);
+    // left with no timer (a restart whose put-back failed, say): only a put-back ends it, and keep is not offered
+    rmSync(join(f.target.R, 'standin/timers', `sw-guard-${g.id}.timer`));
+    const v = f.cmd(['--undo', '3']);
+    assert.equal(v.status, 2, v.stdout + v.stderr);
+    assert.match(v.stderr, new RegExp(`: the lock-out net still holds a change here \\(guard ${g.id}\\), and no timer waits to put it back\\. Put it back first \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\), then run --undo again\\. Nothing was changed\\.\n`));
+    for (const p of kept) assert.ok(has(f, p), p);
+    assert.ok(!sudoCalls(f).slice(n).some(x => x.startsWith('rm ')), sudoCalls(f).slice(n).join('\n'));
+    // put back: --undo goes on, and the line stays gone (no timer is left to write it back)
+    assert.equal(run(f.target, ['putback', '--id', g.id]).status, 0);
+    const w = f.cmd(['--undo', '3']);
+    assert.equal(w.status, 0, w.stdout + w.stderr);
+    for (const p of kept) assert.ok(!has(f, p), p);
   });
 
   test('--check changes nothing and asks no password, before and after set-up; every call is a read', () => {
