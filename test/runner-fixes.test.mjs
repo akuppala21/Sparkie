@@ -725,7 +725,7 @@ test('a2: a script reached through a link is said not pinned on the ask, and its
   const p = await choose(chat, yes.id);
   assert.equal(p.status, 200, p.text);
   assert.equal(text('notes/a2l-out.txt'), 'linked\n', 'it ran');
-  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\//.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
+  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-/.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
 });
 
 // P-5 (A-16 beside it): a key went to code no hash pins: a module, a build, a one-liner's file. It is refused now,
