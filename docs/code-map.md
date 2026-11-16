@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27199 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27200 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1170,7 +1170,7 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark holding the brain, never with a key, minutes, fleet or gpu, never while changes are paused. It is never run at once, whatever the owner's words, and never covered by a go-ahead or the standing list: it is always the dangerous ask (20-danger.mjs, R54), "ROOT on Spark 3" (and "CAN LOCK YOU OUT" for the lock-out class), and only that ask's press runs it, through the net's seam (netGuarded, 21-net.mjs) and the root helper's `root --net` (--lockout for the lock-out class), armed in …
 
 - **Area:** features. **Rules:** R70, R60, R71, R54. **Tests:** root.test.mjs
-- **Lines:** 124
+- **Lines:** 125
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

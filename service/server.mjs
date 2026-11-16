@@ -21840,11 +21840,12 @@ const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 // program, make, an editor, and, as root, an interpreter that loads from a folder the owner can write), and work it
 // starts later, outside the button and the net (its later: systemd-run, at, batch, crontab, a schedule or unit file
 // written). The refusal says the plain truth: root never runs code it doesn't show, nor work that starts off the button
-// later (there is no way round it, a file run by name included); the steps go on the button as plain commands. Or null.
+// later (there is no way round it, a file run by name included); the steps go on the button as plain commands, and a
+// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH (a limit of root's). Or null.
 function rootUnseen(sorted) {
   if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
   if (sorted?.unshown) return `Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}). Give its steps as plain commands instead, each one on the button.`;
-  if (sorted?.later) return `Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (${String(sorted.later).replace(/\.$/, '').slice(0, 160)}). Run the work itself now, as its own command.`;
+  if (sorted?.later) return `Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (${String(sorted.later).replace(/\.$/, '').slice(0, 160)}). Run the work itself now, as its own command; a timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH.`;
   return null;
 }
 // A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
