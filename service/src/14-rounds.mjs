@@ -181,6 +181,8 @@ function modelStep(turn, sent) {
     const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
     link.cancel = () => settle(reject, new Error(TURN_STOPPED));
     const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+      // (one decoder for the whole answer: a character whose bytes come in two pieces reads whole, error body too)
+      r.setEncoding('utf8');
       // (after a whole answer its end comes first, and close changes nothing)
       r.on('error', e => settle(reject, e));
       r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
@@ -253,15 +255,25 @@ async function turnRounds(turn) {
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
 const ROUND_CALLS = 4;              // limit: calls run in one round (each past them is answered "not run")
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
-// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
-// (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
+// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup its action doesn't mark
+// inside (readInside: outside is the default, A-17) once handed over, its error too (it can quote what it
 // read); run and write_file only once something ran there: a command that ran (one that failed too, its error output
 // is in its result), one started with minutes, write_file's ask (it shows the file's old lines), or a failure on the
 // far side (a 5xx can quote the command's own first line). Never a call refused, asked or answered "nothing ran"
 // before anything ran (final read of the net, 5: "Leave out sudo and set root" was followed by "this came from text
 // Sparkie read first", though nothing had run or been read).
+// An inside read (R26, A-17): only an action that says so itself, `inside: true` or, for some of its arguments, a function
+// of them (sparkie_setup with about "abilities"), where every field it returns is the console's own words or a bare name
+// (bareName, 05-library.mjs). Every other lookup, a new one too, is outside text.
+function readInside(a, args) {
+  if (a?.inside === true) return true;
+  if (typeof a?.inside !== 'function') return false;
+  let x = {};
+  try { x = JSON.parse(args || '{}'); } catch { return false; }
+  try { return a.inside(x && typeof x === 'object' ? x : {}) === true; } catch { return false; }
+}
 function readOutsideBy(c, a, { handed, ok, value, status }) {
-  if (!handed || a?.kind !== 'read' || (INSIDE_READS.has(c.name) && !(c.name === 'running_models' && /"detail"/.test(c.args || '')))) return false;
+  if (!handed || a?.kind !== 'read' || readInside(a, c.args)) return false;
   if (!WORK_TOOLS.has(c.name)) return true;
   if (!ok) return !(status >= 400 && status < 500);
   return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';

@@ -88,7 +88,7 @@ function sortWrap(args, ctx, r, x, name) {
   let k = 0;
   for (; k < args.length; k++) {
     const a = args[k], t = a.text;
-    if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
+    if (a.unknown || a.glob) { sortUnshown(r, `what ${name} runs, named by a $ or a *`); unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`); }
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true, args[k].unknown ? null : t.slice(t.indexOf('=') + 1)); continue; }
     // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
@@ -98,10 +98,11 @@ function sortWrap(args, ctx, r, x, name) {
     if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;
-    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }
+    // (an option it doesn't read, env -S among them, may make it run words that aren't on the button)
+    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) { sortUnshown(r, `what ${name} runs with its option ${t.split('=')[0]}`); unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); } continue; }
     for (let j = 1; j < t.length; j++) {
       if (takes.includes(t[j])) { if (j === t.length - 1) k++; break; }
-      if (!flags.includes(t[j])) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`);
+      if (!flags.includes(t[j])) { sortUnshown(r, `what ${name} runs with its option -${t[j]}`); unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`); }
     }
   }
   const rest = args.slice(k + pos);

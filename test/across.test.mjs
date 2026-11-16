@@ -8,7 +8,8 @@
 // over plain sockets, and that run is kept; a Spark that misses a cable re-test keeps its pairs' last result. A pair
 // with room on Spark 4 only if a container started by hand stops (F11): an owner-only question that names it (also when
 // no Sparks were named), asking stops nothing, an agent gets no choice to send back, and the owner's Yes on the page
-// starts it across both Sparks with that stop in the plan.
+// starts it across both Sparks with that stop in the plan. A failed start across two whose part on Spark 4 never stops
+// (A-23): the one-Spark copy set aside there isn't started beside that part, and the error and log say so.
 //
 // One model across two Sparks with the brain's proven setup (docs/contract.md 15, 2026-11-08). The brain runs on one
 // Spark, and its runs aren't repeated as they are (a draft model only Spark 2 has, a stretched context). When the only
@@ -17,8 +18,10 @@
 // start the brain's hybrid Qwen at all). The model is the brain's own, as on the real Sparks: in Recipes, on Spark 4, copied to Spark 3.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, rmSync, mkdtempSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { T, useFleet, api, call, createKey, createActKey, agentSettings, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
 
 const keys = {};
@@ -31,7 +34,18 @@ const brainRun = { key: JSON.stringify(['RadixArk--Qwen3.8-27B-NVFP4', 'sglang',
   title: 'Qwen 3.8 27B', engine: 'sglang', image: 'lmsysorg/sglang:v0.5.23', args: DFLASH, env: BRAIN_ENV,
   sparks: 1, nodes: ['spark2'], firstAt: '2026-11-08T00:00:00Z', lastAt: '2026-11-08T00:00:00Z', runs: 1, best: { decodeTokS: 30, ttftMs: 100 }, brain: true };
 // A start whose parts never connect is stopped after SPARK_CONSOLE_CONNECT_MS (10 minutes on the Sparks).
-useFleet({ watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_CONNECT_MS: String(20000 * SLOW) },
+// (A-23) A stand-in docker in front of the fleet's (PATH): a stop of the container named in ~/.mock/stop-hangs never
+// comes back; anything else goes to the stand-in as it is.
+const BIN = join(dirname(fileURLToPath(import.meta.url)), 'mock', 'bin');
+const WRAP = mkdtempSync(join(tmpdir(), 'across-docker-'));
+writeFileSync(join(WRAP, 'docker'), `#!/bin/bash
+if [ "$1" = stop ] && [ -s "$HOME/.mock/stop-hangs" ]; then
+  for a in "$@"; do [ "$a" = "$(cat "$HOME/.mock/stop-hangs")" ] && { exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; }; done
+fi
+exec ${JSON.stringify(join(BIN, 'docker'))} "$@"
+`);
+chmodSync(join(WRAP, 'docker'), 0o755);
+useFleet({ watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_CONNECT_MS: String(20000 * SLOW), PATH: `${WRAP}:${BIN}:${process.env.PATH}` },
   prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [brainRun] }), { mode: 0o600 }),
 }, async () => { keys.look = await createKey('across'); keys.act = await createActKey('across-act'); });
 
@@ -238,6 +252,57 @@ test('a Spark that misses a cable re-test keeps its pairs’ last result (a miss
     assert.equal(r.json.sparks.find(s => s.id === 'spark4').online, false);
     assert.equal(pair(r)?.fastLink, 'full', JSON.stringify(r.json.pairs));
   } finally { writeFileSync(T.fleet.offlineFile, offline); }
+});
+
+// A-23: a start across Spark 3 and 4 that fails its test prompt, with the stop of Spark 4's part never coming back. The
+// one-Spark copy of the model that ran on Spark 4 was set aside for that part: it isn't started again beside it; the
+// error (after its first line) and the log say so; the part stays on the operation's list.
+test('a start across two that fails, with the stop of Spark 4\'s part never coming back: the copy set aside on Spark 4 isn\'t started beside it, and it is said', { timeout: 900000 * SLOW }, async () => {
+  await waitFor(async () => (await api('/status')).json.nodes.find(n => n.id === 'spark4')?.state === 'online', { timeout: 90000 * SLOW, what: 'Spark 4 online again' });
+  await waitFor(async () => (await api('/models')).json.sparks?.find(s => s.id === 'spark4')?.online, { timeout: 90000, what: 'Spark 4 in a fresh look' });
+  // The model from the RoCE test runs across both: it stops; then a one-Spark copy of it runs on Spark 4 (the first
+  // part's name), as when the fleet starts.
+  if (containers('spark3')[HEAD]?.state === 'running' || containers('spark4')[PART2]?.state === 'running') {
+    const s = await api('/stop', { method: 'POST', body: { node: 'spark4', container: PART2 } });
+    assert.equal(s.status, 202, s.text);
+    assert.equal((await settled(s.json.id)).status, 'completed');
+  }
+  const lines = readFileSync(mock('spark4', 'containers'), 'utf8').split('\n').filter(l => l && !l.startsWith(`${HEAD}|`));
+  writeFileSync(mock('spark4', 'containers'), [...lines, `${HEAD}|running|Up 1 hour|1|${QWEN}||||`, ''].join('\n'));
+  writeFileSync(mock('spark4', `up-${HEAD}`), String(Math.floor(Date.now() / 1000) - 3600));
+  writeFileSync(join(T.fleet.dir, 'serve-silent'), '');
+  writeFileSync(mock('spark4', 'stop-hangs'), PART2);
+  let id = null;
+  try {
+    // (the owner's own call: its failure doesn't count against agents)
+    const r = await api('/actions/start_model', { method: 'POST', body: { model: QWEN, sparks: ['spark3', 'spark4'] } });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    id = r.json.operation;
+    const w = await waitFor(async () => { const o = (await api(`/jobs/${id}`)).json; return o?.status && o.status !== 'running' ? o : null; }, { timeout: 600000 * SLOW, what: 'the start to end', every: 500 });
+    assert.equal(w.status, 'failed', JSON.stringify(w));
+    assert.match(w.error, /^It didn’t start: it loaded but didn’t answer a test prompt\./, w.error);
+    const aside = `${HEAD}-before-${id}`;
+    const owed = `${HEAD} (there as ${aside}) wasn’t started again on Spark 4: ${PART2} may still be running there (Spark Console couldn’t confirm it stopped). Stop it there, then start ${HEAD} again`;
+    assert.equal(w.error.split('\n')[1], `${owed}.`, w.error);
+    assert.ok(w.log.some(l => l.endsWith(owed)), w.log.join('\n'));
+    assert.ok(w.log.some(l => l.endsWith(`Its part on spark4 didn’t stop: it is still running there. Stop it there: docker stop ${PART2}`)), w.log.join('\n'));
+    assert.ok(!w.log.some(l => new RegExp(`Started ${HEAD} on spark4 again`).test(l)), w.log.join('\n'));
+    assert.ok(w.ranHere.includes(`spark4/${PART2}`), JSON.stringify(w.ranHere));
+    const c4 = containers('spark4');
+    assert.equal(c4[PART2]?.state, 'running', 'the part whose stop never came back');
+    assert.notEqual(c4[HEAD]?.state, 'running', 'the one-Spark copy isn’t started beside it');
+    assert.equal(c4[aside]?.state, 'exited', 'it is still set aside');
+  } finally {
+    rmSync(join(T.fleet.dir, 'serve-silent'), { force: true });
+    rmSync(mock('spark4', 'stop-hangs'), { force: true });
+    rmSync(mock('spark4', `up-${HEAD}`), { force: true });
+    // (the part stopped, and what was set aside gone, so the test below starts from Spark 4 as the tests above left it)
+    if (containers('spark4')[PART2]?.state === 'running') {
+      const s = await api('/stop', { method: 'POST', body: { node: 'spark4', container: PART2 } });
+      if (s.json?.id) await settled(s.json.id).catch(() => {});
+    }
+    writeFileSync(mock('spark4', 'containers'), readFileSync(mock('spark4', 'containers'), 'utf8').split('\n').filter(l => !l.startsWith(`${HEAD}-before-`) && !l.startsWith(`${HEAD}|`)).join('\n'));
+  }
 });
 
 // F11: a start across a pair whose one side has room only if something Spark Console didn't start stops. The owner is
