@@ -59,11 +59,12 @@ LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
 # under it, and so may --home: both are ended when the free space falls under 5 GB (or, started under that, 100 MB under
 # what was free at the start, so a delete runs and a change that fills the disk further is ended). --open: neither.
 RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000 DISK_HARD=5000000000 DISK_SLACK=100000000
-# The ranges a plain change cannot reach: private, link-local, unique-local and the tailnet. --fleet, the caller's
-# choice for a change that was asked, lifts them. (127.0.0.53 stays open whole, for name look-up: the filter knows no
-# ports, so a program on this Spark that listens on every address answers there too. A global IPv6 address is in no
-# range. R63 says both.)
-LAN_RANGES='10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10'
+# The ranges a plain change cannot reach: private, link-local, unique-local, the tailnet, and multicast and broadcast
+# (which reach every device at home one way: a false name answer, a wake packet). --fleet, the caller's choice for a
+# change that was asked, lifts them. (127.0.0.53 stays open whole, for name look-up: the filter knows no ports, so a
+# program on this Spark that listens on every address answers there too. A global IPv6 address is in no range. R63
+# says both.)
+LAN_RANGES='10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10 224.0.0.0/4 255.255.255.255 ff00::/8'
 # The top of the owner's home is read-only for a plain change: nothing made, removed or renamed directly in it, every
 # dot name read-only but these download caches, ~/bin read-only; the other folders there stay writable. (Bun's, Yarn's
 # and pnpm's own folders hold a folder their installers put first on the PATH: only the cache inside each is named.)

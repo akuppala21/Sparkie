@@ -151,7 +151,7 @@ const SHARED_PINS = ['/home/owner/.local/share/spark-portal', '/home/owner/.loca
   '/home/owner/.local/share/spark-portal/workspaces/shared', '/home/owner/.local/share/spark-portal/workspaces/shared/jobs'];
 const PINS = ['/home/owner/.cache/huggingface'];
 const HOME_RW = ['/home/owner/models', '/home/owner/.cache'];
-const LAN = '10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10';
+const LAN = '10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10 224.0.0.0/4 255.255.255.255 ff00::/8';
 // Every look: the same settings, whatever the command says.
 const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_READ_SEARCH',
   '-p', 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH', '-p', 'NoNewPrivileges=yes', '-p', 'SystemCallFilter=~open_by_handle_at',
@@ -1750,6 +1750,15 @@ describe('what bounds a plain change (R63)', () => {
     }
     const o = change(s, 'true', { extra: ['--open'] });
     assert.ok(!unitCall(s, `sw-run-${o.id}`).includes(PTS), '--open (asked) drops the device bounds, as R63 says');
+  });
+
+  // The final read's "multicast": without these three a plain change could send one way to every device at home.
+  test('multicast and broadcast are denied with the home network in a plain change (IPv4 and IPv6), and --fleet lifts them with it', () => {
+    const s = proven();
+    const r = change(s, 'true'), f = change(s, 'true', { extra: ['--fleet'] });
+    const deny = c => c.find(a => a.startsWith('IPAddressDeny=')).split(/[= ]/).slice(1);
+    for (const range of ['224.0.0.0/4', '255.255.255.255', 'ff00::/8', '192.168.0.0/16']) assert.ok(deny(unitCall(s, `sw-run-${r.id}`)).includes(range), range);
+    assert.deepEqual(deny(unitCall(s, `sw-run-${f.id}`)), ['localhost']);
   });
 
   // The final read's "cgroup": the owner's service manager makes its groups as the owner, so without this a change could
