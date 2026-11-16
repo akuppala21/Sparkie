@@ -206,6 +206,29 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
     }
   });
 
+  // What the brain is told about such a Spark matches what fleet_status then shows: the description says a record that
+  // carries a problem is a fault, and the row after a failed wake carries one (left by d4-later: it said "not a problem").
+  test('fleet_status’s description calls a powered-off Spark with a problem a fault, and a failed wake shows that problem', { timeout: 300000 * SLOW }, async () => {
+    const desc = (await api('/actions')).json.actions.find(a => a.name === 'fleet_status').description;
+    const said = desc.split(/(?<=\.) /).find(s => s.includes('offOnPurpose'));
+    assert.ok(said && !/not a problem/.test(said), said);
+    assert.match(said, /not a fault unless it carries a problem/);
+    await done(await act('power_off', { spark: 'spark4' }));
+    plugs.setNoBoot(3);
+    try {
+      const w = await ended((await act('power_on', { spark: 'spark4' })).json.operation);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      const row = (await look('fleet_status')).sparks.find(x => x.id === 'spark4');
+      assert.equal(row.state, 'off', JSON.stringify(row));
+      assert.match(String(row.offOnPurpose.problem), /^Turning it on didn’t work: /, JSON.stringify(row.offOnPurpose));
+      assert.equal(row.offOnPurpose.asleep, null);
+    } finally {
+      plugs.setNoBoot(3, false);
+      setOffline('spark4', false);
+      await waitFor(() => !power().off.spark4, { timeout: 90000, what: 'its record cleared' });
+    }
+  });
+
   test('a power.json edited by hand to hold null or a word for a Spark beside a real record: the looks, the chat and a start still work, and only the real record counts', { timeout: 300000 * SLOW }, async () => {
     await done(await act('power_off', { spark: 'spark4' }));
     const file = join(T.fleet.stateDir, 'power.json'), good = power();
