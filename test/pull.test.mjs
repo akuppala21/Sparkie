@@ -23,6 +23,8 @@
 // neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q). C4a's tests to add: a setup
 // whose fetch fails saves nothing; the token goes to git only under github.com's header key; a second install while
 // one runs is refused (where flock is); busy with no terminal is refused; the installer calls docker only to look.
+// A-13 (the final read with Astra): a put-back whose copy back fails changes nothing live and stays armed, to be run
+// again; nothing runs without its lock; a copy that goes away under it removes no by-hand file; restore.sh stages too.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -993,6 +995,38 @@ describe('the way back for an update from GitHub, armed by the build installed n
     }
   });
 
+  // (A-13: the copy back fails, here because a file of the copy can't be read)
+  test('not kept, and the copy back fails: the new build goes on running, the way back stays armed and the result says so first; put back by hand once it can be', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(80), 'Its way back can\'t copy back');
+    mark(g);
+    const mk = mark0(), copy = share('update-guard', 'service', 'server.mjs');
+    let r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' }, onOut: out => {
+      if (out.includes('Installing tree') && !existsSync(join(home, 'door-down'))) { writeFileSync(join(home, 'door-down'), ''); chmodSync(copy, 0o000); }
+    } });
+    try {
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /couldn't be put back whole: it couldn't be copied back/);
+      const res = resultOf(home);
+      assert.deepEqual([res.tree, res.result], [g.t12, 'not kept']);
+      assert.match(res.why, /^the build from before couldn't be put back whole, and its copy is kept \(make room if the disk is full, then run bash \S+\/update-guard\.sh put-back hand\); /);
+      assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
+      assert.equal((await health(home))?.build, buildOf(g.files), 'the new build goes on running, whole');
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), g.files['service/server.mjs'].text);
+      // (an install from outside meanwhile: it can't put that build back either, so it is refused, or that update's
+      // timer would undo it later)
+      rmSync(join(home, 'door-down'), { force: true });
+      const r2 = await byHand(push(treeFiles(81), 'From outside, while that way back stays armed'));
+      assert.notEqual(r2.code, 0, r2.out);
+      assert.match(r2.out, /That update's way back is still armed: its build from before couldn't be put back whole .*This install changed nothing\./);
+      assert.equal((await health(home))?.build, buildOf(g.files));
+      assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
+    } finally { rmSync(join(home, 'door-down'), { force: true }); if (existsSync(copy)) chmodSync(copy, 0o644); }
+    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    await fromBefore({ out: r.stdout }, mk);
+  });
+
   test('an install made outside an armed update (from the Mac, or by hand) disarms that update\'s way back first, so its timer can\'t undo it', CASE, async () => {
     needs('kept');
     let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
@@ -1515,5 +1549,137 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.deepEqual(lines(home, 'unpacked-list'), want);
       base = g;
     } finally { rmSync(attrs, { force: true }); }
+  });
+});
+
+// The final read with Astra, A-13: a put-back whose copy back fails part-way (a full disk, a disk error) changes nothing
+// live and keeps its copy armed, to be tried again; nothing runs without the lock; a copy that goes away under a
+// put-back removes no by-hand file; restore.sh in a snapshot stages and checks its copy before it changes anything. No
+// fleet here: the real update-guard.sh and restore.sh, a folder standing in for Spark 2's home, a stand-in systemctl
+// that writes its calls down, and a write limit (`ulimit -f`, SIGXFSZ ignored) standing in for a full disk.
+describe('the way back when its copy back fails or its lock is held (A-13)', { concurrency: 1 }, () => {
+  const GUARD_SH = join(REPO, 'deploy', 'update-guard.sh');
+  const BY = ['go-back.sh', 'RECOVERY.txt', 'REBUILD.txt', 'pull.sh', 'update-guard.sh', 'watchdog.sh', 'install-mark'];
+  const BIG = 300000, OLD_SERVER = `// old\n${'x'.repeat(BIG)}\n`, NEW_SERVER = `// new\n${'y'.repeat(BIG - 50000)}\n`;
+  const LIMIT = 'trap "" XFSZ; ulimit -f 100; exec "$@"';   // (100 KB: a write past it fails as on a full disk)
+  const put = (h, p, text, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), text); chmodSync(join(h, p), mode); };
+  const get = (h, p) => (existsSync(join(h, p)) ? read(h, p) : null);
+  const gshare = (h, ...p) => join(h, '.local', 'share', 'spark-console', ...p);
+  const genv = (h, extra = {}) => ({ HOME: h, PATH: `${join(h, 'bin')}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, LANG: 'C.UTF-8', SPARK_CONSOLE_ALL_LOCAL: '1', ...extra });
+  const run = (h, argv, { limit = false, extra } = {}) => spawnSync('bash', limit ? ['-c', LIMIT, 'limit', 'bash', ...argv] : argv, { env: genv(h, extra), encoding: 'utf8', timeout: 240000 * SLOW });
+  const server = h => (t => (t === null ? 'missing' : t === OLD_SERVER ? 'old, whole' : t === NEW_SERVER ? 'new, whole' : `neither (${t.length} bytes)`))(get(h, 'spark-console-service/server.mjs'));
+  const calls = h => lines(h, 'systemctl.log');
+  const armed = h => existsSync(gshare(h, 'update-guard', 'guard'));
+  // Spark 2's home with the build from before installed, the way back armed from it, then the new build's files in.
+  function armedHome({ systemctl = '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\nexit 0\n', bigPull = false } = {}) {
+    const h = shortHome('scg-');
+    put(h, 'bin/systemctl', systemctl, 0o755);
+    put(h, 'spark-console/index.html', 'old page\n');
+    put(h, 'spark-console-service/config.json', '{"old":true}\n');
+    put(h, 'spark-console-service/server.mjs', OLD_SERVER);
+    put(h, '.config/systemd/user/spark-console-api.service', '[Unit]\nDescription=old\n');
+    for (const f of BY) put(h, `.local/share/spark-console/${f}`, f === 'pull.sh' && bigPull ? `old pull.sh\n${'p'.repeat(150000)}\n` : `old ${f}\n`, 0o700);
+    put(h, 'spark-console-src/README.md', 'old source\n');
+    const r = run(h, [GUARD_SH, 'arm', 'aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', '2147483646']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(armed(h), 'armed');
+    rmSync(join(h, 'systemctl.log'), { force: true });
+    return h;
+  }
+  const newBuild = h => {
+    put(h, 'spark-console/index.html', 'new page\n');
+    put(h, 'spark-console-service/config.json', '{"new":true}\n');
+    put(h, 'spark-console-service/server.mjs', NEW_SERVER);
+    for (const f of ['pull.sh', 'update-guard.sh', 'go-back.sh']) put(h, `.local/share/spark-console/${f}`, `new ${f}\n`, 0o700);
+  };
+  const putBack = (h, opts) => run(h, [gshare(h, 'update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test'], opts);
+
+  test('a copy back that fails part-way changes nothing live and keeps the copy armed; a second put-back with room puts every file back, and the copy goes (silent or not)', { timeout: 300000 * SLOW }, () => {
+    const h = armedHome();
+    newBuild(h);
+    let r = putBack(h, { limit: true });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /couldn't be put back whole: it couldn't be copied back \(is the disk full\?\), so nothing was changed and the new build still runs\. Its copy is kept, and the way back stays armed\./);
+    assert.deepEqual([server(h), get(h, 'spark-console/index.html'), get(h, 'spark-console-service/config.json')], ['new, whole', 'new page\n', '{"new":true}\n'], 'the live files are the new build, whole');
+    assert.ok(armed(h) && existsSync(gshare(h, 'update-guard', 'service', 'server.mjs')), 'the copy and its guard file are kept');
+    assert.deepEqual(calls(h).filter(l => /stop spark-console-api|disable --now/.test(l)), [], 'the service wasn’t stopped, and the timer is still on');
+    assert.match(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).why, /^a test; the build from before couldn't be put back whole: .*Its copy is kept: bash \S+\/update-guard\.sh put-back hand$/);
+    assert.ok(!existsSync(join(h, '.spark-console-service.putback')) && !existsSync(join(h, '.spark-console.putback')), 'nothing left beside');
+    // Room again: the same command puts the build from before back whole; nothing answers here, and the copy goes.
+    r = putBack(h);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /was put back, but it doesn't answer/);
+    assert.deepEqual([server(h), get(h, 'spark-console/index.html'), get(h, 'spark-console-service/config.json')], ['old, whole', 'old page\n', '{"old":true}\n']);
+    assert.deepEqual(BY.map(f => get(h, `.local/share/spark-console/${f}`)), BY.map(f => `old ${f}\n`));
+    assert.ok(!existsSync(gshare(h, 'update-guard')), 'the copy went: the live files are now what it held');
+    assert.ok(calls(h).some(l => /disable --now spark-console-update-guard\.timer/.test(l)), 'its timer is off');
+  });
+
+  test('a by-hand file that can\'t be copied back (pull.sh, the judge of the next update) keeps the copy armed; with room it goes back', { timeout: 300000 * SLOW }, () => {
+    const h = armedHome({ bigPull: true });
+    put(h, '.local/share/spark-console/pull.sh', 'new pull.sh\n', 0o700);
+    let r = putBack(h, { limit: true });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /couldn't be put back whole: some of its files couldn't be copied back \(is the disk full\?\)\. Its copy is kept/);
+    assert.equal(get(h, '.local/share/spark-console/pull.sh'), 'new pull.sh\n', 'untouched, not cut short');
+    assert.ok(armed(h), 'the copy is kept');
+    r = putBack(h);
+    assert.match(get(h, '.local/share/spark-console/pull.sh'), /^old pull\.sh\n/);
+    assert.ok(!existsSync(gshare(h, 'update-guard')), r.stdout);
+  });
+
+  test('nothing runs without the lock: a put-back and a disarm that can\'t get it change nothing', { timeout: 120000 * SLOW, skip: spawnSync('sh', ['-c', 'command -v flock'], { timeout: 5000 }).status !== 0 && 'no flock here' }, async () => {
+    const h = armedHome();
+    newBuild(h);
+    const lockFile = gshare(h, 'update-guard.lock');
+    const free = () => spawnSync('flock', ['-n', lockFile, 'true'], { timeout: 5000 }).status === 0;
+    const holder = spawn('flock', ['-x', lockFile, 'sleep', '300'], { detached: true, stdio: 'ignore' });
+    try {
+      await waitFor(() => !free(), { timeout: 10000, what: 'another run holding the way back\'s lock' });
+      let r = putBack(h, { extra: { SPARK_CONSOLE_UPDATE_LOCK_S: '2' } });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stdout, /Another run of the way back still holds its lock \(\S+\), so nothing was changed\./);
+      r = run(h, [gshare(h, 'update-guard', 'update-guard.sh'), 'disarm'], { extra: { SPARK_CONSOLE_UPDATE_LOCK_S: '2' } });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stdout, /so nothing was changed, and the way back is still armed\./);
+      assert.deepEqual([server(h), get(h, 'spark-console/index.html')], ['new, whole', 'new page\n']);
+      assert.ok(armed(h), 'still armed');
+      assert.deepEqual(calls(h), [], 'no service stopped, no timer touched');
+    } finally {
+      try { process.kill(-holder.pid, 'SIGKILL'); } catch {}
+      await waitFor(free, { timeout: 10000, what: 'the lock let go' });
+    }
+  });
+
+  test('a copy that goes away under a put-back (another run took it while the service stopped) removes no by-hand file', { timeout: 300000 * SLOW }, () => {
+    // (the stand-in systemctl takes the copy away as the service stops, as another run's removal would land then)
+    const h = armedHome({ systemctl: '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\ncase "$*" in *"stop spark-console-api"*) G="$HOME/.local/share/spark-console/update-guard"; [ ! -e "$HOME/take-copy" ] || { rm -f "$G/guard"; rm -rf "$G/share"; } ;; esac\nexit 0\n' });
+    newBuild(h);
+    writeFileSync(join(h, 'take-copy'), '');
+    const r = putBack(h);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /went away while this ran/);
+    assert.deepEqual(BY.filter(f => !existsSync(gshare(h, f))), [], 'every by-hand file is still there');
+  });
+
+  test('restore.sh in a snapshot: a copy back that fails changes nothing live and keeps the snapshot as it is; with room it puts it back', { timeout: 300000 * SLOW }, () => {
+    const text = /cat > "\$SNAP\/restore\.sh" <<'RESTORE'\n([\s\S]*?)\nRESTORE\n/.exec(INSTALLER_TEXT)[1];
+    const h = shortHome('scr-'), snap = join(h, '.local', 'share', 'spark-console', 'releases', '20261116T000000Z');
+    put(h, 'bin/systemctl', '#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\nexit 0\n', 0o755);
+    put(snap, 'spark-console/index.html', 'old page\n');
+    put(snap, 'spark-console-service/server.mjs', OLD_SERVER);
+    put(snap, 'spark-console-api.service', '[Unit]\nDescription=old\n');
+    put(snap, 'restore.sh', `${text}\n`, 0o700);
+    put(h, 'spark-console/index.html', 'new page\n');
+    put(h, 'spark-console-service/server.mjs', NEW_SERVER);
+    let r = run(h, [join(snap, 'restore.sh'), '--stand-in'], { limit: true });
+    assert.notEqual(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stderr, /The saved install couldn't be copied back \(is the disk full\?\), so nothing was changed\./);
+    assert.deepEqual([server(h), get(h, 'spark-console/index.html')], ['new, whole', 'new page\n']);
+    assert.ok(!existsSync(join(snap, 'same')), 'the snapshot isn’t marked as what is installed');
+    assert.deepEqual(calls(h).filter(l => /stop/.test(l)), [], 'the service wasn’t stopped');
+    r = run(h, [join(snap, 'restore.sh'), '--stand-in']);
+    assert.deepEqual([server(h), get(h, 'spark-console/index.html')], ['old, whole', 'old page\n'], r.stdout + r.stderr);
+    assert.ok(existsSync(join(snap, 'same')));
   });
 });

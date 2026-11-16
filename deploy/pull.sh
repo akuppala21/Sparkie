@@ -91,6 +91,12 @@ stopped() {
   result refused "the install was stopped before it changed anything"
   exit 130
 }
+# After a put-back: when the way back is still armed (its build from before couldn't be put back whole, a full disk, or
+# another run of it holds its lock), that is said first, with how to try again; nothing otherwise.
+still_armed() {
+  [ -s "$SHARE/update-guard/guard" ] || return 0
+  echo "the build from before couldn't be put back whole, and its copy is kept (make room if the disk is full, then run bash $SHARE/update-guard/update-guard.sh put-back hand); "
+}
 # Cut off (Ctrl-C, the terminal closed) once the way back is armed: it puts back what differs, and the result says what
 # answers then. (A cut at the very end, while the confirmed build's copy is being removed, leaves that build running.)
 interrupted() {
@@ -103,8 +109,8 @@ interrupted() {
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"
   what="the build answering now is ${now:-none}$([ "$it" = - ] || echo ", installed from tree ${it:0:12}")"
-  if [ "$now" = "$code_build" ] && [ "$it" = "$t" ]; then result kept "the install was interrupted after the new build was confirmed; $what" "$code_build"
-  else result 'not kept' "the install was interrupted; $what" "$code_build"; fi
+  if [ -z "$(still_armed)" ] && [ "$now" = "$code_build" ] && [ "$it" = "$t" ]; then result kept "the install was interrupted after the new build was confirmed; $what" "$code_build"
+  else result 'not kept' "$(still_armed)the install was interrupted; $what" "$code_build"; fi
   exit 130
 }
 
@@ -747,7 +753,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"
   now="the build answering now is ${now:-none}$([ "$it" = - ] || echo ", installed from tree ${it:0:12}")"
-  result 'not kept' "$failed; $now" "$code_build"
+  result 'not kept' "$(still_armed)$failed; $now" "$code_build"
   echo "  Not kept: $now." >&2
   return 1
 }

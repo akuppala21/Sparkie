@@ -306,6 +306,9 @@ if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]]; then
     echo "  (The build from before that update is put back first: if this install isn't kept, that confirmed build returns.)"
     bash "$GUARD/update-guard.sh" put-back hand "an install made outside it took over" \
       || echo "  NOTE: that build from before didn't come back answering, or its copy wasn't whole; this install goes on."
+    # (still armed: its build couldn't be put back whole, or another run of it holds its lock. Going on would leave its
+    # timer to undo this install later)
+    [ ! -s "$GUARD/guard" ] || fail "That update's way back is still armed: its build from before couldn't be put back whole (is the disk full?), or another run of it holds its lock. Make room if the disk is full, run: bash $GUARD/update-guard.sh put-back hand, then this install again. This install changed nothing."
   fi
 fi
 
@@ -382,18 +385,34 @@ done
 [ ! -e "${0%/*}/stand-in" ] || SPARK_CONSOLE_ALL_LOCAL=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$(cd "$(dirname "$0")" && pwd)"
-# put_back <saved> <live>: the live folder's contents become exactly the saved ones. It stays the same folder, so
-# Tailscale's routes keep pointing at it.
-put_back() { if [ -d "$1" ]; then mkdir -p "$2"; find "$2" -mindepth 1 -delete; cp -a "$1/." "$2/"; fi; }
+# stage <saved> <beside>: an exact copy of a saved folder made beside the live one, and checked. Nothing live changes.
+stage() { [ -d "$1" ] || return 0; rm -rf "$2" && mkdir -p "$2" && cp -a "$1/." "$2/" && diff -rq --no-dereference "$1" "$2" >/dev/null 2>&1; }
+# swap <beside> <live>: the live folder's contents become the staged ones, moved in (on one disk a move needs no room).
+# It stays the same folder, so Tailscale's routes keep pointing at it.
+swap() {
+  [ -d "$1" ] || return 0
+  mkdir -p "$2"; find "$2" -mindepth 1 -delete
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do { [ -e "$e" ] || [ -L "$e" ]; } || continue; mv "$e" "$2/"; done
+  rmdir "$1"
+}
 echo "Putting back the Spark Console install saved in $S …"
-# However this ends, the service is started again: a copy that fails must never leave it stopped (the watchdog leaves a
+# First a copy beside each live folder, checked: one that fails (a full disk, a disk error) changes nothing live, the
+# service isn't stopped, and this snapshot stays as it is, to be run again once there is room.
+B="$HOME/.spark-console.restore" BS="$HOME/.spark-console-service.restore" BU="$HOME/.config/systemd/user/.spark-console-api.service.restore"
+if ! { stage "$S/spark-console" "$B" && stage "$S/spark-console-service" "$BS" \
+    && { [ ! -f "$S/spark-console-api.service" ] || { mkdir -p "$HOME/.config/systemd/user" && cp -p "$S/spark-console-api.service" "$BU" && cmp -s "$S/spark-console-api.service" "$BU"; }; }; }; then
+  rm -rf "$B" "$BS"; rm -f "$BU"
+  echo "  The saved install couldn't be copied back (is the disk full?), so nothing was changed. Make room, then run this again: bash $0" >&2
+  exit 1
+fi
+# However this ends, the service is started again: a move that fails must never leave it stopped (the watchdog leaves a
 # stopped service alone).
 trap 'systemctl --user daemon-reload 2>/dev/null; systemctl --user start spark-console-api 2>/dev/null || true' EXIT
 systemctl --user stop spark-console-api 2>/dev/null || true
-put_back "$S/spark-console" "$HOME/spark-console"
-put_back "$S/spark-console-service" "$HOME/spark-console-service"
+swap "$B" "$HOME/spark-console"
+swap "$BS" "$HOME/spark-console-service"
 if [ -f "$S/spark-console-api.service" ]; then
-  mkdir -p "$HOME/.config/systemd/user"; cp -p "$S/spark-console-api.service" "$HOME/.config/systemd/user/"
+  mv -f "$BU" "$HOME/.config/systemd/user/spark-console-api.service"
   # (said plainly when the Node that unit starts the service with is no longer there, as code-server's goes, E 2.6)
   n=$(sed -n 's/^ExecStart=\([^ ]*\) .*/\1/p' "$S/spark-console-api.service" | head -n 1)
   [ -z "$n" ] || [ -x "$n" ] || echo "  The build put back starts with the Node.js at $n, which is no longer there, so it can't start. Install Node.js 22 from NodeSource, then install again." >&2

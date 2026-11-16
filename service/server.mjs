@@ -24207,6 +24207,8 @@ function updResultLook() {
     : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
     : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
+    // (the way back couldn't put the build from before back whole, a full disk say, and keeps its copy: pull.sh says so first)
+    : /^the build from before couldn't be put back whole, and its copy is kept/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
   const conv = updTell(asked, line);
   if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});
