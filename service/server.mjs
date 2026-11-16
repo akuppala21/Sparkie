@@ -19024,11 +19024,19 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   return out;
 }
 
+// An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
+// refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
+// (S-12). run is a lookup to runAction, so the ladder asks this itself; root does too (runCommand). A look is not a
+// change and still runs.
+function workHeld(viewer, ctx) {
+  if ((ctx.agentId || ctx.agent || viewer?.agentKey) && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
+}
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
 // spec (write_file, 21-write.mjs): its own call, key and lines for the button, and what the runner runs in its place
 // (as); command is then the plain write the sorter was handed. keys (run's, 21-run-keys.mjs): the names it is given.
 async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null, keys = []) {
   whoMayLook(viewer, ctx);
+  workHeld(viewer, ctx);
   // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
@@ -23926,7 +23934,7 @@ function forBrain(t) {
 // asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
-  if (input.root === true) return rootChange(input, viewer, ctx);
+  if (input.root === true) { workHeld(viewer, ctx); return rootChange(input, viewer, ctx); }
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: its own place, before the sorter)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)

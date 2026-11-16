@@ -403,3 +403,36 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
   assert.ok(held.endsWith('\nbash notes/s6a.sh'), held);
   assert.equal(recordText(end), '$ bash notes/s6a.sh\ns6a ran\n');
 });
+
+// S-12 (the final sorter read): during the hold after Spark Console's state was put back from a copy, every agent change
+// is refused, but an agent's run change through Sparkie was asked instead. Now it is refused in the same words; a look
+// still runs.
+test('S-12: during the put-back hold an agent\'s change on a Spark is refused in the hold\'s words, through Sparkie and by its own call; its look still runs', { timeout: 180000 * SLOW }, async () => {
+  const PUTBACK = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
+  const f = T.fleet.secretsFile, was = readFileSync(f, 'utf8'), s = JSON.parse(was);
+  writeFileSync(f, JSON.stringify({ ...s, auth: { ...(s.auth || {}), hold: { since: new Date().toISOString() } } }), { mode: 0o600 });
+  try {
+    await waitFor(async () => (await api('/auth/putback')).json?.held, { what: 'the hold' });
+    const words = 'fix the held note on spark 3';
+    script([{ match: `^${words}$`, rounds: [[RUN('touch notes/held.txt')]] }]);
+    let r;
+    try {
+      r = await call(keys.act.token, ASK, { message: words });
+      if (r.value?.status === 'thinking') r = await waitFor(async () => { const x = await call(keys.act.token, ASK, { conversation: r.value.conversation }); return x.value?.status !== 'thinking' && x; }, { timeout: 90000, what: 'Sparkie\'s answer to the agent' });
+    } finally { noScript(); }
+    assert.equal(r.isError, false, r.text);
+    const [got] = sentBack(words);
+    assert.equal(got?.error, PUTBACK, JSON.stringify(got));
+    assert.ok(!(await chatMessages(r.value.conversation)).some(m => (m.choices || []).length), 'no button');
+    assert.ok(!existsSync(at3('notes/held.txt')), 'nothing ran');
+    const own = await call(keys.act.token, 'run', { on: 'spark3', command: 'touch notes/held.txt', dir: '~' });
+    assert.equal(own.isError, true, own.text);
+    assert.ok(own.text.includes(PUTBACK), own.text);
+    const look = await call(keys.act.token, 'run', { on: 'spark3', command: 'cat notes/a.txt' });
+    assert.equal(look.isError, false, look.text);
+    assert.equal(look.value?.output, 'a before\n', look.text);
+  } finally {
+    writeFileSync(f, was, { mode: 0o600 });
+    await waitFor(async () => (await api('/auth/putback')).json?.held === false, { what: 'the hold to go' });
+  }
+});

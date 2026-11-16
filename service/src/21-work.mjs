@@ -342,7 +342,7 @@ function forBrain(t) {
 // asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
-  if (input.root === true) return rootChange(input, viewer, ctx);
+  if (input.root === true) { workHeld(viewer, ctx); return rootChange(input, viewer, ctx); }
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: its own place, before the sorter)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
