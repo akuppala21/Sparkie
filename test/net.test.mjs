@@ -411,3 +411,14 @@ test('only the owner’s current message asks for a lock-out change: the message
   assert.match(say('allow port 8002 through the firewall on spark 3', 'carry on'), /^Sparkie’s own proposal/);
   assert.match(say('allow port 8002 through the firewall on spark 3', { content: 'allow port 8002 through the firewall on spark 3', from: 'helper-agent' }), /^Sparkie’s own proposal/, 'an agent’s message');
 });
+
+// The final read's net-asks-port: work sentences that name a way in only as a place or inside another thing's name.
+test('a way-in word counts only as what the verb changes: not after a place word (on, in, of, from, at), not as part of another thing’s name', () => {
+  const { netAsks } = wordsTest(), node = { id: 'spark3' };
+  for (const s of ['Start the app on port 8080 on Spark 3', 'Build the app in the access folder on spark 3', 'Fix the shell script in ~/work on spark 3',
+    'Update my profile picture script on spark 3', 'Install the ssh extension for vscode on spark 3', 'update the network drivers on spark 3',
+    'create a group chat app on spark 3', 'Rename the users table in the db on spark 3', 'make a password generator on spark 3']) assert.equal(netAsks(node, s), false, s);
+  for (const s of ['open port 8022 on spark 3', 'allow user bob to sign in on spark 3', 'turn off Tailscale SSH on spark 3', 'can you add my laptop’s ssh key on spark 3?',
+    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password',
+    'add bob to the sudo group on spark 3', 'add an alias to my .bashrc on spark 3', 'change the firewall rules on spark 3', 'change the password of bob on spark 3']) assert.equal(netAsks(node, s), true, s);
+});

@@ -259,8 +259,11 @@ input; adding a Spark from chat (it waits for Spark 1); a brain across Sparks (i
 for Sparkie's own proposals; removing a kept key from chat.
 
 **A judgement that stays.** Whether the owner's words ask for a lock-out change is decided by word lists
-(`netAsks`, R71; section 9, item 4). A true ask they miss is refused, and the refusal says how to ask. A sentence that
-only looks like an ask gets the dangerous ask. Neither runs anything without the owner's press.
+(`netAsks`, R71; section 9, item 4). The way-in word must be what the verb acts on: not after a place word (on, in,
+of, from, at) and not part of another thing's name ("the shell script", "the users table"). A true ask they miss is
+refused, and the refusal says how to ask ("set PasswordAuthentication no in sshd_config on Spark 3" is one). A
+sentence that only looks like an ask ("set the hostname in config.yaml on Spark 3", one that quotes someone else)
+gets the dangerous ask. Neither runs anything without the owner's press.
 
 **Existing tests changed.** Where behaviour changed on purpose, the tests that held the old behaviour changed with
 it: "root is refused on every Spark" became "refused until the owner turns it on". Every such line shows in

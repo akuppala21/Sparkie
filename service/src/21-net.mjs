@@ -168,9 +168,13 @@ const NET_QUESTION = new RegExp(String.raw`${NET_LEAD}(?:why|what|which|who|whom
 // open", "whether to add", "should I open")
 const NET_STATE = /(?:\b(?:am|is|are|was|were|be|been|being|still|already|left|kept|stays?|remains?|not|never)|n't|(?<!\blet)'s|'m|'re)\s+$/i;
 const NET_IF = /\b(?:how|why|what|when|where|which|who|whether|if|should|would|could|can|might|may)\b(?!')[^,;:]*$/i;
-// (what the verb changes: its own words and the six after it, up to a comma or a joining word, so "start a model on
-// Spark 3 with port 8000" names no lock-out thing to change)
-const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if)\s/i;
+// (what the verb changes: its own words and the six after it, up to a comma, a joining word or a place word (on, in, of,
+// from, at), so "start the app on port 8080 on Spark 3" names no lock-out thing to change. Not "to" or "into": "add bob
+// to the sudo group" is a true ask)
+const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if|on|in|of|from|at)\s/i;
+// (a way-in word that only names another thing, "the shell script", "the users table", "a password generator", is not
+// what changes: the word after it names the thing)
+const NET_NAMED = /^(?:scripts?|tables?|apps?|applications?|generators?|extensions?|drivers?|pictures?|photos?|chats?|folders?|director(?:y|ies)|projects?|repos?|repositor(?:y|ies)|pages?|tests?|tools?|programs?|code|class(?:es)?|functions?|columns?|fields?|bots?|plugins?|themes?|games?|dashboards?|demos?|tutorials?|docs?|notebooks?|models?|datasets?)\b/i;
 function netAsks(node, text) {
   for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
@@ -181,7 +185,8 @@ function netAsks(node, text) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
       if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
-      if (NET_WHAT.test(`${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`)) return true;
+      const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
+      for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
     }
   }
   return false;
