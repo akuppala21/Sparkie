@@ -512,6 +512,16 @@ const handler = async (req, res) => {
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
     // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
+    // The coding trial's result (agentbar/trial.mjs --store), kept the same way (21-brain-trial.mjs); GET: the read.
+    if (path === '/main/trial') {
+      ownerOnly();
+      if (req.method !== 'GET' && req.method !== 'POST') throw new HttpError(405, 'Use GET or POST.');
+      const body = req.method === 'POST' ? await readBody(req) : null;
+      await brainRanLook();
+      if (req.method === 'GET') return send(res, 200, trialView());
+      const kept = storeBrainTrial(body, { ...viewer, from: clientAddress(req) });
+      return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept);
+    }
     if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, { ...viewer, from: clientAddress(req) }); return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
