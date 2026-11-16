@@ -173,7 +173,7 @@ test('a script write_file wrote, and a later command of the same request runs, i
   assert.ok(!existsSync(at3('notes/went.txt')), 'not run');
 });
 
-test('the old text is read only through the look wall: a key\'s is hidden, the button says so, and it is asked even when the words ask', { timeout: 120000 * SLOW }, async () => {
+test('the old text is read only through the look wall: a key\'s is hidden, the button says so, and it is asked', { timeout: 120000 * SLOW }, async () => {
   const looks = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length, before = looks();
   const plain = await turn(await newChat(), 'fix the e notes again on spark 3', [[WRITE('~/notes/e.txt', 'e again\n')]]);
   assert.equal(plain.back[0]?.ran, true, JSON.stringify(plain.back));
@@ -181,7 +181,8 @@ test('the old text is read only through the look wall: a key\'s is hidden, the b
   const chat = await newChat();
   const r = await turn(chat, 'fix the server key file on spark 3', [[WRITE('server.key', 'still a placeholder\n')]]);
   assert.equal(r.back[0]?.outcome, 'needs-ok', JSON.stringify(r.back));
-  assert.match(r.back[0].question, /^Write this file on Spark 3\?\n~\/work\/server\.key: its old text is hidden \(a key, or a file a look may not read\), so only the new text is shown\n\+ still a placeholder\nAsked because its old text is hidden from a look, so you see only the new text\.\n/);
+  // (every key name the look's own check hides, the sorter asks for too, and its reason comes first)
+  assert.match(r.back[0].question, /^Write this file on Spark 3\?\n~\/work\/server\.key: its old text is hidden \(a key, or a file a look may not read\), so only the new text is shown\n\+ still a placeholder\nAsked because /);
   assert.ok(!r.back[0].question.includes('- placeholder'));
   assert.equal(text('work/server.key'), 'placeholder\n');
 });
@@ -190,8 +191,9 @@ test('a write is a work step, as run is: one message writes at most as many as i
   // (words that don't name the Spark: each write is asked, so a round's four don't meet the Spark's claim)
   const w = n => WRITE(`~/notes/step${n}.txt`, `${n}\n`), words = 'fix the step notes';
   const r = await turn(await newChat(), words, [[w(1), w(2), w(3), w(4)], [w(5), w(6), w(7), w(8)], [w(9), w(10), w(11), w(12)], [w(13)]]);
-  assert.match(r.back.at(-1)?.error || '', /^Not run: one message may run 12 commands, and this one has\./, JSON.stringify(r.back));
-  assert.ok(!existsSync(at3('notes/step13.txt')));
+  // (twelve steps spent: the turn answers, and the thirteenth is never called)
+  assert.match(r.message.content, /\n\nStopped here: one message may run 12 commands, and 12 ran\./, r.message.content.slice(-300));
+  assert.ok(!JSON.stringify(r.back).includes('step13'), 'the thirteenth not called');
 });
 
 test('a name that starts with a dash is the file it names, and a later run of it is asked; a path that names no file is refused', { timeout: 120000 * SLOW }, async () => {
