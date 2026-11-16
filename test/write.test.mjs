@@ -25,6 +25,7 @@ import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, sl
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
+const UNREAD = 'kept from a look\n';
 // (the lock-out net is off for this fleet: a write to a way in is its off side; net.test has the on side)
 useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_NET: '0' },
   prepare: ({ root }) => {
@@ -42,6 +43,8 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000'
     put('notes/latin1.txt', Buffer.from('636166e90a6c696e6520320a', 'hex'));
     put('notes/long.txt', 'x\n');
     put('work/server.key', 'placeholder\n', 0o600);
+    // (its owner may write it and nobody may read it: the stand-in's look runs as this account, so it can't read it)
+    put('notes/unread.txt', UNREAD, 0o200);
     symlinkSync('real/inner.txt', join(h, 'notes', 'lnk.txt'));
     mkdirSync(join(h, 'models', 'm1'), { recursive: true });
     put('.ssh/authorized_keys', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n', 0o600);
@@ -76,6 +79,16 @@ async function turn(chat, words, rounds) {
   } finally { noScript(); }
 }
 const writeApi = body => api('/actions/write_file', { method: 'POST', body: { on: 'spark3', ...body } });
+// A text as base64, at each of the three alignments it can take inside a longer run of bytes (its ends cut where they
+// hang on the bytes beside it).
+function base64Forms(v) {
+  const bytes = Buffer.from(v), out = new Set([bytes.toString('base64')]);
+  for (let k = 0; k < 3; k++) {
+    const b = Buffer.concat([Buffer.alloc(k), bytes]).toString('base64');
+    out.add(b.slice(k ? 4 : 0, (k + bytes.length) % 3 ? b.length - 4 : b.length));
+  }
+  return [...out].filter(f => f.length >= 8);
+}
 
 test('a file the owner\'s words ask for is written at once, copied first, with its old mode; its bytes never on a command line; undo puts it back', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat(), marker = 'MARKER-7f3a-written';
@@ -93,6 +106,11 @@ test('a file the owner\'s words ask for is written at once, copied first, with i
   assert.ok(!JSON.stringify(calls()).includes(marker), 'not on a command line');
   assert.ok(!readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', start.unit, 'command'), 'utf8').includes(marker), 'not in the command');
   assert.ok(!JSON.stringify(start).includes(marker), 'not on the journal\'s start line');
+  // (nor as base64, the form the bytes take on the helper's input, at any of its three alignments)
+  for (const b of base64Forms(`e after ${marker}\n`)) {
+    assert.ok(!JSON.stringify(calls()).includes(b) && !JSON.stringify(start).includes(b), `base64 ${b.slice(0, 12)}…`);
+    assert.ok(!readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', start.unit, 'command'), 'utf8').includes(b), `base64 ${b.slice(0, 12)}… in the command`);
+  }
   const undo = await turn(chat, 'undo that', [[{ name: 'undo_last_change', arguments: {} }]]);
   assert.equal(undo.back[0]?.outcome, 'restored', JSON.stringify(undo.back));
   assert.equal(text('notes/e.txt'), 'e before\n');
@@ -130,6 +148,8 @@ test('lines from to to are replaced in place, as cat -n numbered them; out of ra
   assert.equal(far.json.error, '~/notes/five.txt has 5 lines, so lines 5 to 9 aren’t all there. Nothing was written.');
   const none = await writeApi({ path: '~/notes/none.txt', text: 'x', from: 1, to: 1 });
   assert.equal(none.status, 400, none.text);
+  assert.equal(none.json.error, 'Lines 1 to 1 need ~/notes/none.txt there as a plain text file of at most 256 KB a look may read, and it isn’t. Nothing was written.');
+  assert.ok(!existsSync(at3('notes/none.txt')), 'nothing made');
   const half = await writeApi({ path: '~/notes/five.txt', text: 'x', from: 1 });
   assert.equal(half.status, 400, half.text);
   assert.match(half.json.error, /^from and to go together/);
@@ -185,7 +205,7 @@ test('the old text is read only through the look wall: a key\'s is hidden, the b
   const r = await turn(chat, 'fix the server key file on spark 3', [[WRITE('server.key', 'still a placeholder\n')]]);
   assert.equal(r.back[0]?.outcome, 'needs-ok', JSON.stringify(r.back));
   // (every key name the look's own check hides, the sorter asks for too, and its reason comes first)
-  assert.match(r.back[0].question, /^Write this file on Spark 3\?\n~\/work\/server\.key: its old text is hidden \(a key, or a file a look may not read\), so only the new text is shown\n\+ still a placeholder\nAsked because /);
+  assert.match(r.back[0].question, /^Write this file on Spark 3\?\n~\/work\/server\.key: its old text is hidden \(a key, or a file a look may not read\), so only the new text is shown\n\+ still a placeholder\nAsked because it is risky: It names “\.\/server\.key”, key material the run wall hides, so it would run outside the wall\.\n/, r.back[0].question);
   assert.ok(!r.back[0].question.includes('- placeholder'));
   assert.equal(text('work/server.key'), 'placeholder\n');
 });
@@ -234,6 +254,10 @@ test('the button: a cut line and a hidden value are marked, a sign that doesn\'t
   const hidden = await writeApi({ path: '~/notes/rtl.txt', text: `safe ${String.fromCharCode(0x202e)}txt.exe\n` });
   assert.equal(hidden.status, 400, hidden.text);
   assert.match(hidden.json.error, /a sign that doesn’t show/);
+  // (in the path too: the schema stops control signs only, not a zero-width or direction mark)
+  const hiddenPath = await writeApi({ path: `~/notes/zw${String.fromCharCode(0x200b)}.txt`, text: 'x\n' });
+  assert.equal(hiddenPath.status, 400, hiddenPath.text);
+  assert.match(hiddenPath.json.error, /a sign that doesn’t show/);
   // A line put after a last line with no line break starts a line of its own, as the button shows it.
   const c = await newChat(), add = await turn(c, 'change the nobreak note', [[WRITE('~/notes/nobreak.txt', 'c', { from: 3, to: 2 })]]);
   assert.match(add.back[0]?.question || '', /^Write this file on Spark 3\?\n~\/notes\/nobreak\.txt: new lines before line 3 \(2 lines now\)\n\+ c\n/, JSON.stringify(add.back));
@@ -290,7 +314,7 @@ test('the unit\'s own program: it checks the file, writes beside it and makes on
   } finally { setTimeout(() => rmSync(dir, { recursive: true, force: true }), 2000); }
 });
 
-test('write_file\'s own entry: refused while changes are paused; an agent\'s call is a button for the owner', { timeout: 60000 * SLOW }, async () => {
+test('write_file\'s own entry: refused while changes are paused; an agent\'s call is answered with a question for the owner, with no button to press', { timeout: 60000 * SLOW }, async () => {
   await agentSettings({ halted: true });
   try {
     const r = await writeApi({ path: '~/notes/paused.txt', text: 'x\n' });
@@ -300,6 +324,9 @@ test('write_file\'s own entry: refused while changes are paused; an agent\'s cal
   const a = await call(keys.act.token, 'write_file', { on: 'spark3', path: '~/notes/agent.txt', text: 'x\n' });
   assert.equal(a.isError, false, a.text);
   assert.equal(a.value.outcome, 'question', a.text);
+  // (asked of a direct call, an owner-only question keeps no choice: the owner asks for it in their own chat)
+  assert.ok(Array.isArray(a.value.choices) && a.value.choices.length > 0 && a.value.choices.every(c => c.choice === null), a.text);
+  assert.match(a.value.note, /^Only the owner can answer this one, from Spark Console, and nothing was done\. There’s no choice to send back/, a.text);
   assert.ok(!existsSync(at3('notes/paused.txt')) && !existsSync(at3('notes/agent.txt')));
 });
 
@@ -422,4 +449,56 @@ test('a value in a write ask\'s lines, given later with /key, is hidden in the p
   assert.ok(!JSON.stringify(got).includes(X), JSON.stringify(got).slice(0, 2000));
   assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(X), 'chats.json');
   assert.ok(!existsSync(at3('notes/registry.txt')), 'nothing written');
+});
+
+// The final read, TB2: a file the look may not read, under a name the sorter calls a plain change, is asked for that
+// reason alone (the key file above is asked for the sorter's own reason first), and stays as it was.
+test('a file a look may not read is asked because its old text is hidden, even when the words ask for it there, and stays as it was', { timeout: 120000 * SLOW }, async () => {
+  const r = await turn(await newChat(), 'fix the unread note on spark 3', [[WRITE('~/notes/unread.txt', 'new\n')]]);
+  assert.equal(r.back[0]?.outcome, 'needs-ok', JSON.stringify(r.back));
+  assert.match(r.back[0].question, /^Write this file on Spark 3\?\n~\/notes\/unread\.txt: its old text is hidden \(a key, or a file a look may not read\), so only the new text is shown\n\+ new\nAsked because its old text is hidden from a look, so you see only the new text\.\n/, r.back[0].question);
+  assert.equal(statSync(at3('notes/unread.txt')).size, UNREAD.length, 'not written');
+});
+
+// The final read, TB3: in a chat whose words ask for it there, a write into the model store and one at the top of the
+// home are each asked for that reason (the runner's own refusal is not the ask), and the press writes them.
+test('in a chat, a write into the model store is asked for that reason, and the press writes it', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  const r = await turn(chat, 'fix the store config on spark 3', [[WRITE('~/models/m1/config.json', '{}\n')]]);
+  assert.equal(r.back[0]?.outcome, 'needs-ok', JSON.stringify(r.back));
+  assert.match(r.back[0].question, /\nAsked because it changes ~\/models, which a change gets only after your yes\.\n/, r.back[0].question);
+  assert.ok(!existsSync(at3('models/m1/config.json')), 'nothing written before the press');
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(existsSync(at3('models/m1/config.json')) && text('models/m1/config.json'), '{}\n', `the press wrote it: ${p.text.slice(0, 1500)}`);
+});
+
+test('in a chat, a write at the top of the home is asked for that reason, and the press writes it with the top of the home writable', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  const r = await turn(chat, 'fix the top note on spark 3', [[WRITE('~/top.txt', 'top\n')]]);
+  assert.equal(r.back[0]?.outcome, 'needs-ok', JSON.stringify(r.back));
+  assert.match(r.back[0].question, /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\n/, r.back[0].question);
+  assert.ok(!existsSync(at3('top.txt')), 'nothing written before the press');
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(existsSync(at3('top.txt')) && text('top.txt'), 'top\n', `the press wrote it: ${p.text.slice(0, 1500)}`);
+  assert.equal(startOf('~/top.txt')?.wall, 'home', JSON.stringify(startOf('~/top.txt')));
+});
+
+// The final read, TB7: writeKey's other two kinds, a kept key's exact value and a private key block (the token shape is
+// above); each refused by name, nothing written.
+test('a kept key\'s exact value in the text is refused by name; nothing is written', { timeout: 60000 * SLOW }, async () => {
+  const V = `kw${createHash('sha256').update(`${Date.now()} ${Math.random()}`).digest('hex').slice(0, 30)}`;
+  assert.match((await say(await newChat(), `/key WRITE_DEMO_KEY ${V}`)).text, /^Kept your key WRITE_DEMO_KEY\./);
+  const kept = await writeApi({ path: '~/notes/kept.txt', text: `TOKEN_FOR_DEMO=${V}\n` });
+  assert.equal(kept.status, 400, kept.text);
+  assert.equal(kept.json.error, 'The text holds the value of a key you gave Sparkie, so it isn’t written or shown on a button: give the key by its name. Nothing was written.');
+  assert.ok(!existsSync(at3('notes/kept.txt')));
+});
+
+test('a private key block in the text is refused by name; nothing is written', { timeout: 60000 * SLOW }, async () => {
+  const block = await writeApi({ path: '~/notes/block.txt', text: '-----BEGIN PRIVATE KEY-----\nnot a key: a test\'s made-up words\n-----END PRIVATE KEY-----\n' });
+  assert.equal(block.status, 400, block.text);
+  assert.equal(block.json.error, 'The text holds a private key block, so it isn’t written or shown on a button: give the key by its name. Nothing was written.');
+  assert.ok(!existsSync(at3('notes/block.txt')));
 });
