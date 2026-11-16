@@ -1037,9 +1037,9 @@ do_unit() {
   if [ "$NET" = 1 ]; then net_after; fi
   # (never an exit code for a command that never ran: told as a refusal, and nothing of it ran)
   if [ "$ran" = 0 ]; then printf '%s refused: its unit never started (systemd answered %s), so the command never ran\n' "$ID" "$rc"; exit 125; fi
-  # (systemd ends a unit at its limit, and systemd-run then answers 1: "end time" only then, and only once the limit
-  # has truly passed; a command that ends by itself in its last second keeps its own exit code)
-  if [ "$rc" = 1 ] && (( took >= 10#$SECS * 1000000 )); then printf '%s%s end time\n' "$nl" "$ID"
+  # ("end time" only once the limit has truly passed, by the clock with fractions: a command that ends by itself in its
+  # last second keeps its own exit code)
+  if [ "$rc" -ne 0 ] && (( took >= 10#$SECS * 1000000 )); then printf '%s%s end time\n' "$nl" "$ID"
   else printf '%s%s end %s\n' "$nl" "$ID" "$rc"; fi
   exit "$rc"
 }
