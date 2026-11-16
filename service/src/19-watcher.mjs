@@ -60,6 +60,21 @@ const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model |
         : e.type === 'notice' ? String(e.text || '')
       : `${e.container} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.drill ? ' (the self-test’s healing drill, on purpose)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
 
+// An event as the record ahead of the owner's words says it (fleetNotes, R26, A-17): only the console's own words and
+// bare names (bareName, 05-library.mjs): what happened, where, when, its kind. Never text from a Spark, a container, a
+// model or an agent: an operation's error (it quotes a container's log), a bring-back's reason, a notice's words (some
+// carry a name a device or a file gave). fleet_events and operation_log, outside reads, have the words.
+const recordName = v => bareName(String(v ?? '')) || 'a name not shown here';
+const recordEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model ? recordName(e.model) : ''} ${e.status}${e.error ? ' (operation_log has why)' : ''}`
+  : e.type === 'spark-powered-off' ? `${e.spark} was powered off by Spark Console on purpose${e.parked?.length ? `; parked ${e.parked.map(recordName).join(', ')}` : ''}`
+  : e.type === 'spark-powered-on' ? `${e.spark} was turned on again`
+  : e.type.startsWith('spark-') ? `${e.spark} went ${e.type.slice(6)}${e.poweredOff ? ' (powered off by Spark Console on purpose)' : ''}${e.last ? ` (last reading ${e.last.ageSeconds} s before: ${readingWords(e.last)})` : ''}`
+    : e.type === 'learned' ? `learned ${recordName(e.model)} from ${recordName(e.container)} on ${e.spark}${e.recipe ? ' (saved as a recipe)' : ''}`
+      : e.type === 'healing' ? `bringing back ${recordName(e.container)} on ${e.spark}`
+        : e.type === 'heal-skipped' ? `didn’t restart ${recordName(e.container)} on ${e.spark} (should_be_running says why)`
+        : e.type === 'notice' ? `a notice from Spark Console${e.spark ? ` about ${e.spark}` : ''} (fleet_events has its words)`
+      : `${recordName(e.container)} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.drill ? ' (the self-test’s healing drill, on purpose)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
+
 // What a Spark read last, for "why did Spark 4 go dark?" (round two, item 2). The status check keeps the GPU's numbers
 // (busy, watts, temperature, uptime); the watcher adds the hottest sensor on the board, the NVMe drive and the fan from
 // sysfs. Numbers or null only, and nothing here decides anything. The readings print first: they never change how the
@@ -317,6 +332,8 @@ function plannedWake(id) {
   return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
 }
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
+// The record rides ahead of the owner's words in every turn, so it holds the console's own words and bare names only
+// (recordEvent, recordName; R26, A-17): no log, error, served id with a space, bring-back reason or notice's words.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
   const running = Object.values(knowledge.workloads).filter(w => w.running);
@@ -328,14 +345,17 @@ function fleetNotes(viewer) {
     if (off) return `${sparkName(n)}: ${off.problem ? '' : 'asleep, on purpose (not a fault). '}${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
-      return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
+      return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${recordName(w.name)} (${w.kind})`).join('; ')}`;
     }
-    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${w.name} (${w.kind}${w.servedModels?.length ? `, serves ${w.servedModels.join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
+    // (names bare: a served model's id is whatever its server answers, R26)
+    const served = w => (w.servedModels || []).map(bareName).filter(Boolean);
+    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${recordName(w.name)} (${w.kind}${served(w).length ? `, serves ${served(w).join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
   }).filter(Boolean);
-  const recentEv = events.slice(-10).reverse().map(e => `${e.at.slice(0, 16).replace('T', ' ')} UTC: ${describeEvent(e)}`);
+  const recentEv = events.slice(-10).reverse().map(e => `${e.at.slice(0, 16).replace('T', ' ')} UTC: ${recordEvent(e)}`);
   const off = WORKFLOWS.map(w => workflowStatus(w.id)).filter(st => st.state !== 'active').map(st => `${st.id}: ${st.state === 'untested' ? 'off (this version wasn’t tested)' : 'not validated yet (the owner’s first run validates it)'}`);
   // What should be running but isn't (held), from the last look: the owner can bring it back or forget it.
-  const held = (heldLast || []).map(x => `${x.container} on ${x.spark}: held (${x.why})`);
+  // (its reason can quote a failure's first line: should_be_running, an outside read, says it)
+  const held = (heldLast || []).map(x => `${recordName(x.container)} on ${x.spark}: held (should_be_running says why)`);
   // Telegram, only while it has a problem (the owner fixes a token or a pairing; Sparkie says how).
   const telegram = tgProblem() ? [`Telegram: ${TG_WORDS[tg.state]}`] : [];
   // What is waiting on the owner (20-needs.mjs), first, only when there is something.

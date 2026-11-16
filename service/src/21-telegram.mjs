@@ -96,18 +96,21 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
   if (res.status >= 400 && res.status < 500) throw new TgError('bad-request');
   throw new TgError('unreachable');
 }
-// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once.
+// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once. true when sent, else why not (tgCall's
+// code: refused and bad-request, a 401, 403 or 400 from Telegram, will never succeed; the rest may later).
 async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
   const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
+  let why = 'unreachable';
   for (let i = 0, waited = false; i < 3; i++) {
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
+      why = e.code || 'unreachable';
       if (e.code === 'slow-down' && !waited) { waited = true; await sleep(e.retryAfter * 1000); continue; }
       if (e.code === 'unreachable') { await sleep(1000 * (i + 1)); continue; }
-      return false;
+      return why;
     }
   }
-  return false;
+  return why;
 }
 // "typing…" while Sparkie answers: every 4.5 s, for 5 minutes at most.
 function tgTyping() {

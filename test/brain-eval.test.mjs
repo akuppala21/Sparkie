@@ -13,6 +13,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -28,7 +29,7 @@ const CASES = join(REPO, 'test', 'eval', 'cases.json'), sha = b => createHash('s
 const SECRET = 'plain-secret-value-123', file = n => join(TMP, n), read = n => JSON.parse(readFileSync(file(n), 'utf8'));
 
 // test/eval.mjs as the owner runs it, its output kept.
-function runEval(args) {
+function runEval(args, limitMs = 240000) {
   return new Promise(resolve => {
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
@@ -36,7 +37,7 @@ function runEval(args) {
     let out = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { out += d; });
-    const limit = setTimeout(() => child.kill('SIGKILL'), 240000 * SLOW);
+    const limit = setTimeout(() => child.kill('SIGKILL'), limitMs * SLOW);
     child.on('close', code => { clearTimeout(limit); resolve({ code, out }); });
   });
 }
@@ -199,4 +200,92 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
     assert.match(seen.eval.says, /^The newest eval on record for this brain \(.+\) was for another version of what the brain reads, not this build’s\./);
     assert.ok(existsSync(join(TREE, 'test', 'eval', 'cases.json')));
   });
+
+  test('keep-app: the exact call the case names starts the app at once on the practice fleet (known to the watcher, a memory limit of its own)', { timeout: 300000 * SLOW }, async () => {
+    const r = await runEval(['--stand-in', '--only', 'keep-app', '--runs', '1', '--out', file('keep.json')]);
+    const [run] = read('keep.json').cases[0].runs;
+    assert.deepEqual([run.passed, run.asked, run.wrong, run.changed.map(x => [x.action, x.args?.container, x.on])], [true, false, 0, [['keep_running', 'open-webui', ['spark3']]]], r.out);
+    assert.equal(r.code, 0, r.out);
+  });
+
+  test('a broken run (the chat failed, twice) is no score: the file is written under its own kind, each broken run named; --store and the console refuse it; the brain is checked once for the whole run', { timeout: 600000 * SLOW }, async () => {
+    const b = await scriptedBrain('good');
+    try {
+      const r = await runEval(['--brain-port', String(b.port), '--console', `http://127.0.0.1:${b.port}/x`, '--only', 'whats-running', '--runs', '1', '--out', file('broken.json')], 540000);
+      assert.equal(r.code, 1, r.out);
+      const rec = read('broken.json'), [run] = rec.cases[0].runs;
+      assert.deepEqual([rec.kind, rec.score, rec.broken.map(x => [x.case, x.run])], ['spark-console-eval-broken', null, [['whats-running', 1]]], r.out);
+      // (its second try's fleet kept the run's one check: it didn't ask the brain again)
+      assert.deepEqual([run.passed, run.broken, run.rail?.checked, run.rail?.checkedHere], [false, true, true, false], JSON.stringify(run));
+      assert.match(run.error, /^the chat failed: /);
+      assert.match(run.firstTry, /^the chat failed: /, 'tried once more');
+      assert.match(r.out, /^ {6}run 1: no result, tried twice: the chat failed: /m);
+      assert.match(r.out, /^Not a score: 1 run was no result: whats-running run 1 \(the chat failed: .*\)\. Saved .*broken\.json as spark-console-eval-broken, which --store and Spark Console refuse\.$/m);
+      // (two fleets asked the brain the case's words; only the first checked the brain: a check is 6 requests, and the
+      // console's own check at start may make it 12)
+      assert.ok(b.seen.turn >= 2 && b.seen.check >= 6 && b.seen.check <= 12, JSON.stringify(b.seen));
+      const store = await runEval(['--store', file('broken.json'), '--console', 'http://127.0.0.1:9/console/api']);
+      assert.equal(store.code, 1, store.out);
+      assert.match(store.out, /^Not kept: that run isn't a score: 1 of its runs were no result \(whats-running run 1\)\./m);
+      const kept = await keep(rec);
+      assert.equal(kept.status, 400, kept.text);
+      assert.match(kept.json.error, /kind "spark-console-eval"/);
+    } finally { b.close(); }
+  });
+
+  test('a practice console whose rail isn’t checked runs no case: each run is no result, tried once more, named with the rail’s reason, and the brain never gets the case’s words', { timeout: 600000 * SLOW }, async () => {
+    const b = await scriptedBrain('no-tools');
+    try {
+      const r = await runEval(['--brain-port', String(b.port), '--console', `http://127.0.0.1:${b.port}/x`, '--only', 'whats-running,start-named', '--runs', '1', '--out', file('rail.json')], 540000);
+      assert.equal(r.code, 1, r.out);
+      const rec = read('rail.json');
+      assert.deepEqual([rec.kind, rec.broken.map(x => [x.case, x.run])], ['spark-console-eval-broken', [['whats-running', 1], ['start-named', 1]]], r.out);
+      assert.match(rec.broken[0].error, /^the practice console’s rail wasn’t checked before the chat: the brain check on record says not checked/);
+      assert.deepEqual(rec.cases[0].runs[0].rail, { checked: false, why: 'the brain check on record says not checked.', checkedHere: true });
+      assert.match(rec.broken[1].error, /^not run: the brain check kept no “checked” twice/);
+      assert.equal(b.seen.turn, 0, 'the brain never got a case’s words');
+      assert.ok(!rec.cases.some(c => c.runs.some(x => x.passed)), 'no run passed or failed: none was a result');
+    } finally { b.close(); }
+  });
 });
+
+// A scripted brain (an OpenAI-style server) for the runs above: it answers the console's brain check (its system line)
+// as a brain that calls tools does ('good'), or never calls the toy tool ('no-tools'), and every other request with a
+// 500, so a case's chat fails. seen: how many check requests and how many requests with a case's words it got.
+async function scriptedBrain(check) {
+  const seen = { check: 0, turn: 0 }, words = /what's running|start gpt-oss-20b on spark 3/;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ object: 'list', data: [{ id: 'scripted' }] })); }
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      let b = {};
+      try { b = JSON.parse(body); } catch {}
+      const msgs = Array.isArray(b.messages) ? b.messages : [], tools = Array.isArray(b.tools) ? b.tools : [], last = msgs.at(-1) || {};
+      if (!/^Spark Console is checking how this model calls tools\./.test(String(msgs.find(m => m.role === 'system')?.content || ''))) {
+        if (msgs.some(m => m.role === 'user' && words.test(String(m.content)))) seen.turn++;
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end('{"error":{"message":"scripted failure"}}');
+      }
+      seen.check++;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+      const cities = [...String(msgs.findLast(m => m.role === 'user')?.content || '').matchAll(/\b(Oslo|Lima)\b/g)].map(m => m[1]);
+      if (check === 'good' && tools.length && last.role === 'user' && cities.length) {
+        for (const [i, city] of cities.entries()) {
+          send({ tool_calls: [{ index: i, id: `call_check_${i}`, type: 'function', function: { name: 'weather', arguments: '' } }] });
+          send({ tool_calls: [{ index: i, function: { arguments: JSON.stringify({ city, unit: 'c' }) } }] });
+        }
+        send({}, 'tool_calls');
+        return res.end('data: [DONE]\n\n');
+      }
+      const temp = last.role === 'tool' ? /-?\d+/.exec(String(last.content))?.[0] : null;
+      send({ role: 'assistant', content: check !== 'good' && tools.length ? 'I can’t look that up.' : temp ? `It is ${temp} degrees there now.` : 'Hello there, nice to meet you.' });
+      send({}, 'stop');
+      res.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  return { port: server.address().port, seen, close: () => { server.closeAllConnections?.(); server.close(); } };
+}

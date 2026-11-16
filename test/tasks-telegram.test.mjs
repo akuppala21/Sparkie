@@ -5,6 +5,9 @@
 // start comes late here). Started again paired with someone else, such a task ends at the look after the start: no
 // carry-on turn, and nothing of it is told to the new chat. A carry-on turn here waits ten minutes, so a task stays as
 // it is made; the brain's context is 1,000 tokens, so one long lookup ends a reply at the output budget and makes one.
+// A task's report on Telegram that fails to send is tried again (A-8): marked before the send, put back on a failure
+// for now and tried on later ticks with a growing wait, four tries in all, then dropped and said in the journal; a
+// refusal that never succeeds (403, the bot blocked) is tried once (a fleet of its own, its stand-in told to fail).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, cpSync, readdirSync } from 'node:fs';
@@ -130,4 +133,66 @@ test('a task from Telegram keeps a mark of its pairing (not the chat’s ids); s
   const id = made.conv.id, m = (await call(E, `/chats/${id}`)).json.messages;
   const got = { carryOnTurns: m.filter(x => x.auto).length, stillATask: Boolean(taskIn(E, id)), toldToTheNewChat: sentOf(E).filter(x => x.to === OTHER_TG && /stops a model|Carry on with that request/.test(x.text)).map(x => x.text.slice(0, 160)) };
   assert.deepEqual(got, { carryOnTurns: 0, stillATask: false, toldToTheNewChat: [] }, JSON.stringify(m.slice(-3).map(x => [x.role, String(x.content).slice(0, 80)])));
+});
+
+// A-8 (R32): a report that fails to reach the paired chat is tried again a few times, never twice once sent; a 403 once.
+test('a task’s report on Telegram: two failed tries then sent once; always failing, four tries then dropped in the journal; a 403, one try', { timeout: 400000 * SLOW }, async () => {
+  const F = await startMock({ telegram: true, watchMs: 60000, env: { SPARK_CONSOLE_CONTINUE_MS: '600000', SPARK_CONSOLE_TASK_REPORT_MS: '500', SPARK_CONSOLE_TELL_RETRY_MS: '1500' },
+    prepare: ({ dir, stateDir }) => {
+      writeSecrets(dir, { telegram: pairing(OWNER_TG, ago(3600000)) });
+      const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
+      m.presets[m.current] = { ...m.presets[m.current], contextTokens: 1000 };
+      writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
+    } });
+  others.push(F);
+  await waitFor(async () => (await call(F, '/telegram')).json?.state === 'ok', { what: 'Telegram polling' });
+  const mode = m => fetch(`http://127.0.0.1:${F.telegramPort}/__mode`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(m) });
+  const reportSends = words => { const p = join(F.dir, 'telegram-calls.jsonl'); return existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(c => c.method === 'sendMessage' && String(c.body?.text || '').startsWith(`Report on your request “${words}”`)).length : 0; };
+  const dropped = id => readdirSync(F.journalDir).filter(f => f.endsWith('.jsonl')).flatMap(f => readFileSync(join(F.journalDir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))).filter(x => x.k === 'event' && x.act === 'telegram-dropped' && x.task === id);
+  // A task made from the paired chat, then ended by /stop on the page: its report goes to Telegram.
+  const ended = async words => {
+    writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, rounds: [[LONG]] }]));
+    let conv;
+    const before = sentOf(F).length;
+    try {
+      await tgSay(F, words);
+      conv = await waitFor(() => chatsOf(F).find(c => c.channel === 'telegram' && c.task?.carry && c.task.request === words), { timeout: 120000 * SLOW, what: `the task of “${words}” on disk` });
+      // (its reply sent there first, before the stand-in is told to fail)
+      await waitFor(() => sentOf(F).length > before, { timeout: 60000 * SLOW, what: 'the reply in the paired chat' });
+      await sleep(1000);
+    } finally { rmSync(join(F.dir, 'model-script.json'), { force: true }); }
+    return conv;
+  };
+  const stop = conv => call(F, `/chats/${conv.id}/messages`, { method: 'POST', body: { text: '/stop' } });
+  const owedGone = conv => waitFor(() => !chatsOf(F).find(c => c.id === conv.id)?.reports, { timeout: 120000 * SLOW, what: 'the report no longer owed' });
+  try {
+    // Two failed tries (each one of tgSend's: a 429, its wait, a 429), then sent: five calls, the last one went, once.
+    const w1 = 'read the workflows for the first report, then tell me which one stops a model', c1 = await ended(w1);
+    await mode({ slowDown: 4 });
+    assert.equal((await stop(c1)).status, 200);
+    await owedGone(c1);
+    // (no longer owed, and not dropped: it went, after a try that failed; none after it)
+    assert.deepEqual(dropped(c1.task.id), []);
+    const n1 = reportSends(w1);
+    assert.ok(n1 >= 3, `a failed try (two calls) and the one that went: ${n1}`);
+    await sleep(4000);
+    assert.equal(reportSends(w1), n1, 'nothing more once it went');
+    // Always failing: four tries, then dropped, said in the journal; nothing owed after.
+    const w2 = 'read the workflows for the second report, then tell me which one stops a model', c2 = await ended(w2);
+    await mode({ slowDown: 100000 });
+    assert.equal((await stop(c2)).status, 200);
+    const d2 = await waitFor(() => dropped(c2.task.id)[0], { timeout: 120000 * SLOW, what: 'the dropped report in the journal' });
+    assert.deepEqual([d2.what, d2.tries, d2.outcome], ['report', 4, 'dropped']);
+    assert.equal(reportSends(w2), 8);
+    await owedGone(c2);
+    // A 403 (the bot blocked): one try, dropped at once.
+    await mode({});
+    const w3 = 'read the workflows for the third report, then tell me which one stops a model', c3 = await ended(w3);
+    await mode({ blocked: true });
+    assert.equal((await stop(c3)).status, 200);
+    const d3 = await waitFor(() => dropped(c3.task.id)[0], { timeout: 60000 * SLOW, what: 'the dropped report in the journal' });
+    assert.deepEqual([d3.tries, d3.err], [1, 'never']);
+    await sleep(5000);
+    assert.equal(reportSends(w3), 1);
+  } finally { await mode({}); }
 });
