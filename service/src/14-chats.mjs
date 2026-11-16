@@ -250,7 +250,7 @@ function pressLate(x, c, conv, ctx, by, askedNow) {
     if (by.via === 'telegram') {
       const line = out.outcome === 'error' ? (/paused/i.test(out.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.')
         : ['question', 'needs-ok'].includes(out?.outcome) ? 'It needs your answer to a question in Spark Console.' : tgRanLine(out);
-      tell('result', `Result of your earlier press: ${line}`, { last: true }).catch(() => {});
+      tellAgain('result', `Result of your earlier press: ${line}`, { last: true }, 'press', { chat: conv.id }).catch(() => {});
     }
     if (!asked && !by.agentId) taskAnswered(conv, c.group);
   } catch (e) { console.error(`A press’s result: ${e.message}`); }

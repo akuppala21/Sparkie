@@ -3765,7 +3765,7 @@ function pressLate(x, c, conv, ctx, by, askedNow) {
     if (by.via === 'telegram') {
       const line = out.outcome === 'error' ? (/paused/i.test(out.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.')
         : ['question', 'needs-ok'].includes(out?.outcome) ? 'It needs your answer to a question in Spark Console.' : tgRanLine(out);
-      tell('result', `Result of your earlier press: ${line}`, { last: true }).catch(() => {});
+      tellAgain('result', `Result of your earlier press: ${line}`, { last: true }, 'press', { chat: conv.id }).catch(() => {});
     }
     if (!asked && !by.agentId) taskAnswered(conv, c.group);
   } catch (e) { console.error(`A press’s result: ${e.message}`); }
@@ -4608,7 +4608,7 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false, p
 }
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
 // Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
-// Owns: none        Timers: none        Wakes: none
+// Owns: none        Timers: taskReportsDue (a report Telegram didn't take, again after 1, 2 and 4 minutes)        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
 // and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work
@@ -4928,9 +4928,17 @@ async function taskReportsDue(id) {
       saveChats();
     }
     if (r.tg && !r.told) {
+      // (marked before the send, so two ticks never send it twice; put back on a failure for now and tried again on a
+      // later tick, with a growing wait, TELL_TRIES in all; one that never will, or past them, is dropped and said in
+      // the journal: A-8, 20-tell.mjs)
       r.told = true;
       saveChats();
-      await tell('result', taskReportText(conv, r, true), { last: true }).catch(() => false);
+      const got = await tellTry('result', taskReportText(conv, r, true), { last: true }).catch(() => 'later');
+      r.tgTries = (Number(r.tgTries) || 0) + 1;
+      if (got === 'later' && r.tgTries < TELL_TRIES) {
+        r.told = false;
+        setTimeout(() => taskReportsDue(conv.id).catch(e => console.error(`A task’s report: ${e.message}`)), tellWait(r.tgTries)).unref?.();
+      } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
   conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));
@@ -14490,9 +14498,9 @@ function sortWrap(args, ctx, r, x, name) {
   sortProgram(rest, ctx, r, { ...x, unknownArgs: x.unknownArgs || name === 'xargs' });
 }
 /* ───────── telling the owner on Telegram ───────── */
-// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
+// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs, tasks-telegram.test.mjs
 // Owns: none
-// Timers: none        Wakes: none
+// Timers: tellAgain (a result Telegram didn't take, again after 1, 2 and 4 minutes)        Wakes: none
 // tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13,
 // docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on
 // with a request made there, Spark Console's own fixed lines (pairing, /status, "restarted while answering"), and an ask
@@ -14552,29 +14560,49 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
+// true when it went; tellTry says why not: 'later' (Telegram not answering, slowing it down, a limit here holding it) or
+// 'never' (nobody paired, nothing to send, or Telegram refused it: the chat gone, the bot blocked, a token refused).
+async function tell(why, text, opts = {}) { return (await tellTry(why, text, opts)) === 'sent'; }
+async function tellTry(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
-  if (!b) return false;
+  if (!b) return 'never';
   const now = Date.now();
   while (tellSends.length && now - tellSends[0] > 60000) tellSends.shift();
   while (tellResults.length && now - tellResults[0] > 3600000) tellResults.shift();
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   // (a request's last reply is never held back by it: last)
-  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
+  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return 'later'; }
   const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
-  if (!parts.length) return false;
-  if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
+  if (!parts.length) return 'never';
+  if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return 'later'; }
   if (later) tellResults.push(now);
   const silent = later && now - tellOwnerAt > TELL_QUIET_MS;
-  let ok = true;
+  let failed = null;
   for (const [i, p] of parts.entries()) {
     tellSends.push(Date.now());
-    ok = (await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities })) && ok;
+    const sent = await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities });
+    if (sent !== true) failed ||= sent || 'unreachable';
   }
-  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok });
-  return ok;
+  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok: !failed });
+  return !failed ? 'sent' : TELL_NEVER.has(failed) ? 'never' : 'later';
+}
+// Telegram's answers that will never turn into a send (tgCall's codes): a token refused (401, 404), a request refused
+// (400, 403: the chat gone, the bot blocked), Telegram off here.
+const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
+// A result that must reach the paired chat (a task's report, an operation's line, a press's late result): a send that
+// failed for now is tried again a few times with a growing wait (A-8: tgSend's own three tries span seconds), one that
+// never will is not, and a dropped one is said in the journal. TELL_TRIES in all.
+const TELL_TRIES = 4, TELL_RETRY_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_TELL_RETRY_MS) || 60000;
+const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
+const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
+// In memory (a restart forgets the tries left): an operation's line, a press's late result.
+async function tellAgain(why, text, opts, what, fields = {}, n = 1) {
+  const got = await tellTry(why, text, opts).catch(() => 'later');
+  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1).catch(() => {}), tellWait(n)).unref?.(); return got; }
+  if (got !== 'sent') tellDropped(what, { ...fields, tries: n, err: got });
+  return got;
 }
 
 // An operation's result on Telegram: a fixed line from its type, name, Spark and status. No error text, log line,
@@ -14629,7 +14657,8 @@ function tellResult(job, conv) {
   // (lines held for a request the owner has since moved on from go out with this one)
   const held = tellHeld.get(conv.id) || [];
   tellHeld.delete(conv.id);
-  tell('result', [...held, line].join('\n')).catch(() => {});
+  // (a send that failed for now is tried again, A-8)
+  tellAgain('result', [...held, line].join('\n'), {}, 'result', { op: job.id, chat: conv.id }).catch(() => {});
 }
 async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
@@ -23562,18 +23591,21 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
   if (res.status >= 400 && res.status < 500) throw new TgError('bad-request');
   throw new TgError('unreachable');
 }
-// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once.
+// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once. true when sent, else why not (tgCall's
+// code: refused and bad-request, a 401, 403 or 400 from Telegram, will never succeed; the rest may later).
 async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
   const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
+  let why = 'unreachable';
   for (let i = 0, waited = false; i < 3; i++) {
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
+      why = e.code || 'unreachable';
       if (e.code === 'slow-down' && !waited) { waited = true; await sleep(e.retryAfter * 1000); continue; }
       if (e.code === 'unreachable') { await sleep(1000 * (i + 1)); continue; }
-      return false;
+      return why;
     }
   }
-  return false;
+  return why;
 }
 // "typing…" while Sparkie answers: every 4.5 s, for 5 minutes at most.
 function tgTyping() {

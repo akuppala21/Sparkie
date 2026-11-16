@@ -131,12 +131,14 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
 | `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
+| `taskReportsDue` | `14-tasks` | a report Telegram didn't take, again after 1, 2 and 4 minutes |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
 | `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
 | `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
+| `tellAgain` | `20-tell` | a result Telegram didn't take, again after 1, 2 and 4 minutes |
 | `tryStop` | `21-long` | every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
 | `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |

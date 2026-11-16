@@ -1,6 +1,6 @@
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
 // Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
-// Owns: none        Timers: none        Wakes: none
+// Owns: none        Timers: taskReportsDue (a report Telegram didn't take, again after 1, 2 and 4 minutes)        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
 // and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work
@@ -320,9 +320,17 @@ async function taskReportsDue(id) {
       saveChats();
     }
     if (r.tg && !r.told) {
+      // (marked before the send, so two ticks never send it twice; put back on a failure for now and tried again on a
+      // later tick, with a growing wait, TELL_TRIES in all; one that never will, or past them, is dropped and said in
+      // the journal: A-8, 20-tell.mjs)
       r.told = true;
       saveChats();
-      await tell('result', taskReportText(conv, r, true), { last: true }).catch(() => false);
+      const got = await tellTry('result', taskReportText(conv, r, true), { last: true }).catch(() => 'later');
+      r.tgTries = (Number(r.tgTries) || 0) + 1;
+      if (got === 'later' && r.tgTries < TELL_TRIES) {
+        r.told = false;
+        setTimeout(() => taskReportsDue(conv.id).catch(e => console.error(`A task’s report: ${e.message}`)), tellWait(r.tgTries)).unref?.();
+      } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
   conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));
