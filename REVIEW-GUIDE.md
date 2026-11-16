@@ -53,9 +53,9 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
 1. **`AGENTS.md`.** The front door: the layout, how to work, the rules that are never broken, one card per task.
 2. **`docs/architecture.md`.** The diagram (the root helper, the box, the ladder and the lock-out net are on it),
    one sentence followed from chat to a running model, one command followed to a Spark, and the known traps.
-3. **`docs/rules.md`.** One line per rule, R1 to R72 (there is no R44). Each rule's file in `docs/rules/` says why,
+3. **`docs/rules.md`.** One line per rule, R1 to R74 (there is no R44). Each rule's file in `docs/rules/` says why,
    where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
-   R55 and R60 to R72.
+   R55 and R60 to R74.
 4. **`docs/how/`.** One card per kind of work. For this review: `docs/how/call-the-root-helper.md`,
    `docs/how/raise-a-dangerous-ask.md`, `docs/how/find-why-a-change-was-refused.md`,
    `docs/how/run-the-brain-eval.md`, `docs/how/land-a-step.md`.
@@ -120,7 +120,7 @@ command, or the dangerous ask: its own message, built by code, with two digits t
 that removes or overwrites a file that could not be copied first is the dangerous ask too. A press says what
 really happened: "done" only for a command that ran and ended with exit 0. Changes in one round run one after
 another, in order. `/undo` puts back only the chat's newest change. Rules R55, R64 (the sorter), R61 (the ladder,
-the runner), R72 (the press), R63 (the walls), R54 (the ask), R25 (whose words), R34. Parts: `20-sort.mjs`,
+the runner), R72 (the press), R63 (the walls), R54 (the ask), R25 and R74 (whose words), R34. Parts: `20-sort.mjs`,
 `20-shell.mjs`, `20-shape.mjs`, `20-options.mjs`, `20-places.mjs`, `20-programs.mjs`, `20-tools.mjs`,
 `20-remote.mjs`, `20-tables.mjs`, `20-uses.mjs`; `21-ladder.mjs`, `21-runner.mjs`, `21-copies.mjs`,
 `21-copies-prune.mjs`, `20-danger.mjs`, `20-came-from.mjs`, `16-actions.mjs`, `14-rounds.mjs`. Tests

@@ -5203,7 +5203,7 @@ function proxyBrain(req, res, path, target, payload) {
 
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
-// Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46
+// Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74
 // Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -5416,13 +5416,40 @@ function ownSentences(text) {
   });
   return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
 }
-// A work word (fix, install, change, build, update …) asks for work only as an order (S-3), never as a noun: not after
-// "the", "a", "any", "last", "my", "Spark 3's", "since" and the like ("summarize the build log", "the last update broke
-// it", "any change since yesterday?"), nor with "is", "failed", "log" … after it ("build failed on Spark 3").
-const WORK_NOT_AFTER = /\b(?:the|a|an|any|some|no|this|that|these|those|my|your|its|our|their|his|her|last|latest|recent|previous|next|new|old|same|each|every|another|whose|which|what|of|for|from|since|after|before|during|about|by|into|in|at|\w+'s)\s+$/i;
+// Where an order puts its verb (A-18, S-3): a change word of any kind asks for a change only as the first word the
+// owner says to Sparkie in that sentence, after nothing but a short closed list of openers: a greeting or a joining
+// word (ORDER_LEAD), a place or a manner ("on Spark 3,", "Spark 3:", "as root on Spark 3,"), or a request to Sparkie
+// ("can you", "I want you to", "go ahead and", "let's"). A later part after a comma, "and" or "then" counts only when
+// the sentence itself began as an order ("pull the repo on spark 3 and build it"). An order has no subject of its own:
+// "I used to build …", "my colleague says to fix …", "the cron job tries to update …" ask for nothing, and neither
+// does a word used as a noun ("Update: …", "the build is slow", "Try as I might"). A statement and an order in one
+// sentence ("The loader on Spark 3 is broken, fix it.") is a button; said as two sentences, it runs. One function, for
+// every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call orderAt(sentence, at)).
+const ORDER_LEAD = String.raw`(?:(?:ok|okay|alright|right|well|so|and|but|also|now|then|next|first|second|third|finally|lastly|afterwards|after\s+that|yes|yep|yeah|sure|great|good|cool|nice|perfect|thanks|thank\s+you|actually|instead|just|simply|quickly|please|pls|plz|kindly|hey|hi|hello|sparkie|@sparkie)\b[\s,:!–—-]*)`;
+const ORDER_WHERE = String.raw`(?:as\s+root\b[\s,:–—-]*|(?:on|in|at)\s+(?:the\s+)?sparks?[\s_-]*\d+\b[\s,:–—-]*|sparks?[\s_-]*\d+\s*[:,–—-]\s*|(?:on|in|at)\s+\d\b\s*[,:]\s*)`;
+const ORDER_YOU = String.raw`(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*|i\s+(?:want|need)\s+you\s+to\s+|i(?:'d|\s+would)\s+like\s+you\s+to\s+|you\s+(?:can|may|should|could)\s+(?:now\s+)?|go\s+ahead\s+and\s+|let(?:'s|s|\s+us)\s+)`;
+const ORDER_OPEN = new RegExp(`^\\s*(?:${ORDER_LEAD}|${ORDER_WHERE}|${ORDER_YOU})*`, 'i');
+// (the verbs an order's sentence may open with, so a part after "and" or "then" is an order too; "don't …" opens one)
+const ORDER_OPENERS = /^(?:(?:don't|do\s+not|never)\s+)?(?:fix|install|set|change|edit|build|clean|update|try|start|stop|restart|run|rerun|launch|relaunch|deploy|redeploy|serve|load|use|kill|cancel|abort|undo|revert|roll|save|write|test|check|pull|clone|fetch|download|grab|get|copy|move|rename|make|create|add|remove|delete|open|close|cd|go|take|put|turn|switch|swap|replace|bring|spin|fire|boot|wake|power|shut|free|clear|unload|reboot|upgrade|configure|enable|disable|apply|patch|rebuild|reinstall|compile|commit|push|merge|checkout|reset|tidy|unpack|unzip|extract|point|keep|sync|find|look|research|search|refresh|compare|forget|remember|note|read|show|list|tell|see|view|print|watch|wait|give|ask|let|have|do)\b/i;
+const ORDER_JOIN = new RegExp(`(?:[,;]|\\band\\b|\\bthen\\b)\\s*(?:${ORDER_LEAD})*$`, 'i');
+// (a quote mark before it, not an apostrophe inside a word)
+const ORDER_QUOTE = /["“”‘]|(?:^|\s)'|'(?:\s|$)/;
 const WORK_NOUN = /^\s+(?:is|are|was|were|has|have|had|seems?|looks?|keeps?|broke|failed|did|didn't|does|doesn't|isn't|wasn't|log|logs|folder|script|scripts|output|step|time)\b/i;
-const workOrder = (sentence, m) => !WORK_NOT_AFTER.test(sentence.slice(Math.max(0, m.index - 40), m.index))
-  && !WORK_NOUN.test(sentence.slice(m.index + m[0].length, m.index + m[0].length + 30));
+// (a word used as a noun: "Update: …", "Try as I might"; for a work word also "the fix for …", "build 42", WORK_NOUN)
+const ORDER_NOUN = /^\s*[:#]|^\s+as\b/, WORK_NOUN_MORE = /^\s+(?:of|for)\b|^\s+\d/;
+// (a match that opens with a noun, "run the self-test", "run it on whatever is best": the sentence must open as an order)
+const ORDER_NOUN_START = /^(?:self[\s-]?tests?|whatever\s+is\s+best)/i;
+// Whether the change word at this match is where an order puts it (kind: changeIntent's, for a work word's nouns).
+// m is a match ({index, 0: the word}), or the word's index alone (netAsks: orderAt(sentence, at)).
+function orderAt(sentence, m, kind = null) {
+  if (typeof m === 'number') m = { index: m, 0: /^\S*/.exec(sentence.slice(m))[0] };
+  const pre = sentence.slice(0, m.index), post = sentence.slice(m.index + m[0].length, m.index + m[0].length + 30);
+  if (!/\s/.test(m[0].trim()) && (ORDER_NOUN.test(post) || (kind === 'work' && (WORK_NOUN.test(post) || WORK_NOUN_MORE.test(post))))) return false;
+  const open = ORDER_OPEN.exec(sentence)[0].length;
+  if (ORDER_NOUN_START.test(m[0])) return !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
+  if (!pre.slice(open).trim()) return true;
+  return ORDER_JOIN.test(pre.slice(-80)) && !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
+}
 // A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
 // call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
 // it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
@@ -5454,7 +5481,7 @@ function changeIntent(text) {
     for (const [kind, re] of CHANGE_WORDS) {
       for (const m of sentence.matchAll(re)) {
         const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
-        if (kind === 'work' && !NEGATOR.test(pre) && !workOrder(sentence, m)) continue;
+        if (!NEGATOR.test(pre) && !off && !orderAt(sentence, m, kind)) continue;
         if (NEGATOR.test(pre) || off) { negated.add(kind); worded.add(kind); }
         else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre)) here.add(kind);
       }
@@ -5544,6 +5571,9 @@ function tracesToRequest(name, input, saidText, request = saidText) {
   for (const id of [input.spark, ...(input.sparks || [])].filter(Boolean)) {
     if (name === 'start_model' ? !said.has(id) : namedSparks.length && !namedSparks.includes(id)) return false;
   }
+  // (no Spark named: the container the words point to must be on the call's Spark alone, so the call's Spark never
+  // picks between two, A-20)
+  if (!namedSparks.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && pickContainer(name, n.id, saidText))) return false;
   return true;
 }
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
@@ -5618,9 +5648,14 @@ async function sparkieCheck(name, input, ctx) {
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
   const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
-    if (out.spark && !said.has(out.spark)) delete out.spark;
+    // Where it lands is the owner's to say (A-20): one Spark named is where it starts, whatever the call says; with
+    // more named, the call has to pick one of them, else it is a button; with none named, Spark Console places it.
+    const named = [...said].filter(t => /^spark\d+$/.test(t));
     if (out.sparks && !out.sparks.every(id => said.has(id))) delete out.sparks;
-    return { clear: asked && await namesModel(out, saidText), input: out };
+    if (!out.sparks && named.length === 1) out.spark = named[0];
+    else if (out.spark && !said.has(out.spark)) delete out.spark;
+    const settled = out.sparks || out.spark || named.length < 2;
+    return { clear: asked && Boolean(settled) && await namesModel(out, saidText), input: out };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).
   if (name === 'remember' || name === 'forget_memory') return { clear: memoryClear(name, out, ctx, asked), input: out };
@@ -5870,7 +5905,9 @@ async function runAction(name, viewer, args, ctx = {}) {
       ? { ...ctx.plan, workflow: out.workflow, title: workflowById(out.workflow).title, version: out.workflowVersion || ctx.plan.version,
         inputs: ctx.plan.inputs.map(i => (i.source === 'chosen' && i.name === 'spark' && Array.isArray(out.sparks) ? { name: 'sparks', value: out.sparks.join(' + '), source: 'chosen' } : i)) }
       : ctx.plan;
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started,
+    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20)
+    const ranOn = Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started, ...(ranOn ? { ranOn } : {}),
       ...(plan ? { plan } : {}) });
     journalCalled(jid, name, input, args, ctx, { out, ms: Date.now() - started });
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
@@ -11266,7 +11303,7 @@ function lessonSeenBefore(job) {
   } catch { return null; }
 }
 /* ───────── the agent door (MCP) ───────── */
-// Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
+// Area: ways in        Rules: R7, R9, R26, R31, R37, R39, R73        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs, door-repeat.test.mjs
 // Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
 //   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
@@ -11418,6 +11455,19 @@ function audit(entry) {
     appendFileSync(AUDIT_FILE, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...text('request'), ...text('error'), args })}\n`, { mode: 0o600 });
   } catch {}
 }
+// The door's own call handling (R73). Every answer comes within DOOR_WAIT_MS (clients give up at 60 s). A call of a tool
+// that can change something (a change, or run and write_file: `changes`) made again by the same agent with the same
+// arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
+// same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
+// runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
+// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
+// once until its work truly ends, not when the door stops waiting for it.
+const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
+const doorWork = new Map();
+const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
+const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+// (still going: the call itself, or the operation its answer names)
+const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
   const reply = (status, body) => send(res, status, { jsonrpc: '2.0', ...body });
   const fail = (status, id, code, message) => reply(status, { id: id ?? null, error: { code, message } });
@@ -11434,7 +11484,7 @@ async function mcpDoor(req, res, viewer) {
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');
   let msg;
-  // (256 KB is far more than any tool call needs; a megabyte of text was a way to stall the console)
+  // (262,144 characters is far more than any tool call needs; a megabyte of text was a way to stall the console)
   try { msg = await readBody(req, 262144); } catch (e) { return fail(e.status || 400, null, -32700, e.message); }
   // Removed while the request was on its way: refused.
   if (!(agent = agentFor(req, viewer))) return noKey();
@@ -11489,34 +11539,49 @@ async function mcpDoor(req, res, viewer) {
     const name = msg.params?.name, a = typeof name === 'string' ? offered.find(x => x.name === name) : null;
     if (!a) return fail(200, id, -32602, typeof name === 'string' ? `No tool called ${name.slice(0, 60)} for this agent.` : 'Name the tool to call (params.name).');
     const toolError = text => reply(200, { id, result: { content: [{ type: 'text', text }], isError: true } });
-    // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
-    if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
-    if (a.openWorld) {
-      // Bad arguments are refused before they count against the web-search limit.
-      try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
-      if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+    // (a tool that can change something: a change, or a read that changes, run and write_file)
+    const changing = a.kind !== 'read' || Boolean(a.changes), key = changing ? doorKey(agent, a, msg.params?.arguments) : null;
+    for (const [k, w] of doorWork) if (!doorGoing(w)) doorWork.delete(k);
+    let work = key ? doorWork.get(key) : null;
+    const joined = Boolean(work);
+    if (!work) {
+      // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
+      if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
+      if (a.openWorld) {
+        // Bad arguments are refused before they count against the web-search limit.
+        try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
+        if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+      }
+      agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
+      agentUseDirty = true;
+      agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
+      work = { p: runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }) };
+      const mine = work;
+      if (key) doorWork.set(key, mine);
+      // (the slot goes when the work ends; an answer that names an operation still running is kept for a repeat, R73)
+      mine.p.then(v => { mine.settled = true; mine.value = v; }, () => { mine.settled = true; if (key && doorWork.get(key) === mine) doorWork.delete(key); })
+        .finally(() => { agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1)); });
     }
-    agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
-    agentUseDirty = true;
-    agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
     try {
       const started = Date.now();
-      // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
-        sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
+      // Answer within 50 s (clients give up at 60). A look that is slow gets a "try again", and its result is cached
+      // when it lands; a call that can change something is never told to try again (R73).
+      // (the timer is cleared once the work answers, so it never rejects later)
+      let timer;
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      let value;
+      try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {
         text = JSON.stringify({ truncated: true, sizeKB: Math.round(text.length / 1024), note: 'Too big to send whole. Ask for less: a lower limit, one Spark, or without detail.', start: text.slice(0, 30000) });
       }
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length });
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length, ...(joined ? { joined: true } : {}) });
       return reply(200, { id, result: { content: [{ type: 'text', text }], isError: false } });
     } catch (e) {
       const code = { 400: 'invalid', 403: 'not_allowed', 404: 'not_found', 409: 'conflict', 413: 'too_large', 429: 'busy', 502: 'unreachable', 503: 'unreachable', 504: 'still_running' }[e.status] || 'failed';
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code });
-      if (isFault(e)) recordFault(`agent tool ${a.name}`, e);
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code, ...(joined ? { joined: true } : {}) });
+      if (isFault(e) && !joined) recordFault(`agent tool ${a.name}`, e);
       return toolError(`[${code}${[409, 429, 502, 503].includes(e.status) ? ', retry later' : ''}] ${maskSecrets(e.message || String(e))}`);
-    } finally {
-      agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1));
     }
   }
   return fail(200, id, -32601, `This server doesn’t do ${String(msg.method).slice(0, 60)}.`);
@@ -24823,7 +24888,7 @@ function commandShown(c, ok, out) {
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = 'c5e97d9570b39a72cae72c15f9c188c2138cbeb8c7158630c05d96b368065271';
+const HELPER_SHA256 = '2aa4ee111adc6f45137c45339c8cd9dab873086cb14b9ff1e5a835476b7e983b';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
