@@ -6,7 +6,9 @@
 // an entry that is itself a link) stops the start with one line naming it, and nothing runs; the ordinary layout starts.
 // A start that first copies the model from another Spark checks the same before anything is sent, with a weight file
 // that leads out at least 16 MiB: a chat template or a small file under a weight name linked out stops it, a large
-// shard is copied as a file and the model starts.
+// shard is copied as a file and the model starts. A copy whose sender ends badly after a whole archive (A-21: a weight
+// file it can't read left out) leaves nothing at the final place or in staging, the library doesn't count that Spark,
+// and the next start copies again and completes; a copy cancelled part-way leaves nothing either.
 //
 // One tap after an install (docs/contract.md 6.3): "Test the changes" runs each workflow that isn't validated
 // with a small model on Spark 3 or 4 (never Spark 2), and starts again whatever had to stop. Auto-restart works before
@@ -14,9 +16,11 @@
 // Nothing here counts as validated at first (SPARK_CONSOLE_ASSUME_VALIDATED=0).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync, existsSync, statSync, lstatSync, closeSync, openSync, truncateSync } from 'node:fs';
-import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, SLOW } from './lib.mjs';
+import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync, existsSync, statSync, lstatSync, closeSync, openSync, truncateSync, chmodSync, mkdtempSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { T, useFleet, api, call, createKey, createActKey, waitFor, SLOW } from './lib.mjs';
 
 const keys = {};
 // Seen on the real Sparks (2026-11-08): the brain's own runs (DFlash with a draft model only Spark 2 has, a stretched
@@ -27,7 +31,20 @@ const DFLASH = ['--context-length', '1000000', '--speculative-algorithm', 'DFLAS
 const run = (model, extra) => ({ key: JSON.stringify([model, 'sglang', 'lmsysorg/sglang:v0.5.23', 1, DFLASH, {}]), model, repo: null, title: model, engine: 'sglang',
   image: 'lmsysorg/sglang:v0.5.23', args: DFLASH, env: {}, sparks: 1, nodes: ['spark2'], firstAt: '2026-11-08T00:00:00Z', lastAt: '2026-11-08T00:00:00Z', runs: 1,
   best: { decodeTokS: 99, ttftMs: 100 }, ...extra });
-useFleet({ watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_ASSUME_VALIDATED: '0' },
+// (A-21) A stand-in tar in front of the fleet's (PATH): with ~/.mock/tar-hold, a tar that writes an archive sends its
+// first MiB and then holds the rest until the file goes, as a link that stalls part-way does; else the stand-in's own.
+const BIN = join(dirname(fileURLToPath(import.meta.url)), 'mock', 'bin');
+const WRAP = mkdtempSync(join(tmpdir(), 'validate-tar-'));
+writeFileSync(join(WRAP, 'tar'), `#!/bin/bash
+real=${JSON.stringify(join(BIN, 'tar'))}
+writes=; for a in "$@"; do case "$a" in -c*) writes=1 ;; esac; done
+[ -n "$writes" ] && [ -f "$HOME/.mock/tar-hold" ] || exec "$real" "$@"
+"$real" "$@" | head -c 1048576
+while [ -f "$HOME/.mock/tar-hold" ]; do sleep 0.2; done
+exit 0
+`);
+chmodSync(join(WRAP, 'tar'), 0o755);
+useFleet({ watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_ASSUME_VALIDATED: '0', PATH: `${WRAP}:${BIN}:${process.env.PATH}` },
   prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [run('gpt-oss-20b', {}), run('RadixArk--Qwen3.8-27B-NVFP4', { brain: true }),
   run('unsloth--Qwen3.8-27B-NVFP4', { brain: true })] }), { mode: 0o600 }),
 }, async () => { keys.look = await createKey('val'); });
@@ -257,6 +274,62 @@ test('a start that copies the model from another Spark first: a real weight shar
   assert.ok(!lstatSync(there).isSymbolicLink(), 'a file, not a link');
   assert.equal(statSync(there).size, 17 * 2 ** 20);
   assert.match(lastRun4(), /^spark\.model=testorg--Copyshard-27B$/m);
+});
+
+// A-21: the receiving Spark unpacks into staging and stops there; only when both ends ended 0 is it moved into place.
+// A model in ~/models on Spark 3 only (a config and two weight files); the tests run as a user that is not root.
+const models = (spark, ...p) => join(T.fleet.root, spark, 'models', ...p);
+function onlyOn3(name, mib) {
+  const dir = models('spark3', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ architectures: ['Qwen3ForCausalLM'], model_type: 'qwen3', torch_dtype: 'bfloat16', max_position_embeddings: 40960 }));
+  for (const n of ['model-00001-of-00002.safetensors', 'model-00002-of-00002.safetensors']) { closeSync(openSync(join(dir, n), 'w')); truncateSync(join(dir, n), mib * 2 ** 20); }
+  return dir;
+}
+const planOn4 = async model => (await api(`/deploy/plan?model=${model}&node=spark4`)).json;
+const copies = async model => (await api('/models')).json.library.find(m => m.name === model)?.copies || [];
+
+test('a copy whose sender ends badly after a whole archive (a weight file it can\'t read) leaves nothing on the other Spark, isn\'t counted there, and the next start copies again', { timeout: 600000 * SLOW }, async () => {
+  const MODEL = 'a21-twoshard', dir = onlyOn3(MODEL, 1), second = join(dir, 'model-00002-of-00002.safetensors');
+  chmodSync(second, 0o000);
+  try {
+    assert.throws(() => readFileSync(second), /EACCES/, 'this test needs a user that can’t read the second weight file (not root)');
+    assert.ok((await planOn4(MODEL)).steps.some(s => s.kind === 'copy' && s.from === 'spark3'));
+    const w = await ownerStartOn4(MODEL);
+    assert.equal(w.status, 'failed', JSON.stringify(w));
+    assert.match(w.error, /Copy failed: some files on spark3 can’t be read as your user/, w.error);
+    assert.ok(!existsSync(models('spark4', MODEL)), 'nothing at the final place');
+    assert.ok(!existsSync(models('spark4', '.incoming', MODEL)), 'nothing in staging');
+    assert.ok(!(await copies(MODEL)).includes('spark4'), 'the library doesn’t count Spark 4');
+    assert.ok((await planOn4(MODEL)).steps.some(s => s.kind === 'copy' && s.from === 'spark3'), 'the next plan still copies');
+  } finally { chmodSync(second, 0o644); }
+  const w = await ownerStartOn4(MODEL);
+  assert.equal(w.status, 'completed', JSON.stringify(w));
+  assert.deepEqual(readdirSync(models('spark4', MODEL)).sort(), ['config.json', 'model-00001-of-00002.safetensors', 'model-00002-of-00002.safetensors']);
+  assert.equal(statSync(models('spark4', MODEL, 'model-00002-of-00002.safetensors')).size, 2 ** 20);
+});
+
+test('a copy cancelled part-way leaves nothing at the final place and nothing in staging', { timeout: 600000 * SLOW }, async () => {
+  const MODEL = 'a21-cancelled';
+  onlyOn3(MODEL, 2);
+  const hold = join(T.fleet.root, 'spark3', '.mock', 'tar-hold');
+  writeFileSync(hold, '');
+  let id = null;
+  try {
+    const r = await api('/actions/start_model', { method: 'POST', body: { model: MODEL, spark: 'spark4' } });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    id = r.json.operation;
+    // (part of it has come over, and the rest is held)
+    await waitFor(async () => { const o = (await api(`/jobs/${id}`)).json; assert.equal(o.status, 'running', JSON.stringify(o)); return o.progress?.done >= 2 ** 20 && existsSync(models('spark4', '.incoming', MODEL)); },
+      { timeout: 120000 * SLOW, what: 'part of the copy on Spark 4', every: 200 });
+    const c = await api(`/jobs/${id}/cancel`, { method: 'POST', body: {} });
+    assert.equal(c.status, 200, c.text);
+  } finally { rmSync(hold, { force: true }); }
+  const w = await waitFor(async () => { const o = (await api(`/jobs/${id}`)).json; return o?.status && o.status !== 'running' ? o : null; }, { timeout: 180000 * SLOW, what: 'the start to end', every: 500 });
+  assert.equal(w.status, 'cancelled', JSON.stringify(w));
+  assert.ok(!existsSync(models('spark4', MODEL)), 'nothing at the final place');
+  assert.ok(!existsSync(models('spark4', '.incoming', MODEL)), 'nothing in staging');
+  assert.ok(!(await copies(MODEL)).includes('spark4'));
 });
 
 test('going back to the last good build: none on the stand-in fleet, so it says so', async () => {
