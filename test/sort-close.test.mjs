@@ -193,3 +193,17 @@ test('a command that writes over or removes a file\'s old content is marked dele
   // (what writes nothing over: no mark, and no list)
   for (const c of ['mkdir x', 'touch y', 'cat a >> b', 'hf download Qwen/Q --local-dir ~/m', 'ls']) assert.deepEqual([c, sort(c).deletes, sort(c).overwrites], [c, false, []]);
 });
+
+// S-5 (the sorter's final read): a git kind covered git bisect run rm …; npm audit fix and dedupe got a kind, ran at once
+// in a folder the task fetched into, and reached nothing.
+test('no kind covers a command that runs another program or fetched code: git bisect run, rebase -x, submodule foreach, npm audit fix, dedupe', () => {
+  const NONE = ['git bisect run rm -rf src', 'git bisect run sed -i s/a/b/ x', 'git bisect run cp a b', 'git rebase -x "rm x" main', 'git submodule foreach rm -rf x',
+    'git -c core.hooksPath=/tmp/h commit -m x', 'npm audit fix', 'npm audit fix --force', 'npm dedupe', 'npm ddp', 'yarn dedupe', 'npm install', 'bash -c "rm x"'];
+  assert.deepEqual(check(NONE.map(c => [c, null, { dir: '~/work' }]), r => (!r.simple && r.program === null ? null : `simple ${r.simple}, program ${r.program}`)), []);
+  assert.deepEqual(check(['npm audit fix', 'npm dedupe', 'yarn dedupe', 'npm audit'].map(c => [c, null, { dir: '~/work' }]), r => (r.reach.includes('internet') ? null : 'reaches nothing')), []);
+  // (in a folder the task fetched into, an install that runs the project's scripts is asked, as npm install is)
+  const W = { dir: '~/work', written: ['~/work/proj'] };
+  assert.deepEqual(check(['cd ~/work/proj && npm audit fix', 'cd ~/work/proj && npm dedupe', 'cd ~/work/proj && npm install'].map(c => [c, null, W]), r => is('risky', r)), []);
+  // (git's own commands keep their kind)
+  for (const c of ['git pull', 'git commit -m x', 'git status']) assert.equal(sort(c, { dir: '~/work' }).program === 'git' || sort(c, { dir: '~/work' }).class === 'look', true, c);
+});

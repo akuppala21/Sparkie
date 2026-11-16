@@ -191,6 +191,8 @@ const sortGone = (ctx, r, why) => { ctx.kinds.add('delete'); raise(r, 'risky', `
 const sortOpen = (ctx, r, why) => { r.open = !ctx.root; raise(r, 'risky', why); };
 // A command handed over as text (bash -c, eval, watch, ssh): read and sorted like the rest.
 function sortInline(text, ctx, r, via) {
+  // (a command run by another is never one simple program, even when what it runs is a doubt: no kind covers it, S-5)
+  r.simple = false;
   if (ctx.depth >= SORT_DEPTH) unsure(`It nests commands in commands more than ${SORT_DEPTH} deep.`);
   const c = sortFresh();
   ctx.depth++;
