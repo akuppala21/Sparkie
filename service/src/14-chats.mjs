@@ -186,9 +186,20 @@ async function runChoice(viewer, conv, id, by) {
   return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
 }
 // A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
-// the chat file's masked copy), for the owner's page (24-handler.mjs).
-const chatWhole = new WeakMap();
-const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) ? { ...m, content: chatWhole.get(m) } : m));
+// the chat file's masked copy), for the owner's page (24-handler.mjs). A reply's asks too (chatAsks).
+const chatWhole = new WeakMap(), chatAsksWhole = new WeakMap();
+const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.get(m) } : {}), ...(chatAsksWhole.has(m) ? { asks: chatAsksWhole.get(m) } : {}) });
+const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
+// A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
+// shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+function chatAsks(asked, message) {
+  const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
+  if (!list.length) return message;
+  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
+  if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
+  return message;
+}
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',
@@ -517,9 +528,10 @@ function turnAnswer(turn) {
   const message = { role: 'assistant', content: `${maskSecrets(turn.answer.trim())}${card ? `\n\nPaste card, from Spark Console:\n\`\`\`\n${card}\n\`\`\`` : ''}`, createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), ...(turn.finishReason === 'length' ? { truncated: true } : {}),
     ...(unverified.length ? { unverified } : {}) };
+  chatAsks(asked, message);
   conv.messages.push(message);
   keepTask(turn);
-  emit({ type: 'done', message });
+  emit({ type: 'done', message: chatWholeOne(message) });
   return message;
 }
 // The reply’s end when anything in it threw, the owner’s /stop included: what was written so far is saved with the
@@ -532,9 +544,10 @@ function turnFailed(turn, e) {
   const choices = asked.flatMap(sparkieMessageChoices);
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
+  chatAsks(asked, message);
   conv.messages.push(message);
   if (!link.gone) keepTask(turn);
-  emit({ type: 'error', error: why, message });
+  emit({ type: 'error', error: why, message: chatWholeOne(message) });
   return message;
 }
 

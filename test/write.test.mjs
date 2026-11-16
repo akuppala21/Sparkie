@@ -333,6 +333,15 @@ test('a hidden part holding a sign that runs something is shown whole on the but
     const sent = await waitFor(() => lines(join(fleet.dir, 'telegram-calls.jsonl')).find(c => c.method === 'sendMessage' && c.body?.reply_markup), { what: 'the ask in the paired chat' });
     assert.ok(sent.body.text.includes(`+ token=$(reboot) ${mark}`), sent.body.text);
     assert.ok(sent.body.text.includes('+ password=[hidden]'), sent.body.text);
+    // (the page gets the ask's own lines with its button: whole on the reply and on a later read, masked in the file)
+    const page = r.message.asks?.[0]?.text || '';
+    assert.match(page, /^Write this file on Spark 3\?\n~\/notes\/runs\.txt: /, page);
+    assert.ok(page.includes(`+ token=$(reboot) ${mark}`) && page.includes('+ password=[hidden]'), page);
+    assert.equal((await api(`/chats/${chat}`)).json.messages.at(-1).asks?.[0]?.text, page);
+    assert.ok(JSON.parse(readFileSync(join(fleet.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat).messages.at(-1).asks[0].text.includes(`+ token=[hidden] ${mark}`));
+    // (a run's ask the same: its exact command and why it is asked)
+    const run = await turn(await newChat(), 'touch the run note on spark 3', [[{ name: 'run', arguments: { on: 'spark3', command: 'touch notes/run-note.txt' } }]]);
+    assert.match(run.message.asks?.[0]?.text || '', /^Run this on Spark 3\?\n\$ touch notes\/run-note\.txt\n(?:[^\n]*\n)*Asked because /, JSON.stringify(run.message));
     // (the chat file and the journal keep it masked)
     assert.ok(!readFileSync(join(fleet.stateDir, 'chats.json'), 'utf8').includes('token=$(reboot)'), 'masked in chats.json');
     for (const f of readdirSync(fleet.journalDir)) assert.ok(!readFileSync(join(fleet.journalDir, f), 'utf8').includes('token=$(reboot)'), `masked in ${f}`);
