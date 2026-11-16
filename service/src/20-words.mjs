@@ -12,11 +12,12 @@
 // undo_update, through runAction as the page, so that action's own guard decides, R31). In the paired Telegram chat
 // (21-telegram.mjs) /status, /pause, /restart sparkie, /stop, /undo and /help work too; /undo update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
 // is saved as one Spark Console notice quoting the word, so Sparkie later reads it as data.
-const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/putback', '/help'];
+const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/putback', '/help'];
 // The whole message, trimmed and lowercased ("/restart_sparkie" too); "/pause now" or "please /pause" is not a word.
 function ownerWord(text) {
   const t = String(text).trim().toLowerCase().replace(/_/g, ' ');
-  return t.length <= 40 && OWNER_WORDS.includes(t) ? t : null;
+  // (/allowed off 2, /allowed off all: 21-ahead.mjs)
+  return t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)) ? t : null;
 }
 const BRAIN_WORD_MIN_UP_MS = 10 * 60000;
 // With Sparkie's own model not answering, an owner's one-line message starting with "/" that isn't a word gets /help
@@ -49,12 +50,16 @@ async function statusText() {
   const running = [...jobs.values()].filter(j => j.status === 'running').length;
   // What is waiting on the owner (20-needs.mjs): the same lines as fleet_status's needsOwner, right after Sparkie's own.
   const needs = needsLines();
+  // (the owner's requests Sparkie is carrying on with, and their counts so far from the journal: 14-tasks.mjs, E7)
+  let tasks = [];
+  try { tasks = tasksNowLines(); } catch {}
   return maskSecrets([`Sparkie: ${brain}.`,
     chat?.kind === 'endpoint' ? `Sparkie’s chat runs on ${String(chat.title || chat.model).slice(0, 80)} right now, not on its own model.${chat.node && nodeById(chat.node) && knownOffline(nodeById(chat.node)) ? ' Its Spark isn’t reachable, so chat can’t answer.' : ''}` : null,
     needs.length ? `Needs you:\n${needs.map(t => `- ${t}`).join('\n')}` : 'Needs you: nothing.',
     `Sparks online: ${online.length ? online.join(', ') : 'none'}.`, `Operations running: ${running}.`, `Spark Console build ${BUILD}.`,
     `Agents’ changes: ${s.halted ? (s.autoPaused ? 'paused automatically' : 'paused') : 'on'}.`,
-    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`].filter(Boolean).join('\n'));
+    `Open to the internet: ${funnelOn === null ? 'not known' : funnelOn ? 'yes' : 'no'}.`,
+    tasks.length ? `Requests Sparkie is carrying on with:\n${tasks.map(t => `- ${t}`).join('\n')}` : null].filter(Boolean).join('\n'));
 }
 
 function pauseWord(via) {
@@ -160,6 +165,7 @@ function helpWord() {
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo: put back this chat’s last change (works while changes are paused)',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
+    '/allowed: what is always allowed in your chats; /allowed off 2 takes one away, /allowed off all every one',
     '/putback: put back the newest change made inside the lock-out net, unless it was kept (21-net.mjs)',
     '/help: this list'];
   lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
@@ -176,7 +182,7 @@ function helpWord() {
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
   const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
-    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word === '/putback' ? await netPutbackWord() : helpWord();
+    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word.startsWith('/allowed') ? allowedWord(word, via) : word === '/putback' ? await netPutbackWord() : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;
   const message = { role: 'assistant', content: `${maskSecrets(head)}\n${maskSecrets(reply)}`, createdAt: new Date().toISOString(), notice: true, word: true,
     ...(undo?.choices?.length ? { choices: undo.choices } : {}) };

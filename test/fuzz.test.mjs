@@ -59,6 +59,7 @@ const VALID = () => ({
   remember: { text: 'Spark 3 is where models go' },
   restart_model: { spark: ctx.spark, container: ctx.container },
   run: { on: ctx.spark, command: 'ls' },
+  write_file: { on: ctx.spark, path: 'fuzz.txt', text: 'x\n' },
   save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' },
   search_huggingface: { query: 'qwen3 0.6b' },
   search_web: { query: 'vllm flags' },

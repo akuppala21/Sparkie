@@ -34,7 +34,7 @@ const tgAskable = c => Boolean(c?.ownerOnly && !(c.action && PAGE_ONLY.has(c.act
 // The ask's words, all built by code: the question, then each yes it doesn't already hold, whole.
 function tgAskText(q) {
   const question = String(q.question || '');
-  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action).map(c => String(c.label)).filter(l => !question.includes(l));
+  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action && !pendingChoices.get(c.choice)?.always).map(c => String(c.label)).filter(l => !question.includes(l));
   return [question, ...yes].join('\n\n');
 }
 // question() calls this for an owner-only question with buttons. It sends one ask, or nothing: approvals off, a chat
@@ -44,7 +44,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const p = tgPaired(), owner = String(accessList().owner || '').toLowerCase();
     const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
     if (!p || !tgApproveOn() || !conv || conv.agent || ctx.agent || String(conv.login || '').toLowerCase() !== owner || viewer?.role !== 'owner') return false;
-    const shown = (q.choices || []).filter(c => c.choice);
+    // ("Always allow …" is the page's only, with the passkey: 21-ahead.mjs)
+    const shown = (q.choices || []).filter(c => c.choice && !pendingChoices.get(c.choice)?.always);
     if (!shown.length || !shown.every(c => tgAskable(pendingChoices.get(c.choice)))) return false;
     const words = text ?? tgAskText(q);
     // Nobody approves what they can't read.
@@ -54,7 +55,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: q.group, conv: conv.id };
     for (const c of shown) tgAsks.set(c.choice, sent);
     const drop = () => { for (const c of shown) if (tgAsks.get(c.choice) === sent) tgAsks.delete(c.choice); };
-    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })) }).then(ok => { if (!ok) drop(); }, drop);
+    // (lines the button shows whole go as they are: question()'s whole, write_file's)
+    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [] }).then(ok => { if (!ok) drop(); }, drop);
     return true;
   } catch (e) { console.error(`Asking on Telegram: ${e.message}`); return false; }
 }
@@ -130,6 +132,8 @@ function tgAsksVoid(everywhere) {
 // pairing wrote approve: true; its code came only from the passkey page).
 function tgNewPairing() {
   tgAsksVoid(true);
+  // (every chat's go-ahead goes with the old pairing, 21-ahead.mjs)
+  aheadEndAll();
   tgApproveOff = false;
 }
 // /lock in the paired chat: approvals from Telegram off at once, and every ask's Telegram side void. Only the page turns

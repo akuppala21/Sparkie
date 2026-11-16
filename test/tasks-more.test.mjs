@@ -76,7 +76,14 @@ test('at its limit of turns a task stops, its last reply says how to go on and c
     await sleep(5000 * SLOW);
     assert.equal(await autos(chat), 8, 'eight carry-on turns, no more');
     assert.equal((await chatMessages(chat)).filter(m => m.stopped).length, 1, 'said once');
-    assert.deepEqual((await chatMessages(chat)).at(-1), stop, 'nothing after it');
+    // (E7: the task's report comes right after the stop, and nothing after it)
+    const shown = await waitFor(async () => { const m = await chatMessages(chat); return m.at(-1)?.report ? m : null; }, { timeout: 30000 * SLOW, what: 'the report after the stop', every: 250 }), report = shown.at(-1);
+    assert.deepEqual(shown.at(-2), stop, 'the stop, right before the report');
+    assert.deepEqual([report.role, report.notice, typeof report.report, report.stopped ?? null], ['assistant', true, 'string', null]);
+    assert.equal(report.content.split('\n')[0], `Report on your request “${words}”: stopped at its 8 carry-on turns.`);
+    assert.equal(report.content.split('\n').at(-1), 'It stopped at its 8 carry-on turns: say “carry on” for another 2 hours and 8 turns.');
+    await sleep(5000 * SLOW);
+    assert.equal((await chatMessages(chat)).length, shown.length, 'nothing after it');
     assert.deepEqual((await needs()).filter(l => /^Sparkie stopped carrying on/.test(l)), ['Sparkie stopped carrying on with one of your requests at its limit (turns). Say “carry on” in that chat to go on, or anything else to leave it.']);
     // "go on", as the reply says: the same request, a fresh 2 hours and 8 turns; the line goes.
     const before = taskOf(chat);

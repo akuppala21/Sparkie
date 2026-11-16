@@ -156,7 +156,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
     // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
     // the page.
-    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
+    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false, ...(conv.task?.id ? { task: conv.task.id } : {}),
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
       // (the button pressed: run's ladder keeps what its ask showed under it, 21-ladder.mjs)
       pressed: String(id),
@@ -172,6 +172,10 @@ async function runChoice(viewer, conv, id, by) {
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
       content = outcomeText(c.label, out);
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
+      // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
+      const ran = !['question', 'needs-ok'].includes(out?.outcome);
+      const given = ran && c.ahead ? aheadGive(conv, c.ahead, by) : ran && c.always ? aheadKeep(c.always, by) : null;
+      if (given) content = `${content}\n${given}`;
     } catch (e) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
@@ -179,14 +183,33 @@ async function runChoice(viewer, conv, id, by) {
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
-  const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  // (an ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page
+  // gets them whole, from memory, chatWholeShown)
+  const whole = asked?.whole?.length ? content : null;
+  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
+  if (whole) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
   // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
   // agent's press, nor one of another request's button)
   if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
-  return { ...(out || { outcome: 'declined' }), message };
+  return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
+}
+// A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
+// the chat file's masked copy), for the owner's page (24-handler.mjs). A reply's asks too (chatAsks).
+const chatWhole = new WeakMap(), chatAsksWhole = new WeakMap();
+const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.get(m) } : {}), ...(chatAsksWhole.has(m) ? { asks: chatAsksWhole.get(m) } : {}) });
+const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
+// A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
+// shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+function chatAsks(asked, message) {
+  const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
+  if (!list.length) return message;
+  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
+  if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
+  return message;
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
@@ -263,7 +286,7 @@ async function continueTask(id) {
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || t.parked || chatBusy(id)) return;
   // (its way in gone meanwhile, another Telegram pairing among them: it ends, and nothing of it is told there, 14-tasks.mjs)
-  if (taskGone(t)) { endTask(conv, false); saveChats(); return; }
+  if (taskGone(t)) { endTask(conv, false, 'gone'); saveChats(); return; }
   // (a try the brain never answered gives way to this one: taskRetry, 14-tasks.mjs)
   if (t.retries) taskRetryLines(conv);
   const carried = Boolean(t.carry), answered = Boolean(t.answered) && !resultSince(conv);
@@ -317,7 +340,10 @@ const TURN_STOPPED = 'Stopped at your word.';
 // their results. True when there was something to stop.
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
+  // (and its go-ahead, 21-ahead.mjs)
+  aheadEnd(conv);
   conv.task = null;
+  if (task) taskEnded(conv, task, 'stopped');
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
   // (written at once, also when no answer to /stop is saved: from Telegram, or in a full chat)
@@ -370,7 +396,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       return turnFailed(turn, e);
     } finally {
       taskStepsKept(turn);
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn), task: turn.ctx?.task || null });
       finish();
     }
   } finally { finish(); }
@@ -446,13 +472,14 @@ function markAnswering({ conv, link, slot }) {
 }
 // This message as a request: it ends the last one’s carrying on and puts refused buttons away, and it gives the gate
 // what the owner asked (`ctx`, which every tool call of the turn carries) and the questions that come back (`asked`).
-function turnRequest({ conv, text, agent, task, channel, open, said }) {
+function turnRequest({ conv, text, agent, task, channel, open, said, turnId }) {
   // "carry on" gives a task stopped at a limit a fresh budget, and this turn carries it on (taskAgain, 14-tasks.mjs).
   const again = !task && !agent ? taskAgain(conv, text) : null;
   if (again) task = again;
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
   // (written at once: a restart before this reply ends must not bring the last request back)
-  if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
+  if (!task && !agent && conv.task) { const was = conv.task; conv.task = null; taskEnded(conv, was, 'replaced'); saveChats(); }
+  if (!task && !agent) aheadNewRequest(conv);
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -472,6 +499,8 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
     // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
     chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
+    // (the request's id on every journal line it makes: the first turn's, which a task made of it keeps, E7)
+    task: task?.id || turnId || null,
     ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
     // "Don't stop anything" holds for this message and the next, unless this one asks to stop something; a carry-on turn
     // keeps it, and that its request's replies read outside text, from the task (keepTask).
@@ -503,7 +532,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
-  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { id: ctx?.task || null, since: now, request: kept, at: now, [AHEAD_SINCE]: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (what it read and wrote goes on with it, A7c)
   if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
@@ -525,28 +554,35 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task, asked);
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
+    taskPark(conv.task, asked);
+    // (its question went to the paired Telegram chat as an ask: its report goes there too, E7)
+    if ([...tgAsks.values()].some(x => x.conv === conv.id)) conv.task.tgAsked = true;
+  }
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
   // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
   // posted while it answered, which finish() then wakes it for): the request is done, and its record goes, so neither
   // a restart nor a later result takes it up again. A turn that failed is no such end.
   if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
-    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task) && !resultSince(conv)) conv.task = null;
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task) && !resultSince(conv)) { conv.task = null; taskEnded(conv, task, 'done'); }
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
-function endTask(conv, tell = true) {
+function endTask(conv, tell = true, how = 'no') {
   const task = conv?.task;
+  // (its go-ahead too, with or without a task to end: 21-ahead.mjs)
+  aheadEnd(conv);
   if (!task) return false;
   task.ended = true;
   conv.task = null;
+  taskEnded(conv, task, how);
   if (tell && task.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return true;
 }
 // The tasks started by a way in that is gone (tgForget: channel 'telegram'; endSession: the device's session id).
 function endTasksFrom({ channel = null, session = null }) {
   let n = 0;
-  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false)) n++;
+  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false, 'gone')) n++;
   if (n) saveChats();
   return n;
 }
@@ -563,9 +599,10 @@ function turnAnswer(turn) {
   const message = { role: 'assistant', content: `${maskSecrets(turn.answer.trim())}${card ? `\n\nPaste card, from Spark Console:\n\`\`\`\n${card}\n\`\`\`` : ''}`, createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), ...(turn.finishReason === 'length' ? { truncated: true } : {}),
     ...(unverified.length ? { unverified } : {}) };
+  chatAsks(asked, message);
   conv.messages.push(message);
   keepTask(turn);
-  emit({ type: 'done', message });
+  emit({ type: 'done', message: chatWholeOne(message) });
   return message;
 }
 // The reply’s end when anything in it threw, the owner’s /stop included: what was written so far is saved with the
@@ -578,10 +615,11 @@ function turnFailed(turn, e) {
   const choices = asked.flatMap(sparkieMessageChoices);
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
+  chatAsks(asked, message);
   conv.messages.push(message);
   turn.failed = true;
   if (!link.gone) keepTask(turn);
-  emit({ type: 'error', error: why, message });
+  emit({ type: 'error', error: why, message: chatWholeOne(message) });
   return message;
 }
 

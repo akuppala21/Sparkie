@@ -3,8 +3,11 @@
 # a-workspace.md, 2.13). Run it once for each Spark, in your own terminal: the compute Sparks first, Spark 2 last.
 #
 #   bash spark-console/deploy/root-for-sparkie.sh --check 3   what is there for each wall; changes nothing, asks no password
-#   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once
-#   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: the line, then the helper, then the mark
+#   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once.
+#                                                             Root stays off there: look, run and the net only
+#   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md)
+#   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
+#   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
 #   bash spark-console/deploy/root-for-sparkie.sh --hub 2     Spark 2 itself, the hub: last, and only with --hub
 #
 # From the Mac it does one thing: it runs Spark 2's installed copy of itself over ssh
@@ -23,17 +26,20 @@
 #        <you> ALL=(root) NOPASSWD: /usr/local/sbin/spark-console-root
 #   7. the helper proves its walls and prints each wall's result; if the proof fails, the line and the helper are
 #      removed again, so nothing half set up is left
+#   8. only with --with-root, and only after a proof passed: root's switch, written by root to
+#      /var/lib/spark-console/root-on (root, 0600: the day and this helper's SHA-256). A later build of the helper finds
+#      it is not its own, so root is off again until this is run with --with-root again
 # Run again, it changes nothing when this build's helper, the same line and a current proof are already there.
 # It never touches SSH settings, Tailscale, a firewall, users, Docker or a container, and keeps no password anywhere.
 set -euo pipefail
 
-usage() { echo "Usage: bash $0 [--check | --undo] [--hub] <Spark number>   (for example: --check 3)" >&2; exit 2; }
+usage() { echo "Usage: bash $0 [--check | --undo | --with-root | --without-root] [--hub] <Spark number>   (for example: --check 3)" >&2; exit 2; }
 stop() { echo "Stopped: $*" >&2; exit 2; }
 
 MODE=install HUB=0 N=''
 for a in "$@"; do
   case "$a" in
-    --check|--undo) [ "$MODE" = install ] || usage; MODE=${a#--} ;;
+    --check|--undo|--with-root|--without-root) [ "$MODE" = install ] || usage; MODE=${a#--} ;;
     --hub) HUB=1 ;;
     [1-9]|[1-9][0-9]) [ -z "$N" ] || usage; N=$a ;;
     *) usage ;;
@@ -79,11 +85,13 @@ sq() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
 setup_text() {
   cat <<'SETUP'
 # The set-up half of spark-console's deploy/root-for-sparkie.sh, run on the Spark being set up, as you.
-#   bash -c '<this text>' root-setup install|check|undo <the helper's SHA-256> <Spark 2's machine id> <1 with --hub, else 0>
+#   bash -c '<this text>' root-setup install|with-root|without-root|check|undo <the helper's SHA-256> <Spark 2's machine id>
+#     <1 with --hub, else 0>
 set -euo pipefail
 HELPER=/usr/local/sbin/spark-console-root
 LINE=/etc/sudoers.d/spark-console-root
 MARK=/var/lib/spark-console/proved
+ROOT_ON=/var/lib/spark-console/root-on
 COPY="$HOME/.cache/spark-console/spark-console-root.copy"
 # What the run wall holds in your home must be there (the helper's MUST_BE_THERE: the same names, kept in step with it):
 # a start file, or a folder something outside the walls reads, that is not there could be made from inside the wall.
@@ -117,6 +125,34 @@ links() {   # $1 names: those that are links or under one, as the helper judges 
     [ "$real" = "$home/$n" ] || printf '%s ' "$n"
   done
 }
+start_reads() {   # what bash and your own start files read in your home that is not there: a --home change could make it
+  local f w seen=' '
+  for w in .bash_completion .local/share/bash-completion .inputrc; do
+    seen+="$w "
+    [ -e "$HOME/$w" ] || [ -L "$HOME/$w" ] || printf '%s ' "$w"
+  done
+  for f in .bashrc .profile .bash_profile .bash_login .bash_logout .bash_aliases; do
+    [ -f "$HOME/$f" ] || continue
+    while IFS= read -r w; do
+      w=${w#\$HOME/} w=${w#\$\{HOME\}/} w=${w#\~/} w=${w%/}
+      [ -n "$w" ] && [[ $seen != *" $w "* ]] || continue
+      seen+="$w "
+      [ -e "$HOME/$w" ] || [ -L "$HOME/$w" ] || printf '%s ' "$w"
+    done < <(grep -oE '(\$HOME|\$\{HOME\}|~)/[A-Za-z0-9._/-]+' "$HOME/$f" 2>/dev/null || true)
+  done
+}
+path_dirs() {   # the folders in your home that your start files put on the PATH (read from them, never run)
+  local f w seen=' '
+  for f in .profile .bashrc .bash_profile .bash_login .bash_aliases; do
+    [ -f "$HOME/$f" ] || continue
+    while IFS= read -r w; do
+      w=${w#\$HOME/} w=${w#\$\{HOME\}/} w=${w#\~/} w=${w%/}
+      [ -n "$w" ] && [[ $seen != *" $w "* ]] || continue
+      seen+="$w "
+      printf '~/%s ' "$w"
+    done < <(grep -E 'PATH' "$HOME/$f" 2>/dev/null | grep -oE '(\$HOME|\$\{HOME\}|~)/[A-Za-z0-9._/-]+' || true)
+  done
+}
 home_lines() {   # what the run wall needs of your home, and what reaches round it: reads only
   local v u path n bad files
   v=$(missing)
@@ -145,6 +181,12 @@ home_lines() {   # what the run wall needs of your home, and what reaches round 
              find "$d" -mindepth 2 -maxdepth 2 -path '*.wants/*' -printf '%f\n' 2>/dev/null || true
            done | sort -u)
   if [ -n "$bad" ]; then note "enabled units of yours that run a program a change could rewrite: ${bad% }"; else note "no enabled unit of yours runs a program a change could rewrite"; fi
+  v=$(start_reads)
+  if [ -n "$v" ]; then note "read by bash or your start files, but not there (a --home change could make them): ${v% }"
+  else note "everything bash and your start files read in your home is there"; fi
+  v=$(path_dirs)
+  if [ -n "$v" ]; then note "folders in your home your start files put on the PATH (a --home change may put programs there): ${v% }"
+  else note "your start files put no folder in your home on the PATH"; fi
   v=$(tailscale debug prefs 2>/dev/null || true)
   if [[ $v == *'"RunSSH": true'* ]]; then
     note "Tailscale SSH: on. Any program on your tailnet signed in as you can open a shell here with no key, outside every"
@@ -208,7 +250,7 @@ check() {
   home_lines
   note "look wall: not set up"
   note "run wall: not set up"
-  note "root (the net): not built yet, refused on every Spark"
+  note "root (inside the net): not set up"
 }
 
 folders_ok() {
@@ -265,9 +307,23 @@ install() {
   return 1
 }
 
+root_switch() {   # $1 on or off: root's switch on this Spark (on only after a passing proof, for this helper)
+  if [ "$1" = on ]; then
+    printf 'on %s helper %s\n' "$(date -u +%Y-%m-%d)" "$2" | sudo tee "$ROOT_ON.new" > /dev/null
+    sudo chmod 0600 "$ROOT_ON.new"
+    sudo mv -f "$ROOT_ON.new" "$ROOT_ON"
+    note "root is on here: Sparkie may run a command as root on $(hostname), each time inside the put-back net, after your"
+    note "press. Turn it off again with --without-root."
+  else
+    sudo rm -f "$ROOT_ON" "$ROOT_ON.new"
+    note "root is off here: the helper refuses every root command on $(hostname)."
+  fi
+}
+
 undo() {
   note "sudo asks for your password on $(hostname), once"
   sudo -v || stop "sudo did not accept the password. Nothing was changed."
+  root_switch off
   sudo rm -f "$LINE" "$LINE.new"; note "the sudo line is gone: $LINE"
   sudo rm -f "$HELPER" "$HELPER.new"; note "the helper is gone: $HELPER"
   sudo rm -f "$MARK"; note "the proof's mark is gone: $MARK"
@@ -276,9 +332,9 @@ undo() {
 
 main() {
   local mode=$1 sha=$2 hub_id=$3 hub=$4 mid
-  [[ $mode =~ ^(install|check|undo)$ && $sha =~ ^[0-9a-f]{64}$ && $hub_id =~ ^[0-9a-f]{32}$ && $hub =~ ^[01]$ ]] \
+  [[ $mode =~ ^(install|with-root|without-root|check|undo)$ && $sha =~ ^[0-9a-f]{64}$ && $hub_id =~ ^[0-9a-f]{32}$ && $hub =~ ^[01]$ ]] \
     || stop "the set-up script was called with something it does not understand"
-  if [ "$mode" != check ]; then trap 'rm -f "$COPY"' EXIT; fi
+  case "$mode" in install|with-root|undo) trap 'rm -f "$COPY"' EXIT ;; esac
   mid=$(systemd-id128 machine-id 2>/dev/null || true)
   [[ $mid =~ ^[0-9a-f]{32}$ ]] || stop "couldn't read this Spark's machine id, so nothing was done"
   if [ "$mid" = "$hub_id" ] && [ "$hub" != 1 ]; then stop "this is Spark 2, the hub: it is set up last, and only with --hub."; fi
@@ -286,6 +342,11 @@ main() {
   case "$mode" in
     check) check "$sha" ;;
     install) install "$sha" ;;
+    with-root) install "$sha" && root_switch on "$sha" ;;
+    without-root)
+      note "sudo asks for your password on $(hostname), once"
+      sudo -v || stop "sudo did not accept the password. Nothing was changed."
+      root_switch off ;;
     undo) undo ;;
   esac
 }
@@ -296,7 +357,7 @@ SETUP
 if [ "$ADDR" = local ]; then
   echo "Spark $N (this Spark, the hub):"
   if [ "$MODE" = check ]; then exec bash -s -- check "$SHA" "$HUB_ID" 1 < <(setup_text); fi
-  if [ "$MODE" = install ]; then
+  if [ "$MODE" = install ] || [ "$MODE" = with-root ]; then
     mkdir -p "$HOME/.cache/spark-console"
     cp "$HELPER_FILE" "$HOME/.cache/spark-console/spark-console-root.copy"
   fi
@@ -305,7 +366,7 @@ fi
 DEST="$FLEET_USER@$ADDR"
 echo "Spark $N ($ADDR):"
 if [ "$MODE" = check ]; then exec ssh -o ConnectTimeout=8 "$DEST" "bash -s -- check $SHA $HUB_ID 0" < <(setup_text); fi
-if [ "$MODE" = install ]; then
+if [ "$MODE" = install ] || [ "$MODE" = with-root ]; then
   ssh -o ConnectTimeout=8 "$DEST" 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/spark-console-root.copy' < "$HELPER_FILE" \
     || stop "couldn't copy the helper to Spark $N (is it on?)"
 fi

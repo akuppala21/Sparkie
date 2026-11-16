@@ -149,3 +149,21 @@ test('a command Sparkie ran is one quiet row of its own, the command on a button
   // The live stream copies the five fields onto the step it draws.
   assert.match(APP, /outcome: ev\.outcome, where: ev\.where, line: ev\.line, tail: ev\.tail, root: ev\.root, kept: ev\.kept, look: ev\.look \}\];/);
 });
+
+// A7d's read: in a Sparkie turn the page shows a change ask's own lines with its buttons (the path and the old and new
+// lines of a write, a run's command and why it is asked), as plain text: never HTML from the text, only for an ask whose
+// buttons are there.
+test('an ask\'s own lines are shown with its buttons, as plain text', () => {
+  const { askLines } = pageFunctions('askLines');
+  const text = 'Write this file on Spark 3?\n~/notes/a.html: a new file\n+ <img src=x onerror=alert(1)>\n+ token=$(reboot) (shown whole: what would be hidden here holds signs that run something)\nAsked because Sparkie asks before every change.';
+  const el = askLines({ choices: [{ id: 'c1', label: 'Run it', state: 'open', group: 'g1' }], asks: [{ group: 'g1', text }, { group: 'other', text: 'not shown' }] });
+  assert.equal(el.tag, 'div');
+  assert.equal(el.kids.length, 1);
+  assert.equal(el.kids[0].tag, 'pre');
+  assert.deepEqual(el.kids[0].kids, [text], 'one text child: the lines as written, never markup');
+  assert.equal(askLines({ choices: [], asks: [{ group: 'g1', text }] }), null, 'no buttons, no lines');
+  assert.equal(askLines({ choices: [{ id: 'c1', label: 'Run it', state: 'open', group: 'g1' }], asks: [{ group: 'g1', text: { html: '<b>x</b>' } }] }), null, 'only text');
+  // (drawn with the reply, before its buttons, and styled as the dangerous ask's command block is: pre-wrapped)
+  assert.match(APP, /!mine && !m\.streaming \? askLines\(m\) : null,\n\s*!mine && !m\.streaming \? choiceRow\(m\) : null,/);
+  assert.match(CSS, /\.ask-lines pre \{[^}]*white-space: pre-wrap;/);
+});
