@@ -15765,7 +15765,7 @@ action({
   },
 });
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
-// Area: features        Rules: R62, R52, R43        Tests: box-fill.test.mjs
+// Area: features        Rules: R62, R52, R43, R23        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -15938,11 +15938,13 @@ async function fillTreeList(tree) {
   }
   return { blobs, trees, links, bytes };
 }
-// Opening a box is a change, and so are a fill and a read back: Sparkie's and an agent's call meet the pause, Sparkie's
-// the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
+// Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
+// Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
+// carries rail: true (run's door makes it a button).
 async function fillGate(viewer, ctx) {
   whoMayLook(viewer, ctx);
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and filling or reading back a box is a change, so nothing was done.');
   if (by === 'sparkie') {
     const rail = await brainRail();
@@ -16071,7 +16073,7 @@ async function boxFillDoor(input, viewer, ctx) {
   }
 }
 /* ───────── the box: a throw-away container on a compute Spark (A2; commands in it come with A4) ───────── */
-// Area: features        Rules: R62, R52, R1, R43        Tests: box.test.mjs
+// Area: features        Rules: R62, R52, R1, R43, R23        Tests: box.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a
@@ -16082,8 +16084,8 @@ async function boxFillDoor(input, viewer, ctx) {
 // own folder, ~/.local/share/spark-console/work/<name>, at /work), and a time limit (its process is sleep <seconds>;
 // --rm removes it when that ends). A fixed check then runs inside it and must find every wall (BOX_WALLS); one that got
 // through, or one it can't tell, removes the box, and nothing opens. Opening one is a change: Sparkie's and an agent's
-// call meet the pause, and Sparkie's the rail (R52: unchecked, it is one button the owner presses); the owner's own call
-// meets neither. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
+// call meet the pause, an agent's the put-back hold (R23), and Sparkie's the rail (R52: unchecked, it is one button the
+// owner presses); the owner's own call meets none of them. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
 // it, and at "/stop <its name>" from the owner's own call; the record is kept until its removal is seen. The watcher and
 // workloads skip a container this record knows by its name and label (19-watcher.mjs), and typed starts refuse its
 // names (21-apps.mjs). A command runs in the box by docker exec, in /work, for 30 seconds (boxRun; A4), and write_file
@@ -16325,11 +16327,13 @@ async function boxEnd(key, ctx, timeout = 30000) {
   return { at, spark: b.spark, name: b.name, until, removed: word === 'removed', why };
 }
 
-// Who may cause something in the box (R62): Sparkie's and an agent's call are refused while changes are paused, and
-// Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button the owner presses. The owner's own call,
-// a press included, meets neither.
+// Who may cause something in the box (R62): an agent's call (and Sparkie's in an agent's chat) is refused while the
+// state put back from a copy is held (R23), as runAction refuses an agent's change then; Sparkie's and an agent's call
+// are refused while changes are paused, and Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button
+// the owner presses. The owner's own call, a press included, meets none of them.
 async function boxGate(viewer, ctx, key, command, ask) {
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and opening a box is a change, so no box opened. Nothing ran.');
   if (by === 'sparkie' && !(await brainRail()).checked) {
     boxRecord(ctx, { unit: boxName(key), args: { command: command.slice(0, 600) }, ok: true, outcome: 'asked' });

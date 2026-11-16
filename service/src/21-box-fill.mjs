@@ -1,5 +1,5 @@
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
-// Area: features        Rules: R62, R52, R43        Tests: box-fill.test.mjs
+// Area: features        Rules: R62, R52, R43, R23        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -172,11 +172,13 @@ async function fillTreeList(tree) {
   }
   return { blobs, trees, links, bytes };
 }
-// Opening a box is a change, and so are a fill and a read back: Sparkie's and an agent's call meet the pause, Sparkie's
-// the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
+// Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
+// Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
+// carries rail: true (run's door makes it a button).
 async function fillGate(viewer, ctx) {
   whoMayLook(viewer, ctx);
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and filling or reading back a box is a change, so nothing was done.');
   if (by === 'sparkie') {
     const rail = await brainRail();

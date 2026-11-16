@@ -4,18 +4,20 @@
 // refused while two are open; a command in an open box is refused once the free memory has dropped below what the
 // boxes there may take, and runs again once it is back. While the box's image is fetched (a slow stand-in fetch, longer
 // than an open's 20-second wait for the lock), the next call is told it is being fetched at once, not that another box
-// is opening. Starts a stand-in fleet: run it on a Spark.
+// is opening. While the state put back from a copy is held (R23), an agent's call opens, fills, reads back, runs and
+// writes in no box, with the hold's own words; the owner's own call still runs, and once the hold ends the agent's
+// opens. Starts a stand-in fleet: run it on a Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, sleep, waitFor, REPO, SLOW } from './lib.mjs';
 
 const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
 const K = {};
-useFleet({ prepare: ({ root }) => { for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `\n${IMAGE}\n`); } },
-  async () => { K.a = await createActKey('box-more-a'); K.b = await createActKey('box-more-b'); });
+useFleet({ env: { SPARK_CONSOLE_BOX_FILL_DOOR: '1' }, prepare: ({ root }) => { for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `\n${IMAGE}\n`); } },
+  async () => { K.a = await createActKey('box-more-a'); K.b = await createActKey('box-more-b'); K.c = await createActKey('box-more-c'); });
 
 const boxName = key => `spark-console-box-${createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
 const mock = spark => join(T.fleet.root, spark, '.mock');
@@ -92,4 +94,28 @@ test('while the box’s image is fetched, the next call is told so at once, not 
     await waitFor(() => text(images).split('\n').includes(IMAGE), { timeout: 120000, what: 'the slow fetch to end' });
     await sleep(5000);
   }
+});
+
+test('while the state put back from a copy is held, an agent opens, fills, reads back, runs and writes in no box; the owner’s own call runs', { timeout: 180000 * SLOW }, async () => {
+  const HELD = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
+  const f = T.fleet.secretsFile, read = () => (existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {});
+  const hold = on => { const s = read(), auth = { ...(s.auth || {}) }; if (on) auth.hold = { since: new Date().toISOString(), state: 'box-more test', again: [], signedOut: 0, parked: 0 }; else delete auth.hold; mkdirSync(dirname(f), { recursive: true, mode: 0o700 }); writeFileSync(f, JSON.stringify({ ...s, auth }), { mode: 0o600 }); };
+  const aBox = folder(boxName(`agent ${K.a.id}`)), cBox = boxName(`agent ${K.c.id}`);
+  assert.ok(existsSync(aBox), 'the first agent’s box is open');
+  hold(true);
+  try {
+    await sleep(1500);   // (the hold is read again at most every half second)
+    for (const [k, tool, args] of [[K.a, 'run', { on: 'box', command: 'touch held.txt' }], [K.a, 'write_file', { on: 'box', path: 'held.txt', text: 'x\n' }],
+      [K.c, 'run', { on: 'box', command: 'true' }], [K.c, 'run', { on: 'box', command: `/fill ${'a'.repeat(40)}` }], [K.c, 'run', { on: 'box', command: '/read-back' }]]) {
+      const r = await call(k.token, tool, args);
+      assert.ok(r.isError && (r.text || '').includes(HELD), `${tool} ${JSON.stringify(args)}: ${r.raw}`);
+    }
+    assert.ok(!existsSync(join(aBox, 'held.txt')), 'nothing ran or was written in the open box');
+    assert.ok(!boxLines('spark3').some(l => l.startsWith(`${cBox}|`)) && !boxLines('spark4').some(l => l.startsWith(`${cBox}|`)), 'no box opened');
+    const o = await asOwner('true');
+    assert.deepEqual([o.ok, o.box], [true, 'open'], o.said);
+  } finally { hold(false); }
+  await sleep(1500);
+  const c = await asAgent(K.c, 'true');
+  assert.deepEqual([c.ok, c.box], [true, 'opened'], c.said);
 });
