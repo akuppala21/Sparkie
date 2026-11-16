@@ -787,7 +787,7 @@ function restartJob(viewer, ctx, spark, container, model) {
     await restartRoom(viewer, spark, container, model);
     step(j, `Starting ${container} on ${spark}`);
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
-    if (r.code) throw new Error(`Docker couldn’t start it: ${r.err || r.out}`);
+    if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');

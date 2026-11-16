@@ -484,7 +484,7 @@ async function powerOffJob(j, ids, ctx, why, boxYes = false) {
     try { r = await shutDownSpark(node); } catch (e) { refused.push({ id, words: e.message }); return; }
     const [code] = fields(r.out, 'poweroff')[0] || [];
     if (code === '0' || (r.code === 255 && !code) || /timed out/.test(r.err)) return;
-    refused.push({ id, words: /password is required|not allowed|sudoers|a terminal is required/i.test(r.out + r.err) ? setupWords(node) : `${sparkName(node)} didn’t shut down: ${String(r.out || r.err).trim().split('\n')[0].slice(0, 200)}` });
+    refused.push({ id, words: /password is required|not allowed|sudoers|a terminal is required/i.test(r.out + r.err) ? setupWords(node) : `${sparkName(node)} didn’t shut down: ${maskSecrets(String(r.out || r.err).trim().split('\n')[0]).slice(0, 200)}` });
   }));
   if (refused.length) {
     // Nothing went down there: its record goes and what was parked starts again.
@@ -585,7 +585,7 @@ async function powerOnSparks(j, ids, why, noSwitch = false) {
   if (bad.length) {
     // (a Spark Spark Console powered off that didn't come back goes on the needs-you list, whoever asked: a call that
     // started it tells nobody, and it needs its button or a look, R41)
-    if (!noSwitch) for (const [id, r] of bad) if (powerState().off[id]) try { offRecord(id, { problem: `Turning it on didn’t work: ${String(r.reason?.message || r.reason).split('\n')[0].slice(0, 300)}` }); } catch {}
+    if (!noSwitch) for (const [id, r] of bad) if (powerState().off[id]) try { offRecord(id, { problem: `Turning it on didn’t work: ${maskSecrets(String(r.reason?.message || r.reason).split('\n')[0]).slice(0, 300)}` }); } catch {}
     throw bad[0][1].reason;
   }
   // Docker there settles before anything starts (healing waits for the same).
@@ -629,8 +629,10 @@ async function bringBackParked(j, ids, skip = null) {
       note(j, `${x.container} is back on ${where}`);
       results.push(x.container);
     } catch (e) {
-      note(j, `${x.container} didn’t come back: ${String(e.message).split('\n')[0].slice(0, 300)}`);
-      fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back after its Spark was turned on failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+      // (masked, then cut, as every healing reason: R7)
+      const why = maskSecrets(String(e.message).split('\n')[0]).slice(0, 300);
+      note(j, `${x.container} didn’t come back: ${why}`);
+      fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back after its Spark was turned on failed: ${why}` });
     }
   }
   return results;
@@ -751,7 +753,7 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
       // What else was parked there comes back now, after what was asked for, whether that started or not (never
       // stopping anything: one that doesn't fit is held, with why). What was asked for, if it didn't start, is only
       // unparked: held, with why, never parked for good on a Spark that is on.
-      const back = await bringBackParked(j, need, started ? null : asked).catch(e => { note(j, `Bringing back what was parked there: ${e.message}`); return []; });
+      const back = await bringBackParked(j, need, started ? null : asked).catch(e => { note(j, `Bringing back what was parked there: ${maskSecrets(String(e.message))}`); return []; });
       if (back.length) note(j, `Back: ${back.join(', ')}`);
     }
   });
