@@ -32,8 +32,20 @@
 # With ~/.mock/ids-per-run, a container made again under a name gets a new id (cid). `docker inspect -f '{{json .Args}}'`
 # gives the words after a container's image in its run (~/.mock/args-<name>, written by every run; a seeded one ships
 # its own): what Sparkie's model loaded is read from them (R52).
+# A box (label spark-console.box, 21-box.mjs) has ours "box", its run kept in ~/.mock/run-<name>; it runs `sleep <seconds>`
+# with --rm, so once ~/.mock/box-until-<name> (when that ends) has passed, any docker command finds it gone. `docker ps
+# --format` with {{.Label "spark-console.box"}} gives that label as a fourth column. Its self-check (`docker exec <box> bash
+# -c … box-check <id> …`) answers each wall as the box's run asked Docker for it (no network, no capabilities, a read-only
+# root, one mount, plain runc and no NVIDIA devices), and open for a wall named by ~/.mock/box-open-<wall>; "can't tell"
+# for one named by ~/.mock/box-missing-<wall> (it holds the missing tool's name); with ~/.mock/box-check-dies it answers
+# nothing. With ~/.mock/daemon-down every docker command fails as one does while the daemon doesn't answer.
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
+if [ -f "$M/daemon-down" ]; then echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1; fi
+for f in "$M"/box-until-*; do
+  [ -f "$f" ] && [ "$(cat "$f")" -le "$(date +%s)" ] || continue
+  b=${f##*/box-until-}; { grep -v "^$b|" "$M/containers" || true; } > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$f" "$M/run-$b" "$M/up-$b"
+done
 cmd=$1; shift
 # ~/.mock/slow-<command> (seconds): that command takes a while, like a real restart or stop of a big model.
 [ -f "$M/slow-$cmd" ] && sleep "$(cat "$M/slow-$cmd")"
@@ -146,6 +158,7 @@ case "$cmd" in
         # The power-off look (21-power.mjs): protect, spark.console, spark.app, spark.job and spark.role labels.
         power*) p=""; [ "$protect" = 1 ] && p=true; c=""; [ "$ours" = 1 ] && c=1; a=""; [ "$ours" = app ] && a=1; j=""; runLabel "$M/run-$name" spark.job=1 && j=1
           printf 'power\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$p" "$c" "$a" "$j" "$role" ;;
+        *spark-console.box*) b=""; [ "$ours" = box ] && b=$name; printf '%s|%s|%s|%s\n' "$(cid "$name")" "$name" "$state" "$b" ;;
         '{{.ID}}|'*) printf '%s|%s|%s\n' "$(cid "$name")" "$name" "$state" ;;
         '{{.ID}}'*) printf '%s\t%s\tc%s\t%s\n' "$name" "$name" "$ours" "$status" ;;
       esac
@@ -193,7 +206,7 @@ case "$cmd" in
   rm)
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
-      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/args-$name"
+      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/box-until-$name" "$M/args-$name"
     done ;;
   run)
     printf '%s\n' "$@" > "$M/last-run-args"
@@ -210,7 +223,7 @@ case "$cmd" in
       HF_HUB_CACHE="$hub" "$(dirname "$0")/hf" download "$repo"; exit $? ;;
     esac
     name=""; model=""; protect=""; role=""; cluster=""; rank=""; ours=""
-    while [ $# -gt 0 ]; do case "$1" in --name) name=$2; shift;; --label) case "$2" in spark.console=1) ours=1;; spark.app=1) ours=app;; spark.model=*) model=${2#spark.model=};; spark.protect=true) protect=1;; spark.role=*) role=${2#spark.role=};; spark.cluster=*) cluster=${2#spark.cluster=};; spark.rank=*) rank=${2#spark.rank=};; esac; shift;; esac; shift; done
+    while [ $# -gt 0 ]; do case "$1" in --name) name=$2; shift;; --label) case "$2" in spark.console=1) ours=1;; spark.app=1) ours=app;; spark.model=*) model=${2#spark.model=};; spark.protect=true) protect=1;; spark.role=*) role=${2#spark.role=};; spark.cluster=*) cluster=${2#spark.cluster=};; spark.rank=*) rank=${2#spark.rank=};; spark-console.box=*) ours=box;; esac; shift;; esac; shift; done
     # Like docker: a --mount whose source isn't there refuses to start. Like SGLang and vLLM (Spark 3, 2026-11-08): a
     # cache entry mounted at /hf whose snapshot files link outside that folder has weight files missing in the container.
     hfout=""; prev=""
@@ -224,6 +237,7 @@ case "$cmd" in
     if [ -f "$M/ids-per-run" ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
     [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
     runArgs "$M/last-run-args" > "$M/args-$name"
+    if [ "$ours" = box ]; then cp "$M/last-run-args" "$M/run-$name"; echo $(( $(date +%s) + $(tail -n 1 "$M/last-run-args") )) > "$M/box-until-$name"; fi
     if [ "$ours" = app ] && [ -f "$M/app-port-taken" ]; then
       echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
       echo "docker: Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1 failed: port is already allocated." >&2; exit 125
@@ -349,6 +363,22 @@ case "$cmd" in
   # Python's stack dump (PYTHONFAULTHANDLER, then SIGABRT), as a part stuck setting up NCCL prints it.
   exec)
     name=""; for a in "$@"; do case "$a" in -*) ;; *) name=$a; break ;; esac; done
+    if [ "$(lineOf "$name" | cut -d'|' -f4)" = box ] && printf '%s\n' "$@" | grep -qx box-check; then
+      [ -f "$M/box-check-dies" ] && { echo 'OCI runtime exec failed: exec failed: unable to start container process' >&2; exit 126; }
+      id=$(printf '%s\n' "$@" | awk 'p {print; exit} $0 == "box-check" {p=1}'); R="$M/run-$name"
+      asked() { awk -v a="$1" -v b="$2" 'p && $0 == b {f=1} {p = ($0 == a)} END {exit !f}' "$R"; }
+      wall() {
+        if [ -f "$M/box-missing-$1" ]; then printf "%s wall %s open can't tell: %s is missing\n" "$id" "$1" "$(cat "$M/box-missing-$1")"
+        elif [ ! -f "$M/box-open-$1" ] && eval "$2"; then printf '%s wall %s ok\n' "$id" "$1"; else printf '%s wall %s open\n' "$id" "$1"; fi
+      }
+      wall root 'grep -qx -- --user "$R"'; wall caps 'asked --cap-drop ALL && ! grep -qxE -- "--cap-add|--privileged" "$R"'
+      wall privileges 'asked --security-opt no-new-privileges'; wall writes 'grep -qx -- --read-only "$R" && asked --ipc none'
+      wall work 'grep -qE "^type=bind,src=.*,dst=/work$" "$R"'; wall mounts '[ "$(grep -cxE -- "--mount|-v|--volume" "$R")" = 1 ]'
+      wall home 'true'; wall sockets '! grep -q docker.sock "$R"'; wall secrets '! grep -qxE -- "--env-file|-e" "$R"'
+      wall network 'asked --network none'
+      wall devices 'asked --runtime runc && asked --env NVIDIA_VISIBLE_DEVICES=void && ! grep -qxE -- "--gpus|--device|--privileged" "$R"'
+      printf '%s walls end\n' "$id"; exit 0
+    fi
     case "$*" in *SIGABRT*) printf 'sock 10.100.186.3:51544 10.100.186.2:41877 trying to connect\nsock 127.0.0.1:5557 127.0.0.1:40112 connected\nenv GLOO_SOCKET_IFNAME=enp1s0f1np1\n'; printf 'Fatal Python error: Aborted\n\nCurrent thread 0x0000f00d (most recent call first):\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/device_communicators/pynccl.py", line 112 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/parallel_state.py", line 291 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 742 in init_torch_distributed\n  File "/usr/lib/python3.12/threading.py", line 359 in wait\n' >> "$M/logs-$name" ;; esac ;;
   logs) name=$(last "$@"); if [ -f "$M/logs-$name" ]; then cat "$M/logs-$name"; else echo "INFO: loading safetensors shards ... $(( RANDOM % 100 ))%"; fi ;;
   pull) echo "$1: Pulling from library"; sleep 2; echo "Status: Downloaded newer image for $1"; echo "$1" >> "$M/images" ;;

@@ -76,6 +76,8 @@ function dangerMore(f) {
       !d ? 'What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository.'
         : d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
+    // (a proposal of Sparkie's own code: GitHub's run, the protected paths and tests it changes, the review, C8d)
+    if (f.install.proposal) out.push(dangerPlain(f.install.proposal, 700));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
   for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));

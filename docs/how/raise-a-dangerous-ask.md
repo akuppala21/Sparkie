@@ -14,7 +14,7 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
   `{script}` for a script's text. None for an install.
 - `facts`, each optional and typed: `asked` (the gate's own answer, when the raiser knows it better), `backAt` (the
   net's time), `kept` (files copied first), `gone` (`{what, bytes}`: cannot be put back), `waysIn` (paths), `install`
-  (`{tree, testedAt, differs, brainReads}`; `differs` null when what differs isn't known), `outsideWall` (why), `lines`
+  (`{tree, testedAt, differs, brainReads, proposal}`; `differs` null when what differs isn't known), `outsideWall` (why), `lines`
   (code's own sentences, one line each: what its wall lets it do, what it reaches), `whoApproves` (it changes passkeys,
   recovery codes, the pairing or the switch: page only), `switchBrain`, `wall`, `recheck` (a function giving the
   script's bytes again at the press).

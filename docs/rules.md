@@ -63,7 +63,9 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).
 - [R60](rules/R60.md): The lock-out net: confirm, or it goes back.
 - [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and its walls).
+- [R62](rules/R62.md): The box (design A 2.4; step A2): `run {on: "box"}` opens the caller's box, a throw-away container on a compute Spark that reaches nothing of the Spark but its own folder.
 - [R63](rules/R63.md): What bounds a plain change.
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
 - [R66](rules/R66.md): Long tasks (design E 2.1 as cut, step 6; contract 4.8): a task carries on by itself only within limits the owner's own words set, and stops, waits or ends where the owner would …
 - [R67](rules/R67.md): The coding trial (design C 2.5) says whether the brain serving now can change Spark Console's own code, and `trialPassed()` is its one read: `propose_update` (C8) asks it.
+- [R69](rules/R69.md): Sparkie's own code (design C 2.5, step 8): `propose_update {do: start, send, drop}` (in `updates`; its word kinds `code` and `cancel`) proposes a change to Spark Console's own …

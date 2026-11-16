@@ -109,13 +109,17 @@ async function restartWord(via) {
   return 'Restarting Sparkie’s model. It takes a few minutes to load again; /status shows when its server responds.';
 }
 
-// /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs). It
-// never cancels an operation and never stops a model.
-function stopWord(conv) {
-  // (a dangerous ask this chat asked closes too: 20-danger.mjs)
-  const asked = dangerStopped(conv);
-  if (conv && stopTurn(conv)) return 'Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request. Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.';
-  if (asked) return 'Stopped. The ask in this chat that waited for your answer is closed, and nothing was run.';
+// /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs), and
+// the chat's box goes (boxStop, 21-box.mjs). It never cancels an operation and never stops a model.
+async function stopWord(conv) {
+  // (a dangerous ask this chat asked closes too: 20-danger.mjs; and the chat's box goes, said once its removal is seen
+  // or not: 21-box.mjs)
+  const asked = dangerStopped(conv), turn = Boolean(conv && stopTurn(conv)), box = conv ? await boxStop(conv) : null;
+  const gone = !box ? '' : box.removed ? ` This chat’s box on ${box.at} was removed, with its folder.`
+    : ` This chat’s box on ${box.at} couldn’t be removed just now (${box.why}); it ends by itself at ${box.until}, and /stop here tries again.`;
+  if (turn) return `Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request.${gone} Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.`;
+  if (asked) return `Stopped. The ask in this chat that waited for your answer is closed, and nothing was run.${gone}`;
+  if (box) return `Sparkie isn’t answering in this chat and has nothing to carry on with.${gone} Operations and models are as they were.`;
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
@@ -170,7 +174,7 @@ function helpWord() {
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
   const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
-    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? stopWord(conv) : helpWord();
+    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;
   const message = { role: 'assistant', content: `${maskSecrets(head)}\n${maskSecrets(reply)}`, createdAt: new Date().toISOString(), notice: true, word: true,
     ...(undo?.choices?.length ? { choices: undo.choices } : {}) };
