@@ -11785,12 +11785,18 @@ function audit(entry) {
 // arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
 // same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
 // runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
-// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
-// once until its work truly ends, not when the door stops waiting for it.
+// arguments as the action's own check reads them (checkInput: "Spark 3" and "spark3" are one call; arguments it refuses
+// as sent, and the action refuses them), never on the JSON-RPC id, which restarts with each client session. A call
+// keeps its slot of the three at once until its work truly ends, not when the door stops waiting for it.
 const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
 const doorWork = new Map();
+// (the keys in any order, nested ones too: run_workflow's inputs)
 const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
-const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+function doorKey(agent, a, args) {
+  let read = args ?? {};
+  try { read = checkInput(a.input, args, a.name); } catch {}
+  return createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(read)])).digest('hex');
+}
 // (still going: the call itself, or the operation its answer names)
 const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
@@ -11893,7 +11899,7 @@ async function mcpDoor(req, res, viewer) {
       // when it lands; a call that can change something is never told to try again (R73).
       // (the timer is cleared once the work answers, so it never rejects later)
       let timer;
-      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. While it is still going, the same call with the same arguments, sent again, waits on it and answers with its result. Once it has ended, the same call runs again, so look first: recall {kind: "call"} shows how this one ended; an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
       let value;
       try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));
