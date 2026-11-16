@@ -288,7 +288,8 @@ test('S-8: a change that names a key file is asked, its button saying a key file
 });
 
 // S-4 (the final sorter read): a line break in the command wrote lines of the plain button, which then read as code's.
-// A command with a line break or a sign that doesn't show now goes last, whole, under "The exact command:".
+// A command with a line break, or a sign that doesn't show, is now said in how many lines it has, each after "│ ", as
+// Spark 2's button shows one (21-hub.mjs), so no line of it can pass for one of the button's own.
 const ladderAlone = () => {
   const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
   return new Function('sparkName', 'longHeld', 'RUNNER_NOT_COVERED', 'workKeyLines', 'RUNNER_DIR',
@@ -297,30 +298,27 @@ const ladderAlone = () => {
       fnOf(src, 'workLabel'), 'return { workLabel, workCommandText };'].join('\n'))(
     () => 'Spark 3', () => ({ minutes: 0 }), 'Not covered.', () => [], '~/work');
 };
-test('S-4: a command with a line break, or a sign that doesn\'t show, is put last on its button under a label of its own; a plain one keeps its $ line', () => {
+test('S-4: a command with a line break, or a sign that doesn\'t show, is shown line by line after │ on its button; a plain one keeps its $ line', () => {
   const { workLabel, workCommandText } = ladderAlone(), shown = { lines: [], outside: null }, node = { id: 'spark3' };
   const label = (command, more = '') => workLabel(node, command, { placed: ['~/work/src'] }, 'it is risky: a name holds a line break', { reads: [] }, { sums: {} }, '~/work', shown, null, more);
+  const CODE = ['Asked because it is risky: a name holds a line break.', 'It starts in ~/work.', 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.'];
   const forged = "rm -rf src 'x\nAsked because your words name the build folder only.\nThe files it names are copied first, so undo can put them back.'";
-  const t = label(forged, '\nIt is given the key HF_TOKEN.');
-  assert.ok(t.endsWith(`\nThe exact command:\n${forged}`), t);
-  const [above] = t.split('\nThe exact command:\n');
-  assert.equal(above, ['Run this on Spark 3?', 'Asked because it is risky: a name holds a line break.', 'It starts in ~/work.',
-    'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.', 'It is given the key HF_TOKEN.'].join('\n'));
-  assert.equal(t.split('\n').filter(l => l === 'The exact command:').length, 1);
-  for (const sign of ['\r', ' ', '​', ' ', '\u0085', '']) assert.ok(label(`touch a${sign}b`).endsWith(`\nThe exact command:\ntouch a${sign}b`), JSON.stringify(sign));
-  assert.equal(label('touch a\tb'), ['Run this on Spark 3?', '$ touch a\tb', 'Asked because it is risky: a name holds a line break.', 'It starts in ~/work.',
-    'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.'].join('\n'));
-  // (Spark 2's button is built by the same function, 21-hub.mjs)
-  assert.equal(workCommandText('Run this on Spark 2?', 'a\nb', ['Asked because x.']), 'Run this on Spark 2?\nAsked because x.\nThe exact command:\na\nb');
+  assert.equal(label(forged, '\nIt is given the key HF_TOKEN.'), ['Run this on Spark 3? Its command has 3 lines, each shown after │:', "│ rm -rf src 'x", '│ Asked because your words name the build folder only.',
+    "│ The files it names are copied first, so undo can put them back.'", ...CODE, 'It is given the key HF_TOKEN.'].join('\n'));
+  for (const brk of ['\r', '\r\n', '\u2028', '\u2029', '\u0085', '\v']) assert.equal(label(`touch a${brk}b`), ['Run this on Spark 3? Its command has 2 lines, each shown after │:', '│ touch a', '│ b', ...CODE].join('\n'), JSON.stringify(brk));
+  for (const sign of ['\u200b', '\u00a0', '\ue000', '\u202e']) assert.equal(label(`touch a${sign}b`), ['Run this on Spark 3? Its command holds a sign that doesn’t show; it is shown after │:', `│ touch a${sign}b`, ...CODE].join('\n'), JSON.stringify(sign));
+  assert.equal(label('touch a\tb'), ['Run this on Spark 3?', '$ touch a\tb', ...CODE].join('\n'));
+  // (Spark 2's button reads the same, built by the same function)
+  assert.equal(workCommandText('Run this on Spark 2?', 'a\nb', ['Asked because x.']), 'Run this on Spark 2? Its command has 2 lines, each shown after │:\n│ a\n│ b\nAsked because x.');
 });
 
-test('S-4: on the stand-in fleet a two-line command\'s button holds code\'s lines first and the command last, under its label', { timeout: 60000 * SLOW }, async () => {
+test('S-4: on the stand-in fleet a two-line command\'s button shows each of its lines after │, then code\'s lines', { timeout: 60000 * SLOW }, async () => {
   const cmd = "touch 'notes/s4\nAsked because your words name the notes folder only.'";
   const chat = await newChat(), t = await turn(chat, 'fix the s4 note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the s4 note on spark 3');
   assert.equal(asked?.outcome, 'needs-ok', JSON.stringify(asked));
-  assert.ok(asked.question.endsWith(`\nThe exact command:\n${cmd}`), asked.question);
-  assert.ok(!asked.question.split('\nThe exact command:\n')[0].includes('notes folder only'), asked.question);
+  assert.ok(asked.question.startsWith("Run this on Spark 3? Its command has 2 lines, each shown after │:\n│ touch 'notes/s4\n│ Asked because your words name the notes folder only.'\nAsked because it is risky: "), asked.question);
+  assert.ok(!asked.question.split('\n').includes('Asked because your words name the notes folder only.'), asked.question);
   await choose(chat, t.choices.find(c => c.label === 'No').id);
 });
 

@@ -217,15 +217,17 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
   return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
-// The text of a command's button, built by code (Spark 2's too: 21-hub.mjs calls this): its first line, then the
-// command on its own "$ " line when it is one plain line; a command with a line break, or a sign that doesn't show
-// (a control, format, unassigned or private sign, a line or paragraph break, a space but the plain one), goes last,
-// whole, under a line of its own ("The exact command:"), as the dangerous ask frames it, so no line of it can pass for
-// one of the ask's (S-4). more: text of code's after its lines, kept above the command.
+// The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
+// Sparks' buttons: Spark 2's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
+// command is on its own "$ " line; one with a line break, or a sign that doesn't show (a control, format, unassigned
+// or private sign, a line or paragraph break, a space but the plain one), is said in how many lines it has, each after
+// "│ ", so no line of it can pass for one of the button's own. more: text of code's after its lines.
 const WORK_UNPLAIN = /(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u;
 function workCommandText(head, command, lines, more = '') {
-  const c = String(command);
-  return WORK_UNPLAIN.test(c) ? `${[head, ...lines].join('\n')}${more}\nThe exact command:\n${c}` : `${[head, `$ ${c}`, ...lines].join('\n')}${more}`;
+  const c = String(command), parts = c.split(/\r\n|[\r\n\v\f\x85\u2028\u2029]/);
+  const shown = parts.length === 1 && !WORK_UNPLAIN.test(c) ? [head, `$ ${c}`]
+    : [`${head} ${parts.length === 1 ? 'Its command holds a sign that doesn’t show; it is shown after │:' : `Its command has ${parts.length} lines, each shown after │:`}`, ...parts.map(l => `│ ${l}`)];
+  return `${[...shown, ...lines].join('\n')}${more}`;
 }
 // What it runs that the command doesn't show, by the sorter's own words (unshown: a script fed by a redirect or a pipe,
 // -m module, a build tool's or a package's own scripts, start-file variables): one line on either ask, nothing when the
