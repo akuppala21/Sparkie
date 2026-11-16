@@ -4849,9 +4849,9 @@ function taskCounts(id) {
       // (a cancel is counted once, by the operation it cancelled, below)
       if (r.act === 'undo_last_change') c.undone++;
     } else if (r.k === 'cmd') {
-      // (a command that changed something: the runner's start line marks it a change, and the net's seam marks every one
-      // it runs (net: a lock-out change, one on Spark 2, root), whatever the sorter called it; after the owner's yes when
-      // it was asked. A look is no change, run being a lookup to runAction; one whose end says it never ran is none, K5)
+      // (a command that changed something: the runner's start line marks it a change, the box's too (boxStart), and the
+      // net's seam marks every one it runs (net: a lock-out change, one on Spark 2, root), whatever the sorter called it;
+      // after the owner's yes when it was asked. A look is no change (run is a lookup to runAction); never ran: none, K5)
       if (r.start && r.act === 'run' && (r.class === 'change' || r.net)) changes.set(r.id, ['asked', 'button'].includes(r.gate));
     } else if (r.k === 'op') {
       c.ops++;
