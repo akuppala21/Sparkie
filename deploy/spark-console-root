@@ -858,7 +858,7 @@ only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOC
   && [ ${#CMD[@]} -eq 0 ] && [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
-  local state why='' held look_why open timer
+  local state why='' held look_why open timer look
   prereqs
   state=$(proof_state)
   lists
@@ -897,7 +897,9 @@ do_check() {
     # (left open with no timer, after a restart whose put-back failed, say: keep is refused then, so only a put-back ends
     # it. The one-time command's --check shows this line, and its --undo stops on it)
     case "$timer" in *'not waiting'*)
-      if [ -e "$R$GUARD/$open/failures" ]; then say "net left: guard $open waits for no timer; its put-back did not finish ($(tail -n 1 -- "$R$GUARD/$open/failures" | cut -c1-200)): putback --id $open tries again, keep --id $open keeps it as it stands"
+      look=$(systemctl show --property=ActiveState --value "sw-guard-look-$open.timer" 2>/dev/null) || look=''
+      if [ "$look" = active ] && [ ! -e "$R$GUARD/$open/failures" ]; then say "net look: guard $open was put back after a restart; sw-guard-look-$open looks that the ways in run, and only then is it done"
+      elif [ -e "$R$GUARD/$open/failures" ]; then say "net left: guard $open waits for no timer; its put-back did not finish ($(tail -n 1 -- "$R$GUARD/$open/failures" | cut -c1-200)): putback --id $open tries again, keep --id $open keeps it as it stands"
       else say "net left: guard $open waits for no timer: putback --id $open puts it back now (keep --id $open is refused while no timer waits)"; fi ;;
     esac
   fi
@@ -1382,7 +1384,8 @@ restore_sh() {
 #!/bin/bash
 # The lock-out net's put-back (docs/rules/R60.md; design A 2.8): fixed text spark-console-root wrote beside the copies
 # of the ways in, in /var/lib/spark-console/guard/<id>/. Started by the timer sw-guard-<id> ("timer"), by the unit
-# sw-guard-boot-<id> after a restart inside the window ("boot"), or by the helper's putback ("asked"). Nothing in it
+# sw-guard-boot-<id> after a restart inside the window ("boot"), by that put-back's own look, the timer
+# sw-guard-look-<id>, that the ways in then run ("look"), or by the helper's putback ("asked"). Nothing in it
 # comes from a caller. It stops the command's unit and waits until systemd says it is stopped (inactive or failed:
 # silence is not "gone"), with SIGKILL after a minute and half a minute more; then guard.py puts back only what
 # differs, never through a link, and reloads what it put back (a unit never seen stopped is still put back, and the
@@ -1392,7 +1395,7 @@ set -u
 here=$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P) || exit 1
 if [ "$EUID" -eq 0 ]; then PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; fi
 why=${1-timer}
-case "$why" in timer|boot|asked) ;; *) exit 2 ;; esac
+case "$why" in timer|boot|asked|look) ;; *) exit 2 ;; esac
 exec 9> "$here/lock" || exit 1
 flock 9
 if [ -e "$here/kept" ] || [ -e "$here/result" ]; then exec python3 -I -S "$here/guard.py" done; fi
@@ -1942,15 +1945,19 @@ def restore(why, seen='seen'):
         if 'tailscale' in unsaid:
             notes.append("differs, not put back: Tailscale's settings or routes (its state file is as it was)")
     notes += [f'cannot be put back: {x}' for x in lost]
-    # (what this try put back is noted: a later try, should this one fail before its reloads, reloads it too)
+    # (what this try put back is noted: a later try, should this one fail before its reloads, reloads it too; and what
+    # an earlier try put back, its units too, is counted)
     try:
         with open(os.path.join(HERE, 'put')) as f:
-            went = [x for x in f.read().splitlines() if x.startswith('/')]
+            earlier = [x for x in f.read().splitlines() if x]
     except OSError:
-        went = []
-    went = sorted(set(went + done))
-    with open(os.path.join(HERE, 'put'), 'w') as f:
-        f.write(''.join(x + '\n' for x in went))
+        earlier = []
+    went = sorted(set([x for x in earlier if x.startswith('/')] + done))
+
+    def noted(items):
+        with open(os.path.join(HERE, 'put'), 'w') as f:
+            f.write(''.join(x + '\n' for x in items))
+    noted(went + [x for x in earlier if not x.startswith('/')])
     # What was put back is read again: systemd first, then what reads those files. After a restart only systemd and
     # netplan's files (the units read them later); a moved ssh port behind ssh.socket needs the socket restarted.
     ssh_socket = (was_st.get('ssh.socket') or {}).get('active') == 'active'
@@ -2041,8 +2048,27 @@ def restore(why, seen='seen'):
     # A put-back in part: no result, and pending, the restart unit, what it stopped and what it put stay, so the next
     # try (restore.sh's own, the timer, a restart, putback) starts, reloads and puts back again. What it did is kept in
     # ./part, which keep reads to say what did not go back.
-    done = [p for p in went if p not in done] + done   # (what an earlier try put back counts too)
+    done = [p for p in dict.fromkeys(earlier + went) if p not in done] + done   # (what an earlier try put back counts too)
+    # After a restart the starts queued above run only once this unit has ended (it is ordered before them), so the
+    # put-back is not done yet: it arms a look of its own, the transient timer sw-guard-look-<id> (gone once it ran),
+    # which in 90 s runs the put-back again: each way-in unit that ran at the copy and does not run is started, and each
+    # must run, or the put-back failed (three looks in all, by restore.sh's tries, 20 s apart). Only a look that finds
+    # them running writes the result. If the look cannot be armed, this try could not finish.
+    look = boot and any((was_st.get(u) or {}).get('load') == 'loaded' and (was_st.get(u) or {}).get('active') in ON for u in UNITS)
+    if look and not could:
+        try:
+            armed = subprocess.run(['systemd-run', f'--unit=sw-guard-look-{ID}', f'--description=Spark Console net {ID}: the ways in run after a restart',
+                                    '--on-active=90s', '--timer-property=AccuracySec=1s', '--collect', '--quiet', '-p', 'Type=oneshot', '--',
+                                    '/bin/bash', os.path.join(HERE, 'restore.sh'), 'look'],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60, env=ENV).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            armed = False
+        if armed:
+            noted(done)
+            return
+        could.append(f'its look that the ways in run after the restart (sw-guard-look-{ID}) could not be armed')
     if could:
+        noted(done)
         lines = [f'{len(done)} went back, {len(could)} could not, at {now()}'] + [f'could not: {x}' for x in could] + [f'put back {p}' for p in done] + notes
         tmp = os.path.join(HERE, 'part.new')
         with open(tmp, 'w') as f:
@@ -2056,7 +2082,7 @@ def restore(why, seen='seen'):
         except FileNotFoundError:
             pass
     head = f'put back at {now()}: ' + (f'{len(done)} went back, {len(notes)} did not' if done or notes else 'nothing differed')
-    lines = [head, {'timer': 'by its timer', 'boot': 'after a restart inside the window'}.get(why, "on the console's word")]
+    lines = [head, {'timer': 'by its timer', 'boot': 'after a restart inside the window', 'look': 'after a restart inside the window, once the ways in ran'}.get(why, "on the console's word")]
     lines += [f'put back {p}' for p in done] + notes + [f"reload {' '.join(c)}: {res}" for c, res in ran]
     tmp = os.path.join(HERE, 'result.new')
     with open(tmp, 'w') as f:

@@ -1513,6 +1513,13 @@ describe('the lock-out net (R60)', () => {
     const b0 = calls(t).length;
     assert.equal(fire(t, q.id, 'boot').status, 0);
     assert.ok(!calls(t).slice(b0).some(c => c[0] === 'systemctl' && c.includes('start')), 'nothing queued');
+    // (the A-2 follow-up changed this. Old: the restart's put-back wrote the result "nothing differed" at once. New: ssh
+    // ran at the copy, so its look, sw-guard-look-<id>, writes it once ssh runs; ssh started by itself, so nothing more)
+    assert.ok(!existsSync(join(G(t, q.id), 'result')) && unitCall(t, `sw-guard-look-${q.id}`));
+    writeFileSync(join(t.R, 'standin/units/ssh.service'), 'active enabled\n');
+    const l0 = calls(t).length;
+    assert.equal(fire(t, q.id, 'look').status, 0);
+    assert.ok(!calls(t).slice(l0).some(c => c[0] === 'systemctl' && c.includes('start')), 'nothing started');
     assert.match(readFileSync(join(G(t, q.id), 'result'), 'utf8').split('\n')[0], /: nothing differed$/);
   });
 
@@ -1881,7 +1888,11 @@ describe('the lock-out net (R60)', () => {
       assert.equal(fire(s, r.id, 'boot').status, 0);
       const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
       assert.ok(asked.indexOf('daemon-reload') >= 0 && asked.indexOf('--no-block start ssh.service') > asked.indexOf('daemon-reload'), `${how}: ${asked.join(' | ')}`);
-      assert.ok(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n').includes('put back the unit ssh.service'), how);
+      // (the A-2 follow-up: the result is written by the restart's own look, once ssh runs; before, by the restart)
+      assert.ok(!existsSync(join(G(s, r.id), 'result')), how);
+      assert.equal(fire(s, r.id, 'look').status, 0, how);
+      const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+      assert.ok(result.includes('put back the unit ssh.service') && result[1] === 'after a restart inside the window, once the ways in ran', `${how}: ${result.join('\n')}`);
       assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active enabled links', how);
       assert.ok(lstatExists(join(s.R, 'etc/systemd/system/multi-user.target.wants/ssh.service')) && !lstatExists(join(s.R, 'etc/systemd/system/ssh.service')), how);
     }
@@ -1893,6 +1904,61 @@ describe('the lock-out net (R60)', () => {
     assert.equal(fire(s, r.id, 'timer', env).status, 1);
     assert.ok(part(s, r.id).includes('could not: the unit ssh.service ran at the copy and does not run now'), part(s, r.id).join('\n'));
     assert.ok(existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'result')));
+  });
+
+  // The A-2 follow-up to A-15: after a restart the queued starts run only once the restart unit has ended, so the
+  // put-back arms a look of its own, the transient timer sw-guard-look-<id> (90 s; gone once it ran), which runs the
+  // put-back again: each way-in unit that ran at the copy and does not run is started, and must run (three looks, 20 s
+  // apart); only then is it done. Before: the restart's put-back was done once systemd took the queued start.
+  const RESTART = s => { rmSync(join(s.R, 'standin/timers', `sw-guard-${s.id}.timer`)); writeFileSync(join(s.R, 'standin/units/ssh.service'), 'inactive disabled\n'); };
+  test("after a restart the put-back arms its own look, sw-guard-look-<id>: a way-in unit that never comes up is started at each of three looks, then the put-back failed, the guard stays open and check says so", { timeout: 150000 }, () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'active enabled\n');
+    const r = net(s, `${SSH_CHANGE}; systemctl disable ssh.service`);
+    RESTART({ ...s, id: r.id });   // (the restart: the net's timer is gone, ssh did not start)
+    // (systemd says ok to each start of ssh, queued or not, yet ssh never runs)
+    const env = binOf(s, { systemctl: `case "$*" in "start ssh.service") echo start >> "$SPARK_CONSOLE_REHEARSAL/standin/starts"; exit 0 ;; "--no-block start ssh.service") exit 0 ;; esac; exec "${join(MOCKBIN, 'systemctl')}" "$@"` });
+    assert.equal(fire(s, r.id, 'boot', env).status, 0);
+    assert.deepEqual(unitCall(s, `sw-guard-look-${r.id}`), ['systemd-run', `--unit=sw-guard-look-${r.id}`, `--description=Spark Console net ${r.id}: the ways in run after a restart`,
+      '--on-active=90s', '--timer-property=AccuracySec=1s', '--collect', '--quiet', '-p', 'Type=oneshot', '--', '/bin/bash', join(G(s, r.id), 'restore.sh'), 'look']);
+    assert.ok(!existsSync(join(G(s, r.id), 'result')) && existsSync(join(G(s, r.id), 'pending')), 'not done at the restart');
+    for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
+    assert.ok(run(s, ['check', '--id', newId()]).stdout.endsWith(` net look: guard ${r.id} was put back after a restart; sw-guard-look-${r.id} looks that the ways in run, and only then is it done\n`));
+    rmSync(join(s.R, 'standin/timers', `sw-guard-look-${r.id}.timer`));   // (it fired)
+    const t0 = Date.now(), l = fire(s, r.id, 'look', env);
+    assert.equal(l.status, 1, l.stdout + l.stderr);
+    assert.ok(Date.now() - t0 >= 40000, `three looks, 20 s apart (${Date.now() - t0} ms)`);
+    assert.equal(readFileSync(join(s.R, 'standin/starts'), 'utf8'), 'start\nstart\nstart\n', 'started at each look');
+    const p = part(s, r.id);
+    for (const x of ['could not: the unit ssh.service ran at the copy and does not run now', 'put back /etc/ssh/sshd_config', 'put back the unit ssh.service']) assert.ok(p.includes(x), `${x}\n${p.join('\n')}`);
+    assert.ok(!existsSync(join(G(s, r.id), 'result')) && existsSync(join(G(s, r.id), 'pending')));
+    for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
+    const c = run(s, ['check', '--id', newId()]).stdout;
+    assert.ok(new RegExp(` net left: guard ${r.id} waits for no timer; its put-back did not finish \\(\\S+ attempt 3: 2 went back, 1 could not: the unit ssh\\.service ran at the copy and does not run now\\): putback --id ${r.id} tries again, keep --id ${r.id} keeps it as it stands\\n$`).test(c), c);
+  });
+
+  test('after a restart a way-in unit that comes up by the second look: the put-back is whole, and only then done', { timeout: 120000 }, () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'active enabled\n');
+    const r = net(s, `${SSH_CHANGE}; systemctl disable ssh.service`);
+    RESTART({ ...s, id: r.id });
+    const once = '"$SPARK_CONSOLE_REHEARSAL/standin/looked-once"';
+    const env = binOf(s, { systemctl: `[ "$*" = "--no-block start ssh.service" ] && exit 0; if [ "$*" = "start ssh.service" ] && [ ! -e ${once} ]; then : > ${once}; exit 0; fi; exec "${join(MOCKBIN, 'systemctl')}" "$@"` });
+    assert.equal(fire(s, r.id, 'boot', env).status, 0);
+    assert.ok(!existsSync(join(G(s, r.id), 'result')));
+    rmSync(join(s.R, 'standin/timers', `sw-guard-look-${r.id}.timer`));
+    const t0 = Date.now(), l = fire(s, r.id, 'look', env);
+    assert.equal(l.status, 0, l.stdout + l.stderr);
+    assert.ok(Date.now() - t0 >= 20000, `a second look (${Date.now() - t0} ms)`);
+    assert.equal(readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n').length, 1);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.match(result[0], /: 2 went back, 0 did not$/);
+    assert.equal(result[1], 'after a restart inside the window, once the ways in ran');
+    for (const x of ['put back /etc/ssh/sshd_config', 'put back the unit ssh.service']) assert.ok(result.includes(x), `${x}\n${result.join('\n')}`);
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active enabled');
+    assert.ok(!existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'part')));
+    for (const f of BOOT(s, r.id)) assert.ok(!lstatExists(f), f);
+    assert.ok(!/ net (open|left|look): /.test(run(s, ['check', '--id', newId()]).stdout));
   });
 
   // P-1: the command's unit counts as stopped only when systemd says inactive or failed; no answer is not "gone". One
@@ -2745,11 +2811,11 @@ describe("the owner's one-time command", () => {
     assert.equal(u.status, 2, u.stdout + u.stderr);
     assert.match(u.stderr, new RegExp(`Stopped on .*: the lock-out net still holds a change here \\(guard ${g.id}, which goes back at \\d{4}-\\d\\d-\\d\\dT\\S+Z unless it is kept\\)\\. Keep it \\(sudo /usr/local/sbin/spark-console-root keep --id ${g.id}\\) or put it back \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\) first, then run --undo again\\. Nothing was changed\\.\n`));
     for (const p of kept) assert.ok(has(f, p), p);
-    // left with no timer (a restart whose put-back failed, say): only a put-back ends it, and keep is not offered
+    // left with no timer (a restart whose put-back failed, say): a put-back ends it, or, once that has failed, a keep
     rmSync(join(f.target.R, 'standin/timers', `sw-guard-${g.id}.timer`));
     const v = f.cmd(['--undo', '3']);
     assert.equal(v.status, 2, v.stdout + v.stderr);
-    assert.match(v.stderr, new RegExp(`: the lock-out net still holds a change here \\(guard ${g.id}\\), and no timer waits to put it back\\. Put it back first \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\), then run --undo again\\. Nothing was changed\\.\n`));
+    assert.match(v.stderr, new RegExp(`: the lock-out net still holds a change here \\(guard ${g.id}\\), and no timer waits to put it back\\. Put it back first \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\), or, once its put-back has failed, keep it as it stands \\(sudo /usr/local/sbin/spark-console-root keep --id ${g.id}\\); then run --undo again\\. Nothing was changed\\.\n`));
     for (const p of kept) assert.ok(has(f, p), p);
     assert.ok(!sudoCalls(f).slice(n).some(x => x.startsWith('rm ')), sudoCalls(f).slice(n).join('\n'));
     // put back: --undo goes on, and the line stays gone (no timer is left to write it back)
