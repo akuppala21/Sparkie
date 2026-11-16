@@ -125,30 +125,36 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   audit({ via, actor: channel === 'telegram' ? 'owner on Telegram' : 'owner', action: 'key-given', args: { name, kept: r.kept }, ok: r.kept });
   return message;
 }
-// A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
-// (messages, titles, a carried-on request) get every kept value hidden and are saved once if one changed, so the daily
-// copy stops carrying it. A chat that never held one is left exactly as it was (nor is its time touched). Says whether
-// one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too), and
-// whether one of them was on Telegram.
+// A key just kept may already be in the owner's earlier words, typed before it was given with /key, and in what came of
+// them: a command's step line and its last lines, an ask's text, a button's label, an error, the page's snapshot, a task
+// and its report. Every string of every stored chat (all but its id and login, at any depth, so a field added later is
+// covered too) gets every kept value hidden, and the chats are saved once if one changed, so chats.json, the daily copy
+// it next makes and GET /chats/:id stop carrying it; so do the lines the page is shown whole from memory (chatWhole,
+// chatAsksWhole, 14-chats.mjs). A chat that never held one is left exactly as it was (nor is its time touched). Says
+// whether one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too),
+// and whether one of them was on Telegram.
+// (every string in o, at any depth, but its own fields named in skip, in place; true when one changed)
+function keptHiddenIn(o, skip = []) {
+  let changed = false;
+  for (const k of Object.keys(o)) {
+    const v = o[k];
+    if (skip.includes(k)) continue;
+    if (typeof v === 'string') { const t = keptHidden(v); if (t !== v) { o[k] = t; changed = true; } }
+    else if (v && typeof v === 'object' && keptHiddenIn(v)) changed = true;
+  }
+  return changed;
+}
 function hideKeptInChats(value) {
   const owner = accessList().owner, left = { said: false, telegram: false };
   let changed = false;
   for (const c of chatData().conversations) {
-    if (c.login !== owner) continue;
-    // (its title and a carried-on request are the owner's words too)
-    for (const [o, k] of [[c, 'title'], [c.task, 'request']]) {
-      if (typeof o?.[k] !== 'string') continue;
-      const t = keptHidden(o[k]);
-      if (t !== o[k]) { o[k] = t; changed = true; }
+    for (const m of Array.isArray(c.messages) ? c.messages : []) {
+      if (c.login === owner && m?.role === 'user' && !m.auto && typeof m.content === 'string' && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
+      if (chatWhole.has(m)) chatWhole.set(m, keptHidden(chatWhole.get(m)));
+      if (chatAsksWhole.has(m)) chatAsksWhole.set(m, chatAsksWhole.get(m).map(a => ({ ...a, text: keptHidden(a.text) })));
     }
-    for (const m of c.messages) {
-      if (typeof m.content !== 'string') continue;
-      const t = keptHidden(m.content);
-      if (t === m.content) continue;
-      if (m.role === 'user' && !m.auto && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
-      m.content = t;
-      changed = true;
-    }
+    // (its id and login say whose it is; everything else, messages, title, task and reports, is cleaned)
+    if (keptHiddenIn(c, ['id', 'login'])) changed = true;
   }
   if (changed) saveChats();
   return left;
