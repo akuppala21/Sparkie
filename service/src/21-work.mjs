@@ -207,24 +207,21 @@ function helperCall(node, verb, opts = {}) {
 // What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
 // and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
 // helper's own included, is only ever output.
-// Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer,
-// the runner (21-runner.mjs) and the net (21-guard.mjs) read through these, and own-programs.test checks each against
-// the sentences deploy/spark-console-root can print, so a sentence the helper changes fails a test, not a Spark.
+// Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer
+// and the runner (21-runner.mjs) read through these (the net's, 21-guard.mjs, through GUARD_SAYS there), and
+// own-programs.test checks each against the sentences deploy/spark-console-root can print, so a sentence the helper
+// changes fails a test, not a Spark.
 const HELPER_SAYS = {
-  end: /^end (\d{1,3}|time)$/,
   proofPassed: /^proof passed: /,
   proofFailed: /^proof failed: (.*)\. No mark was written, so the look and run walls refuse on this Spark\.$/,
   refused: /^refused: (.*)$/,
-  proofState: /^(?:refused|look refuses): the wall proof is (\S+) on this Spark(?:: prove first)?$/,
+  // (a state of one word or more: "missing", "out of date: systemd changed")
+  proofState: /^(?:refused|look refuses): the wall proof is (.+?) on this Spark(?:: prove first)?$/,
   lookRefuses: /^look refuses: (.*)$/,
   lookReady: /^look ready$/,
   state: /^state (never|running|ended|unknown): /,
   diskFloor: /^refused: the disk has (\d+) GB free; a plain change needs (\d+) GB free: free space first, by a change the owner asks for \(it may run under the floor\)$/,
   diskStopped: /^stopped: the disk's free space fell under (\d+) GB$/,
-  netArmed: /^net armed: the ways in go back at (\S+) /,
-  netOpen: /^net open: (.*)$/,
-  kept: /^kept: |^kept already: /,
-  putBack: /^(?:net |already )?put back at (.*)$/,
 };
 function helperAnswer({ id, code, out, err, cut, timedOut }) {
   if (cut) return { kind: 'ran', output: out, exit: null, cut: true };

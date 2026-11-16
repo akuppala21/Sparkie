@@ -14,9 +14,11 @@
 // Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync, renameSync, mkdtempSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
@@ -180,23 +182,31 @@ test('what put-back does not cover is said: on the button, and in the result whe
   await choose(chat, r.choices.find(c => c.label === 'No').id);
 });
 
-test('a change runs git with none of the owner\'s or the system\'s settings but their name and mail, no attributes file, no hooks and no file-system monitor, from the unit\'s own first lines', { timeout: 60000 * SLOW }, async () => {
-  // (that a command setting or unsetting these is asked is the sorter's row: step A7a-git. A .gitconfig an earlier change
-  // with the top of the home writable could have left: an editor, an attributes file, another source for a pull)
-  writeFileSync(at3('.gitconfig'), '[user]\n\tname = Stand In\n\temail = owner@example.invalid\n[core]\n\teditor = planted-editor\n\tattributesFile = ~/planted-attributes\n[url "https://example.invalid/"]\n\tinsteadOf = https://github.com/\n');
-  let r, env;
-  try {
-    r = await run('git config --list > notes/git.txt');
-    env = await run('printenv GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_ATTR_NOSYSTEM > notes/git-env.txt');
-  } finally { rmSync(at3('.gitconfig'), { force: true }); }
+test('a change runs git with none of the owner\'s or the system\'s settings, no attributes file, no hooks and no file-system monitor, from the unit\'s own first lines', { timeout: 60000 * SLOW }, async () => {
+  // (that a command setting or unsetting these is asked is the sorter's row: step A7a-git. The stand-in unit's home is the
+  // owner's as /etc/passwd names it, /spark3, which isn't there here: no name or mail is carried over)
+  const r = await run('git config --list > notes/git.txt');
   assert.equal(r.status, 200, r.text);
-  assert.equal(text('notes/git.txt'), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\nuser.name=Stand In\nuser.email=owner@example.invalid\n');
+  assert.equal(text('notes/git.txt'), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\n');
+  const env = await run('printenv GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_ATTR_NOSYSTEM > notes/git-env.txt');
   assert.equal(env.status, 200, env.text);
   assert.equal(text('notes/git-env.txt'), '/dev/null\n1\n1\n');
-  // (no name or mail of the owner's: none is carried over, so git says so itself rather than take an empty one)
-  const none = await run('git config --list > notes/git-none.txt');
-  assert.equal(none.status, 200, none.text);
-  assert.equal(text('notes/git-none.txt'), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\n');
+});
+
+test('the unit\'s git lines with a .gitconfig an earlier change left (an editor, an attributes file, another source for a pull): git gets none of it, only the owner\'s name and mail', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8');
+  const decl = /^const RUNNER_GIT = \[[\s\S]*?\]\.join\('\\n'\);$/m.exec(src)?.[0];
+  assert.ok(decl, 'RUNNER_GIT in 21-runner.mjs');
+  const RUNNER_GIT = new Function(`${decl}\nreturn RUNNER_GIT;`)();
+  const home = mkdtempSync(join(tmpdir(), 'sct-git-')), clean = { PATH: process.env.PATH, HOME: home, LANG: 'C' };
+  try {
+    const list = () => spawnSync('bash', ['--noprofile', '--norc', '-c', `${RUNNER_GIT}git config --list`], { cwd: home, env: clean, encoding: 'utf8' }).stdout;
+    writeFileSync(join(home, '.gitconfig'), '[user]\n\tname = Stand In\n\temail = owner@example.invalid\n[core]\n\teditor = planted-editor\n\tattributesFile = ~/planted-attributes\n\tsshCommand = planted-ssh\n[url "https://example.invalid/"]\n\tinsteadOf = https://github.com/\n');
+    assert.equal(list(), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\nuser.name=Stand In\nuser.email=owner@example.invalid\n');
+    // (none set: none carried over, so git says so itself rather than take an empty one)
+    writeFileSync(join(home, '.gitconfig'), '[core]\n\teditor = planted-editor\n');
+    assert.equal(list(), 'core.hookspath=/dev/null\ncore.fsmonitor=false\ncore.attributesfile=/dev/null\n');
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test('a change whose end is unknown holds its Spark until the root helper says it has ended: no second change starts beside it', { timeout: 120000 * SLOW }, async () => {
@@ -578,7 +588,7 @@ test('the press runs in the wall its button showed: a folder at the top of the h
 
 test('the dangerous ask says the wall it runs in after the yes and what that lets it do, and its press runs there', { timeout: 120000 * SLOW }, async () => {
   writeFileSync(at3('notes/b.tmp'), 'b\n');
-  const chat = await newChat(), cmd = 'rm ~/notes/*.tmp && echo x > top2.txt';
+  const chat = await newChat(), cmd = 'rm notes/*.tmp && echo x > top2.txt';
   await turn(chat, 'clean the tmp files and write the top note on spark 3', [[RUN(cmd)]]);
   const ask = (await chatMessages(chat)).findLast(m => m.danger);
   assert.ok(ask, 'the dangerous ask');
