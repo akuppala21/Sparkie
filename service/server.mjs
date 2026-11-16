@@ -16791,7 +16791,9 @@ function workRead(ctx, id, title, args) {
 // (never trimmed: kept past 1,024, where the sorter doubts, so the commands after it are asked)
 function workWrote(ctx, sorted) {
   if (!Array.isArray(ctx?.written)) return;
-  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
+  // (a place it only read is no write: the sorter's reads, R64)
+  const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
+  for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
 }
 
 // Whether a change runs at once (design A 2.5): why not, or null when it may. 1, the owner (their chats, Telegram, the
@@ -16808,8 +16810,9 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
   const outside = runnerOutside(sorted, command, dir, topDirs);
   if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
-  const wide = runnerWiden(node, command, widen);
-  if (wide.fleet) return 'it reaches another Spark or your home network';
+  const wide = runnerWiden(node, command, widen, sorted);
+  if (wide.fleet) return 'it reaches another Spark of this fleet';
+  if (wide.home) return 'it reaches your home network';
   if (wide.gpu) return 'it uses the GPU';
   // (no change runs at once while a Spark offers a shell with no key: Tailscale SSH, from the tailnet's own answer)
   const ts = workTailnetSsh();
@@ -16904,9 +16907,10 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen);
+  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
-    ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
+    ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
+    ...(wide.internet ? [RUNNER_WIDE.internet] : []),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
 }
@@ -16956,8 +16960,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
-    const w = runnerWiden(node, command, widen);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+    const w = runnerWiden(node, command, widen, sorted);
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
@@ -18147,16 +18151,20 @@ const RUNNER_DIR = '~/work';
 // that one. Each goes only when it is a real folder there now (helperScript). (The wall makes the rest of ~/.local
 // read-only by itself, R63: the shared folder's entry costs nothing and stays, should that ever change.)
 const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
-// What an asked change may widen (R63): the other Sparks' and the home network's ranges (--fleet) when the caller says
-// it must reach them or its command names another Spark or such an address; the devices (--gpu) when the caller says
-// it must use the GPU. Never at once: the button says what each widens.
+// What an asked change may widen (R63), from the sorter's own fields (R64) and the caller's words: the fleet's ranges
+// (--fleet) when it reaches another Spark of this fleet (reach, or a name or address of one in its words, or the
+// caller's fleet); the devices (--gpu) when it uses the GPU (the sorter's gpu, or the caller's). One that reaches the
+// home network is asked too, and gets no flag: a change can't reach it. Never at once: the button says each, and where
+// it reaches the internet.
 const RUNNER_WIDE = { fleet: 'With your yes it may also reach the other Sparks and your home network (their addresses are closed to a change otherwise).',
-  gpu: 'With your yes it may also use the GPU and the other devices (closed to a change otherwise).' };
-function runnerWiden(node, command, widen = {}) {
+  gpu: 'With your yes it may also use the GPU and the other devices (closed to a change otherwise).',
+  home: 'It reaches your home network, which a change can’t reach, even after your yes: there it will fail.',
+  internet: 'It reaches the internet.' };
+function runnerWiden(node, command, widen = {}, sorted = null) {
   const names = NODES.filter(n => n.id !== node.id).flatMap(n => [n.id, n.alias, n.ip, n.host !== 'local' ? n.host : null]).filter(x => typeof x === 'string' && x);
-  const words = String(command).split(/[\s'"=@:/,;|&()<>]+/).filter(Boolean);
-  const named = words.some(w => names.includes(w) || /^(?:10|127)\.\d+\.\d+\.\d+$|^192\.168\.\d+\.\d+$|^172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+$|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$|^169\.254\.\d+\.\d+$/.test(w) || /\.ts\.net$/i.test(w));
-  return { fleet: widen.fleet === true || named, gpu: widen.gpu === true };
+  const words = String(command).split(/[\s'"=@:/,;|&()<>]+/).filter(Boolean), reach = Array.isArray(sorted?.reach) ? sorted.reach : [];
+  const fleet = widen.fleet === true || reach.includes('fleet') || words.some(w => names.includes(w));
+  return { fleet, gpu: widen.gpu === true || sorted?.gpu === true, home: !fleet && reach.includes('home'), internet: reach.includes('internet') };
 }
 // What still holds outside the plain wall (run --open, R42 and R63, as the helper builds it), said on its button.
 const RUNNER_OPEN_HOLDS = 'There it still can’t gain root by itself, and the ways in (~/.ssh) and the start files stay read-only; but it runs as you with all your groups (Docker’s too), and the keys and tokens in your home are open to it.';
@@ -18175,13 +18183,12 @@ const runnerProtected = (sorted, dir = RUNNER_DIR) => RUNNER_PROTECT.filter(d =>
 // inside the wall: it is asked, and after the owner's yes runs outside it (run --open, design A 2.13), the button and
 // the result saying why.
 const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'];
-const RUNNER_INSTALLS = [[/(?:^|[\s;&|(])(?:pip3?|python3?\s+-m\s+pip)\s+install\b[^;&|]*\s--user\b/, '~/.local'],
-  [/(?:^|[\s;&|(])(?:uv\s+tool|pipx)\s+install\b/, '~/.local'], [/(?:^|[\s;&|(])cargo\s+install\b/, '~/.cargo/bin'],
-  [/(?:^|[\s;&|(])npm\s+(?:i|install|add)\b[^;&|]*\s(?:-g|--global)\b/, 'the system’s own folders']];
 function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
   const out = [];
   if (sorted?.open) out.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
-  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
+  // (a place the command only reads is no write there, R64's reads: the copy first still covers it)
+  const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
+  for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
     if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
     const where = p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.')) ? ' at the top of the home'
@@ -18189,7 +18196,8 @@ function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
         : p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p) ? ', outside the home' : null;
     if (where !== null && out.length < 4) out.push(`it writes ${p}${where} which the plain wall keeps read-only`.replace(/(\S) which/, '$1, which'));
   }
-  for (const [re, where] of RUNNER_INSTALLS) if (re.test(String(command)) && out.length < 4) out.push(`it installs into ${where}, which the plain wall keeps read-only`);
+  // (an install that puts programs where the plain wall keeps them read-only, the sorter's installs, R64)
+  for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) if (out.length < 4) out.push(`it installs into ${w === 'npm -g' ? 'the system’s own folders (npm -g)' : w}, which the plain wall keeps read-only`);
   return [...new Set(out)];
 }
 function runnerMemoryCap(available) {
@@ -18215,9 +18223,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
+  const wide = runnerWiden(node, command, widen, sorted), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
-  if ((wide.fleet || wide.gpu) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark or the home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
+  if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && outside.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
