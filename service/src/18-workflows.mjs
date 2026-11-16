@@ -64,6 +64,9 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   withOwed,
   CONTEXT_FLOOR,
   spanOf,
+  START_READY_MS,
+  unanswered,
+  backUnits,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -100,7 +103,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.

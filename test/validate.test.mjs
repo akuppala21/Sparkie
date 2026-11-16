@@ -8,7 +8,8 @@
 // that leads out at least 16 MiB: a chat template or a small file under a weight name linked out stops it, a large
 // shard is copied as a file and the model starts. A copy whose sender ends badly after a whole archive (A-21: a weight
 // file it can't read left out) leaves nothing at the final place or in staging, the library doesn't count that Spark,
-// and the next start copies again and completes; a copy cancelled part-way leaves nothing either.
+// and the next start copies again and completes; a copy cancelled part-way leaves nothing either. A copy that reached
+// the other Spark but couldn't be moved into place there says so, names that Spark, and keeps the whole copy (W-9).
 //
 // One tap after an install (docs/contract.md 6.3): "Test the changes" runs each workflow that isn't validated
 // with a small model on Spark 3 or 4 (never Spark 2), and starts again whatever had to stop. Auto-restart works before
@@ -330,6 +331,25 @@ test('a copy cancelled part-way leaves nothing at the final place and nothing in
   assert.ok(!existsSync(models('spark4', MODEL)), 'nothing at the final place');
   assert.ok(!existsSync(models('spark4', '.incoming', MODEL)), 'nothing in staging');
   assert.ok(!(await copies(MODEL)).includes('spark4'));
+});
+
+// W-9: the copy reaches Spark 4 whole, but its move into place there fails: an earlier entry left at the final place
+// holds a folder this user can't write (as files a container wrote as root are). The words name Spark 4, never Spark 3,
+// and the whole copy is kept in staging there, with the one command that finishes it.
+test('a copy that reached the other Spark but couldn\'t be moved into place there: the words name that Spark and how to finish it, and the whole copy is kept', { timeout: 600000 * SLOW }, async () => {
+  const c = cachedCopy('Movefail-27B', {}, hub3()), entry4 = join(hub4(), `models--${c.model}`), locked = join(entry4, 'blobs', 'locked');
+  mkdirSync(locked, { recursive: true });
+  writeFileSync(join(locked, 'left-by-a-container'), 'x');
+  chmodSync(locked, 0o555);
+  try {
+    assert.ok((await planOn4(c.model)).steps.some(s => s.kind === 'copy' && s.from === 'spark3'), 'a copy is planned (what is left there isn’t a copy)');
+    const w = await ownerStartOn4(c.model);
+    assert.equal(w.status, 'failed', JSON.stringify(w));
+    const [first] = w.error.split('\n');
+    assert.match(first, new RegExp(`^Copy failed: the copy reached spark4 but couldn’t be moved into place there \\([^)]*Permission denied[^)]*\\)\\. The whole copy is kept there in ~/\\.cache/huggingface/hub/\\.spark-console-incoming/models--${c.model}\\. To finish it, on spark4 run: sudo chown -R \\$USER ~/\\.cache/huggingface/hub/models--${c.model} && rm -rf ~/\\.cache/huggingface/hub/models--${c.model} && mv ~/\\.cache/huggingface/hub/\\.spark-console-incoming/models--${c.model} ~/\\.cache/huggingface/hub/models--${c.model}$`), first);
+    assert.doesNotMatch(w.error, /On spark3 run|files on spark3 can’t be read/);
+    assert.ok(existsSync(join(hub4(), '.spark-console-incoming', `models--${c.model}`, 'snapshots', 'c1', 'config.json')), 'the whole copy is kept in staging');
+  } finally { chmodSync(locked, 0o755); }
 });
 
 test('going back to the last good build: none on the stand-in fleet, so it says so', async () => {

@@ -1288,7 +1288,12 @@ ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
   if (!failed) {
     const moved = await run(to, `rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }`, { timeout: 600000 });
     if (moved.code === 0) return;
-    errText = `${errText}\n${moved.err || moved.out || `it couldn’t be moved into place on ${to.id}`}`;
+    // Only the move failed, on the receiving Spark (W-9: often files a container left there as root): the whole copy is
+    // kept in staging, never shown as a model, and the words say which Spark and the one command that finishes it there.
+    // (The next start copies again from the start: the staging folder is cleared before each copy.)
+    const [home, stage] = store === 'hf' ? ['~/.cache/huggingface/hub', '~/.cache/huggingface/hub/.spark-console-incoming'] : [`~/${CONFIG.modelsDir}`, `~/${CONFIG.modelsDir}/.incoming`];
+    const said = String(moved.err || moved.out || '').trim().split('\n').pop().slice(0, 300) || (moved.code === 255 ? `${to.id} didn’t answer` : 'no reason given');
+    throw new Error(`Copy failed: the copy reached ${to.id} but couldn’t be moved into place there (${said}). The whole copy is kept there in ${stage}/${folder}. To finish it, on ${to.id} run: sudo chown -R $USER ${home}/${folder} && rm -rf ${home}/${folder} && mv ${stage}/${folder} ${home}/${folder}`);
   }
   // Otherwise what was copied goes, and whether it went is looked at: left there, it would hold up to a whole model.
   const gone = await run(to, `rm -rf ${staging}/${q(folder)}`, { timeout: 600000 });
@@ -1349,7 +1354,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
-    if (!started.code || started.code === 255 || /\(timed out\)$/.test(started.err)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
+    if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
     consoleStopped.delete(`${nodeId}/${cname}`);
     step(job, 'Loading the model; this can take a few minutes');
@@ -1795,19 +1800,48 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 }
 
 // It didn't start: what was set aside gets its name back and starts again. It's taken off this start's lists, so
-// putting the rest back (putBack) doesn't stop it again as one of this start's parts.
-async function asideBack(job) {
-  const held = [];
+// putting the rest back (putBack) doesn't stop it again as one of this start's parts. Before that the new container of
+// its own name is stopped and looked at (W-1), and nothing else this start ran there may still run (A-23); otherwise it
+// stays set aside, and the new one stays on `ranHere`, so putBack's checked stop and its words cover both. A pair set
+// aside goes back whole or not at all (W-7). After putBack's own stops (`afterStops`) it only looks.
+// One whose start again failed stays on `stoppedHere` and is said (W-3, job.notBack).
+async function asideBack(job, afterStops = false) {
+  const ready = new Map();
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
-    // (never beside a part this start ran on that Spark that isn't known to have stopped: it stays set aside, and the
-    // put-back looks again once its own stops are done, A-23)
-    if ((await runningOn(job, a.node, x)).length) { held.push(a); continue; }
-    const r = await run(nodeById(a.node), `docker stop --time 20 ${q(a.name)} >/dev/null 2>&1; docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} && docker start ${q(a.name)} >/dev/null`, { timeout: 120000 });
-    job.ranHere = (job.ranHere || []).filter(y => y !== x);
-    job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
-    consoleStopped.delete(x);
-    note(job, r.code ? `Couldn’t start ${a.name} on ${a.node} again (it’s there as ${a.aside}); start it from Spark Console.` : `Started ${a.name} on ${a.node} again`);
+    ready.set(a, afterStops ? !(await runningOn(job, a.node)).length
+      : !(await runningOn(job, a.node, x)).length && (await stopChecked(nodeById(a.node), a.name)) === 'stopped');
+  }
+  const held = [], all = job.asideHere || [];
+  for (const u of backUnits(all.map(a => `${a.node}/${a.name}`))) {
+    const parts = u.items.map(x => all.find(a => `${a.node}/${a.name}` === x));
+    if (parts.some(a => !ready.get(a))) { held.push(...parts); continue; }
+    const back = [];
+    for (const a of parts) {
+      const x = `${a.node}/${a.name}`;
+      const r = await run(nodeById(a.node), `docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} || exit 3; docker start ${q(a.name)} >/dev/null || exit 4`, { timeout: 120000 });
+      job.ranHere = (job.ranHere || []).filter(y => y !== x);
+      consoleStopped.delete(x);
+      if (!r.code) {
+        job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
+        note(job, `Started ${a.name} on ${a.node} again`);
+        back.push(a);
+        continue;
+      }
+      const at = sparkName(nodeById(a.node) || { id: a.node }), there = r.code === 4 ? '' : r.code === 3 ? ` (it’s there as ${a.aside})` : ` (Docker didn’t answer: it may be there as ${a.aside})`;
+      note(job, `Couldn’t start ${a.name} on ${a.node} again${there}; start it from Spark Console.`);
+      (job.notBack ||= []).push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : `${a.name} couldn’t be started again on ${at}${there}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, and it is owed as the pair, W-7)
+    if (u.model && back.length < parts.length) {
+      for (const a of back) {
+        consoleStopped.set(`${a.node}/${a.name}`, Date.now());
+        (job.stoppedHere ||= []).push(`${a.node}/${a.name}`);
+        if ((await stopChecked(nodeById(a.node), a.name)) === 'stopped') note(job, `Stopped ${a.name} on ${a.node} again: its other part didn’t start`);
+      }
+    }
   }
   job.asideHere = held;
 }
@@ -1852,6 +1886,8 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
     const r = await run(nodeById(m.node), clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix }), { timeout: 120000 });
+    // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
+    if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     if (r.code) { await stopAll(); throw new Error(`Docker couldn’t start the part on ${m.node}: ${r.err || r.out}`); }
     (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     // Started again on purpose (as a one-Spark start does): an earlier stop of this part no longer counts as "stopped
@@ -6975,12 +7011,12 @@ function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) 
 // runs out of memory, the start cuts it again, and the new figure is kept.
 function fullContext(how, v, free) {
   const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
-  if (!flag || !(cut > 0)) return how;
+  if (!flag || !v.contextCut) return how;
   const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
-  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free: a
-  // context is never cut below 16,384 by itself, A-26)
+  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free, also
+  // when the free memory then couldn't be read: a context is never cut below 16,384 by itself, A-26, W-12)
   const low = at >= 0 && Number(pair === 1 ? String(how.args[at]).split('=')[1] : how.args[at + 1]) < CONTEXT_FLOOR;
-  if (!low && (!Number.isFinite(free) || free < cut + HEADROOM)) return how;
+  if (!low && (!(cut > 0) || !Number.isFinite(free) || free < cut + HEADROOM)) return how;
   return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free, ...(low ? { floor: true } : {}) } };
 }
 // The least free memory on these Sparks right now, or null when one can't be read.
@@ -7022,8 +7058,8 @@ const START_FAILURES = [
   { id: 'out-of-memory', title: 'it ran out of memory while loading',
     sign: /out of memory|OutOfMemoryError|cudaMalloc|insufficient memory|not enough (?:GPU )?memory|no available memory for the cache blocks|larger than the maximum number of tokens that can be stored in KV cache|KV cache[^\n]{0,80}(?:insufficient|too small|exceed)|(?:max_model_len|max_seq_len|context.length)[^\n]{0,80}(?:larger|greater|exceed)/i,
     // (never below 16,384 by itself, contract 6.9 and T12: shorter needs the owner's yes, and no ask is built yet, A-26)
-    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384; never shorter without asking).',
-    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest it is cut to without asking): it needs a Spark with more free memory, or a smaller version of the model.',
+    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384, the shortest Spark Console cuts it to by itself).',
+    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest Spark Console cuts it to by itself): it needs a Spark with more free memory, or a smaller version of the model. To run it with a shorter context, start it with a setup that sets one itself (a recipe setup, or its own spark.json): a setup’s own context is never made longer.',
     next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > CONTEXT_FLOOR ? { fix: { ...fix, contextCap: CONTEXT_FLOOR } } : null) },
   { id: 'bad-flag', title: 'the engine didn’t accept one of the settings',
     sign: /unrecognized arguments|no such option|error: argument|invalid choice|unexpected keyword argument|unknown (?:argument|option)/i,
@@ -7086,7 +7122,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which isn’t done without asking (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which Spark Console no longer does by itself (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
   else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
@@ -7134,28 +7170,41 @@ async function putBack(job, m, placed) {
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
   // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
   // have stopped, nothing is started again; both stay on the operation's lists, and its words say so (cleanUp). A copy
-  // set aside is asideBack's, after these stops.
+  // set aside is asideBack's, after these stops. A pair it had stopped goes back whole or not at all (W-7); one that
+  // couldn't be started again stays on `stoppedHere` and is said (W-3, job.notBack).
   const aside = new Set((job.asideHere || []).map(a => `${a.node}/${a.name}`));
   const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x) && !aside.has(x));
   for (const x of ran) consoleStopped.set(x, Date.now());
   const ends = await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return stopChecked(nodeById(id), c); }));
-  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [];
-  for (const x of stopped) {
-    const [id, container] = x.split('/');
-    if (still.some(y => y.split('/')[0] === id)) { held.push(x); continue; }
-    consoleStopped.delete(x);
-    // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
-    // a link while this start ran is refused by name, and the job isn't started)
-    const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
-    note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [], pairs = [], notBack = (job.notBack ||= []);
+  for (const u of backUnits(stopped)) {
+    if (u.items.some(x => still.some(y => y.split('/')[0] === x.split('/')[0]))) { held.push(...u.items); if (u.model) pairs.push(u); continue; }
+    const back = [];
+    for (const x of u.items) {
+      const [id, container] = x.split('/');
+      consoleStopped.delete(x);
+      // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
+      // a link while this start ran is refused by name, and the job isn't started)
+      const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
+      note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+      if (!r.code) { back.push(x); continue; }
+      const at = sparkName(nodeById(id) || { id });
+      notBack.push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message.replace(/\.$/, '') : `${container} couldn’t be started again on ${at}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, W-7)
+    if (u.model && back.length < u.items.length) {
+      for (const x of back) { const [id, c] = x.split('/'); consoleStopped.set(x, Date.now()); if ((await stopChecked(nodeById(id), c)) === 'stopped') note(job, `Stopped ${c} on ${id} again: its other part didn’t start`); }
+    }
   }
   job.ranHere = still;
-  await asideBack(job);
+  await asideBack(job, true);
   const kept = job.asideHere || [];
-  job.stoppedHere = [...held, ...kept.map(a => `${a.node}/${a.name}`)];
-  if (!job.ranHere.length) return;
-  const owed = owedWords(job.ranHere, job.stoppedHere, kept);
-  for (const line of owed) note(job, line);
+  job.stoppedHere = [...new Set([...held, ...notBack.flatMap(n => n.items), ...kept.map(a => `${a.node}/${a.name}`)])];
+  const owed = [...(job.ranHere.length ? owedWords(job.ranHere, held.concat(kept.map(a => `${a.node}/${a.name}`)), kept, pairs) : []), ...notBack.map(n => n.words)];
+  if (!owed.length) return;
+  for (const line of owed.slice(0, owed.length - notBack.length)) note(job, line);
   job.cleanUp = owed.map(l => `${l}.`).join(' ');
 }
 
@@ -7516,7 +7565,8 @@ function restartJob(viewer, ctx, spark, container, model) {
     await restartRoom(viewer, spark, container, model);
     step(j, `Starting ${container} on ${spark}`);
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
-    if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+    // (a start Docker didn't answer in time may have started it all the same: stopped again below, looked at, W-6)
+    if (r.code && !unanswered(r)) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');
@@ -7524,6 +7574,7 @@ function restartJob(viewer, ctx, spark, container, model) {
     // didn't answer, a Spark that answered nothing until the limit, the limit itself. One that ended by itself is
     // stopped already.
     try {
+      if (r.code) throw new Error(`Docker didn’t answer the start of ${container} in time.`);
       const deadline = Date.now() + RESTART_WAIT_MS;
       while (Date.now() < deadline) {
         await sleep(5000);
@@ -7664,18 +7715,45 @@ async function runningOn(job, id, except = null) {
   const looks = await Promise.all(mine.map(x => stopLook(nodeById(id), x.split('/').slice(1).join('/'))));
   return mine.filter((x, i) => looks[i] !== 'stopped');
 }
+// A command that didn't get Docker's own answer (it timed out, or the Spark stopped answering) may still have done what
+// it was asked: a `docker run` or `docker start` like that counts as run, and is stopped again and looked at (W-6).
+const unanswered = r => r.code === 255 || /\(timed out\)$/.test(String(r.err || ''));
+// What a put-back starts again, as units: a pair stopped for the start (`<name>` on one Spark, `<name>-part2` on another)
+// goes back whole or not at all (W-7: one part alone holds its memory and does nothing); anything else alone.
+function backUnits(items) {
+  const units = [], used = new Set(), nameOf = x => x.split('/').slice(1).join('/'), sparkOf = x => x.split('/')[0];
+  for (const x of items) {
+    if (used.has(x)) continue;
+    const head = nameOf(x).replace(/-part2$/, ''), mate = items.find(y => y !== x && !used.has(y) && sparkOf(y) !== sparkOf(x)
+      && (nameOf(x) === head ? nameOf(y) === `${head}-part2` : nameOf(y) === head));
+    used.add(x);
+    if (!mate) { units.push({ items: [x] }); continue; }
+    used.add(mate);
+    const [h, p] = nameOf(x) === head ? [x, mate] : [mate, x];
+    units.push({ items: [h, p], model: head.replace(/^sc-/, ''), sparks: [sparkOf(h), sparkOf(p)] });
+  }
+  return units;
+}
 // What a put-back still owes, one sentence a Spark: what may still be running there, and what this operation had stopped
-// there that wasn't started again because of it (a copy set aside named with the name it is there under). Each ends
-// "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
-function owedWords(still, held, asides = []) {
+// there that wasn't started again because of it (a copy set aside named with the name it is there under; the new one of
+// the same name called the new one). Then one sentence a pair held whole (W-7), naming what the owner can ask for: that
+// model across both Sparks. Each ends "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
+function owedWords(still, held, asides = [], pairs = []) {
+  const inPair = new Set(pairs.flatMap(u => u.items)), single = held.filter(x => !inPair.has(x));
   const on = (list, id) => list.filter(x => x.split('/')[0] === id).map(x => x.split('/').slice(1).join('/'));
-  return [...new Set(still.map(x => x.split('/')[0]))].map(id => {
-    const at = sparkName(nodeById(id) || { id }), s = on(still, id), h = on(held, id);
+  const at = id => sparkName(nodeById(id) || { id });
+  const lines = [...new Set(still.map(x => x.split('/')[0]))].map(id => {
+    const h = on(single, id), s = on(still, id).map(n => (asides.some(a => a.node === id && a.name === n) ? `the new ${n}` : n));
     const them = s.length > 1 ? 'them' : 'it', were = s.length > 1 ? 'they' : 'it';
-    if (!h.length) return `${s.join(' and ')} may still be running on ${at}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
+    if (!h.length) return `${s.join(' and ')} may still be running on ${at(id)}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
     const shown = h.map(n => { const a = asides.find(x => x.node === id && x.name === n); return a ? `${n} (there as ${a.aside})` : n; });
-    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
+    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at(id)}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
   });
+  for (const u of pairs) {
+    const across = u.sparks.map(at).join(' + ');
+    lines.push(`${u.model} wasn’t started again across ${across}: both its parts stay stopped while one of its Sparks may still run what this start ran. Once that is stopped, start ${u.model} across ${across} again`);
+  }
+  return lines;
 }
 // A failed start's error with what is still owed after its first line (the line the chat shows): unchanged when nothing is.
 const withOwed = (job, message) => {
@@ -8326,6 +8404,9 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   withOwed,
   CONTEXT_FLOOR,
   spanOf,
+  START_READY_MS,
+  unanswered,
+  backUnits,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -8362,7 +8443,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -16764,6 +16845,8 @@ action({
       // (a job's two mounts checked again in the same command, as for a run again)
       const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
       if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
+      // (one Docker didn't answer in time may have started all the same: stopped again, looked at, and said, W-6)
+      if (r.code && unanswered(r)) { await appPutBack(j, node, container); throw new Error(`Docker didn’t answer the start of ${container} in time.`); }
       if (r.code) {
         // docker run makes the container before it starts it: one that never started (its port was taken) holds no data
         // or log, and left there it would stand in the way of the next try under this name. Only that one goes: still
