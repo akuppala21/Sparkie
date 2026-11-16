@@ -1329,8 +1329,8 @@ do_stop() {
     done
     case "$(systemctl show --property=ActiveState --value "$u" 2>/dev/null)" in
       inactive|failed) ;;
-      active|activating|deactivating|reloading|refreshing) say "stop: $was is still running"; exit 1 ;;
-      *) say "stop: systemd does not answer for $was, so whether it stopped is not known"; exit 1 ;;
+      '') say "stop: systemd does not answer for $was, so whether it stopped is not known"; exit 1 ;;
+      *) say "stop: $was is still running"; exit 1 ;;
     esac
   done
   if [ -n "$was" ]; then say "stopped $was: it was running, and it is gone"
