@@ -50,12 +50,13 @@ const taskLimits = t => ({
   hours: Number.isInteger(t?.hours) ? Math.min(TASK_HOURS_MAX, Math.max(1, t.hours)) : TASK_PLAIN.hours,
   turns: Number.isInteger(t?.turns) ? Math.min(TASK_HOURS_MAX * TASK_TURNS_AN_HOUR, Math.max(1, t.turns)) : TASK_PLAIN.turns,
 });
-// Which limit a task has reached, or null: its carry-on turns, its hours from the request, its work steps in all.
+// Which limit a task has reached, or null: its carry-on turns, its hours from the request, its work steps in all (one
+// count, E5b's: what taskStepsKept keeps on the task after each turn, read through taskStepsLeft, 14-rounds.mjs).
 function taskOver(t, now = Date.now()) {
   const { hours, turns } = taskLimits(t);
   if ((Number(t?.continuations) || 0) >= turns) return 'turns';
   if (!((t?.parked ? Math.min(now, Date.parse(t.parked)) : now) - Date.parse(t?.at) <= hours * 3600000)) return 'hours';
-  if ((Number(t?.steps) || 0) >= TASK_STEPS) return 'steps';
+  if (!taskStepsLeft(t)) return 'steps';
   return null;
 }
 // Which Telegram pairing a task came from, kept on it without the chat's ids (they stay in the secrets file): a new
@@ -118,6 +119,7 @@ function taskAgain(conv, text) {
   if (!(t?.stopped || t?.parked) || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
   // (parked at a button: this turn carries it on, so Sparkie asks again; its budget stays)
   if (!t.stopped) { taskUnpark(t); return t; }
+  // (its count of commands starts again too, as at the owner's next message: taskStepsLeft reads 0 as all 120 left)
   Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
   delete t.carry;
   delete t.parked;

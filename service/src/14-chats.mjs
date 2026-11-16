@@ -484,7 +484,7 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, works, spent, asked, failed }) {
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, spent, asked, failed }) {
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
@@ -497,17 +497,17 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
   // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
   if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
-  // (and its work steps in all, against its limit of 120: taskOver, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && works) conv.task.steps = (Number(conv.task.steps) || 0) + works;
   // (and the jobs of the request, whose end wakes it: jobEnded, 21-apps.mjs; noted here, as the watcher's list can be a
   // minute behind)
   if (!agent && conv.task && (!task || conv.task === task)) {
     const started = [...jobs.values()].filter(j => j.conv === conv.id && j.once && !['failed', 'cancelled'].includes(j.status) && String(j.createdAt) >= String(now));
     if (started.length) conv.task.jobs = [...(conv.task.jobs || []), ...started.map(j => ({ spark: j.node, container: j.container, at: j.createdAt }))].slice(-20);
   }
-  // (a turn a budget ended that would have carried on but for the task's own limit: its reply carries the mark,
-  // 14-tasks.mjs)
-  if (!agent && task && conv.task === task && !carry && ['steps', 'output'].includes(spent) && taskOver(task)) taskStopped(conv, task, taskOver(task), conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
+  // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
+  // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
+  // after this, so this turn's are no count of keepTask's)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
+  if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task);
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,

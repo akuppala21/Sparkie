@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (21898 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (21901 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -287,7 +287,7 @@ Sparkie's chats live here: one owner-only JSON file on this Spark. Each person s
 The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and how much it may do, the tools each round offers, one streamed model call, the loop of rounds, one round’s tool calls, and one tool call. They share the turn’s state in one object, `turn`.
 
 - **Area:** brain. **Rules:** R7, R26, R34, R36, R43, R46, R50. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs
-- **Lines:** 287
+- **Lines:** 288
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -300,12 +300,12 @@ The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them i
 A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made, and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work on its own ("sort it out on your own", "work through it overnight", "while I'm away") has 4 hours and 60 turns; hours the owner asks it to work for ("work on this for 6 hours") give those hours, 1 to 72, and 15 turns an hour. Only an instruction …
 
 - **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs
-- **Lines:** 188
+- **Lines:** 190
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `taskBudget`, `taskLimits`, `taskOver`, `taskGone`, `TASKS_AT_START`, `tasksAfterRestart`, `taskStopped`, `taskAgain`, `tasksNeeds`, `taskJobsOwed`, `taskRetry`, `taskRetryLines`, `taskAsked`, `taskPark`, `taskUnpark`, `taskAnswered`
-- **Uses:** `01-setup` (`q`), `14-chats` (`CONTINUE_HOURS`, `turns`, `CONTINUE_MAX`, `chatData`, `endTask`, `resultSince`, `wakeWork`, `saveChats`), `14-rounds` (`TASK_STEPS`), `16-actions` (`normQuotes`), `17-changes` (`pendingChoices`), `19-watcher` (`knowledge`), `20-tell` (`tell`), `21-telegram` (`tgPaired`), `22-sessions` (`sessionList`, `sessionOver`)
+- **Uses:** `01-setup` (`q`), `14-chats` (`CONTINUE_HOURS`, `turns`, `CONTINUE_MAX`, `chatData`, `endTask`, `resultSince`, `wakeWork`, `saveChats`), `14-rounds` (`taskStepsLeft`, `TASK_STEPS`), `16-actions` (`normQuotes`), `17-changes` (`pendingChoices`), `19-watcher` (`knowledge`), `20-tell` (`tell`), `21-telegram` (`tgPaired`), `22-sessions` (`sessionList`, `sessionOver`)
 - **Used by:** `14-chats`, `14-rounds`, `20-needs`
 
 ### `15-routes.mjs`: choosing what Sparkie and agents use
