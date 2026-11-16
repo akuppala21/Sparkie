@@ -399,11 +399,12 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   }
 }
 
-// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net (open,
-// or kept) put back now, by code, with no brain. One kept already stays: the helper puts nothing back once it is kept.
+// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net that is
+// still open put back now, by code, with no brain; with none open, the newest kept one is named, and stays: the helper
+// puts nothing back once it is kept. (A kept one never hides an older one still open, on another Spark say.)
 async function netPutbackWord() {
   let g;
-  try { g = netNow().guards.filter(x => [...NET_OPEN, 'kept'].includes(x.state)).at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
+  try { const gs = netNow().guards; g = gs.filter(x => NET_OPEN.includes(x.state)).at(-1) || gs.filter(x => x.state === 'kept').at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
   if (!g) return 'No change made inside the lock-out net is on record, so nothing was put back.';
   const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `the newest change made inside the lock-out net, on ${at} (record ${g.record || g.id})`;
   if (!node) return `${which[0].toUpperCase()}${which.slice(1)} is on a Spark no longer on the list, so nothing was put back.`;

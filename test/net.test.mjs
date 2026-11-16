@@ -458,3 +458,19 @@ test('the net’s check that a new SSH connection still works asks ssh for a new
   await netProbe({ id: 'spark3' });
   assert.deepEqual(asked.map(([s, o]) => [s, o?.fresh]), [['echo net-ok', true]]);
 });
+
+// The final read's putback-newest: a kept guard made after an open one (on another Spark) hid the open one from /putback.
+test('/putback puts back the newest guard still open, never stopping at a newer one that was kept', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), fn = /^async function netPutbackWord\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'netPutbackWord');
+  const guards = [{ id: 'g3', spark: 'spark3', state: 'open', record: 'j_3', goesBackAt: '2099-01-01T00:00:00Z' }, { id: 'g4', spark: 'spark4', state: 'kept', record: 'j_4' }];
+  const called = [], marks = [];
+  const make = () => new Function('netNow', 'NET_OPEN', 'maskSecrets', 'nodeById', 'sparkName', 'guardAnswer', 'guardCall', 'netMark', 'netUnhold', 'netStillLost', 'netStillWords', 'NET_SLACK_MS', 'netHhmm', 'NET_LIVE', 'netRestart', `${fn}\nreturn netPutbackWord;`)(
+    () => ({ guards }), ['arming', 'open', 'timer'], s => s, id => ({ id }), n => `Spark ${n.id.slice(5)}`, (id, out) => ({ putBackAt: out }),
+    (node, verb, { id }) => { called.push([node.id, verb, id]); return Promise.resolve({ out: '2026-11-15T22:00:00Z: 1 went back, 0 did not' }); },
+    (id, f) => marks.push([id, f.state]), () => {}, () => Promise.resolve([]), () => '', 60000, () => '22:00 UTC', '', () => '');
+  const said = await make()();
+  assert.deepEqual(called, [['spark3', 'putback', 'g3']], said);
+  assert.match(said, /^Put back: the newest change made inside the lock-out net, on Spark 3 \(record j_3\)/);
+  assert.deepEqual(marks, [['g3', 'put back']]);
+});
