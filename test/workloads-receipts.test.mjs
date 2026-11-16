@@ -9,12 +9,16 @@
 // as a run of stop_model (its validation).
 // The owner's start or restart while the run's own step is still starting it (loading) is their newest wish, so the run
 // leaves it once the step has ended.
+// The same for an app a run started (`keep_running`): the owner's keep answered "already" leaves it; one the owner took
+// off the list and started again by hand is left, and not put back on the list by the run. The owner's restart answered
+// "already" leaves a model too.
 //
 // The stand-in fleet as in the round-two check (a2-cleanup): Spark 3 with none of Spark Console's models running and a
 // new id for each container made there; on Spark 4 a job (rc-long) that runs until the test ends it, and start times
 // stamped as they happen. Self-healing looks every 2 s.
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, waitFor, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
@@ -48,6 +52,8 @@ const done = async r => { assert.equal(r.json?.outcome, 'started', r.text); retu
 const ownerStop = async () => { const s = await api('/stop', { method: 'POST', body: { node: 'spark3', container: GPT20 } }); assert.equal(s.status, 202, s.text); assert.equal((await opEnd(s.json.id, 'the owner’s stop')).status, 'completed'); };
 const LEFT = 'Left running: sc-gpt-oss-20b on Spark 3 was started again since, not by this run.';
 const WISHED = 'Left running: sc-gpt-oss-20b on Spark 3 was asked for by the owner while being started.';
+const WEB = 'rc-web', WEB_LEFT = 'Left running: rc-web on Spark 4 was started again since, not by this run.';
+const freePort = () => new Promise(res => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 // (~/.mock/serve-down on Spark 3: a model started there stays loading until it is gone)
 const loading = on => (on ? writeFileSync(mockFile('spark3', 'serve-down'), '') : rmSync(mockFile('spark3', 'serve-down'), { force: true }));
 const stopRecord = () => { try { return JSON.parse(readFileSync(join(T.fleet.stateDir, 'validations.json'), 'utf8')).stop_model || null; } catch { return null; } };
@@ -58,15 +64,25 @@ async function ready() {
   if (stateOf('spark3', GPT20) === 'running') await ownerStop();
   assert.deepEqual([stateOf('spark4', 'rc-long'), stateOf('spark3', GPT20)], ['running', 'exited']);
 }
-// A run of "rc eval" to the moment it waits on its job.
-async function toStep2() {
-  const r = await act('run_workflow', { name: 'rc eval' });
-  assert.equal(r.json?.outcome, 'started', r.text);
-  return atStep2(r.json.operation);
+// Also the app: stopped, and off the list.
+async function readyWeb() {
+  await ready();
+  if (stateOf('spark4', WEB) === 'running') {
+    if ((await listed()).includes(`spark4/${WEB}`)) assert.equal((await done(await act('keep_running', { spark: 'spark4', container: WEB, do: 'stop' }))).status, 'completed');
+    else setState('spark4', WEB, 'exited', 'Exited (0) just now');
+  }
+  assert.equal(stateOf('spark4', WEB), 'exited');
+  assert.ok(!(await listed()).includes(`spark4/${WEB}`));
 }
-async function atStep2(id) {
+// A run of "rc eval" (or another) to the moment it waits on its job.
+async function toStep2(title = 'rc eval') {
+  const r = await act('run_workflow', { name: title });
+  assert.equal(r.json?.outcome, 'started', r.text);
+  return atStep2(r.json.operation, title === 'rc eval');
+}
+async function atStep2(id, model = true) {
   await waitFor(async () => /^Step 2: rc-long runs on Spark 4; waiting for it to end/.test((await opNow(id)).step), { timeout: 240000 * SLOW, what: 'step 2 waiting for rc-long', every: 250 });
-  assert.equal(stateOf('spark3', GPT20), 'running');
+  if (model) assert.equal(stateOf('spark3', GPT20), 'running');
   return id;
 }
 // How the run ends: its job ends well, or with an error, or the run is cancelled.
@@ -96,6 +112,10 @@ const TOUCH = {
     assert.equal((await done(await act('restart_model', { spark: 'spark3', container: GPT20 }))).status, 'completed');
     assert.equal(idOf('spark3', GPT20), before, 'the same container');
   },
+  async 'asks to restart it, and is told it already runs'() {
+    const a = await act('restart_model', { spark: 'spark3', container: GPT20 });
+    assert.equal(a.json?.outcome, 'already', a.text);
+  },
 };
 
 describe('a saved workflow\'s clean-up stops only what its run started (A-22)', { concurrency: 1 }, () => {
@@ -107,6 +127,15 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
       { action: 'keep_running', args: { spark: 'spark4', container: 'rc-long' } },
     ] });
     assert.equal(s.status, 200, s.text);
+    // An app, made and stopped (off the list), and a run that starts it for the job.
+    const web = await act('keep_running', { spark: 'spark4', container: WEB, image: 'nginx:1.27', port: `${await freePort()}:80` });
+    assert.equal((await done(web)).status, 'completed');
+    assert.equal((await done(await act('keep_running', { spark: 'spark4', container: WEB, do: 'stop' }))).status, 'completed');
+    const w = await act('save_workflow', { title: 'rc web', steps: [
+      { action: 'keep_running', args: { spark: 'spark4', container: WEB } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'rc-long' } },
+    ] });
+    assert.equal(w.status, 200, w.text);
   }, { timeout: 180000 * SLOW });
 
   test('nobody touched it: the run stops what it started, as before', { timeout: 600000 * SLOW }, async () => {
@@ -120,7 +149,7 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
   for (const [touch, how] of [['stops it and starts it again (a new container)', 'well'], ['stops it and starts it again (a new container)', 'fails'],
     ['stops it and starts it again (a new container)', 'cancelled'], ['asks to start it, and is told it already runs', 'well'],
     ['asks to start it, and is told it already runs', 'fails'], ['asks to start it, and is told it already runs', 'cancelled'],
-    ['stops it and restarts the same container', 'well']]) {
+    ['stops it and restarts the same container', 'well'], ['asks to restart it, and is told it already runs', 'well']]) {
     test(`the owner ${touch} while the run waits; the run ${how === 'well' ? 'ends well' : how === 'fails' ? 'fails' : 'is cancelled'}: the model keeps running, stays on the list, and the result says it was left`, { timeout: 600000 * SLOW }, async () => {
       await ready();
       const id = await toStep2();
@@ -174,6 +203,39 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
     assert.ok(said.includes(LEFT), said.join('\n'));
     assert.deepEqual(stopRecord(), before, 'the left stop isn’t a run of stop_model');
     assert.equal(stateOf('spark3', GPT20), 'running');
+  });
+
+  test('an app a run started, nobody touched: the run stops it, as before', { timeout: 600000 * SLOW }, async () => {
+    await readyWeb();
+    const id = await toStep2('rc web');
+    assert.equal(stateOf('spark4', WEB), 'running');
+    const o = await finish(id, 'well');
+    assert.equal(o.cleanUp, 'Stopped what this run had started: rc-web on Spark 4.');
+    assert.equal(stateOf('spark4', WEB), 'exited');
+    assert.ok(!(await listed()).includes(`spark4/${WEB}`));
+  });
+
+  test('the owner asks to keep the run\'s app and is told it already runs: the run leaves it running and on the list', { timeout: 600000 * SLOW }, async () => {
+    await readyWeb();
+    const id = await toStep2('rc web');
+    const k = await act('keep_running', { spark: 'spark4', container: WEB });
+    assert.equal(k.json?.outcome, 'already', k.text);
+    const o = await finish(id, 'well');
+    assert.ok(String(o.cleanUp).includes(WEB_LEFT), `${o.cleanUp}`);
+    assert.equal(stateOf('spark4', WEB), 'running', 'the owner’s app runs');
+    assert.ok((await listed()).includes(`spark4/${WEB}`), 'and stays on the list');
+  });
+
+  test('the owner takes the run\'s app off the list and starts its container again by hand: the run leaves it, and never puts it on the list', { timeout: 600000 * SLOW }, async () => {
+    await readyWeb();
+    const id = await toStep2('rc web');
+    assert.equal((await done(await act('keep_running', { spark: 'spark4', container: WEB, do: 'stop' }))).status, 'completed');
+    assert.ok(!(await listed()).includes(`spark4/${WEB}`));
+    setState('spark4', WEB, 'running', 'Up 1 second');
+    const o = await finish(id, 'fails');
+    assert.ok(String(o.cleanUp).includes(WEB_LEFT), `${o.cleanUp}`);
+    assert.equal(stateOf('spark4', WEB), 'running', 'the owner’s app runs');
+    assert.ok(!(await listed()).includes(`spark4/${WEB}`), 'and stays off the list');
   });
 
   test('a model self-healing brought back during the run is still the run\'s: it is stopped at the end', { timeout: 600000 * SLOW }, async () => {
