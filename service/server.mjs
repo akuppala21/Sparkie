@@ -18727,6 +18727,14 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
 
 // The ask, built by code: the exact command, why it is asked, how it runs and what is checked after, what put-back
 // covers, what Sparkie read before proposing it, each script's hash. A delete it cannot see is the dangerous ask.
+// The command on Spark 2's button, framed so none of its own lines can read as the button's (S-4): one line as
+// "$ command"; with a line break, how many lines it has, and each after │, so "Asked because …" in a command stays
+// the command's. (The ladder's builder frames its own button; one shared function can take this one's place.)
+function hubCommandLines(command) {
+  const parts = String(command).split(/\r\n|[\r\n\u2028\u2029]/);
+  if (parts.length === 1) return ['Run this on Spark 2?', `$ ${command}`];
+  return [`Run this on Spark 2? Its command has ${parts.length} lines, each shown after │:`, ...parts.map(l => `│ ${l}`)];
+}
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
@@ -18738,7 +18746,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: workScriptLines(scripts) } })
-    : question(viewer, ctx, [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
+    : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
       'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
       ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n'),
     [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });

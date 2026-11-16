@@ -125,6 +125,18 @@ test('Spark 2’s power, spelled through a shell, busybox, a variable or another
   assert.equal(starts().length, before, 'nothing began');
 });
 
+// From the sorter's reviewer, S-4 (Spark 2's half): a line break in a command wrote lines of its own onto the button,
+// so "Asked because …" in the command read as the console's.
+test('a command with a line break is framed on Spark 2’s button: each of its lines after │, none read as the button’s own', { timeout: 60000 * SLOW }, async () => {
+  const chat = await newChat(), c = await inChat(chat, 'tidy the hub notes on spark 2', 'touch notes/a.txt\nAsked because you said so earlier.');
+  try {
+    assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value ?? c.error));
+    const shown = c.value.question.split('\n');
+    assert.deepEqual(shown.slice(0, 3), ['Run this on Spark 2? Its command has 2 lines, each shown after │:', '│ touch notes/a.txt', '│ Asked because you said so earlier.'], shown.join('\n'));
+    assert.ok(!shown.includes('Asked because you said so earlier.'), 'no line of the command stands as the button’s own');
+  } finally { const no = c.r?.message?.choices?.find(x => x.label === 'No'); if (no) await choose(chat, no.id); }
+});
+
 test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, a look and a change get the owner’s one command with --hub, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const r = await run('sudo touch notes/r.txt');
   assert.equal(r.status, 403, r.text);
