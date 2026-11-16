@@ -102,11 +102,15 @@ test('the chat’s row for a root command says root, from what code answered, so
   const chat = await newChat(), cmd = 'printf row > rowed.txt';
   const a = await ask(chat, 'as root on spark 3, write rowed.txt', cmd);
   assert.ok(a.m, 'the dangerous ask');
-  const [step] = a.r.tools;
-  assert.deepEqual([step.name, step.where, step.line, step.root, step.tail], ['run', 'Spark 3', `$ ${cmd}`, true, 'Asked first, as its own message: nothing ran yet.'], JSON.stringify(step));
-  const saved = (await chatMessages(chat)).flatMap(m => m.tools || []).find(t => t.line === `$ ${cmd}`);
-  assert.equal(saved?.root, true, 'kept so in the chat, which the page reads');
-  const p = await press(chat, a.yes.id, a.pair);
+  // (the ask is answered whatever happens here, so the next test's ask isn't told to wait for it)
+  let p = null;
+  try {
+    const [step] = a.r.tools;
+    assert.deepEqual([step.name, step.where, step.line, step.root, step.tail], ['run', 'Spark 3', `$ ${cmd}`, true, 'Asked first, as its own message: nothing ran yet.'], JSON.stringify(step));
+    const saved = (await chatMessages(chat)).flatMap(m => m.tools || []).find(t => t.line === `$ ${cmd}`);
+    assert.equal(saved?.root, true, 'kept so in the chat, which the page reads');
+    p = await press(chat, a.yes.id, a.pair);
+  } finally { if (!p) await press(chat, a.no.id).catch(() => {}); }
   assert.equal(p.status, 200, p.text);
   assert.equal(readFileSync(join(T.fleet.root, 'spark3', 'rowed.txt'), 'utf8'), 'row');
   // (the brain's root: true on Spark 2 is refused: the row says nothing of root)
