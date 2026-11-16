@@ -1959,19 +1959,25 @@ LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18 20 25 26 30'
 RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 29 30 31'
 # (--home's wall: the plain wall with the top of the home writable: what it must still stop, and what it must allow)
 HOME_ATTEMPTS='3 10 14 19 25 27 28 29 30 31'
-OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20 22 25 26 30 31'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20 21 22 23 24 25 26 29 30 31'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
 AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14 run:19 run:23 run:24 look:15 run:15 look:16 run:16 look:17 run:17 look:18 run:18'
 # The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
 # use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
 # targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
 # read-only list (5), sudo with the helper's own line (8), its own key (10), its own folders' right to be renamed (14),
-# its own job folder's (19), the helper's stop, which only the owner's sudo line reaches (20), the owner's start files
-# (25), a name made at the top of the home and in a dot folder (26), the terminal its own program holds (30), and that
-# program's own control group, which systemd hands to the owner (31). 22 (its own address, the tailnet) may be absent.
+# its own job folder's (19), the helper's stop, which only the owner's sudo line reaches (20), no memory cap outside
+# (21), a file and a segment it leaves in /dev/shm and IPC, which the check afterwards must see (23), its right to
+# change the home's mode (24, by its rights: never done), the owner's start files (25), a name made at the top of the
+# home and in a dot folder (26), a write in ~/.ssh (29), the terminal its own program holds (30), and that program's own
+# control group, which systemd hands to the owner (31). 22 (its own address, the tailnet) may be absent.
 # Attempt 2 must reach its own program on the loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be
-# absent, for the reason the proof states.
-MUST_WORK='1 4 5 6 7 8 10 14 19 20 25 26 30 31'
+# absent, for the reason the proof states; a "blocked" for one that was absent says "not controlled", as do those no
+# honest control exists for (NO_CONTROL).
+MUST_WORK='1 4 5 6 7 8 10 14 19 20 21 23 24 25 26 29 30 31'
+declare -A NO_CONTROL=([15]='only root can try it, outside the walls too' [16]='only root can try it, outside the walls too'
+  [17]='only root can try it, outside the walls too' [18]="its way through sudo is attempt 8's control; the rest only root can try"
+  [27]='it must work inside the wall, so there is nothing to stop' [28]='it must work inside the wall, so there is nothing to stop')
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -2116,13 +2122,13 @@ do_prove() {
   if [ -z "$control" ] && { [ "${GOT[outside:2]-}" != works ] || [[ ${DETAIL[outside:2]-} != *"the loopback"* ]]; }; then
     control="attempt 2 could not reach the proof's own program on the loopback outside the walls, so the run wall's loopback rule would be shown by nothing"
   fi
-  for n in 5 12; do
+  for n in 5 12 23; do
     if [ -z "$control" ] && [ "${GOT[after:outside:$n]-}" != works ]; then
       control="the check from outside afterwards for attempt $n (${NAMES[$n]}) did not see what the proof left there on purpose"
     fi
   done
   if [ -z "$control" ] && [ "$alive" != yes ]; then control="the proof's own program outside the walls stopped before the end"; fi
-  if [ -z "$control" ]; then say "proof controls work: each attempt was seen working outside the walls, or is not there"
+  if [ -z "$control" ]; then say "proof controls work: each attempt with a control was seen working outside the walls; the rest say they are not controlled"
   else say "proof controls failed: $control"; fi
   local list bad any key verdict how_said
   for wall in look run home; do
@@ -2154,6 +2160,8 @@ do_prove() {
         say "proof $wall $n $verdict: $line"
         [ -n "$bad" ] || bad=$n
         [ -n "$first" ] || first="attempt $n in the $wall wall $verdict (${NAMES[$n]})"
+      elif [ -n "${NO_CONTROL[$n]-}" ]; then say "proof $wall $n blocked: ${NAMES[$n]} (not controlled: ${NO_CONTROL[$n]})"
+      elif [ "${GOT[outside:$n]-}" = not-there ]; then say "proof $wall $n blocked: ${NAMES[$n]} (not controlled: not there outside the walls)"
       else say "proof $wall $n blocked: ${NAMES[$n]}"; fi
     done
     if [ -z "$any" ] && [ -z "$unitfail" ]; then
@@ -2625,19 +2633,25 @@ def shm_key(how):
     return int(hashlib.sha256(f'{ID}-{how}'.encode()).hexdigest()[:7], 16)
 
 
-def a23(c):  # a file left in /dev/shm and a SysV segment left in IPC: both looked for from outside afterwards
+def a23(c):  # a file left in /dev/shm and a SysV segment left in IPC: both looked for from outside afterwards (outside,
+    left = []  # the same, which the check afterwards must see: the control)
+    tag = 'outside' if c.mode == 'outside' else f'run-{c.how}'
     try:
-        write(f'/dev/shm/.spark-console-proof-{ID}-run-{c.how}', b'left')
+        write(f'/dev/shm/.spark-console-proof-{ID}-{tag}', b'left')
+        left.append('/dev/shm')
     except OSError:
         pass
     try:
-        ctypes.CDLL(None, use_errno=True).shmget(shm_key(c.how), 4096, 0o1600)
+        if ctypes.CDLL(None, use_errno=True).shmget(shm_key('outside' if c.mode == 'outside' else c.how), 4096, 0o1600) >= 0:
+            left.append('IPC')
     except (OSError, AttributeError):
         pass
-    return []
+    return left if c.mode == 'outside' and len(left) == 2 else []
 
 
 def a24(c):  # the home's own mode: opened to all (sshd would then refuse the owner's key); looked at afterwards
+    if c.mode == 'outside':   # (by its rights only: the home is the owner's to change. Never done outside)
+        return ['may change its mode'] if os.stat(HOME).st_uid == UID else []
     try:
         os.chmod(HOME, 0o777)
     except OSError:
@@ -3026,6 +3040,23 @@ def after():
         except (OSError, AttributeError):
             pass
     out('V', 23, 'run', 'through' if left23 else 'blocked', what(left23))
+    seen23 = []   # (the control: what the attempt outside left must be seen, and goes)
+    q = f'/dev/shm/.spark-console-proof-{ID}-outside'
+    if os.path.lexists(q):
+        seen23.append('/dev/shm')
+        try:
+            os.unlink(q)
+        except OSError:
+            pass
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        sid = libc.shmget(shm_key('outside'), 0, 0)
+        if sid >= 0:
+            seen23.append('IPC')
+            libc.shmctl(sid, 0, None)
+    except (OSError, AttributeError):
+        pass
+    out('V', 23, 'outside', 'works' if len(seen23) == 2 else 'not-there', f'saw what was left in {" and ".join(seen23)}' if seen23 else 'saw nothing left outside')
     try:
         with open(os.path.join(HERE, 'home-mode')) as f:
             home_was = int(f.read().strip(), 8)

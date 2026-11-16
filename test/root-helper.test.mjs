@@ -705,13 +705,19 @@ describe('the proof of the walls', () => {
     'a write in ~/.ssh', 'a terminal of this Spark (/dev/pts)', "writing a control group of the owner's (/sys/fs/cgroup)"];
   const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26, 30];
   const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30, 31];
+  // (the last round's item 3: the attempts no honest control exists for say so on their own line)
+  const ROOT_ONLY = 'only root can try it, outside the walls too', MUST = 'it must work inside the wall, so there is nothing to stop';
+  const NO_CONTROL = { 15: ROOT_ONLY, 16: ROOT_ONLY, 17: ROOT_ONLY, 18: "its way through sudo is attempt 8's control; the rest only root can try", 27: MUST, 28: MUST };
+  const said = n => `${NAMES[n]}${NO_CONTROL[n] ? ` (not controlled: ${NO_CONTROL[n]})` : ''}`;
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
     const p = prove(s);
     assert.equal(p.status, 0, p.stdout + p.stderr);
-    for (const n of LOOK) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${NAMES[n]}\n`), `look ${n}`);
-    for (const n of RUN) assert.ok(p.stdout.includes(`${p.id} proof run ${n} blocked: ${NAMES[n]}\n`), `run ${n}`);
+    // (old: every line "proof <wall> <n> blocked: <name>"; new: 15 to 18 and 27 add "(not controlled: <why>)")
+    for (const n of LOOK) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${said(n)}\n`), `look ${n}`);
+    for (const n of RUN) assert.ok(p.stdout.includes(`${p.id} proof run ${n} blocked: ${said(n)}\n`), `run ${n}`);
+    assert.ok(p.stdout.includes(`${p.id} proof home 28 blocked: ${said(28)}\n`), 'home 28');
     assert.match(p.stdout, new RegExp(`${p.id} proof look passed\n${p.id} proof run 1 `));
     assert.ok(p.stdout.includes(`${p.id} proof root 13 refused: root with no net\n`));
     assert.match(p.stdout, new RegExp(`${p.id} proof passed: the mark is written for this helper, systemd 255\\.4-1ubuntu8\\.4 and kernel 6\\.11\\.0-1016-nvidia\n$`));
@@ -727,7 +733,8 @@ describe('the proof of the walls', () => {
       [['systemctl', 'stop', `sw-guard-${g}nl.timer`], ['systemctl', 'stop', `sw-guard-${g}nr.timer`],
         ['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
     assert.ok(p.stdout.includes(`${p.id} proof outside 2 works: an open connection (the loopback, stand-in)\n`));
-    assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt was seen working outside the walls, or is not there\n`));
+    // (old: "...each attempt was seen working outside the walls, or is not there"; untrue for those with no control)
+    assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt with a control was seen working outside the walls; the rest say they are not controlled\n`));
     const py = which(s, 'python3'), proof = `/run/spark-console/${p.id}/proof.py`;
     const hidden = ['/home/owner/.local/share/spark-console'];
     const lookUnit = lookCall(s, p.id, 'x', 120, hidden);
@@ -740,7 +747,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26, 30, 31].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 21, 22, 23, 24, 25, 26, 29, 30, 31].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -788,7 +795,8 @@ describe('the proof of the walls', () => {
     refused(look(s, 'true'), 'the wall proof is none on this Spark: prove first');
   };
   // (19, 20, 25 and 26 too: the final read's TC-5 found the controls for them held by no test)
-  for (const n of [1, 4, 5, 6, 7, 8, 10, 19, 20, 25, 26]) {
+  // (and 21, 23, 24 and 29: the last round's item 3 gave them controls)
+  for (const n of [1, 4, 5, 6, 7, 8, 10, 19, 20, 21, 23, 24, 25, 26, 29]) {
     test(`attempt ${n} not seen working outside the walls (its own program, files, folders or line): no mark, even with every wall holding`, () => {
       const s = proven();
       s.put('standin/outside', `${n} not-there stand-in\n`);
@@ -838,6 +846,8 @@ describe('the proof of the walls', () => {
     assert.ok(p.stdout.includes(`${p.id} proof outside 3 not there: ${NAMES[3]} (no socket here)\n`), p.stdout);
     assert.ok(p.stdout.includes(`${p.id} proof outside 9 not there: ${NAMES[9]} (no user manager here)\n`));
     assert.ok(existsSync(join(s.R, 'var/lib/spark-console/proved')));
+    // (and a "blocked" for each says it is not controlled: the last round's item 3)
+    for (const n of [3, 9, 11]) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${NAMES[n]} (not controlled: not there outside the walls)\n`), `${n}: ${p.stdout}`);
   });
   for (const [name, knob, why] of [
     ['never started', 'no-pid', "the proof's own program outside the walls did not start"],
@@ -853,7 +863,8 @@ describe('the proof of the walls', () => {
   }
   test('the checks from outside afterwards did not see what the proof left there on purpose: no mark', () => {
     for (const [n, play] of [[5, 'V 12 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n'],
-      [12, 'V 5 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n']]) {
+      [12, 'V 5 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n'],
+      [23, 'V 5 outside works x\nV 12 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n']]) {
       const s = proven();
       s.put('standin/play-after', play);
       const p = prove(s);
@@ -2727,12 +2738,17 @@ describe("the proof's own attempts", () => {
     try {
       writeFileSync(join(P.held, 'target'), String(target.pid));
       writeFileSync(join(P.held, 'home-mode'), mode.toString(8));
+      // (the controls the last round added: each seen working outside, 23's checked again afterwards)
+      const outside = lines(P.py('outside', 21, 23, 24, 29));
+      for (const n of [21, 23, 24, 29]) assert.ok(outside.some(l => l.startsWith(`P ${n} outside works `)), `outside ${n}: ${outside.join('\n')}`);
+      assert.equal(statSync(P.home).mode & 0o777, mode, '24 outside is judged by its rights: the mode is not changed');
       const through = lines(P.py('run', 19, 21, 25, 26, 29));
       for (const n of [19, 21, 25, 26, 29]) for (const how of ['direct', 'child']) assert.ok(through.some(l => l.startsWith(`P ${n} ${how} through `)), `${n} ${how}: ${through.join('\n')}`);
       const left = lines(P.py('run', 23, 24));
       for (const n of [23, 24]) for (const how of ['direct', 'child']) assert.ok(left.includes(`P ${n} ${how} left -`), `${n} ${how}: ${left.join('\n')}`);
       const after = lines(P.py('after'));
       for (const n of [23, 24]) assert.ok(after.some(l => l.startsWith(`V ${n} run through `)), `after ${n}: ${after.join('\n')}`);
+      assert.ok(after.includes('V 23 outside works saw what was left in /dev/shm and IPC'), after.join('\n'));
       assert.equal(statSync(P.home).mode & 0o777, mode, "the check afterwards put the home's mode back");
       const may = lines(P.py('run', 27)).concat(lines(P.py('home', 28)));
       for (const n of [27, 28]) assert.ok(may.includes(`P ${n} direct blocked -`), `${n}: ${may.join('\n')}`);
