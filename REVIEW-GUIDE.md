@@ -254,6 +254,10 @@ plugs).
 input; adding a Spark from chat (it waits for Spark 1); a brain across Sparks (it waits for real runs); a reviewer
 for Sparkie's own proposals; removing a kept key from chat.
 
+**A judgement that stays.** Whether the owner's words ask for a lock-out change is decided by word lists
+(`netAsks`, R60; section 9, item 4). A true ask they miss is refused, and the refusal says how to ask. A sentence that
+only looks like an ask gets the dangerous ask. Neither runs anything without the owner's press.
+
 **Existing tests changed.** Where behaviour changed on purpose, the tests that held the old behaviour changed with
 it: "root is refused on every Spark" became "refused until the owner turns it on". Every such line shows in
 `git diff f060fff 36db95e -- test/`; in the test files, 74 removed or edited lines hold an assertion. Please check
@@ -455,11 +459,18 @@ and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60; `
 `docs/history/later-2026-11-15.md`.
 - A change that passes the check right after it and locks the owner out later: a unit disabled, a network file not
   applied until a restart. Live firewall rules are said, not put back.
-- "The owner's own words" is decided by `netWhose`: a list of verbs plus the Spark's name. By our reading of the
-  code (not run), "Fix the build on Spark 3" passes it, and so does a question such as "Why is ssh open on
-  Spark 3?". A firewall change Sparkie then proposes is asked, not refused. The cost, by the same reading, is one
-  more dangerous ask, not a change that runs by itself: nothing runs before the owner's press with its two digits,
-  and then it runs inside the net. Is that the right line for contract 8.3?
+- "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R60). One sentence of the
+  owner's, in this message or the one before, must do three things. It names the Spark. Right after a change verb it
+  names a way in: SSH, a key, Tailscale, the firewall or a port, the network, a user, account, password, sudo or
+  group, the shell's start files, signing in or access. And it is an instruction: no "don't"; not a question unless
+  "can you", "could you", "would you", "will you" or "please" opens it; not "tell me …" or "how to …"; not "is
+  open". So "Fix the build on Spark 3", "Why is ssh open on Spark 3?" and "Start a model on Spark 3 with port 8000"
+  are refused now, and so is a true ask that names another Spark than the command's (`net.test.mjs`,
+  `root.test.mjs`).
+- That is still a judgement: a word list is never complete. A true ask it misses is refused, never run, and the
+  refusal tells the owner to say it in one sentence, naming what to change and on which Spark. A sentence that only
+  looks like an ask ("open the firewall log on Spark 3") still passes, and gets the dangerous ask: nothing runs before
+  the owner's press with its two digits, and then only inside the net. Find a sentence that is not an ask and passes.
 - The timer: a way for the change to stop, delay or outlive it; a power cut at each step of arming and put-back.
 
 **5. Changes on Spark 2.** `service/src/21-hub.mjs`; R1; `test/hub-change.test.mjs`.

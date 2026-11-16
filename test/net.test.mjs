@@ -240,6 +240,36 @@ test('a lock-out change runs only when the owner asks for it in their own words 
   assert.ok(!readFileSync(join(T.fleet.root, 'spark3', '.ssh', 'authorized_keys'), 'utf8').includes(ADDED), 'nothing ran');
 });
 
+test('the owner’s words ask for a lock-out change only in one sentence that names the Spark and what to change in the lock-out class, as an instruction: a question, a change to something else, a “don’t” or another Spark is refused, never asked, and the refusal says how to ask', { timeout: 300000 * SLOW }, async () => {
+  keysReset();
+  // (the same lock-out command each time, the stand-in brain's own proposal: only the owner's words differ)
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const proposed = async words => {
+    const chat = await newChat();
+    script([{ match: `^${esc(words)}$`, rounds: [[RUN(ADD)]] }]);
+    try { await say(chat, words); } finally { noScript(); }
+    const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
+    return { chat, m, no: m?.choices.find(c => c.label === 'No') };
+  };
+  const REFUSED = 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal, not your words asking for this on Spark 3. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on Spark 3.”';
+  for (const words of ['Why is ssh open on Spark 3?', 'Fix the build on Spark 3', 'is tailscale up on spark 3', 'don’t change ssh on spark 3', 'add my key on spark 4',
+    'start a model on spark 3 with port 8000', 'tell me how to add a key on spark 3']) {
+    const p = await proposed(words);
+    if (p.no) await press(p.chat, p.no.id);
+    assert.equal(p.m, undefined, `${words}: refused, never asked`);
+    assert.equal(sentBack(words).at(-1)?.error, REFUSED, words);
+  }
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  // True asks, in different words: still the dangerous ask (each answered No, so nothing runs).
+  for (const words of ['open port 8022 on spark 3', 'allow user bob to sign in on spark 3', 'turn off Tailscale SSH on spark 3', 'can you add my laptop’s ssh key on spark 3?',
+    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password']) {
+    const p = await proposed(words);
+    assert.ok(p.m, `${words}: the dangerous ask (${JSON.stringify(sentBack(words))})`);
+    assert.equal((await press(p.chat, p.no.id)).status, 200);
+  }
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+});
+
 test('with no root helper on a Spark, a lock-out change answers with the owner’s one command, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const n = await api('/actions/run', { method: 'POST', body: { on: 'spark4', command: 'chmod 600 ~/.ssh/authorized_keys', dir: '~' } });
   assert.equal(n.status, 200, n.text);

@@ -122,6 +122,17 @@ test('a root command in the lock-out class from an agent is refused, never asked
   assert.ok(ag.text.includes('Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from an agent.'), ag.text);
 });
 
+test('a root command in the lock-out class after the owner’s question, or after a change to something else, is refused, never asked, and the refusal says how to ask (the owner’s words, R60)', { timeout: 120000 * SLOW }, async () => {
+  const keyAdd = "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAsked asked@net' >> .ssh/authorized_keys";
+  for (const words of ['why is ssh open on spark 3 as root', 'as root on spark 3, fix the build']) {
+    const chat = await newChat(), a = await ask(chat, words, keyAdd);
+    if (a.no) await press(chat, a.no.id);
+    assert.equal(a.m, undefined, `${words}: refused, never asked`);
+    assert.equal(sentBack(words)[0]?.error, 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal, not your words asking for this on Spark 3. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on Spark 3.”', words);
+  }
+  assert.ok(!readFileSync(join(T.fleet.root, 'spark3', '.ssh', 'authorized_keys'), 'utf8').includes('asked@net'), 'nothing ran');
+});
+
 test('the lock-out class as root: ROOT on Spark 3 · CAN LOCK YOU OUT, and the helper is called with --lockout', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
   const a = await ask(chat, 'as root on spark 3, add the other key', "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@net' >> .ssh/authorized_keys");
