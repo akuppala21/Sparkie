@@ -566,6 +566,69 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
       refused(home, await pull(home, ['install', h1.t12]), h1.t12, new RegExp(`isn't newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\)`), was);
     } finally { writeFileSync(lockFile, lock); }
   });
+
+  // (the final read's U1: a build installed from the Mac with a lock from a whole run on a Spark, which named no tree
+  // and no commit, was taken as older than any tested build: check offered one 941 commits behind as newer, and its
+  // installer ran)
+  test('never backwards, whatever the installed lock holds: a lock from a run on a Spark names the tree and is placed on main; with no tree (as before), a tree not on main or a commit that isn\'t one, it can\'t be told and nothing is offered or installed; the same tree; a newer one is', { timeout: 300000 * SLOW }, async () => {
+    needs('newer');
+    // (as the case before leaves it: main is a merge, not tested, whose second parent is the newest tested build,
+    // installed)
+    const merged = { commit: mainHead, tree: gh(['rev-parse', `${mainHead}^{tree}`]) }, h1 = { commit: gh(['rev-parse', `${mainHead}^2`]) };
+    h1.tree = gh(['rev-parse', `${h1.commit}^{tree}`]); h1.t12 = h1.tree.slice(0, 12);
+    const lockFile = join(home, 'spark-console-service', 'workflows.lock.json'), lock = read(lockFile), was = installedNow(home);
+    assert.equal(JSON.parse(lock).tree, h1.tree, 'the case before ran to its end: the newest tested build is the one installed');
+    const as = fields => writeFileSync(lockFile, JSON.stringify({ build: JSON.parse(lock).build, versions: {}, ...fields }));
+    const json = async () => { const r = await pull(home, ['check', '--json']); assert.equal(r.code, 0, r.out); return JSON.parse(r.out.trim().split('\n').at(-1)); };
+    const side = commitOf(last.commit, treeFiles(13), 'Only on a branch, installed from the Mac');
+    let n1 = null;
+    try {
+      // The reviewer's case: main's head (newer, not tested yet) installed from the Mac, its lock written on a Spark
+      // before locks named their tree; the newest tested build is older. Then a tree no commit on main holds, and a
+      // commit that isn't a commit id (the one before the tested one, which an older pull.sh took as installed).
+      for (const fields of [{}, { tree: side.tree }, { tree: side.tree, commit: side.commit }, { commit: `${h1.commit}~1` }]) {
+        as(fields);
+        const x = await json();
+        assert.deepEqual([x.newer, x.newerKnown, x.newest?.tree], [false, false, h1.tree], `${JSON.stringify(fields)}: ${JSON.stringify(x)}`);
+        let r = await pull(home, ['check']);
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Whether it is newer than the installed build can't be told: that build's lock names no commit or tree on main/);
+        assert.doesNotMatch(r.out, /To install it/);
+        r = await pull(home, ['install', h1.t12]);
+        refused(home, r, h1.t12, new RegExp(`Whether tree ${h1.t12} is newer than the installed build can't be told`), was);
+      }
+      // The same, its lock written on a Spark now (the tree, no commit): placed on main, so the older one isn't newer.
+      as({ tree: merged.tree });
+      let x = await json();
+      assert.deepEqual([x.newer, x.newerKnown], [false, true], JSON.stringify(x));
+      let r = await pull(home, ['check']);
+      assert.match(r.out, new RegExp(`It is not newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\), so there is nothing to install from here\\.`));
+      refused(home, await pull(home, ['install', h1.t12]), h1.t12, new RegExp(`isn't newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\)`), was);
+      // The very tree the newest tested build is: the one installed.
+      as({ tree: h1.tree });
+      x = await json();
+      assert.deepEqual([x.newer, x.newerKnown], [false, true], JSON.stringify(x));
+      assert.match((await pull(home, ['check'])).out, new RegExp(`The newest tested build on main \\(tree ${h1.t12}\\) is the one installed\\.`));
+      // A newer tested build over it: offered, with what differs and its commits since, and installed.
+      as({ tree: merged.tree });
+      n1 = push(treeFiles(14), 'Newer than the one installed');
+      mark(n1);
+      x = await json();
+      assert.deepEqual([x.newer, x.newerKnown, x.newest.tree, x.differsKnown], [true, true, n1.tree, true], JSON.stringify(x));
+      assert.deepEqual(x.subjects.map(s => s.replace(/^\w+ /, '')), ['Newer than the one installed']);
+      assert.ok(x.differs.includes('deploy/pull.sh'), JSON.stringify(x.differs));
+      r = await pull(home, ['check']);
+      assert.match(r.out, /since the installed one[^\n]*\n {4}[0-9a-f]+ Newer than the one installed\n/);
+      assert.match(r.out, new RegExp(`To install it: bash \\S+/pull\\.sh install ${n1.t12}`));
+      r = await pull(home, ['install', n1.t12]);
+      assert.equal(r.code, 0, r.out);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [n1.t12, 'kept']);
+      assert.equal(JSON.parse(read(lockFile)).commit, n1.commit);
+    } finally {
+      // (the lock as it was, unless the newer build was installed and wrote its own)
+      if (!(n1 && resultOf(home).tree === n1.t12 && resultOf(home).result === 'kept')) writeFileSync(lockFile, lock);
+    }
+  });
 });
 
 // Installers of a tree's own that misbehave, made from this tree's.
@@ -851,7 +914,8 @@ describe('the way back for an update from GitHub, armed by the build installed n
     mkdirSync(dir);
     const x = spawnSync('sh', ['-c', `'${REAL_GIT}' --git-dir '${GH}' archive ${g.commit} | tar -x -C '${dir}'`], { env: GIT_ENV, encoding: 'utf8' });
     assert.equal(x.status, 0, x.stderr);
-    writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
+    // (the lock as a whole run on a Spark writes it: its tree, no commit)
+    writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {}, tree: g.tree }));
     r = await new Promise(resolve => {
       const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
@@ -874,7 +938,8 @@ describe('the way back for an update from GitHub, armed by the build installed n
     mkdirSync(dir);
     const x = spawnSync('sh', ['-c', `'${REAL_GIT}' --git-dir '${GH}' archive ${g.commit} | tar -x -C '${dir}'`], { env: GIT_ENV, encoding: 'utf8' });
     assert.equal(x.status, 0, x.stderr);
-    writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
+    // (the lock as a whole run on a Spark writes it: its tree, no commit)
+    writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {}, tree: g.tree }));
     const r = await new Promise(resolve => {
       const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';

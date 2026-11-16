@@ -16,7 +16,8 @@
 #
 # install refuses, with nothing changed: a <tree> that isn't the newest commit on main with a tested/<tree> tag (the
 # head of main before its full run passed, an older tested build, a tree only on another branch); one older than the
-# build installed (going back is go-back.sh's job); a tag that does more than add the lock to that commit; a lock for
+# build installed (going back is go-back.sh's job), or any while a build is installed whose commit on main can't be told
+# (its lock names neither a commit this copy holds nor a tree main holds); a tag that does more than add the lock to that commit; a lock for
 # another tree or another build; a tree holding a submodule, a link other than the stand-in fleet's (below), or a
 # .gitattributes anywhere (any case); a tree that unpacks as anything but itself, file by file; a second install while
 # one runs. Each install leaves
@@ -248,12 +249,33 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   [ "$TAG_BUILD" = "$p" ] || { TAG_WHY="The lock in tested/$want is for build $TAG_BUILD, but this code is build $p."; return 1; }
   TAG_BUILD=$p
 }
-# The installed build, from its lock: "<build> <tree or -> <commit or ->".
+# The installed build, from its lock: "<build> <tree or -> <commit or ->", each only in its shape (hex ids: whatever
+# else a lock holds is never handed to git as a name).
 installed() {
-  python3 -I -c 'import json, sys
+  python3 -I -c 'import json, re, sys
 try: d = json.load(open(sys.argv[1]))
 except Exception: d = {}
-print(d.get("build") or "-", d.get("tree") or "-", d.get("commit") or "-")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || echo '- - -'
+if not isinstance(d, dict): d = {}
+v = lambda k, p: d[k] if isinstance(d.get(k), str) and re.fullmatch(p, d[k]) else "-"
+h = "[0-9a-f]{40}([0-9a-f]{24})?"
+print(v("build", "[0-9a-f]{12}"), v("tree", h), v("commit", h))' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || echo '- - -'
+}
+# installed_on_main <tree or -> <commit or ->: the installed build's commit, which nothing offered or installed may be
+# older than. Its lock's commit when this copy holds it (and it holds the lock's tree), else the newest commit on main
+# whose tree is the lock's tree (a lock from a whole run on a Spark names the tree only). "-" when it can't be told: a
+# lock with neither, a commit that doesn't hold its lock's tree, files no commit on main holds, a build installed with
+# no lock that can be read. "none" when nothing is installed (no service and no lock): any tested build is newer.
+installed_on_main() {
+  local c t
+  if [ ! -e "$HOME/spark-console-service/server.mjs" ] && [ ! -e "$HOME/spark-console-service/workflows.lock.json" ]; then echo none; return 0; fi
+  if [ "$2" != - ] && g cat-file -e "$2^{commit}" 2>/dev/null; then
+    if [ "$1" = - ] || [ "$(g rev-parse -q --verify "$2^{tree}" 2>/dev/null)" = "$1" ]; then echo "$2"; else echo -; fi
+    return 0
+  fi
+  if [ "$1" != - ]; then
+    while read -r c t; do [ "$t" != "$1" ] || { echo "$c"; return 0; }; done < <(g log --topo-order -n 5000 --format='%H %T' refs/heads/main 2>/dev/null)
+  fi
+  echo -
 }
 # The real address, the way in the owner uses: config.json's origin, as installed now (a test's own, only with ALL_LOCAL).
 door_url() {
@@ -355,7 +377,7 @@ os.replace(tmp, path)' "$SECRETS" "$1" \
 }
 
 check_facts() {
-  local ib it ic head ht nt nc
+  local ib it ic head ht nt nc kc
   read -r ib it ic <<<"$(installed)"
   echo "  Installed: build $ib$([ "$it" = - ] || echo ", tree ${it:0:12}")$([ "$ic" = - ] || echo ", commit ${ic:0:12}")"
   read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
@@ -370,15 +392,21 @@ check_facts() {
   [ -n "${nt:-}" ] || { echo "  Nothing on main is tested yet."; return 0; }
   [ -z "$bad" ] || { echo "  The newest tree on main with a tested/ tag (${nt:0:12}) isn't offered: $bad"; return 0; }
 
-  if [ "$nt" = "$it" ]; then echo "  The newest tested build on main (tree ${nt:0:12}) is the one installed."; return 0; fi
+  kc=$(installed_on_main "$it" "$ic")
+  if [ "$nt" = "$it" ] || [ "$kc" = "$nc" ]; then echo "  The newest tested build on main (tree ${nt:0:12}) is the one installed."; return 0; fi
   echo "  Newest tested on main: tree ${nt:0:12}, commit ${nc:0:12}."
-  if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; then
-    echo "  It is not newer than the installed build (commit ${ic:0:12}), so there is nothing to install from here."
+  # (never "newer" when the installed build's commit can't be told: it could be the older one)
+  if [ "$kc" = - ]; then
+    echo "  Whether it is newer than the installed build can't be told: that build's lock names no commit or tree on main (it was installed from the Mac, from files not on main or with a lock that names no tree). So it isn't offered. Install a build of main from the Mac once, and this can tell again."
     return 0
   fi
-  if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then
+  if [ "$kc" != none ] && ! g merge-base --is-ancestor "$kc" "$nc"; then
+    echo "  It is not newer than the installed build (commit ${kc:0:12}), so there is nothing to install from here."
+    return 0
+  fi
+  if [ "$kc" != none ]; then
     echo "  Its commits since the installed one (subjects as written on GitHub, newest first):"
-    g log --topo-order -n 10 --format='    %h %s' "$ic..$nc" | cut -c1-160
+    g log --topo-order -n 10 --format='    %h %s' "$kc..$nc" | cut -c1-160
   fi
   echo "  To install it: $ME install ${nt:0:12}"
 }
@@ -391,11 +419,12 @@ check() {
 # "no git", "not set up", "token" (GitHub refused the token: it may have expired), "slow" (not finished in FETCH_S
 # seconds), "locked" (a fetch cut off left git's lock in the copy: "lock" names it) or "unreachable". The newest tested
 # tree is offered only when its tag passes install's own checks (tag_check); otherwise "badTag" says why and nothing is
-# offered. From the lock only shaped values come out (a build
+# offered. It is "newer" only when the installed build's commit on main is known (installed_on_main) and older; when
+# that can't be told, "newerKnown" is false and nothing is newer. From the lock only shaped values come out (a build
 # of 12 hex digits, a time, a hash of 64), never its text. Commit subjects and git's words ("why") are as written
 # on GitHub and by git: the reader treats them as outside text.
 check_json() {
-  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' ns='' bad='' newer=false subj='' dif='' known='' problem='' why=''
+  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' ns='' bad='' newer=false subj='' dif='' known='' problem='' why='' kc='' nk=yes
   out() {  # out <problem> <why>
     printf '%s' "$subj" | python3 -I -c 'import json, re, sys
 a = sys.argv[1:]
@@ -411,8 +440,8 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10],
   "differs": [f for f in a[16].split("\n") if re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)][:200],
   "differsOther": len([f for f in a[16].split("\n") if f and not re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)]),
-  "differsKnown": a[17] == "yes"}))' \
-      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}" "$dif" "$known" "$ns"
+  "differsKnown": a[17] == "yes", "newerKnown": a[19] == "yes"}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}" "$dif" "$known" "$ns" "$nk"
   }
   # (the stand-in fleet marks a program missing with ~/.mock/off-path-<program>, as the console's own look reads it)
   if ! command -v git >/dev/null 2>&1 || { [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -e "$HOME/.mock/off-path-git" ]; }; then
@@ -441,12 +470,17 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
     nb=$TAG_BUILD nat=$TAG_AT
     nr=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | reads_of /dev/stdin || true)
     ns=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | set_of /dev/stdin || true)
-    if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
+    # (newer: nothing installed, or the installed build's commit on main is known and older. Never when it can't be
+    # told, whatever the installed lock holds: then newerKnown is false, and nothing is offered)
+    kc=$(installed_on_main "$it" "$ic")
+    if [ "$nt" != "$it" ] && [ "$kc" != "$nc" ]; then
+      if [ "$kc" = none ] || { [ "$kc" != - ] && g merge-base --is-ancestor "$kc" "$nc" 2>/dev/null; }; then newer=true
+      elif [ "$kc" = - ]; then nk=no; fi
+    fi
     # (the files that differ from the installed build: names of a plain shape only, the rest counted; data from the
-    # repository, for the install's ask to list)
-    # (not known when the installed build's commit isn't in this copy: one installed from the Mac before it reached main)
-    if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null; then dif=$(g diff --no-renames --name-only "$ic" "$nc" 2>/dev/null | head -n 1000 || true) known=yes; fi
-    if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
+    # repository, for the install's ask to list; not known when the installed commit isn't)
+    if [ "$kc" != - ] && [ "$kc" != none ]; then dif=$(g diff --no-renames --name-only "$kc" "$nc" 2>/dev/null | head -n 1000 || true) known=yes; fi
+    if [ "$kc" != - ] && [ "$kc" != none ] && g merge-base --is-ancestor "$kc" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$kc..$nc" | cut -c1-200)
     else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
   fi
   out '' ''
@@ -479,7 +513,7 @@ install() {
   WANT="$1"
   trap stopped INT TERM HUP
   ready
-  local c t tc lat code_build p txt note code=0 now why trees ib it ic
+  local c t tc lat code_build p txt note code=0 now why trees ib it ic kc
   read -r c t <<<"$(newest_tested || true)"
   if [ -z "${c:-}" ] || [ "${t:0:12}" != "$WANT" ]; then
     trees=$'\n'$(g log --topo-order -n 5000 --format=%T refs/heads/main)
@@ -495,10 +529,15 @@ install() {
       refuse "Nothing on main has a tested/ tag yet."
     fi
   fi
-  # Never backwards: when the installed build's lock names a commit this copy holds, it is the one asked for or older.
+  # Never backwards, whatever the installed lock holds: the installed build's commit on main (installed_on_main) is the
+  # one asked for or older. With a build installed whose commit can't be told, nothing is installed: it could be newer.
   read -r ib it ic <<<"$(installed)"
-  if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$c"; then
-    refuse "Tree $WANT (commit ${c:0:12}) isn't newer than the installed build (commit ${ic:0:12}). To go back a build: bash $SHARE/go-back.sh"
+  kc=$(installed_on_main "$it" "$ic")
+  if [ "$kc" = - ]; then
+    refuse "Whether tree $WANT is newer than the installed build can't be told: that build's lock names no commit or tree on main (it was installed from the Mac, from files not on main or with a lock that names no tree), and an older build is never installed from here. Install a build of main from the Mac once, and this can tell again."
+  fi
+  if [ "$kc" != none ] && ! g merge-base --is-ancestor "$kc" "$c"; then
+    refuse "Tree $WANT (commit ${c:0:12}) isn't newer than the installed build (commit ${kc:0:12}). To go back a build: bash $SHARE/go-back.sh"
   fi
   # The tag: that commit plus the lock, nothing else; the lock names this tree and the build this code is.
   tag_check "$c" "$t" || refuse "$TAG_WHY"
