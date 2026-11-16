@@ -62,10 +62,14 @@ const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
 // any write the sorter didn't place (a file an option names). The result never says all a command wrote was kept.
 const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program (an install, a build) writes on its own isn’t copied first, so undo can’t put that back.';
-// Git in a change runs with no hooks and no file-system monitor (A7c): code's own first line of the unit's command, so
-// a repository the change works in can't run a program of its own through git. Setting or unsetting these in a
-// command is the sorter's to ask.
-const RUNNER_GIT = 'export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false\n';
+// Git in a change (A7c): code's own first lines of the unit's command. It reads no settings of the owner's or the
+// system's (a .gitconfig an earlier change with the top of the home writable left would give it an ssh command, an
+// editor, a credential helper, filters, includes, another source for a pull), no system attributes file, and runs with
+// no hooks and no file-system monitor, so a repository the change works in can't run a program of its own through git.
+// Only the owner's name and mail are carried over, read first, as plain values. Setting or unsetting these in a command
+// is the sorter's to ask.
+const RUNNER_GIT = ['c=3; for k in name email; do v=$(git config --global --get "user.$k" 2>/dev/null) && [ -n "$v" ] && export "GIT_CONFIG_KEY_$c=user.$k" "GIT_CONFIG_VALUE_$c=$v" && c=$((c + 1)); done; unset k v',
+  'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=$c GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2=/dev/null; unset c', ''].join('\n');
 // After its time limit systemd gives a unit 5 seconds to stop (TimeoutStopSec=5, the helper's), and a second more here.
 const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
@@ -93,13 +97,26 @@ function runnerWiden(node, command, widen = {}, sorted = null) {
   const fleet = widen.fleet === true || reach.includes('fleet') || words.some(w => names.includes(w));
   return { fleet, gpu: widen.gpu === true || sorted?.gpu === true, home: !fleet && reach.includes('home'), internet: reach.includes('internet') };
 }
-// What still holds outside the plain wall (run --open, R42 and R63, as the helper builds it), said on its button.
-const RUNNER_OPEN_HOLDS = 'There it still can’t gain root by itself, and the ways in (~/.ssh) and the start files stay read-only; but it runs as you with all your groups (Docker’s too), and the keys and tokens in your home are open to it.';
+// What a change outside the plain wall can do (run --open, R42 and R63, as the helper builds it), said on its button:
+// it keeps every group, Docker's too, and Docker on a Spark is root.
+const RUNNER_OPEN_HOLDS = 'There it runs as you with all your groups, Docker’s too, and Docker on a Spark is as good as root: it can do anything there that root can. Every address (the other Sparks, your home network) and the GPU are open to it, and so are the keys and tokens in your home. ~/.ssh and the start files stay read-only, but not to what it does through Docker.';
+// What a change with the top of the home writable can do (run --home, R63), said on its button by code: where it writes
+// that a plain change can't (named from the command); that it runs walled, but what it leaves where a terminal looks
+// runs at the owner's next terminal there, outside every wall; that it may fill the disk (the helper's floor and watch
+// are off for it). What it changed there is listed afterwards by a later step (A7c's home note), which adds its sentence.
+function runnerHomeLines(node, walls, wide = {}) {
+  return [`It writes where a plain change can’t: ${walls.at.join('; ')}.`,
+    `It runs walled: no Docker, no keys${wide.fleet ? '' : ', no other Spark'}. But it may add or replace programs and settings that your own terminal on ${sparkName(node)} runs by itself. If the command is not what it says, your next terminal there runs what it left.`,
+    RUNNER_HOME_DISK];
+}
+// The root helper's floor for a change the owner pressed, or one with the top of the home writable (R63: DISK_HARD and
+// DISK_SLACK in deploy/spark-console-root, which own-programs.test holds these words to).
+const RUNNER_HOME_DISK = 'It is ended if the disk’s free space falls under 5 GB (or, when less was free at its start, 100 MB under that).';
 // The signs a program prints when it finds no GPU (the plain wall gives a change no devices, R63): said after it.
 const RUNNER_NO_DEVICE = /no CUDA-capable device is detected|No CUDA GPUs are available|CUDA_ERROR_NO_DEVICE|cudaErrorNoDevice|Found no NVIDIA driver|couldn't communicate with the NVIDIA driver|Failed to initialize NVML|\/dev\/nvidia[a-z0-9-]*: No such file/;
 const RUNNER_NO_GPU = 'The GPU isn’t open to a plain change (it gets no devices): GPU work is a job (keep_running with once and gpu), or ask for this again with gpu, which is asked first.';
 // The root helper's own lines after a change (R63), as the owner reads them.
-const runnerNote = n => (/^stopped: /.test(n) ? `It was stopped: ${n.slice(9)} (the root helper's floor).` : `${n[0].toUpperCase()}${n.slice(1)}.`);
+const runnerNote = n => (HELPER_SAYS.diskStopped.test(n) ? `It was stopped: ${n.slice('stopped: '.length)} (the root helper's floor).` : `${n[0].toUpperCase()}${n.slice(1)}.`);
 // The protect folders a sorted command reaches: one of its places is in one, or holds one (rm -r ~/.cache), or it
 // starts in one (dir: make or npm install there writes what the sorter doesn't place).
 const runnerProtected = (sorted, dir = RUNNER_DIR) => RUNNER_PROTECT.filter(d => dir === d || String(dir).startsWith(`${d}/`)
@@ -115,25 +132,28 @@ const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'
 // them; --open (nothing hidden, every group, design A 2.13) for what the sorter calls open, another dot folder at the
 // top, the system's own folders (npm -g) or anything outside the home but the temporary folders.
 const RUNNER_HOME_WRITE = ['~/.local', '~/bin', '~/.cargo/bin'];
+// at: the places a --home change writes, in the button's words.
 function runnerWalls(sorted, command, dir = RUNNER_DIR, topDirs = []) {
-  const open = [], home = [];
+  const open = [], home = [], at = [];
   if (sorted?.open) open.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
   // (a place the command only reads is no write there, R64's reads: the copy first still covers it)
   const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
   for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
     if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
-    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
-    else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) home.push(`it writes ${p}, which the plain wall keeps read-only`);
+    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) {
+      home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
+      at.push(p === '~' ? 'your home folder itself' : `${p} at the top of your home`);
+    } else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) { home.push(`it writes ${p}, which the plain wall keeps read-only`); at.push(p); }
     else if (parts && parts[0].startsWith('.')) open.push(`it writes ${p}, which the plain wall keeps read-only`);
     else if (!parts && p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p)) open.push(`it writes ${p}, outside the home, which the plain wall keeps read-only`);
   }
   // (an install that puts programs where the plain wall keeps them read-only, the sorter's installs, R64)
   for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) {
     if (w === 'npm -g') open.push('it installs into the system’s own folders (npm -g), which the plain wall keeps read-only');
-    else home.push(`it installs into ${w}, which the plain wall keeps read-only`);
+    else { home.push(`it installs into ${w}, which the plain wall keeps read-only`); at.push(`what it installs into ${w}`); }
   }
-  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4) };
+  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4), at: [...new Set(at)].slice(0, 4) };
 }
 // The would-fail reasons, those that need --open first.
 function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
@@ -147,29 +167,46 @@ function runnerMemoryCap(available) {
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
 // The folders at the top of the home a change names that are there now, real and not ~/bin (one look): a write inside
-// one is inside the plain wall's writable folders, not at the top (R63).
+// one is inside the plain wall's writable folders, not at the top (R63). null when the look gave no whole answer: never
+// "none is there", which would widen the wall.
 async function runnerTopDirs(node, sorted) {
   const tops = [...new Set([...(sorted?.placed || []), ...(sorted?.wide || [])].filter(p => typeof p === 'string' && /^~\/[^/.][^/]*$/.test(p) && p !== '~/bin' && !/[*?[\]{}\\]/.test(p)))].slice(0, 16);
   if (!tops.length) return [];
   const w = p => `"$HOME"${q(p.slice(1))}`;
-  const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
-  return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
+  const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; echo looked`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
+  const out = String(r.out).split('\n');
+  return r.code === 0 && out.includes('looked') ? out.filter(l => tops.includes(l)) : null;
 }
 // as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null } = {}) {
+// keys (run's, 21-run-keys.mjs): the names of the keys it is given.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [] } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
+  // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
+  if (keys.length && sorted.class === 'look') sorted.class = 'change';
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, as ? '' : command, widen, sorted), walls = runnerWalls(sorted, as?.sortAs ?? command, dir, topDirs ?? await runnerTopDirs(node, sorted)), outside = [...walls.open, ...walls.home];
+  const tops = topDirs ?? await runnerTopDirs(node, sorted);
+  if (!tops) throw new HttpError(503, `Which folders at the top of the home it names are there on ${sparkName(node)} couldn’t be read, so nothing ran.`);
+  const wide = runnerWiden(node, as ? '' : command, widen, sorted), walls = runnerWalls(sorted, as?.sortAs ?? command, dir, tops), outside = [...walls.open, ...walls.home];
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs ${walls.open.length ? 'outside that wall' : 'with the top of the home writable'}, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
+  // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
+  // writes counts for the request's later commands now, 21-long.mjs)
+  if (ctx.long && !ctx.long.job) {
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys }));
+    workWrote(ctx, sorted);
+    return started;
+  }
+  // (its keys, checked again now: never outside the wall (--open; --home holds the home's keys hidden), and at once only
+  // where each has gone before)
+  const given = keys.length ? runKeysGive(node, command, sorted, keys, ctx, asked, walls.open) : null;
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false, afterLook = null;
@@ -197,8 +234,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
         notKept: lost.slice(0, 50).map(said) };
     }
-    rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha,
+    // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
+    if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
+    rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha, ...(given ? { keys } : {}),
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
@@ -220,16 +259,22 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(as?.stdin ? { stdin: as.stdin } : {}) });
+    // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
+    if (ctx.long) Object.assign(ctx.long, { id, record: rid });
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+      ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection
     // dropped, or whose answer couldn't be read, gets none: undo's cut-off rule reads its files by their times)
     if (a.kind === 'ended') afterLook = wayCheck;
     // (what it wrote, for the commands after it in this request: a command that runs one is asked, 21-ladder.mjs)
     if (!Object.hasOwn(RUNNER_NEVER, a.kind)) workWrote(ctx, sorted);
+    // (where its keys went, kept with them, once it started)
+    if (given && !Object.hasOwn(RUNNER_NEVER, a.kind)) runKeysUsed(given, keys);
     const why = String(a.detail || '').slice(0, 300);
     if (!['ran', 'ended'].includes(a.kind)) {
       const never = Object.hasOwn(RUNNER_NEVER, a.kind);
@@ -240,8 +285,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
-      // (the disk floor, R63: said plainly)
-      if (a.kind === 'refused' && /^the disk has \d+ GB free; a change needs \d+ GB free$/.test(why)) throw new HttpError(409, `Nothing ran: ${why.replace(/^the disk has/, `${at}’s disk has`)}. Free some space there first.`);
+      // (the disk floor, R63: said plainly. Only a change at once meets it: one the owner pressed goes with --asked, which
+      // may start under it and is ended at the helper's lower floor)
+      const floor = HELPER_SAYS.diskFloor.exec(a.said || '');
+      if (floor) throw new HttpError(409, `Nothing ran: ${at}’s disk has ${floor[1]} GB free, and a change that runs at once needs ${floor[2]} GB free (the root helper’s floor). With your yes it may start under the floor, and is ended if the free space falls under ${floor[3]}: ask for it in your chat, or free space there first.`);
       if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the command: ${why}. Nothing ran.`);
       // (the Spark stopped answering mid-change: what it did is unknown, and the owner is told once, here)
       if (a.kind === 'unreachable') {
@@ -267,7 +314,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
-      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: `Nothing was written: ${maskSecrets(last || (a.exit == null ? 'it was ended before it finished' : `exit ${a.exit}`)).slice(0, 300)}` }) : {}),
+      // (after an end the console can't know, or at the time limit, it may have been written)
+      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
@@ -308,7 +356,7 @@ async function runnerRunState(node, unit) {
   const id = /^sw-run-([0-9a-f]{24})$/.exec(String(unit || ''))?.[1];
   if (!id) return 'unknown';
   const r = await helperCall(node, 'state', { id, limitMs: 15000 });
-  return new RegExp(`(?:^|\\n)${id} state (never|running|ended|unknown): `).exec(r.out)?.[1] || 'unanswered';
+  return String(r.out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => HELPER_SAYS.state.exec(l.slice(id.length + 1))?.[1]).find(Boolean) || 'unanswered';
 }
 // A change a console restart cut off (journalAfterRestart): its Spark is held as above, from its start line's time.
 function runnerHold(r) {

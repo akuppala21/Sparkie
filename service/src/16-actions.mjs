@@ -131,6 +131,8 @@ const CHANGE_WORDS = [
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
   // Installing Spark Console's newest tested build (21-updates.mjs): "install the new build", "update spark console".
+  // A change to Spark Console's own code (21-selfchange.mjs): "change your code", "fix yourself", "add X to Spark Console".
+  ['code', /\b(?:change|edit|fix|improve|patch|modify|rewrite)\s+(?:your|sparkie'?s|spark\s*console'?s)\s+(?:own\s+)?(?:code|source(?:\s+code)?)\b|\bfix\s+yourself\b|\badd\b[^.?!;\n]{0,80}?\bto\s+spark\s*console(?:'s\s+code)?\b|\b(?:propose|send)\s+(?:a\s+|the\s+|that\s+|your\s+)?(?:code\s+)?(?:change|pull\s+request)\b/gi],
   ['install', /\b(?:install|upgrade\s+to|update\s+to)\b[^.?!;\n]{0,40}?\b(?:builds?|updates?|versions?|spark\s*console)\b|\b(?:update|upgrade)\s+(?:the\s+)?(?:spark\s*)?console\b/gi],
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
   ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
@@ -174,7 +176,7 @@ const GROUP_WORDS = [
   // (power: a Spark itself switched by name, never a model: "turn off Spark 3’s model" opens it but power_off refuses it)
   ['power', 'turning a Spark off or on, and the idle power-off', /\b(?:power(?:ed|ing|s)?[\s-]*(?:on|off|up|down)|power(?:ed|ing|s)?\s+(?:it|them|(?:the\s+)?sparks?\b[\s\d,+&]*(?:and\s+\d\s*)?)\s*(?:on|off|up|down)|wake|wakes|waking|woke|sleep\w*|asleep|plugs?|watts?|idle|shutdown|shut\s*down\s+(?:the\s+)?sparks?|shut(?:s|ting)?\s+(?:the\s+)?sparks?\b[^.?!\n]{0,20}?\bdown|turn(?:s|ed|ing)?\s+(?:on|off)\s+(?:the\s+)?sparks?|turn(?:s|ed|ing)?\s+(?:the\s+|all\s+)?sparks?\b[^.?!\n]{0,20}?\b(?:on|off)|boot(?:s|ed|ing)?\s+(?:up\s+)?(?:the\s+)?sparks?)\b/i],
   // (Spark Console's own updates: undo_update stays in control, beside the other undo)
-  ['updates', 'Spark Console’s own updates: is a newer tested build out, what it changes, and installing it', /\binstall\b[^.?!;\n]{0,40}?\b(?:builds?|updates?|versions?)\b|\bupdate\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b|\b(?:newer|newest|latest)\s+(?:tested\s+)?builds?\b|\btested\s+builds?\b|\b(?:check\s+for|any)\s+(?:new\s+)?updates?\b|\bupdates?\s+(?:for|to|of)\s+(?:spark\s*console|sparkie|you(?:rself)?|the\s+console)\b|\bspark\s*console\s+updates?\b|\bupgrade\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b/i],
+  ['updates', 'Spark Console’s own updates: is a newer tested build out, what it changes, and installing it; a change to its own code', /\b(?:your|sparkie'?s|spark\s*console'?s)\s+(?:own\s+)?(?:code|source(?:\s+code)?)\b|\bfix\s+yourself\b|\b(?:your|the|sparkie'?s)\s+(?:code\s+)?(?:proposal|pull\s+request)\b|\binstall\b[^.?!;\n]{0,40}?\b(?:builds?|updates?|versions?)\b|\bupdate\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b|\b(?:newer|newest|latest)\s+(?:tested\s+)?builds?\b|\btested\s+builds?\b|\b(?:check\s+for|any)\s+(?:new\s+)?updates?\b|\bupdates?\s+(?:for|to|of)\s+(?:spark\s*console|sparkie|you(?:rself)?|the\s+console)\b|\bspark\s*console\s+updates?\b|\bupgrade\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
 // After "could you", these ask for information ("could you tell me whether to stop it"), not for a change.
@@ -223,6 +225,7 @@ const PAGE_ONLY = new Set([
   'forget_memory',
   'save_workflow',
   'forget_workflow',
+  'propose_update',
 ]);
 const PAGE_ONLY_TOOLS = new Set([
   'forget_workflow',
@@ -242,6 +245,7 @@ const ACTION_KIND = {
   power_off: ['poweroff'],
   power_on: ['poweron'],
   power_settings: ['poweroff', 'stop', 'powerset'],
+  propose_update: ['code', 'cancel'],
   remember: ['remember'],
   restart_model: ['restart', 'start'],
   run: ['work'],
@@ -424,6 +428,13 @@ async function sparkieCheck(name, input, ctx) {
     return { clear: asked && ids.length > 0 && ids.every(id => inPhrase.has(id)), input: out };
   }
   if (name === 'power_settings') return { clear: asked && powerSettingsClear(out, saidText), input: out };
+  // A proposal of Spark Console's own code: the owner's words ask for a change to its code (code); a drop also on a
+  // cancel. Everything else about it is code's (21-selfchange.mjs).
+  if (name === 'propose_update') {
+    const want = out.do === 'drop' ? ['code', 'cancel'] : ['code'];
+    // (a send in a request that read outside text is a button, as a saved workflow is)
+    return { clear: want.some(k => intent.asked.includes(k)) && !want.some(k => intent.negated.includes(k) || intent.mixed.includes(k)) && !(out.do === 'send' && ctx.readOutside), input: out };
+  }
   // A workflow's steps are Sparkie's own writing. They are saved at once only when this turn read nothing from outside,
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
@@ -474,6 +485,9 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (name === TRIAL_YES) return trialYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
+  // (a change to Spark Console's own code: dark until the trial has a pass and it is turned on; then only the owner's
+  // own chat, 21-selfchange.mjs, R69)
+  if (name === 'propose_update') selfGate(viewer, ctx);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
   // A button's arguments were kept here when it was offered (and checked then, or built here): they run as kept.
   let input = ctx.trusted ? args : checkInput(a.input, args, name);
@@ -506,7 +520,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   // with a button. "Don't stop …" rules stopping out for the whole request.
   // (an action that asks the owner itself, as a dangerous ask, gets no plain question first: its own ask is the stronger
   // one, R54)
-  if (ctx.via === 'sparkie' && a.asks !== 'danger') {
+  // (and a proposal's install, which asks as install_update does: 21-selfchange.mjs, C8d)
+  if (ctx.via === 'sparkie' && a.asks !== 'danger' && !(name === 'propose_update' && input.do === 'install')) {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;
@@ -569,6 +584,8 @@ async function runAction(name, viewer, args, ctx = {}) {
     const out = await a.run(input, viewer, ctx);
     if (byAgent && out?.operation && out.outcome !== 'already-starting') agentChanges.push(Date.now());
     if (ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).conv ||= ctx.conv;
+    // (and the request it was made for, so its task's report counts it: E7, 14-tasks.mjs)
+    if (ctx.task && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).task ||= ctx.task;
     if (ownersOwn && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).ownersOwn = true;
     // Work started from Telegram reports there when it ends (20-tell.mjs).
     if (ctx.channel && ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation) && !jobs.get(out.operation).channel) {

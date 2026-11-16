@@ -88,10 +88,23 @@ function writeSplice(oldText, text, from, to) {
   return out.length ? `${out.join('\n')}${ends ? '\n' : ''}` : '';
 }
 // One line on the button: masked, cut at 200 signs and said so; a line the mask changed is marked, as it is written as
-// given.
+// given. A hidden part that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >) is shown as
+// written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
+// hidden that way could be a command). The records (the brain's result, the journal, the chat file) mask the line again,
+// with the same mark, which then says the hidden part holds such signs; the button (the page, Telegram) shows it.
+const WRITE_WHOLE = ' (shown whole: what would be hidden here holds signs that run something)', WRITE_RUNS = /[$`()|;&<>]/;
 function writeLineShown(sign, l) {
-  const m = maskSecrets(l), a = Array.from(m);
-  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}`;
+  let m = maskSecrets(l), whole = false;
+  if (m !== l && m.includes('[hidden]')) {
+    const parts = m.split('[hidden]'), esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const got = new RegExp(`^${parts.map(esc).join('([\\s\\S]*?)')}$`).exec(l);
+    if (got && got.slice(1).some(x => WRITE_RUNS.test(x))) {
+      m = parts.map((x, i) => (i ? `${WRITE_RUNS.test(got[i]) ? got[i] : '[hidden]'}${x}` : x)).join('');
+      whole = true;
+    }
+  }
+  const a = Array.from(m);
+  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}${whole ? WRITE_WHOLE : ''}`;
 }
 // The button's first lines: what is written where, and the lines that change, old and new (design A 2.14 row 7).
 function writeShown(at, place, old, text, from, to) {
@@ -129,7 +142,13 @@ async function writeFile(input, viewer, ctx = {}) {
   const place = writePlace(input.path), sortAs = `cat > ${q(place.rel)}`, sorted = sortCommand(sortAs, runnerSortOpts(node, ctx, place.dir));
   // (Spark 2, a brain Spark, root, a pause, not done, the lock-out class: refused before anything is read, as for run)
   runnerNever(node, sorted, ctx);
-  if (['notdone', 'lockout'].includes(sorted.class)) return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
+  // (the lock-out class is never written, nor handed to the lock-out net, which runs a command bare: its press would run
+  // the plain write the sorter was handed, with nothing on its input)
+  if (sorted.class === 'lockout') {
+    throw new HttpError(403, NET_ON ? `Nothing ran: a change that can lock you out of ${sparkName(node)} runs only as a plain command inside the lock-out net, never as write_file. ${sorted.why}`
+      : `Nothing ran: a change that can lock you out of ${sparkName(node)} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  }
+  if (sorted.class === 'notdone') return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
   const old = await writeOld(node, place);
   if (old.kind === 'helper') {
     const needs = helperNeeds(node, old.answer);
@@ -142,6 +161,8 @@ async function writeFile(input, viewer, ctx = {}) {
   let bytes;
   if (Number.isInteger(from)) {
     if (old.kind !== 'file' || !old.bytes) throw no(400, `Lines ${from} to ${to} need ${place.shown} there as a plain text file of at most 256 KB a look may read, and it isn’t.`);
+    // (the lines are put together as text: a file that doesn't come back byte for byte from it would change elsewhere)
+    if (!Buffer.from(old.bytes.toString('utf8')).equals(old.bytes)) throw no(400, `${place.shown} isn’t UTF-8 text, so lines ${from} to ${to} can’t be put in it without changing other bytes: write the whole file.`);
     const n = writeSplit(old.bytes.toString('utf8')).length;
     if (to > n) throw no(400, `${place.shown} has ${n} line${n === 1 ? '' : 's'}, so lines ${from} to ${to} aren’t all there.`);
     bytes = Buffer.from(writeSplice(old.bytes.toString('utf8'), text, from, to));
@@ -154,6 +175,8 @@ async function writeFile(input, viewer, ctx = {}) {
     // (a file whose old text is hidden is asked, never written at once: the owner sees what they can't read here)
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
+    // (the lines the button shows whole, for Telegram's ask and the page's copy: the records keep them masked)
+    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.endsWith(WRITE_WHOLE)),
     file: { path: place.shown, before: old.kind === 'file' && old.bytes ? old.bytes.toString('utf8') : '', after: bytes.toString('utf8') },
     run: writeProgram(place.rel, old),
     as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,

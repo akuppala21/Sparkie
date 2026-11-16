@@ -45,11 +45,13 @@ function tellParts(text) {
   if (rest) parts[parts.length - 1] = `${parts[parts.length - 1].slice(0, TELL_PART - 40).trimEnd()}\n\n(the rest is in Spark Console)`;
   return parts.filter(Boolean);
 }
-// Secrets hidden, and the bot's own token replaced wherever it appears.
-const tellClean = (text, token) => {
-  let t = maskSecrets(String(text || ''));
-  if (token) t = t.split(token).join('[hidden]');
-  return t;
+// Secrets hidden, and the bot's own token replaced wherever it appears. keep: whole lines code built to be shown as they
+// are (question()'s whole): each one found in the text goes as it is, but for the bot's token.
+const tellClean = (text, token, keep = []) => {
+  const clean = s => { let t = maskSecrets(String(s || '')); if (token) t = t.split(token).join('[hidden]'); return t; };
+  const lines = String(text || '').split('\n'), kept = new Set((Array.isArray(keep) ? keep : []).filter(k => typeof k === 'string' && k && !k.includes('\n')));
+  if (!kept.size) return clean(text);
+  return lines.map(l => (kept.has(l) ? (token ? l.split(token).join('[hidden]') : l) : clean(l))).join('\n');
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
@@ -59,7 +61,7 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '' } = {}) {
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -68,8 +70,9 @@ async function tell(why, text, { buttons = null, to = null, pre = null, tail = '
   while (tellResults.length && now - tellResults[0] > 3600000) tellResults.shift();
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
-  if (later && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
+  // (a request's last reply is never held back by it: last)
+  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
+  const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);
@@ -92,6 +95,7 @@ const TELL_OPS = {
   'power-on': 'Turning on',
   restart: 'Restarting',
   'restart-model': 'Restarting',
+  run: 'The command',
   'self-test': 'The self-test with',
   'start-model': 'Starting',
   stop: 'Stopping',
@@ -107,7 +111,8 @@ function tellWhat(job) {
 }
 function tellResultLine(job) {
   const what = tellWhat(job);
-  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.`;
+  // (a long command's exit code, a number: an exit other than 0 is a result, told as one, 21-long.mjs)
+  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished${job.type === 'run' && Number.isInteger(job.exit) ? ` with exit code ${job.exit}` : ''}.`;
   if (job.status === 'cancelled') return `${what} was cancelled.`;
   return `${what} didn’t work. The details are in Spark Console.`;
 }
@@ -135,10 +140,10 @@ function tellResult(job, conv) {
   tellHeld.delete(conv.id);
   tell('result', [...held, line].join('\n')).catch(() => {});
 }
-async function tellCarry(convId, message) {
+async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
   tellHeld.delete(convId);
-  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message) });
+  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message), last });
   if (held.length) return tell('result', held.join('\n'));
   return false;
 }

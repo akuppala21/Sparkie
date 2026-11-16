@@ -2,8 +2,9 @@
 # Stand-in systemd-run for rehearsals of the root helper (deploy/spark-console-root; test/root-helper.test.mjs). Outside
 # a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails and starts nothing. Every call is one JSON line in
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
-#   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
-#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first; past its
+#   sw-look-<id>, sw-run-<id>,  the command runs here, unwalled (a root command as the test's own account): the held
+#   sw-root-<id>                folder /run/spark-console/<id> is read under the rehearsal, and a copy of it is kept in
+#                               <rehearsal>/standin/ran/<unit>/ first; past its
 #                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit; while it
 #                               runs <rehearsal>/standin/live/<unit> is there (what systemctl is-active answers). WALL_VIEW
 #                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
@@ -151,7 +152,7 @@ def wall_view():
     return view
 
 
-if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
+if unit.startswith(('sw-look-', 'sw-run-', 'sw-root-')) and cmd:
     uid = unit.split('-', 2)[2]
     held = os.path.join(R, 'run', 'spark-console', uid)
     shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
@@ -165,7 +166,9 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     # While it runs, <rehearsal>/standin/live/<unit> is there (the stand-in systemctl's is-active reads it).
     live = os.path.join(R, 'standin', 'live', unit)
     os.makedirs(os.path.dirname(live), exist_ok=True)
-    open(live, 'w').close()
+    # (it holds this stand-in's own pid: the stand-in systemctl's stop ends the unit through it, as systemd would)
+    with open(live, 'w') as f:
+        f.write(str(os.getpid()))
     # (its own session, so it can be ended whole; a signal to this stand-in, a caller's timeout say, ends it whole too)
     held = []
     def end(sig, _):

@@ -22,7 +22,7 @@
 //   groups   where the parts define GROUP_WORDS (R46): every action has one group (core, or one of those); the core
 //            holds at most 12 actions and a group at most 6
 // Dated records are never checked: docs/history/, docs/design-2026-11-13/ and docs/review-astra/.
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -414,7 +414,22 @@ export function checkDocs(root = ROOT) {
   checkShape(tree, out);
   checkGroups(tree, out);
   checkCovers(tree, out);
+  checkAttributes(root, out);
   return out;
+}
+
+// No .gitattributes anywhere, in any case: git archive obeys one (export-ignore, export-subst), so an install of a tree
+// holding one could unpack something other than the tested tree, and deploy/pull.sh refuses such a tree (R29).
+function checkAttributes(root, out) {
+  const look = dir => {
+    for (const f of readdirSync(join(root, dir))) {
+      if (f === '.git' || f === 'node_modules') continue;
+      const p = dir ? `${dir}/${f}` : f;
+      if (f.toLowerCase() === '.gitattributes') out.push({ check: 'attributes', file: p, line: 1, message: 'is a .gitattributes file: git archive obeys it (export-ignore, export-subst), so an install could unpack something other than the tested tree, and pull.sh refuses a tree with one. Take it out.' });
+      else if (lstatSync(join(root, p)).isDirectory()) look(p);   // (never through a link)
+    }
+  };
+  look('');
 }
 
 export const describe = p => `${p.file}:${p.line}: ${p.message} [${p.check}]`;

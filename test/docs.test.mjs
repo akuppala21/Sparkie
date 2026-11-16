@@ -85,6 +85,12 @@ test('the made-up tree passes as it is', () => {
   assert.deepEqual(problemsWith({}).map(say), []);
 });
 
+test('a .gitattributes anywhere, in any case, is a problem: git archive would obey it, and pull.sh refuses the tree', () => {
+  for (const f of ['public/.gitattributes', 'docs/.GitAttributes', '.gitattributes']) {
+    fails({ [f]: 'app.js export-ignore\n' }, 'attributes', /is a \.gitattributes file: git archive obeys it/);
+  }
+});
+
 describe('ids', () => {
   test('a rule id no file defines', () => fails(doc('Keep R41.'), 'ids', /R41/));
   test('a contract id the contract does not define', () => fails(doc('As contract 8.99 says.'), 'ids', /contract 8\.99/));

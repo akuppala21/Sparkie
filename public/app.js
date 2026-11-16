@@ -2108,6 +2108,8 @@ const SVC_LABEL = {
   'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
   'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
   'self-test': j => `Self-test on ${nodeName(j.node)}`,
+  // (run with minutes: a long command, by its Spark alone)
+  run: j => `A command on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 
@@ -2219,6 +2221,13 @@ function commandRow(t) {
   return h('li', {}, btn, shown);
 }
 
+// The asks' own lines, as code built them for the button (write_file's path and its old and new lines, a run's command
+// and why it is asked): plain text with the buttons, so a press never does what wasn't shown here (A7d's read).
+function askLines(m) {
+  const groups = new Set((m.choices || []).map(x => x.group));
+  const list = (m.asks || []).filter(a => a && groups.has(a.group) && typeof a.text === 'string' && a.text);
+  return list.length ? h('div', { class: 'ask-lines' }, list.map(a => h('pre', {}, a.text.slice(0, 8000)))) : null;
+}
 function toolLines(tools, asked = false) {
   const lines = [];
   for (const t of tools) {
@@ -2425,8 +2434,8 @@ PAGES.sparkie = function sparkiePage(view, r) {
   const slashDraft = () => owner() && ta.value.trim().startsWith('/');
   // One of the owner's words, exactly (the same rule as the server's): it goes through even while another answer is
   // stuck, as its own small request.
-  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/help'];
-  const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && OWNER_WORDS.includes(t); };
+  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/putback', '/help'];
+  const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)); };
   const syncSend = () => { sendBtn.disabled = (c.sending && !isWord(ta.value)) || (!sparkieModel().up && !slashDraft()); };
   ta.addEventListener('input', () => { c.draft = ta.value; grow(); syncSend(); });
   ta.addEventListener('keydown', e => {
@@ -2621,6 +2630,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
             : m.content ? h('div', { class: 'msg-body' }, renderMarkdown(m.content)) : null,
         !mine && m.tools?.length ? toolLines(m.tools, (m.choices || []).length > 0) : null,
         !mine ? checkedFold(m) : null,
+        !mine && !m.streaming ? askLines(m) : null,
         !mine && !m.streaming ? choiceRow(m) : null,
         snapshot ? h('details', { class: 'snapshot' }, h('summary', {}, icon('server'), 'Live snapshot attached'), h('pre', {}, snapshot)) : null,
         m.error ? h('div', { class: 'banner bad', style: { 'margin-top': '8px' } }, icon('alert'), h('div', { class: 'banner-text' }, m.error || 'This reply failed.')) : null,
@@ -3627,6 +3637,8 @@ async function putBackList() {
     l.passkeys.length ? h('ul', { class: 'putback-list' }, ...l.passkeys.map(k => row(k.name, `Added ${when(k.addedAt)} · last used ${when(k.lastUsedAt)}`, () => capi(`auth/passkeys/${encodeURIComponent(k.id)}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
     h('h3', {}, 'Agent keys'),
     l.agentKeys.length ? h('ul', { class: 'putback-list' }, ...l.agentKeys.map(k => row(k.name, `${k.canChange ? 'Can start and stop models' : 'Can only look'}${k.fromAnywhere ? ', from anywhere' : ', on your tailnet only'}`, () => capi(`agents/${k.id}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    ...(l.allowed?.length ? [h('h3', {}, 'Always allowed'), h('ul', { class: 'putback-list' }, ...l.allowed.map(w => h('li', { class: 'putback-row' }, h('div', {}, w)))),
+      h('p', { class: 'muted' }, 'These run without asking again only after you keep them. Take one away with /allowed off in your chat.')] : []),
     h('p', { class: 'muted' }, `${l.agentsPaused ? 'Agents’ changes are paused. ' : ''}${l.lastUse} ${l.namesAreData}`));
   const ok = await dialog({
     title: 'Spark Console’s state was put back from a copy', description: 'Until you keep what came back, sign-in from the internet is refused and agents can’t change anything.',

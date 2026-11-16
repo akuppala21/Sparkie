@@ -399,6 +399,15 @@ case "$cmd" in
       wall devices 'asked --runtime runc && asked --env NVIDIA_VISIBLE_DEVICES=void && ! grep -qxE -- "--gpus|--device|--privileged" "$R"'
       printf '%s walls end\n' "$id"; exit 0
     fi
+    # Anything else run in a running box (C8b's fill and read back): the command after its name, in the box's own folder
+    # (its /work); with ~/.mock/box-tar-<name>, a `tar` there prints that file instead (a test's hostile tar).
+    if [ "$(lineOf "$name" | cut -d'|' -f4)" = box ]; then
+      [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || { echo "Error response from daemon: container $name is not running" >&2; exit 1; }
+      src=$(sed -n 's|^type=bind,src=\(.*\),dst=/work$|\1|p' "$M/run-$name" | head -n 1)
+      while [ $# -gt 0 ] && [ "$1" != "$name" ]; do shift; done; shift
+      if [ "$1" = tar ] && [ -f "$M/box-tar-$name" ]; then exec cat "$M/box-tar-$name"; fi
+      cd "$src" && exec "$@"
+    fi
     case "$*" in *SIGABRT*) printf 'sock 10.100.186.3:51544 10.100.186.2:41877 trying to connect\nsock 127.0.0.1:5557 127.0.0.1:40112 connected\nenv GLOO_SOCKET_IFNAME=enp1s0f1np1\n'; printf 'Fatal Python error: Aborted\n\nCurrent thread 0x0000f00d (most recent call first):\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/device_communicators/pynccl.py", line 112 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/parallel_state.py", line 291 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 742 in init_torch_distributed\n  File "/usr/lib/python3.12/threading.py", line 359 in wait\n' >> "$M/logs-$name" ;; esac ;;
   logs) name=$(last "$@"); if [ -f "$M/logs-$name" ]; then cat "$M/logs-$name"; else echo "INFO: loading safetensors shards ... $(( RANDOM % 100 ))%"; fi ;;
   pull) echo "$1: Pulling from library"; sleep 2; echo "Status: Downloaded newer image for $1"; echo "$1" >> "$M/images" ;;

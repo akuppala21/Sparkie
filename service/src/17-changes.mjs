@@ -55,7 +55,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+// whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
+// paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -77,10 +79,12 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
     pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
-      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}),
+      // (a go-ahead's answer keeps what its press gives, built by code, and "Always allow …" what it keeps: 21-ahead.mjs)
+      ...(c.ahead ? { ahead: c.ahead } : {}), ...(c.always ? { always: c.always } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
-  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
+  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
     note: ownerOnly ? 'Only the owner can answer this one, from Spark Console. Tell them what it asks; don’t answer it yourself.'
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
@@ -136,6 +140,12 @@ function changeLabel(name, input) {
   if (name === 'power_on') return `Turn on ${sparksSaid || 'a Spark'}`;
   if (name === 'power_settings') return input.idleMinutes ? `Power off idle Sparks after ${input.idleMinutes} minute${input.idleMinutes === 1 ? '' : 's'}` : 'Stop powering off idle Sparks';
   // (the self-test: what it runs is fixed by code; the button says where, and that it stops nothing)
+  // (a proposal of Sparkie's own code, 21-selfchange.mjs: its title is Sparkie's words, marked so)
+  if (name === 'propose_update') {
+    return input.do === 'send' ? `Send the proposal “${maskSecrets(String(input.title || '')).replace(/\s+/g, ' ').slice(0, 80)}” (Sparkie’s words) as a pull request: Spark Console builds the diff and the generated files, and GitHub runs the tests`
+      : input.do === 'drop' ? 'Drop the open proposal: close its pull request and delete its branch'
+      : 'Put main’s code in this chat’s box, to propose a change to Spark Console’s own code';
+  }
   if (name === 'self_test') return `Run the self-test${where || ' on a compute Spark that is free'}: a small model with the healing drill, a web page and a job with the GPU, stopping nothing`;
   // (the box, 21-box.mjs: where it is and what it can't reach; the command whole, keys masked)
   if (name === 'run' && input.on === 'box') return `Open the box (a throw-away container on a compute Spark: no network, nothing of the Spark but its own folder) for: ${maskSecrets(String(input.command ?? ''))}`;

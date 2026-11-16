@@ -292,7 +292,7 @@ async function boxRun(input, viewer, ctx = {}) {
         why: e.removed ? `The box on ${e.at} was removed, with its folder.` : `The box on ${e.at} couldn’t be removed just now (${e.why}); it ends by itself at ${e.until}. Ask again to try once more.` };
     }
     if (!command.trim()) throw new HttpError(400, 'The command is empty: give one command to run in the box.');
-    if (input.dir !== undefined || input.fleet !== undefined || input.gpu !== undefined) throw new HttpError(400, 'A command in the box starts in /work, reaches no network and no GPU: dir, fleet and gpu are for a Spark.');
+    if (['dir', 'fleet', 'gpu', 'minutes', 'keys'].some(k => input[k] !== undefined)) throw new HttpError(400, 'A command in the box starts in /work, reaches no network and no GPU, and gets 30 seconds: dir, fleet, gpu, minutes and keys are for a Spark.');
     const asked = await boxGate(viewer, ctx, key, command, () => propose(viewer, ctx, 'run', input));
     if (asked) return asked;
   } catch (e) {

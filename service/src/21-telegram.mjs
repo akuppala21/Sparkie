@@ -220,6 +220,10 @@ async function tgUpdate(u) {
   if (word === '/stop') return tell('system', await stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram')));
   // (/undo: this chat's last change put back, also while changes are paused, 20-words.mjs)
   if (word === '/undo') return tell('system', (await undoChangeWord(tgOwner(), tgConv(), 'telegram')).reply);
+  // (/allowed lists what is always allowed and takes it away; adding one is the page's: 21-ahead.mjs)
+  if (word?.startsWith('/allowed')) return tell('system', allowedWord(word, 'telegram'));
+  // (/putback: the newest change made inside the lock-out net put back, by code, with no brain, 21-net.mjs)
+  if (word === '/putback') return tell('system', await netPutbackWord());
   const cmd = /^\/(new|status|unpair|start|help|lock)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
   if (cmd === 'unpair') { tgForget(); return; }
   // (approvals from here off at once, also while Sparkie answers: 20-tg-approve.mjs)
@@ -251,6 +255,8 @@ function tgTryPair(m) {
   tg.code = null;
   tgNewPairing();
   tgSave();
+  // (a task from the chat paired before this one ends: its carry-on turns would go on, and be told, here)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Pairing Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-paired', args: { name }, ok: true });
   tgSetState('ok');
   tellOwnerAt = Date.now();
@@ -407,6 +413,8 @@ async function telegramRoute(req, res, path, viewer) {
     tgStop();
     secretsWrite(s => ({ ...s, telegram: { token, bot } }));
     tgForgotten = false;
+    // (a new bot drops the pairing: a task from it ends, as at Disconnect)
+    try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Connecting Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
     const st = tgSaved();
     st.offset = 0; delete st.conv; delete st.answering;
     tgSave();

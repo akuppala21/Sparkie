@@ -11,7 +11,8 @@
 // names its day; a second yes while an install asked from chat is going is refused, and the first one's result is
 // still told; a yes after that very tree was installed another way says so; a check at the yes that takes longer than
 // the press waits is answered at once and what comes of it is told in the chat; install_update is no saved
-// workflow's step; the unit it runs in has a time limit of its own.
+// workflow's step; the unit it runs in has a time limit of its own. The eighth read's: an asked time ahead of the
+// clock counts as old.
 // The service runs pull.sh check --json against a stand-in GitHub (a bare repository with tested/ tags as the mark job
 // makes them); `install` is a stand-in that writes the console's update-result.json as pull.sh would, so the
 // install itself (test/pull.test.mjs covers it) never runs here and the console never restarts.
@@ -275,5 +276,14 @@ describe('install_update', { concurrency: 1 }, () => {
     assert.match(src, /'--unit', 'spark-console-pull-install', '-p', `RuntimeMaxSec=\$\{UPD_UNIT_MAX_S\}`/);
     const max = Number(/const UPD_UNIT_MAX_S = (\d+);/.exec(src)?.[1]);
     assert.ok(max > 30 * 60 && max < 90 * 60, String(max));
+  });
+
+  // (the eighth read of C5, Later 2)
+  test('an install asked from chat whose time is ahead of the clock isn’t waited for: said in its chat, and no yes is refused for it', async () => {
+    const chat = await newChat(), tree = 'e'.repeat(12);
+    writeFileSync(join(STATE, 'update-asked.json'), JSON.stringify({ tree, build: tree, conv: chat, channel: null, at: new Date(Date.now() + 86400000).toISOString() }), { mode: 0o600 });
+    await waitFor(async () => (await chatMessages(chat)).some(m => m.content === `The install of tree ${tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`),
+      { timeout: 30000, what: 'said in its chat' });
+    assert.ok(!existsSync(join(STATE, 'update-asked.json')), 'no longer refuses a yes');
   });
 });

@@ -19,7 +19,7 @@
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '4a65f95893609e4d0c4d40c817614e790c2fc1bed52e32a811d4f0d96d4f4507';
+const HELPER_SHA256 = '9cbb88a1d41626519631db44bcd587baf1bfdb463a92f11ae5ea4f0a921a4f06';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
@@ -29,6 +29,9 @@ const PROVE_LOCK_AT = `${ALL_LOCAL ? '"$HOME/.rehearsal"' : ''}/run/spark-consol
 // console gives the call LOOK_SLACK more before it ends it; the stand-in fleet may shorten it); two at once on a Spark; a
 // proof 15 minutes.
 const LOOK_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_LOOK_SECONDS) || 30;
+// Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches C8b's two (runCommand,
+// 21-box-fill.mjs). Defined here, where runCommand reads it, so a harness of this part alone has it.
+const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
 const LOOK_SLACK = 8, LOOK_AT_ONCE = 2, LOOK_HEAD = 2000, LOOK_TAIL = 3500, PROVE_MS = 15 * 60000;
 const looking = new Map();       // Spark id → looks running there now
 const wallsFailed = new Map();   // Spark id → the attempt its last proof (the self-test's) let through; gone when one passes
@@ -145,16 +148,17 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument)
-  const input = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input != null ? ' --stdin' : ''}` : '';
+  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument;
+  // input, a change's keys, 21-run-keys.mjs: after this script on the same input, which --stdin reads to its end)
+  const bytes = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${asked === true ? ' --asked' : ''}${bytes != null || input === true ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -170,8 +174,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : input != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${input}SPARKIE_INPUT\nexit $?`
-        : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
+        : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
@@ -181,7 +185,8 @@ function helperCall(node, verb, opts = {}) {
   const id = /^[a-z0-9]{8,40}$/.test(opts.id || '') ? opts.id : randomBytes(12).toString('hex'), limitMs = opts.limitMs || ((opts.seconds || LOOK_SECONDS) + LOOK_SLACK) * 1000;
   if (knownOffline(node)) return Promise.resolve({ id, code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id }), limit: limitMs / 1000 + 5 });
+    // (a change's keys, 21-run-keys.mjs: after the script on the same input, which the helper's --stdin reads to its end)
+    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id, input: verb === 'run' && typeof opts.input === 'string' }) + (verb === 'run' && typeof opts.input === 'string' ? `\n${opts.input}` : ''), limit: limitMs / 1000 + 5 });
     const chunks = [];
     let bytes = 0, cut = false, timedOut = false, err = '', done = false;
     const finish = code => {
@@ -210,6 +215,22 @@ function helperCall(node, verb, opts = {}) {
 // What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
 // and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
 // helper's own included, is only ever output.
+// Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer
+// and the runner (21-runner.mjs) read through these (the net's, 21-guard.mjs, through GUARD_SAYS there), and
+// own-programs.test checks each against the sentences deploy/spark-console-root can print, so a sentence the helper
+// changes fails a test, not a Spark.
+const HELPER_SAYS = {
+  proofPassed: /^proof passed: /,
+  proofFailed: /^proof failed: (.*)\. No mark was written, so the look and run walls refuse on this Spark\.$/,
+  refused: /^refused: (.*)$/,
+  // (a state of one word or more: "missing", "out of date: systemd changed")
+  proofState: /^(?:refused|look refuses): the wall proof is (.+?) on this Spark(?:: prove first)?$/,
+  lookRefuses: /^look refuses: (.*)$/,
+  lookReady: /^look ready$/,
+  state: /^state (never|running|ended|unknown): /,
+  diskFloor: /^refused: the disk has (\d+) GB free; a plain change needs (\d+) GB free: free space first, by a change the owner asks for \(it may start under the floor, and is ended if the free space falls under (.+)\)$/,
+  diskStopped: /^stopped: the disk's free space fell under (.+)$/,
+};
 function helperAnswer({ id, code, out, err, cut, timedOut }) {
   if (cut) return { kind: 'ran', output: out, exit: null, cut: true };
   const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time)\\n$`).exec(out);
@@ -224,10 +245,12 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   const own = out.split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1)), find = p => own.find(l => l.startsWith(p))?.slice(p.length);
   const said = find('console ');
   if (said != null) return { kind: said.split(' ')[0], detail: said.split(' ').slice(1).join(' ') };
-  if (find('proof passed:') != null) return { kind: 'proven' };
-  const failed = find('proof failed: '), refused = find('refused: ') ?? find('look refuses: ');
-  if (failed != null) return { kind: 'failed', detail: failed.replace(/\. No mark was written.*$/, '') };
-  if (refused != null) return { kind: /^the wall proof is /.test(refused) ? 'proof' : 'refused', detail: refused.replace(/ on this Spark(?:: prove first)?$/, '') };
+  const line = re => own.find(l => re.test(l)), got = re => re.exec(line(re) ?? '');
+  if (line(HELPER_SAYS.proofPassed) != null) return { kind: 'proven' };
+  const failed = got(HELPER_SAYS.proofFailed), proof = got(HELPER_SAYS.proofState), refused = got(HELPER_SAYS.refused) ?? got(HELPER_SAYS.lookRefuses);
+  if (failed) return { kind: 'failed', detail: failed[1] };
+  if (proof) return { kind: 'proof', detail: `the wall proof is ${proof[1]}` };
+  if (refused) return { kind: 'refused', detail: refused[1].replace(/ on this Spark(?:: prove first)?$/, ''), said: `refused: ${refused[1]}` };
   if (code === 255 && !own.length) return { kind: 'unreachable', detail: maskSecrets(String(err).split('\n').pop()).slice(0, 200) };
   const first = maskSecrets(String(out || err).trim().split('\n')[0] || '').slice(0, 200);
   return { kind: /a password is required|a terminal is required|not in the sudoers|may not run sudo/.test(out + err) ? 'nosudo' : 'broken', detail: first };
@@ -294,8 +317,14 @@ function forBrain(t) {
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
 // command word, a key's name), with the look's own words.
 async function runCommand(input, viewer, ctx = {}) {
+  if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: its own place, before the sorter)
-  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
+  // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
+  if (Number.isInteger(input.minutes) && !ctx.long) ctx = { ...ctx, long: { minutes: input.minutes } };
+  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = ctx.long?.job ? ctx.long.seconds : LOOK_SECONDS;
+  // (not on Spark 2 yet: a long command there would run outside the lock-out net its changes run in, A11)
+  if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
+  if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
@@ -317,10 +346,21 @@ async function runCommand(input, viewer, ctx = {}) {
     if (input.dir !== undefined && input.dir !== '~') throw new HttpError(400, 'A look starts in ~: name its paths from there (dir is where a change starts).');
     if (input.fleet === true || input.gpu === true) throw new HttpError(400, 'A look reaches no network and no device: fleet and gpu are for a change, asked first.');
     if ((looking.get(node.id) || 0) >= LOOK_AT_ONCE) throw new HttpError(429, `Two looks are running on ${at} already. Try again when one has answered.`);
+    // (with minutes: the look itself runs as an operation, and the turn doesn't wait, 21-long.mjs)
+    if (ctx.long && !ctx.long.job) { const started = longStart(node, ctx, 'look', () => runCommand(input, viewer, ctx)); rec.handed = true; return started; }
+    // (a long look's start line first, so after a restart its unit is found by id and stopped, 21-long.mjs)
+    const hid = randomBytes(12).toString('hex');
+    if (ctx.long?.job) {
+      rec.started = journal('cmd', { id: rid, start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+        unit: form ? null : `sw-look-${hid}`, form: form || null, seconds, minutes: ctx.long.minutes, op: ctx.long.job.id, args: { spark: node.id, command: command.slice(0, 600) }, sub: jSub(node.id) });
+      if (!rec.started) throw new HttpError(507, JOURNAL_REFUSED);
+      Object.assign(ctx.long, { id: form ? null : hid, record: rid });
+    }
     looking.set(node.id, (looking.get(node.id) || 0) + 1);
     let r;
-    try { r = await helperCall(node, form ? 'check' : 'look', form ? { seconds, form } : { command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
+    try { r = await helperCall(node, form ? 'check' : 'look', form ? { id: hid, seconds, form } : { id: hid, command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
     const a = helperAnswer(r), why = String(a.detail || '').slice(0, 300);
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     Object.assign(rec, { outcome: a.kind, unit: form ? null : `sw-look-${r.id}`, form });
     const needs = helperNeeds(node, a);
     if (needs) return needs;
@@ -343,7 +383,7 @@ async function runCommand(input, viewer, ctx = {}) {
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it, and recall {"id":"${rid}","find":"<words>"} its lines that hold those words, numbered.` } : {}), record: rid,
     };
   } catch (e) { rec.err = e; throw e; } finally {
-    journal('cmd', { id: rid, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+    if (!rec.handed) journal('cmd', { id: rid, ...(rec.started ? { end: true } : {}), chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
       unit: rec.unit || null, form: rec.form || null, args: { spark: node.id, command: command.slice(0, 600) }, ok: !rec.err, outcome: rec.outcome, exit: rec.exit ?? null,
       err: jErr(rec.err), ms: Date.now() - t0, bytes: rec.bytes ?? null, cut: rec.cut || null, sub: jSub(node.id) }, `$ ${command}\n${rec.text ?? ''}`);
   }
@@ -358,6 +398,8 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
+    minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
+    keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only. A command given a key is always asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });
