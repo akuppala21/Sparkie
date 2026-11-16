@@ -424,11 +424,12 @@ async function copiesPy() {
     readFileSync(join(S, '21-copies-prune.mjs'), 'utf8'), readFileSync(join(S, '21-copies.mjs'), 'utf8'),
     'export { COPIES_PY, COPIES_FILE_MAX, COPIES_SET_MAX };'].join('\n'));
   const m = await import(pathToFileURL(join(d, 'copies.mjs')).href);
-  const arg = A => Buffer.from(JSON.stringify({ fileMax: m.COPIES_FILE_MAX, allMax: m.COPIES_SET_MAX, ...A })).toString('base64');
-  const answer = out => { const x = /^RESULT ([A-Za-z0-9+/=]+)$/m.exec(out); assert.ok(x, `no answer: ${out.slice(-300)}`); return JSON.parse(Buffer.from(x[1], 'base64').toString('utf8')); };
+  // (as copiesOn sends it: the limits, and the ways in, none here)
+  const arg = A => Buffer.from(JSON.stringify({ fileMax: m.COPIES_FILE_MAX, allMax: m.COPIES_SET_MAX, ways: [], ...A })).toString('base64');
+  const answer = (out, err) => { const x = /^RESULT ([A-Za-z0-9+/=]+)$/m.exec(out); assert.ok(x, `no answer: ${out.slice(-300)} ${String(err).slice(-600)}`); return JSON.parse(Buffer.from(x[1], 'base64').toString('utf8')); };
   return {
-    once: (home, A) => { const r = spawnSync('python3', ['-', arg(A)], { input: m.COPIES_PY, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 30000 }); return answer(String(r.stdout)); },
-    held: async (home, A, hold, during) => { const r = await held(['python3', '-', arg({ ...A, hold })], home, hold, m.COPIES_PY, during, { HOME: home }); assert.equal(r.code, 0, r.err); return answer(r.out); },
+    once: (home, A) => { const r = spawnSync('python3', ['-', arg(A)], { input: m.COPIES_PY, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 30000 }); return answer(String(r.stdout), r.stderr); },
+    held: async (home, A, hold, during) => { const r = await held(['python3', '-', arg({ ...A, hold })], home, hold, m.COPIES_PY, during, { HOME: home }); assert.equal(r.code, 0, r.err); return answer(r.out, r.err); },
   };
 }
 
