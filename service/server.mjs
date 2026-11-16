@@ -3677,6 +3677,9 @@ async function runChoice(viewer, conv, id, by) {
   conv.messages.push(message);
   conv.updatedAt = message.createdAt;
   saveChats();
+  // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
+  // agent's press, nor one of another request's button)
+  if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
@@ -3726,9 +3729,10 @@ const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|
 const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
-const chatBusy = id => replying.has(id) || [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
+const chatRunning = id => [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
+const chatBusy = id => replying.has(id) || chatRunning(id);
 // An operation's result was posted after the last message from the owner's side (theirs, or a carry-on turn's).
-const resultSince = conv => conv.messages.slice(conv.messages.map(m => m.role).lastIndexOf('user') + 1).some(m => m.notice && m.operation);
+const resultSince = conv => conv.messages.slice(conv.messages.map(m => m.role).lastIndexOf('user') + 1).some(m => m.notice && (m.operation || m.jobEnd));
 // The one place that decides whether Sparkie carries on with a chat's request now. Called when an operation's result is
 // posted (postResult) and when a reply ends (sparkieTurn's finish), so it no longer matters which of the two ended
 // first. Only a posted result wakes a task (undo_update posts none). It never throws.
@@ -3737,7 +3741,8 @@ function wakeWork(id) {
   try {
     const conv = chatData().conversations.find(c => c.id === id);
     // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry)) return;
+    // (or a carry-on turn that couldn't start is tried again: taskRetry, 14-tasks.mjs)
+    if (!conv?.task || conv.task.parked || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry || conv.task.answered || conv.task.retries)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -3747,10 +3752,18 @@ async function continueTask(id) {
   // (a request made on Telegram whose carrying on doesn't happen still gets its results there)
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
-  if (!t || chatBusy(id)) return;
-  const carried = Boolean(t.carry);
+  if (!t || t.parked || chatBusy(id)) return;
+  // (its way in gone meanwhile, another Telegram pairing among them: it ends, and nothing of it is told there, 14-tasks.mjs)
+  if (taskGone(t)) { endTask(conv, false); saveChats(); return; }
+  // (a try the brain never answered gives way to this one: taskRetry, 14-tasks.mjs)
+  if (t.retries) taskRetryLines(conv);
+  const carried = Boolean(t.carry), answered = Boolean(t.answered) && !resultSince(conv);
   delete t.carry;
-  if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
+  delete t.answered;
+  // (its own limits: the hours and turns its words gave it, and its steps in all; the one reached is said, 14-tasks.mjs)
+  { const over = taskOver(t); if (over) { taskStopped(conv, t, over); return stop(); } }
+  // (a full chat: no turn can come there, so it stops, said in a line of its own)
+  if (conv.messages.length >= LIMITS.messages) { taskStopped(conv, t, 'full'); return stop(); }
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
   // A request made from a device signed in over the internet carries on as one: this marker keeps every viewer.session
@@ -3758,12 +3771,18 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : answered ? 'The owner answered your question (above).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
+    // (it couldn't start: four answers already coming, this chat answering, no brain set up; tried again, not counted)
+    if ([409, 429].includes(e.status) && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried, answered }); return; }
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
   }
-  if (t.channel === 'telegram' && !(conv.task === t && [...jobs.values()].some(j => j.status === 'running' && j.conv === conv.id))) await tellCarry(conv.id, message);
+  // (the brain never answered: nothing said, nothing run; tried again, not counted)
+  if (message?.error && !String(message.content || '').trim() && !message.tools?.length && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried, answered }); return; }
+  if (t.retries) { delete t.retries; saveChats(); }
+  // (on Telegram a task's reply goes out only when nothing of it is left running or owed, and then past the hourly limit)
+  if (t.channel === 'telegram' && !(conv.task === t && (t.carry || chatRunning(conv.id) || taskJobsOwed(t)))) await tellCarry(conv.id, message, true);
 }
 
 // The measured-looking numbers in an answer (with a unit: tokens/s, GB, %, W, °F, ms, s) that appear nowhere in what the
@@ -3792,6 +3811,8 @@ function stopTurn(conv) {
   conv.task = null;
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
+  // (written at once, also when no answer to /stop is saved: from Telegram, or in a full chat)
+  if (task) saveChats();
   // (results held on Telegram for the carry-on that now won't come go out)
   if (task?.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return Boolean(link || task);
@@ -3917,8 +3938,12 @@ function markAnswering({ conv, link, slot }) {
 // This message as a request: it ends the last one’s carrying on and puts refused buttons away, and it gives the gate
 // what the owner asked (`ctx`, which every tool call of the turn carries) and the questions that come back (`asked`).
 function turnRequest({ conv, text, agent, task, channel, open, said }) {
+  // "carry on" gives a task stopped at a limit a fresh budget, and this turn carries it on (taskAgain, 14-tasks.mjs).
+  const again = !task && !agent ? taskAgain(conv, text) : null;
+  if (again) task = again;
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
-  if (!task && !agent) conv.task = null;
+  // (written at once: a restart before this reply ends must not bring the last request back)
+  if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -3944,7 +3969,7 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     noStops: Boolean(task?.noStops) || intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
     ...(task?.readOutside ? { readOutside: true } : {}),
     onQuestion: q => { asked.push(q); } };
-  return { asked, ctx };
+  return { asked, ctx, ...(again ? { task } : {}) };
 }
 // What the brain is sent besides the tools: the system prompt, the earlier messages, then Spark Console’s record ahead
 // of the words, labelled as data.
@@ -3962,10 +3987,12 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx }) {
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, spent, asked, failed }) {
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
-  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
+  // owner's press runs it and wakes the rest, contract 4.8)
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
@@ -3973,6 +4000,25 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
   // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
   if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
+  // (and the jobs of the request, whose end wakes it: jobEnded, 21-apps.mjs; noted here, as the watcher's list can be a
+  // minute behind)
+  if (!agent && conv.task && (!task || conv.task === task)) {
+    const started = [...jobs.values()].filter(j => j.conv === conv.id && j.once && !['failed', 'cancelled'].includes(j.status) && String(j.createdAt) >= String(now));
+    if (started.length) conv.task.jobs = [...(conv.task.jobs || []), ...started.map(j => ({ spark: j.node, container: j.container, at: j.createdAt }))].slice(-20);
+  }
+  // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
+  // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
+  // after this, so this turn's are no count of keepTask's)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
+  if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
+  // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task, asked);
+  // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
+  // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
+  // posted while it answered, which finish() then wakes it for): the request is done, and its record goes, so neither
+  // a restart nor a later result takes it up again. A turn that failed is no such end.
+  if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task) && !resultSince(conv)) conv.task = null;
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
@@ -4020,6 +4066,7 @@ function turnFailed(turn, e) {
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
   conv.messages.push(message);
+  turn.failed = true;
   if (!link.gone) keepTask(turn);
   emit({ type: 'error', error: why, message });
   return message;
@@ -4118,13 +4165,14 @@ function budgetContext(setup) {
   return fits(n) ? n : CONTEXT_TOKENS;
 }
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
-// (continueTask: CONTINUE_MAX turns in CONTINUE_HOURS, not while agents are paused): only the owner's request that is a
+// (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are paused): only the owner's request that is a
 // task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
 function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
   if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
-  return t.continuations < CONTINUE_MAX && Date.now() - Date.parse(t.at) <= CONTINUE_HOURS * 3600000 && !(agentSettings().halted && !agentSettings().autoPaused);
+  // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
+  return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
 }
 // What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
@@ -4144,7 +4192,10 @@ function workStep(turn) {
 function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
   const why = ok ? nothing : out.replace(/^\[error\] /, '');
   if (why == null) turn.refusedRow.length = 0;
-  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW && !turn.spent) {
+  // (three refusals end the carrying on even in the round whose command reached the steps: the brain was spinning; calls
+  // the steps left unrun are no refusals of their own)
+  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW
+    && (!turn.spent || (turn.spent === 'steps' && !turn.refusedRow.some(x => /^Not run: one message may run /.test(x.why))))) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }
@@ -4336,6 +4387,210 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   steps[i] = step;
   emit({ type: 'tool', ...step });
   return { role: 'tool', tool_call_id: calls[i].id || `call_${round}_${i}`, content: out };
+}
+/* ───────── long tasks: the carry-on made to last (E6) ───────── */
+// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
+// chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
+// and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work
+// on its own ("sort it out on your own", "work through it overnight", "while I'm away") has 4 hours and 60 turns; hours
+// the owner asks it to work for ("work on this for 6 hours") give those hours, 1 to 72, and 15 turns an hour. Only an
+// instruction counts: a clause that opens with a verb of working on it or carrying on, with nothing ruling it out before
+// those words; never words about something else ("it crashed overnight"), a question, or text in quotes, backticks or
+// after a line ending in ":" (a pasted log). Every task also stops at 120 work steps in all (design A 2.10: the `run`
+// calls of all its turns). At any limit no new turn starts. A task keeps the guards of the turns that made it
+// (`noStops`, `readOutside`) and where it came from (its channel and which Telegram pairing, the device's session), all
+// on disk. A carry-on turn that ends owing nothing (keepTask, 14-chats.mjs) takes its task off the record. After a
+// restart each task that was on disk at the start and is owed something carries on as it was: one whose way in is gone
+// by then (another Telegram pairing or none, the device's sign-in over) ends instead, a record from before these limits
+// is taken off quietly, and one that was waiting on an operation gets one line saying the restart may have cut it off,
+// which wakes it as a result would.
+// (a task's 120 commands, TASK_STEPS, are E5b's: 14-rounds.mjs)
+const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72;
+const TASK_WORDS = /\b(?:on\s+your\s+own|by\s+yourself|unattended|overnight|while\s+i(?:'m|\s+am)\s+away|as\s+a\s+task)\b/gi;
+const TASK_HOURS = /\b(?:for(?:\s+the\s+next)?|up\s+to|over\s+the\s+next)\s+(\d{1,4})\s*(?:hours?|hrs?)\b/gi;
+// An instruction's opening ("please", "could you", "I want you to", …), then a verb of working on it or carrying on.
+const TASK_OPENER = /^(?:(?:ok(?:ay)?|so|now|just|also|and|then|please|kindly)[\s,]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like)\s+you\s+to\s+|i'd\s+like\s+you\s+to\s+|go\s+ahead\s+and\s+)?(?:please\s+)?/i;
+const TASK_VERB = /^(?:work|keep\s+(?:at|on|going|working|trying|digging|looking)|carry\s+on|continue|go\s+on|do|handle|sort|fix|try|dig|look|investigate|figure|find|research|explore|debug|troubleshoot|deal|take\s+care|finish|tune|test|benchmark|compare|clean|tidy|organi[sz]e|set\s+up|build|train|fine-?tune|check|go\s+through|monitor|watch|measure|analy[sz]e|read|review|study|search|prepare|plan)\b/i;
+const TASK_NOT = /\b(?:don'?t|do\s+not|didn'?t|did\s+not|doesn'?t|never|no\s+need\s+to|without|not|avoid|stop\s+yourself\s+from)\b/i;
+// (words that make what follows the subject of the work, not how long or how it is done: "what happened overnight",
+// "the logs from overnight", "why it ran for 70 hours")
+const TASK_ABOUT = /\b(?:what|why|whether|that|which|who|how|when|where|if|from|of|about|since)\b/i;
+// The limits the owner's words give a new task, clause by clause (sentences, and the parts "then" and "; " join): only
+// a clause that is an instruction counts (it opens with a verb of working, and is no question), and only words of time
+// that end it, as part of that instruction ("work on it overnight", "for the next 3 hours"): none with a "not" before
+// them, or a word between the verb and them that makes them its subject ("look at what happened overnight"), or a word
+// after them ("the overnight logs"). Text in quotes or backticks, a quoted line ("> …") and the lines after one ending
+// in ":" up to the next blank line (a pasted log) are no instruction. An agent's request gets the ordinary limits.
+function taskBudget(text, agent = null) {
+  if (agent) return { ...TASK_PLAIN };
+  const quoted = normQuotes(String(text || '').replace(/```[\s\S]*?(?:```|$)/g, '\n').replace(/`[^`\n]*`/g, ' ').replace(/^\s*>.*$/gm, ' ')).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ');
+  let pasted = false;
+  const own = quoted.split('\n').filter(line => {
+    if (pasted) { if (!line.trim()) pasted = false; return false; }
+    if (/:\s*$/.test(line)) pasted = true;
+    return true;
+  }).join('\n');
+  let away = false, hours = null;
+  for (const raw of own.split(/(?<=[?!\n;:])|\.(?=\s|$)|,?\s+(?:and\s+)?then\s+/i)) {
+    if (/[?:]\s*$/.test(raw)) continue;
+    const clause = raw.trim().replace(TASK_OPENER, ''), verb = TASK_VERB.exec(clause);
+    if (!verb) continue;
+    const ok = m => !TASK_NOT.test(clause.slice(0, m.index)) && !TASK_ABOUT.test(clause.slice(verb[0].length, m.index))
+      && !clause.slice(m.index + m[0].length).replace(/^[\s,]*(?:please|thanks|thank\s+you)?[\s,.!]*$/i, '');
+    if ([...clause.matchAll(TASK_WORDS)].some(ok)) away = true;
+    const h = [...clause.matchAll(TASK_HOURS)].find(ok);
+    if (h) hours = Math.min(TASK_HOURS_MAX, Math.max(1, Number(h[1])));
+  }
+  if (hours) return { hours, turns: hours * TASK_TURNS_AN_HOUR };
+  return { ...(away ? TASK_AWAY : TASK_PLAIN) };
+}
+// A task's limits as kept, bounded again (chats.json can be edited by hand); a task from before them has the ordinary.
+const taskLimits = t => ({
+  hours: Number.isInteger(t?.hours) ? Math.min(TASK_HOURS_MAX, Math.max(1, t.hours)) : TASK_PLAIN.hours,
+  turns: Number.isInteger(t?.turns) ? Math.min(TASK_HOURS_MAX * TASK_TURNS_AN_HOUR, Math.max(1, t.turns)) : TASK_PLAIN.turns,
+});
+// Which limit a task has reached, or null: its carry-on turns, its hours from the request, its work steps in all (one
+// count, E5b's: what taskStepsKept keeps on the task after each turn, read through taskStepsLeft, 14-rounds.mjs).
+function taskOver(t, now = Date.now()) {
+  const { hours, turns } = taskLimits(t);
+  if ((Number(t?.continuations) || 0) >= turns) return 'turns';
+  if (!((t?.parked ? Math.min(now, Date.parse(t.parked)) : now) - Date.parse(t?.at) <= hours * 3600000)) return 'hours';
+  if (!taskStepsLeft(t)) return 'steps';
+  return null;
+}
+// Which Telegram pairing a task came from, kept on it without the chat's ids (they stay in the secrets file): a new
+// pairing, or a new bot token, is another way in.
+const tgPairingMark = (b = tgPaired()) => (b ? createHash('sha256').update(`${b.chatId}:${b.userId}:${b.pairedAt || ''}`).digest('hex').slice(0, 16) : null);
+// The way in a task came by is gone: its Telegram pairing is no longer the paired chat, or its device's sign-in is over.
+const taskGone = t => (t.channel === 'telegram' && (!t.tg || t.tg !== tgPairingMark())) || Boolean(t.session && !sessionList().some(s => s.id === t.session && !sessionOver(s)));
+// The tasks on disk when this console started: the look below takes only these (one made since is no survivor).
+const TASKS_AT_START = (() => { try { return new Set(chatData().conversations.map(c => c.task).filter(Boolean)); } catch { return new Set(); } })();
+// After a restart, once the chats and the start-up notices are in: each task that was on disk carries on where it was.
+function tasksAfterRestart() {
+  try {
+    let changed = false;
+    for (const conv of chatData().conversations) {
+      const t = conv.task;
+      if (!t || !TASKS_AT_START.has(t)) continue;
+      // (a record from before these limits: a request that may long be done, taken off with no word)
+      if (!Number.isInteger(t.hours)) { conv.task = null; changed = true; continue; }
+      if (taskGone(t)) { endTask(conv, false); changed = true; continue; }
+      // (one waiting at a button keeps waiting: the restart changes nothing there)
+      if (t.parked) continue;
+      if (!t.carry && !resultSince(conv)) {
+        conv.messages.push({ role: 'assistant', content: 'Spark Console restarted while this request was being carried on. What it had started may have been cut off by the restart: look again before going on.',
+          createdAt: new Date().toISOString(), notice: true, operation: 'restart' });
+        changed = true;
+      }
+      wakeWork(conv.id);
+    }
+    TASKS_AT_START.clear();
+    if (changed) saveChats();
+  } catch (e) { console.error(`Carrying tasks on after the restart: ${e.message}`); }
+}
+// (a few seconds after start: the journal's and the watcher's start-up notices go first)
+setTimeout(tasksAfterRestart, Number(process.env.SPARK_CONSOLE_TASKS_AFTER_MS || 5000)).unref?.();
+
+/* E6b: at a limit, a job's end, a turn that can't start, and "carry on" */
+// The limit a task reached (and on Telegram when the request began there, R32): which one, that what is running
+// finishes, and how to go on. A reply that reached it carries the mark (it already ends "Say “go on”"); when none did
+// (a wake found it over), one line in its chat says it. A chat that is full stops it too: no turn can come there, so the
+// line says to ask again in a new chat. The task stays, stopped, with one needs-you line (tasksNeeds), until the owner
+// writes in that chat: "carry on" (or "go on", as the reply says) gives it a fresh budget of its own size (taskAgain),
+// anything else is a new request.
+function taskStopped(conv, t, which, reply = null) {
+  if (!t || t.stopped) return;
+  t.stopped = which;
+  const { hours, turns } = taskLimits(t);
+  const line = which === 'full' ? 'Stopped carrying on with your request: this chat is full, so no turn can come here. What is already running finishes. Start a new chat and ask again there.'
+    : `Stopped carrying on with your request: it reached ${which === 'turns' ? `its ${turns} carry-on turns` : which === 'hours' ? `its ${hours} hours` : `its ${TASK_STEPS} commands`}. What is already running finishes, and its result comes here. Say “carry on” for another ${hours} hour${hours === 1 ? '' : 's'} and ${turns} turns.`;
+  if (reply) reply.stopped = which;
+  else conv.messages.push({ role: 'assistant', content: line, createdAt: new Date().toISOString(), notice: true, stopped: which });
+  conv.updatedAt = new Date().toISOString();
+  saveChats();
+  if (t.channel === 'telegram') tell('carry', line, { last: true }).catch(() => {});
+}
+// "carry on", "go on", "continue", "keep going" (the whole message): a task stopped at a limit starts again with a fresh
+// budget of the same size, and the turn that said it is its carry-on. null for anything else.
+const CARRY_ON = /^\s*(?:ok(?:ay)?[\s,]+)?(?:please\s+)?(?:carry\s+on|go\s+on|continue|keep\s+going)(?:\s+please)?\s*[.!]*\s*$/i;
+function taskAgain(conv, text) {
+  const t = conv?.task;
+  if (!(t?.stopped || t?.parked) || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
+  // (parked at a button: this turn carries it on, so Sparkie asks again; its budget stays)
+  if (!t.stopped) { taskUnpark(t); return t; }
+  // (its count of commands starts again too, as at the owner's next message: taskStepsLeft reads 0 as all 120 left)
+  Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
+  delete t.carry;
+  delete t.parked;
+  return t;
+}
+// The needs-you lines (openProblems): one for each task stopped at a limit or parked at a button, until the owner writes in
+// its chat or answers. No words
+// of the request: agents read this list too (fleet_status).
+function tasksNeeds(add) {
+  for (const c of chatData().conversations) {
+    if (c.task?.parked && !c.task.stopped) add(`task:${c.id}`, 'Sparkie is waiting for your answer to a question in one of your chats before it carries on with your request. Press a button there, say “carry on” to be asked again, or anything else to leave it.');
+    if (c.task?.stopped === 'full') add(`task:${c.id}`, 'Sparkie stopped carrying on with one of your requests: its chat is full. Start a new chat and ask again there.');
+    else if (c.task?.stopped) add(`task:${c.id}`, `Sparkie stopped carrying on with one of your requests at its limit (${c.task.stopped === 'steps' ? `${TASK_STEPS} commands` : c.task.stopped}). Say “carry on” in that chat to go on, or anything else to leave it.`);
+  }
+}
+// The jobs a task started whose end is still to come (jobEnded takes each off when it is told; one the watcher saw end,
+// after the task noted it, also counts as ended: its end may have come while Spark Console was down).
+const taskJobsOwed = t => (t?.jobs || []).some(j => {
+  const w = knowledge.workloads?.[`${j.spark}/${j.container}`];
+  return !(w && ['exited', 'dead'].includes(w.state) && w.endTold && String(w.lastSeenAt) > String(j.at));
+});
+// A carry-on turn that couldn't start (four answers already coming, the chat answering, no brain set up) or that the
+// brain never answered (it isn't up: loading after a start, refused, cut off before a word): the turn isn't counted, the
+// failed try's two lines give way to the next one's, and it is tried again in a minute, then every five, while its
+// hours last (continueTask asks them each time).
+const TASK_RETRY_MS = Number(process.env.SPARK_CONSOLE_TASK_RETRY_MS || 60000);
+function taskRetry(conv, t, { carried, answered }) {
+  if (carried) t.carry = true;
+  if (answered) t.answered = true;
+  t.retries = (Number(t.retries) || 0) + 1;
+  saveChats();
+  setTimeout(() => wakeWork(conv.id), t.retries === 1 ? TASK_RETRY_MS : 5 * TASK_RETRY_MS).unref?.();
+}
+// (the last try's own two lines, Spark Console's carry-on line and the error that answered it, when nothing came after)
+function taskRetryLines(conv) {
+  const m = conv.messages, last = m.at(-1), line = m.at(-2);
+  if (last?.role === 'assistant' && last.error && !String(last.content || '').trim() && !last.tools?.length && line?.role === 'user' && line.auto) m.splice(-2, 2);
+}
+
+/* E6c: a task waits at a button */
+// A reply that offered a button the owner answers (a change asked about, an owner-only question) parks its task
+// (contract 4.8), and a request with a next step whose first change came back as a button is made a task parked there
+// (keepTask): it does not carry on by itself, its hours stop, and one needs-you line stands (tasksNeeds). Its
+// owner-only questions went to the paired Telegram chat as asks when approvals from there are on (tgAsk); the needs
+// line goes there by itself when the needs-me line is on (needsMeTick). A press that runs its own button (the question
+// it waits at, kept on it as `asks`; never an agent's press) wakes it with the hours it waited given back
+// (taskAnswered); "No" ends it (endTask); "carry on" makes Sparkie ask again (taskAgain).
+const taskAsked = asked => (asked || []).some(q => (q.choices || []).some(c => c.choice && pendingChoices.get(c.choice)?.action));
+function taskPark(t, asked) {
+  if (!t || t.parked) return;
+  t.parked = new Date().toISOString();
+  t.asks = [...new Set((asked || []).filter(q => (q.choices || []).some(c => c.choice && pendingChoices.get(c.choice)?.action)).map(q => q.group))];
+  delete t.carry;
+}
+// (the hours a parked task waited are given back: its hours run from a later start)
+function taskUnpark(t) {
+  if (!t?.parked) return;
+  delete t.asks;
+  const waited = Math.max(0, Date.now() - Date.parse(t.parked));
+  if (Number.isFinite(waited) && Number.isFinite(Date.parse(t.at))) t.at = new Date(Date.parse(t.at) + waited).toISOString();
+  delete t.parked;
+}
+// A button pressed in a parked task's chat that runs something: the task carries on after it.
+function taskAnswered(conv, group) {
+  const t = conv?.task;
+  if (!t?.parked || !(t.asks || []).includes(group)) return;
+  taskUnpark(t);
+  t.answered = true;
+  saveChats();
+  wakeWork(conv.id);
 }
 /* ───────── choosing what Sparkie and agents use ───────── */
 // Area: brain        Rules: R5, R36        Tests: gateway.test.mjs, paste.test.mjs
@@ -5273,7 +5528,7 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
-  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose (idle, or asked) has state "off" and offOnPurpose (when, why, its parked models, how to turn it on): that is not a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
+  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose has state "off" and offOnPurpose (when, why, parked models, how to turn it on): not a fault unless it carries a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
     const s = await statusFor(viewer, false);
@@ -11455,6 +11710,8 @@ function openProblems() {
     () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
     () => memoryNeeds(add),
+    // The owner's requests Sparkie stopped carrying on at a limit (14-tasks.mjs).
+    () => tasksNeeds(add),
     // A brain eval result waiting for the owner's yes (21-brain-rail.mjs, R52).
     () => evalWaitingNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
@@ -13506,7 +13763,7 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '' } = {}) {
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -13515,7 +13772,8 @@ async function tell(why, text, { buttons = null, to = null, pre = null, tail = '
   while (tellResults.length && now - tellResults[0] > 3600000) tellResults.shift();
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
-  if (later && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
+  // (a request's last reply is never held back by it: last)
+  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
   const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
@@ -13582,10 +13840,10 @@ function tellResult(job, conv) {
   tellHeld.delete(conv.id);
   tell('result', [...held, line].join('\n')).catch(() => {});
 }
-async function tellCarry(convId, message) {
+async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
   tellHeld.delete(convId);
-  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message) });
+  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message), last });
   if (held.length) return tell('result', held.join('\n'));
   return false;
 }
@@ -14571,10 +14829,14 @@ function jobEnded(node, w) {
   const conv = /^sc_[0-9a-f]{16}$/.test(chat) ? chatData().conversations.find(c => c.id === chat && c.login === accessList().owner) : null;
   if (!conv) return;
   const now = new Date().toISOString();
-  conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: now, notice: true });
+  conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: now, notice: true, jobEnd: name });
+  // (no longer owed to the task that started it: taskJobsOwed, 14-tasks.mjs)
+  if (conv.task?.jobs) conv.task.jobs = conv.task.jobs.filter(j => !(j.spark === node.id && j.container === name));
   conv.updatedAt = now;
   saveChats();
   if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  // (its end wakes the request it was started for, as an operation's result does: wakeWork, 14-chats.mjs)
+  wakeWork(conv.id);
 }
 // Waiting for a job's end (keep_running with once, A13; the self-test's job): one fixed `docker inspect` of exactly that
 // container through `run` every JOB_WAIT_MS (10 s), first at once, until it isn't running or `limitMs` has passed. It
@@ -14930,7 +15192,7 @@ action({
     await appRoom(node, gb, container);
     const a = { container, image: input.image, port: input.port || null, volumes: input.volumes || [], env: input.env || [], memoryGB: gb, gpu: Boolean(input.gpu), once: Boolean(input.once), command: appCommand(input) };
     const url = hp ? `http://${sp.tsip}:${hp}` : null, open = devBox(a) ? ` ${DEV_BOX_WORDS}` : '';
-    const job = claimed([spark], `starting ${container}`, () => newJob('deploy', { ...meta, model: container, image: input.image, ...(hp ? { port: hp } : {}), memoryGB: gb }));
+    const job = claimed([spark], `starting ${container}`, () => newJob('deploy', { ...meta, model: container, image: input.image, ...(hp ? { port: hp } : {}), memoryGB: gb, ...(a.once ? { once: true } : {}) }));
     runJob(job, async j => {
       pausedCheck(ctx);
       j.checkPause = () => { cancelCheck(j); pausedCheck(ctx); };
@@ -19015,6 +19277,8 @@ function tgTryPair(m) {
   tg.code = null;
   tgNewPairing();
   tgSave();
+  // (a task from the chat paired before this one ends: its carry-on turns would go on, and be told, here)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Pairing Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-paired', args: { name }, ok: true });
   tgSetState('ok');
   tellOwnerAt = Date.now();
@@ -19171,6 +19435,8 @@ async function telegramRoute(req, res, path, viewer) {
     tgStop();
     secretsWrite(s => ({ ...s, telegram: { token, bot } }));
     tgForgotten = false;
+    // (a new bot drops the pairing: a task from it ends, as at Disconnect)
+    try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Connecting Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
     const st = tgSaved();
     st.offset = 0; delete st.conv; delete st.answering;
     tgSave();
@@ -20440,7 +20706,8 @@ function putBackSeed() {
 
 // At start, before the sockets open (25-backup-and-start.mjs). Never throws. While it holds, each start removes again
 // what the owner removed and signs every device out again (a second put-back under the hold can bring either back);
-// only the first one parks tasks, brings back the owner's pause and says so.
+// each one ends the tasks the state holds, with a line in each chat; only the first brings back the owner's pause and
+// says so.
 function putBackAtStart() {
   if (!SECRETS_FILE) return;
   try {
@@ -20477,8 +20744,8 @@ function putBackAtStart() {
     } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }
     let signedOut = 0;
     try { signedOut = sessionList().length; if (signedOut || existsSync(SESSIONS_FILE)) saveSessions([]); } catch (e) { console.error(`The devices after a put-back: ${e.message}`); }
-    if (!first) return;
-    try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
+    // Every task in the state ends, with a line in its chat: also at a second put-back under the hold, so a copy never
+    // brings back a request that would run by itself after the start (14-tasks.mjs).
     let parked = 0;
     try {
       const at = new Date().toISOString();
@@ -20491,6 +20758,8 @@ function putBackAtStart() {
       }
       if (parked) saveChats();
     } catch (e) { console.error(`The tasks after a put-back: ${e.message}`); }
+    if (!first) return;
+    try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
     const since = new Date().toISOString();
     secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
     putBackSeen.at = 0;
