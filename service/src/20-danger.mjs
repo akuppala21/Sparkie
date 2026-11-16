@@ -59,12 +59,13 @@ function dangerCodeOf(shown) {
 }
 // Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
 function dangerBack(f) {
-  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs)
-  if (f.net) return [dangerPlain(f.net, 400)];
+  const gone = f.gone ? [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`] : [];
+  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs;
+  // a root command that also deletes says that too: the net puts back the ways in, never what it deletes, 21-root.mjs)
+  if (f.net) return [dangerPlain(f.net, 400), ...gone];
   if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
   if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
-  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
-  return [];
+  return gone;
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
 // that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built

@@ -49,7 +49,7 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
    one sentence followed from chat to a running model, one command followed to a Spark, and the known traps.
 3. **`docs/rules.md`.** One line per rule, R1 to R70 (there is no R44). Each rule's file in `docs/rules/` says why,
    where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
-   R55 and R60 to R70.
+   R55 and R60 to R71.
 4. **`docs/how/`.** One card per kind of work. For this review: `docs/how/call-the-root-helper.md`,
    `docs/how/raise-a-dangerous-ask.md`, `docs/how/find-why-a-change-was-refused.md`,
    `docs/how/run-the-brain-eval.md`, `docs/how/land-a-step.md`.
@@ -131,11 +131,14 @@ Rules R65, R32. Parts `21-ahead.mjs`, `20-tg-approve.mjs`. Tests `ahead.test.mjs
 journal sees it, and kept by name. `run` hands a key to a command by name; such a command is always asked. Rule R51.
 Parts `20-keys.mjs`, `21-run-keys.mjs`, `03-secrets.mjs`. Tests `app-keys.test.mjs`, `run-keys.test.mjs`.
 
-**Change SSH, Tailscale, the firewall or users on a compute Spark.** Only on the owner's own words with nothing read
-since; otherwise refused, not asked. Always the dangerous ask. The press copies the ways in, arms a timer in that
-Spark's own systemd, runs the change, then tries the ways in from outside: all still work, kept; one doesn't, put
-back at once; no answer, the timer puts it back. `/putback` puts the newest one back by code. Rules R60, R3. Parts
-`21-net.mjs`, `21-guard.mjs`. Tests `net.test.mjs`, `root-helper.test.mjs`.
+**Change SSH, Tailscale, the firewall or users on a compute Spark.** Only as root. As the owner such a change can
+change nothing (the run wall keeps `~/.ssh` and the shell's start files read-only, and `ufw`, `usermod` and
+`tailscale` need root), so one asked as the owner is answered "set root", and nothing is asked or run. As root:
+only on the owner's own words with nothing read since; otherwise refused, not asked. Always the dangerous ask. The
+press copies the ways in, arms a timer in that Spark's own systemd, runs the change, then tries the ways in from
+outside: all still work, kept; one doesn't, put back at once; no answer, the timer puts it back. `/putback` puts
+the newest open one back by code. Rules R60, R71, R70, R3. Parts `21-net.mjs`, `21-root.mjs`, `21-guard.mjs`. Tests
+`net.test.mjs`, `root.test.mjs`, `root-helper.test.mjs`.
 
 **Change Spark 2.** Every change there is asked, one command a press, inside the net, with the console's own ways in
 checked after it. Refused by code: a lock-out change, anything touching the brain's container or model files, any
@@ -195,7 +198,7 @@ risk the owner has not been told about.
 - **Sparkie is the commander** (decisions 18, 20, 22). It may do everything the owner can on the Sparks, root and
   the lock-out class included. Nothing is refused for being powerful; the question is at once, or ask first.
 - **Never lock the owner out.** This is now the reason for a net, not a ban (contract 8.3). SSH, Tailscale, the
-  firewall and users change only on the owner's own words, after a dangerous ask, inside the net.
+  firewall and users change only as root, on the owner's own words, after a dangerous ask, inside the net.
 - **Root** goes only through the one helper. It is off on each Spark until the owner's `--with-root` there, and
   through the console it is always the dangerous ask.
 - **Keys** are given once and kept in one file on Spark 2. A key is never shown back.
@@ -229,7 +232,8 @@ to change.
 - 8.11 says a change on Spark 2 is kept only by a fresh visit through the changed way in. The build keeps a Spark 2
   change by code once the console's own ways in still answer, and refuses a lock-out change there.
 - 8.11 says the net is armed for every command on Spark 2. A look is not armed.
-- 8.11 allows a command 10 minutes on Spark 2 and for a lock-out change. The build gives both 30 seconds.
+- 8.11 allows a command 10 minutes on Spark 2. The build gives it 30 seconds. A lock-out change runs only as root,
+  with 10 minutes, on a compute Spark.
 - 8.14 lists plain root commands among the changes that run at once. In the build root is always the dangerous ask.
 - 8.15 says one command for each Spark, once. Root also needs `--with-root`.
 
@@ -255,8 +259,11 @@ input; adding a Spark from chat (it waits for Spark 1); a brain across Sparks (i
 for Sparkie's own proposals; removing a kept key from chat.
 
 **A judgement that stays.** Whether the owner's words ask for a lock-out change is decided by word lists
-(`netAsks`, R60; section 9, item 4). A true ask they miss is refused, and the refusal says how to ask. A sentence that
-only looks like an ask gets the dangerous ask. Neither runs anything without the owner's press.
+(`netAsks`, R71; section 9, item 4). The way-in word must be what the verb acts on: not after a place word (on, in,
+of, from, at) and not part of another thing's name ("the shell script", "the users table"). A true ask they miss is
+refused, and the refusal says how to ask ("set PasswordAuthentication no in sshd_config on Spark 3" is one). A
+sentence that only looks like an ask ("set the hostname in config.yaml on Spark 3", one that quotes someone else)
+gets the dangerous ask. Neither runs anything without the owner's press.
 
 **Existing tests changed.** Where behaviour changed on purpose, the tests that held the old behaviour changed with
 it: "root is refused on every Spark" became "refused until the owner turns it on". Every such line shows in
@@ -455,12 +462,12 @@ R63; `test/root-helper.test.mjs`.
   says everything is back.
 
 **4. The lock-out net and its put-back.** `net_arm`, `net_after`, `restore_sh`, `guard_py`, `boot_unit`, `do_keep`
-and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60; `test/net.test.mjs`;
+and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60, R71; `test/net.test.mjs`;
 `docs/history/later-2026-11-15.md`.
 - A change that passes the check right after it and locks the owner out later: a unit disabled, a network file not
   applied until a restart. Live firewall rules are said, not put back.
-- "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R60). One sentence of the
-  owner's, in this message or the one before, must do three things. It names the Spark. Right after a change verb it
+- "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R71). One sentence of the
+  owner's current message (never the one before, nor a carry-on turn's) must do three things. It names the Spark. Right after a change verb it
   names a way in: SSH, a key, Tailscale, the firewall or a port, the network, a user, account, password, sudo or
   group, the shell's start files, signing in or access. And it is an instruction: no "don't"; not a question unless
   "can you", "could you", "would you", "will you" or "please" opens it; not "tell me …" or "how to …"; not "is
@@ -530,7 +537,7 @@ beside it. It was left as written. The rules are the record of what was built.
 | Milestone | Became | Not built, or held back |
 |---|---|---|
 | 1 Ground | R29, R46, R47; `21-selftest.mjs`, `21-guide.mjs`, `21-brain-eval.mjs`; the tools in section 3 | |
-| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
+| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, R71, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
 | 3 Memory | R45, R48, R59; `20-memory.mjs` and the four parts beside it, `20-recall.mjs`, `20-digest.mjs`, `20-lessons.mjs` | |
 | 4 No laptop, lighter hub | R58, R49, R37; `21-updates.mjs`, `20-beat.mjs`, `20-state-copy.mjs`, `22-putback.mjs` | Clearing Spark 2 is a script the owner runs (`deploy/clear-spark2.sh`) |
 | 5 On its own, any brain | R50, R52, R66, R62, R67, R69; `14-tasks.mjs`, `21-brain-rail.mjs`, `21-box.mjs`, `21-selfchange.mjs` | Self-change is off; the coding trial waits for the owner |
@@ -545,6 +552,9 @@ beside it. It was left as written. The rules are the record of what was built.
   always the dangerous ask. A script's text is not on the button and can change before the press, so it is refused.
 - **A lock-out change is refused unless the owner's own words ask for it,** with nothing read since. The plan asked
   about any of them. Contract 8.3 says "never because an agent, a page or a fix suggested it".
+- **A lock-out change runs only as root.** The plan let one run as the owner inside the net. In the run wall the
+  owner's user can change none of the ways in, so that path changed nothing and still cost a dangerous press. It is
+  answered "set root" now.
 - **Spark 2.** The plan kept a hub change only after a fresh visit through the changed way in. That proof is not
   built. So a lock-out change on Spark 2 is refused, and any other change is kept by code once the console's own
   ways in still answer.
@@ -552,7 +562,7 @@ beside it. It was left as written. The rules are the record of what was built.
   address; not into the model store, the Hugging Face cache or the shared folder; not with the GPU, another Spark,
   `--home` or `--open`; not after a look in the same request.
 - **Times are shorter.** A change at once has 30 seconds, or up to 10 minutes with `minutes`; more is asked. A
-  lock-out change and a change on Spark 2 have 30 seconds, where the plan allowed 10 minutes.
+  change on Spark 2 has 30 seconds, where the plan allowed 10 minutes. A lock-out change, as root, has 10 minutes.
 - **A command given a key is always asked.** The plan asked once per new place. A command can show a key in a form
   no mask knows, so only the press stands before it (R51).
 - **Smaller points.** The go-ahead comes only from a button, never from the owner's words. Opening a box is a

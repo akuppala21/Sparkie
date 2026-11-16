@@ -1,5 +1,5 @@
 /* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
-// Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
+// Area: features        Rules: R1, R60, R71, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
@@ -36,7 +36,7 @@ const HUB_OWN_PLACES = /^~\/(?:\.local\/state\/spark-console|\.local\/share\/spa
 // helper hides /run, Docker's socket among it, and /var/lib/docker, and leaves Docker's group out; --protect).
 const HUB_WALL = 'In its wall it can’t reach Docker (so not the brain’s container), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only.';
 // Programs that set the next one going (their options skipped): what that one is counts.
-const HUB_WRAPPERS = new Set(['env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
+const HUB_WRAPPERS = new Set(['busybox', 'env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
 const HUB_CONTAINERS = new Set(['docker', 'podman', 'nerdctl', 'ctr', 'crictl', 'docker-compose', 'kubectl', 'k3s', 'microk8s', 'containerd', 'dockerd']);
 const HUB_STARTS = new Set(['run', 'create', 'start', 'up', 'service', 'stack', 'swarm', 'build', 'buildx', 'pull', 'load', 'import']);
 // A container program's sub-command (past its options; compose, container and image name one more): whether it starts one.
@@ -53,7 +53,8 @@ const HUB_KILL = new Set(['kill', 'pkill', 'killall', 'fuser']);
 const HUB_UNIT_VERBS = /^(?:start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|enable|disable|reenable|mask|unmask|kill|edit|set-property|daemon-reload|daemon-reexec|link|revert|preset|preset-all|isolate|set-environment|unset-environment|import-environment|reset-failed|freeze|thaw|clean|reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec|default|rescue|emergency|exit|switch-root|add-wants|add-requires)$/;
 
 // Each program a command runs, roughly as a shell splits it (shellWords, 21-work.mjs), through the wrappers above and
-// into a word that holds a whole command (sh -c '…'), twice deep: [{prog, args}].
+// into a word that holds a whole command (sh -c '…', and the word after -c even with no space in it: bash -c reboot),
+// twice deep: [{prog, args}].
 function hubPrograms(command, depth = 0) {
   const progs = [];
   let seg = [];
@@ -66,7 +67,7 @@ function hubPrograms(command, depth = 0) {
       k++;
       while (k < seg.length && /^(?:-|\d)/.test(seg[k])) k++;
     }
-    if (depth < 2) for (const w of seg) if (/\s/.test(w)) progs.push(...hubPrograms(w, depth + 1));
+    if (depth < 2) for (const [i, w] of seg.entries()) if (/\s/.test(w) || (i > 0 && /^-\w*c$/.test(seg[i - 1]))) progs.push(...hubPrograms(w, depth + 1));
     seg = [];
   };
   for (const t of shellWords(String(command))) {
@@ -89,8 +90,8 @@ function hubBrainNames() {
 function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
   const text = String(command), progs = hubPrograms(text), has = set => progs.find(p => set.has(p.prog));
   const unit = progs.find(p => ['systemctl', 'service'].includes(p.prog) && p.args.some(a => HUB_UNIT_VERBS.test(a)));
-  // Its plug, and its power
-  if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b/i.test(text) || has(HUB_POWER)
+  // Its plug, and its power (its words anywhere, as the plug's: awk 'BEGIN{system("reboot")}', x=reboot; $x)
+  if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b|\b(?:reboot|poweroff|shutdown|halt|kexec)\b/i.test(text) || has(HUB_POWER)
     || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return 'it touches Spark 2’s power or its plug, which are never changed from here';
   // Spark Console's own unit, state, secrets and repository copy (the installer's, and only through its own actions)
   const own = [STATE_DIR, SECRETS_FILE, `${homedir()}/spark-console-src`].filter(Boolean).map(hubEsc).join('|');
@@ -146,6 +147,14 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
 
 // The ask, built by code: the exact command, why it is asked, how it runs and what is checked after, what put-back
 // covers, what Sparkie read before proposing it, each script's hash. A delete it cannot see is the dangerous ask.
+// The command on Spark 2's button, framed so none of its own lines can read as the button's (S-4): one line as
+// "$ command"; with a line break, how many lines it has, and each after │, so "Asked because …" in a command stays
+// the command's. (The ladder's builder frames its own button; one shared function can take this one's place.)
+function hubCommandLines(command) {
+  const parts = String(command).split(/\r\n|[\r\n\u2028\u2029]/);
+  if (parts.length === 1) return ['Run this on Spark 2?', `$ ${command}`];
+  return [`Run this on Spark 2? Its command has ${parts.length} lines, each shown after │:`, ...parts.map(l => `│ ${l}`)];
+}
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
@@ -157,7 +166,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: workScriptLines(scripts) } })
-    : question(viewer, ctx, [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
+    : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
       'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
       ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n'),
     [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });

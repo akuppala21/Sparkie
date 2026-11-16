@@ -1,5 +1,5 @@
 /* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
-// Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
+// Area: features        Rules: R70, R60, R71, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark
@@ -22,6 +22,40 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
+// Code a root command runs that isn't in its own words (the button shows only those, and the code can change before the
+// press): a file run as code (the sorter's scripts), or what the sorter says runs unseen (its unshown: input from < or a
+// pipe into a shell, a build, -m, a project's scripts, BASH_ENV). The refusal's words, or null. (unshown is the sorter's
+// field from its next step; while it is absent, scripts alone decide.)
+function rootUnseen(sorted) {
+  if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
+  if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
+  return null;
+}
+// A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
+// command's first word past wrappers, into $( … ) and sh -c '…'): root's unit has its own mount table, so what it mounts,
+// unmounts or swaps never reaches the Spark (systemd.exec). Its name, or null; a command the reader can't read is left to
+// the sorter, which asks it.
+const ROOT_MOUNTS = new Set(['mount', 'umount', 'swapon', 'swapoff', 'zpool']);
+const ROOT_WRAPS = new Set(['env', 'nice', 'ionice', 'nohup', 'timeout', 'stdbuf', 'setsid', 'command', 'exec', 'chrt', 'taskset', 'flock', 'xargs', 'busybox']);
+function rootMounts(command, depth = 0) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return null; }
+  const walk = list => {
+    for (const pipe of list) for (const cmd of pipe) {
+      if (cmd.group) { const g = walk(cmd.group); if (g) return g; continue; }
+      const words = cmd.words.map(w => w.text);
+      for (const w of cmd.words) for (const sub of w.subs || []) { const g = walk(sub); if (g) return g; }
+      let k = 0;
+      while (k < words.length && ROOT_WRAPS.has(words[k].split('/').pop())) { k++; while (k < words.length && /^-|^\d|^[A-Za-z_]\w*=/.test(words[k])) k++; }
+      const prog = (words[k] || '').split('/').pop(), rest = words.slice(k + 1);
+      if (ROOT_MOUNTS.has(prog) || (prog === 'zfs' && /^(?:mount|unmount|umount)$/.test(rest[0] || ''))) return prog === 'zfs' ? `zfs ${rest[0]}` : prog;
+      // (a shell given its command as a word: read that word too, twice deep)
+      if (depth < 2 && /^(?:ba|da|z|k|a)?sh$/.test(prog)) { const c = rest.findIndex(x => /^-\w*c$/.test(x)); if (c >= 0 && rest[c + 1] != null) { const g = rootMounts(rest[c + 1], depth + 1); if (g) return g; } }
+    }
+    return null;
+  };
+  return walk(items);
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -39,8 +73,12 @@ async function rootChange(input, viewer, ctx = {}) {
   const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
-  // (a file run as code: its text isn't on the button and can change before the press, so as root it is never run)
-  if (sorted.scripts?.length) throw new HttpError(403, `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`);
+  // (code it runs that isn't on the button: never as root)
+  const unseen = rootUnseen(sorted);
+  if (unseen) throw new HttpError(403, unseen);
+  // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
+  const mounts = rootMounts(command);
+  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });
@@ -53,9 +91,15 @@ async function rootChange(input, viewer, ctx = {}) {
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
-  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : [])], where: node.id, shown: { command },
+  // (as the ladder's and Spark 2's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
+  // folder it starts in, workStartsIn. rootLine already says the net puts back nothing but the ways in)
+  const also = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;
+  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : []), ...also], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+    // (line 2 of a lock-out ask follows the decision that let it through, netWhose: the owner's words asked for it)
+    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why, asked: true } : {}),
+      ...(gone ? { gone: { what: gone } } : {}),
       lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : [])] } });
+        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
 }
