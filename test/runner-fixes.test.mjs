@@ -72,7 +72,7 @@ const sets = () => (existsSync(BEFORE()) ? readdirSync(BEFORE()).sort() : []);
 const run = (command, dir = '~', more = {}) => api('/actions/run', { method: 'POST', body: { on: 'spark3', command, ...(dir ? { dir } : {}), ...more } });
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
-const RUN = (command, dir = '~') => ({ name: 'run', arguments: { on: 'spark3', command, ...(dir ? { dir } : {}) } });
+const RUN = (command, dir = '~', more = {}) => ({ name: 'run', arguments: { on: 'spark3', command, ...(dir ? { dir } : {}), ...more } });
 async function turn(chat, words, rounds) {
   script([{ match: `^${words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, rounds }]);
   try {
@@ -759,7 +759,8 @@ test('a2: the button shows a script\'s first 40 lines as read for the ask, after
   const body = Array.from({ length: 45 }, (_, i) => `echo line${i + 1} >> notes/a2s.txt`).join('\n') + '\n';
   writeFileSync(at3('notes/a2s.sh'), body);
   const chat = await newChat(), words = 'run the a2s script', t = await turn(chat, words, [[RUN('bash notes/a2s.sh')]]);
-  const q = sentBack(words)[0]?.question || '';
+  // (the button, as the page shows it: the brain is not handed a script's lines, R-2)
+  const q = ((await chatMessages(chat)).at(-1).asks || []).map(a => a.text).join('\n');
   const h = createHash('sha256').update(body).digest('hex');
   assert.ok(q.includes(`\nThe script ~/notes/a2s.sh as read for this ask (45 lines, SHA-256 ${h.slice(0, 12)}…), each line after │:\n│ echo line1 >> notes/a2s.txt\n`), q);
   assert.ok(q.includes('\n│ echo line40 >> notes/a2s.txt\n│ … and 5 more lines: all of it as read is record j_'), q);
