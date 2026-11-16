@@ -602,6 +602,24 @@ test('the press runs in the wall its button showed: a folder at the top of the h
   await choose(chat, p.json.message.choices.find(c => c.label === 'No').id);
 });
 
+test('both asks say the folder the change starts in: the button and the dangerous ask', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('proj-dl'), { recursive: true });
+  const chat = await newChat(), r = await turn(chat, 'fix the project note', [[RUN('touch dl.txt', '~/proj-dl')]]);
+  const [asked] = sentBack('fix the project note');
+  assert.ok((asked?.question || '').includes('\nIt starts in ~/proj-dl.\n'), JSON.stringify(asked));
+  await choose(chat, r.choices.find(c => c.label === 'No').id);
+  const c2 = await newChat(), r2 = await turn(c2, 'fix the work note', [[RUN('touch dl.txt', null)]]);
+  const [plain] = sentBack('fix the work note');
+  assert.ok((plain?.question || '').includes('\nIt starts in ~/work.\n'), JSON.stringify(plain));
+  await choose(c2, r2.choices.find(c => c.label === 'No').id);
+  writeFileSync(at3('notes/x.dl'), 'x\n');
+  const c3 = await newChat();
+  await turn(c3, 'clean the dl files on spark 3', [[RUN('rm notes/*.dl')]]);
+  const ask = (await chatMessages(c3)).findLast(m => m.danger);
+  assert.ok(ask?.danger.lines.includes('It starts in ~.'), JSON.stringify(ask?.danger?.lines));
+  await choose(c3, ask.choices.find(c => c.label === 'No').id);
+});
+
 test('the dangerous ask says the wall it runs in after the yes and what that lets it do, and its press runs there', { timeout: 120000 * SLOW }, async () => {
   writeFileSync(at3('notes/b.tmp'), 'b\n');
   const chat = await newChat(), cmd = 'rm notes/*.tmp && echo x > top2.txt';

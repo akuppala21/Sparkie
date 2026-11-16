@@ -183,15 +183,20 @@ function workScriptLines(scripts) {
   return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120)))];
 }
 
+// The folder a change starts in, as run took it (~ or a folder under it, no . or .. part: 21-work.mjs), on both asks.
+const workStartsIn = dir => `It starts in ${dir}.`;
 // The button's words, built by code: the exact command, the Spark, why it is asked, the wall it runs in after the yes
-// and what that lets it do, what put-back covers, what Sparkie read before proposing it, each script's hash.
-// (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script)
+// and what that lets it do, the folder it starts in, what put-back covers, what Sparkie read before proposing it, each
+// script's hash.
+// (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script;
+// its path is whole, so no folder line)
 function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
+  // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
   return [...(spec ? spec.lines(at) : [`Run this on ${at}?`, `$ ${command}`]), `Asked because ${why}.`,
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
-    ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
+    ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
@@ -207,7 +212,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : workScriptLines(scripts))],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
