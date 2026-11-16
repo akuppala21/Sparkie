@@ -104,6 +104,30 @@ test('C-16: /undo after a change it can\'t put back (a file saved) says so, name
   assert.equal(text('notes/u.txt'), 'after\n');
 });
 
+test('C-18: an agent\'s fiftieth new conversation never drops one holding the owner\'s words; with none to drop, the new one is refused in plain words', { timeout: 900000 * SLOW }, async () => {
+  const key = await createKey('c18');
+  const ask = async message => { const a = await call(key.token, ASK, { message }); return a; };
+  const answered = async conv => waitFor(async () => (await call(key.token, ASK, { conversation: conv })).value?.status !== 'thinking', { timeout: 90000, what: 'Sparkie’s answer to the agent' });
+  const first = await ask('hello from c18, 0');
+  assert.equal(first.isError, false, first.text);
+  const c0 = first.value.conversation;
+  await answered(c0);
+  await say(c0, 'the owner was here');
+  const convs = [c0];
+  for (let i = 1; i < 50; i++) { const a = await ask(`hello from c18, ${i}`); assert.equal(a.isError, false, a.text); convs.push(a.value.conversation); await answered(a.value.conversation); }
+  const next = await ask('hello from c18, 50');
+  assert.equal(next.isError, false, next.text);
+  await answered(next.value.conversation);
+  assert.equal((await api(`/chats/${c0}`)).status, 200, 'the conversation the owner spoke in stays, though the oldest');
+  assert.equal((await api(`/chats/${convs[1]}`)).status, 404, 'the oldest with none of the owner’s words went');
+  const left = [...convs.slice(2), next.value.conversation];
+  for (const c of left) await say(c, 'the owner was here too');
+  const refused = await ask('hello from c18, 51');
+  assert.equal(refused.isError, true, refused.text);
+  assert.match(refused.text, /This agent already has 50 conversations with Sparkie, and none of the older ones can be cleared to make room: each holds a question waiting for the owner, a task, or the owner’s own words\./);
+  for (const c of [c0, ...left]) assert.equal((await api(`/chats/${c}`)).status, 200, c);
+});
+
 test('R1-01: an undo that put nothing back leaves its change this chat\'s last: the next /undo is that change again, never the one before it', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat(), file = join(T.fleet.stateDir, 'desired.json');
   // (the list's first look writes desired.json, a minute after the console starts)

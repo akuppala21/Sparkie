@@ -11093,6 +11093,9 @@ const ASK_SPARKIE = {
     choice: { type: 'string', pattern: '^[a-f0-9]{10}$', description: 'Take one of the choices Sparkie offered, by its id.' },
   }, additionalProperties: false },
 };
+// An agent's conversation that may be dropped to make room for its next (C-18).
+const agentConvSpare = c => !c.task && !(c.messages || []).some(m => (m.role === 'user' && !m.from && !m.auto)
+  || (m.choices || []).some(x => x.state === 'open' && pendingChoices.has(x.id)));
 async function askSparkie(agent, viewer, args) {
   const input = checkInput(ASK_SPARKIE.input, args ?? {}, ASK_SPARKIE.name);
   if (!input.message && !input.conversation) throw new HttpError(400, 'Send a message (and a conversation id to continue one).');
@@ -11104,9 +11107,13 @@ async function askSparkie(agent, viewer, args) {
     conv = chatData().conversations.find(c => c.id === input.conversation && c.agent?.id === agent.id && c.login === viewer.login);
     if (!conv) throw new HttpError(404, 'This agent has no conversation with that id.');
   } else {
-    // Each agent keeps its 50 most recent conversations.
+    // Each agent keeps its 50 most recent conversations. One that holds a button still open (an ask waiting for the
+    // owner), a task, or a message of the owner's is never dropped (C-18): the oldest without any of those goes, and when
+    // none can, the new one is refused.
     const mine = chatData().conversations.filter(c => c.agent?.id === agent.id && !replying.has(c.id)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-    const drop = new Set(mine.slice(0, Math.max(0, mine.length - 49)));
+    const over = Math.max(0, mine.length - 49), spare = mine.filter(agentConvSpare).slice(0, over);
+    if (spare.length < over) throw new HttpError(409, `This agent already has ${mine.length} conversations with Sparkie, and none of the older ones can be cleared to make room: each holds a question waiting for the owner, a task, or the owner’s own words. Continue one of them (pass its "conversation" id), or ask the owner to delete some in Spark Console.`);
+    const drop = new Set(spare);
     if (drop.size) chatData().conversations = chatData().conversations.filter(c => !drop.has(c));
     const now = new Date().toISOString();
     conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: viewer.login, title: 'New chat', spark: null, agent: { id: agent.id, name: agent.name }, createdAt: now, updatedAt: now, messages: [] };
