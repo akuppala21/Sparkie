@@ -3012,7 +3012,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' && !off.problem } : {}) };
   });
   return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
@@ -8286,7 +8286,8 @@ function fleetNotes(viewer) {
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
     // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
-    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
+    // (a record with a problem, a wake that failed, is said as that: no "asleep")
+    if (off) return `${sparkName(n)}: ${off.problem ? '' : 'asleep, on purpose (not a fault). '}${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
@@ -16954,7 +16955,9 @@ const POWER_WHY = { idle: 'idle', asked: 'asked', start: 'a start needed it', ou
 function powerState(strict = false) {
   let v = null;
   try { v = readKept(POWER_FILE); } catch (e) { if (strict) throw e; }
-  const off = v && typeof v.off === 'object' && v.off && !Array.isArray(v.off) ? v.off : {};
+  // (a record that isn't one, as in a power.json edited by hand, is passed over by every reader, and left out at the next
+  // save: R56)
+  const off = v && typeof v.off === 'object' && v.off && !Array.isArray(v.off) ? Object.fromEntries(Object.entries(v.off).filter(([, r]) => r && typeof r === 'object' && !Array.isArray(r))) : {};
   return { ...(v && typeof v === 'object' && !Array.isArray(v) ? v : {}), idleMinutes: Number.isInteger(v?.idleMinutes) ? v.idleMinutes : IDLE_DEFAULT_MINUTES, off };
 }
 function savePower(change) {
@@ -17066,7 +17069,8 @@ function powerMark(id) {
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
   // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
+    // (not asleep when its record carries a problem, a wake that failed: the problem is said instead, in words)
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: r.problem ? null : asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
