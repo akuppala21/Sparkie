@@ -170,14 +170,22 @@ Object.assign(SORT_HANDLERS, {
     }
     if (a.some(w => (name !== 'rsync' && /^-[^-]*[oFJS]/.test(w.text)) || /^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
   },
-  tailscale(a, ctx, r, x) {
-    const v = a.find(w => !w.text.startsWith('-'))?.text ?? '';
+  tailscale(a, ctx, r, x = {}) {
+    // (its own options come before the verb: --socket takes a path)
+    let k = 0;
+    while (k < a.length && !a[k].unknown && a[k].text.startsWith('-')) k += a[k].text === '--socket' ? 2 : 1;
+    const vw = a[k], v = vw?.text ?? '', rest = a.slice(k + 1);
     // (tailscale ssh is ssh over the tailnet: sorted as ssh, its host too)
-    if (v === 'ssh') return SORT_HANDLERS.ssh(a.slice(a.findIndex(w => w.text === 'ssh') + 1), ctx, r, x);
-    if (/^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
-    if (v === 'logout') r.lasting = 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
-    // (a sign-in as another key: putting back the old state file would bring back the old key over the new one, A13a)
-    else if (['login', 'switch'].includes(v) || (v === 'up' && a.some(w => /^--force-reauth(?:=|$)/.test(w.text)))) r.lasting = `tailscale ${sortQ(v)} signs in again, as another key or account; the net can’t put that back.`;
+    if (v === 'ssh' && !vw.unknown) return SORT_HANDLERS.ssh(rest, ctx, r, x);
+    if (!x.unknownArgs && !a.some(w => w.unknown) && /^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
+    // What the net can't put back, by any spelling: a sign-out; a sign-in again, as another key or to another server (the
+    // old state file put back would bring back the old key over the new one, A13a); the tailnet's own lock; and what it
+    // can't read: words from its input or a $, a verb it doesn't know.
+    if (x.unknownArgs || a.some(w => w.unknown) || !vw) r.lasting ??= 'tailscale is given words the sorter can’t read (from its input, a $ or a command): it may sign Tailscale out, which the net can’t put back.';
+    else if (v === 'logout') r.lasting ??= 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
+    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key, account or server; the net can’t put that back.`;
+    else if (v === 'lock') r.lasting ??= 'tailscale lock changes the tailnet’s own lock, on every machine of it; the net can’t put that back.';
+    else if (!/^(?:up|down|set|serve|funnel|cert|file|web|exit-node|drive|dns|configure|completion|update)$/.test(v)) r.lasting ??= `The sorter doesn’t know tailscale ${sortQ(v)}, so whether the net can put it back can’t be told.`;
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });

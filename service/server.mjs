@@ -12510,6 +12510,14 @@ function sortScan(text, ctx, r, progs, touched = false) {
     if (LOCK_NAMES.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)}, one of the ways in.`);
     const g = progs && SORT_PROGS[s];
     if (g) raise(r, { delete: 'risky', open: 'risky', device: 'change' }[g.cls] ?? g.cls, `It names ${sortQ(s)} inside text it runs: ${g.why}.`);
+    if (progs && SORT_LOCK_HANDLERS.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)} inside text it runs, a program that changes a way in.`);
+  }
+  // (text it runs that names a program whose worst can't be put back: sorted by that worst, since the text isn't read)
+  if (progs) {
+    const w = text.split(/[\s;&|()<>`'"=,{}[\]]+/).map(s => s.split('/').pop());
+    if (w.includes('tailscale')) r.lasting ??= 'Code it runs names tailscale, and what that code does is never read: a Tailscale sign-out or sign-in as another key can’t be put back by the net.';
+    if (w.some(s => /^(?:userdel|deluser)$/.test(s))) r.lasting ??= 'Code it runs names userdel, and what that code does is never read: a deleted user’s home can’t be put back.';
+    if (w.some(s => /^(?:apt|apt-get|aptitude|dpkg|snap)$/.test(s)) && w.some(s => SORT_WAY_PKGS.test(s) || /^(?:remove|purge|autoremove|autopurge|-r|-P|--remove|--purge)$/.test(s))) { raise(r, 'lockout', 'Code it runs names a package tool beside a package the ways in depend on, or a removal.'); r.lasting ??= 'Code it runs may remove a package the ways in depend on, and what that code does is never read: the net doesn’t put a package back.'; }
   }
 }
 // Every word of a command that is not a look, as a place it may change (relative ones from where a cd may have left it).
@@ -13185,14 +13193,22 @@ Object.assign(SORT_HANDLERS, {
     }
     if (a.some(w => (name !== 'rsync' && /^-[^-]*[oFJS]/.test(w.text)) || /^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
   },
-  tailscale(a, ctx, r, x) {
-    const v = a.find(w => !w.text.startsWith('-'))?.text ?? '';
+  tailscale(a, ctx, r, x = {}) {
+    // (its own options come before the verb: --socket takes a path)
+    let k = 0;
+    while (k < a.length && !a[k].unknown && a[k].text.startsWith('-')) k += a[k].text === '--socket' ? 2 : 1;
+    const vw = a[k], v = vw?.text ?? '', rest = a.slice(k + 1);
     // (tailscale ssh is ssh over the tailnet: sorted as ssh, its host too)
-    if (v === 'ssh') return SORT_HANDLERS.ssh(a.slice(a.findIndex(w => w.text === 'ssh') + 1), ctx, r, x);
-    if (/^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
-    if (v === 'logout') r.lasting = 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
-    // (a sign-in as another key: putting back the old state file would bring back the old key over the new one, A13a)
-    else if (['login', 'switch'].includes(v) || (v === 'up' && a.some(w => /^--force-reauth(?:=|$)/.test(w.text)))) r.lasting = `tailscale ${sortQ(v)} signs in again, as another key or account; the net can’t put that back.`;
+    if (v === 'ssh' && !vw.unknown) return SORT_HANDLERS.ssh(rest, ctx, r, x);
+    if (!x.unknownArgs && !a.some(w => w.unknown) && /^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
+    // What the net can't put back, by any spelling: a sign-out; a sign-in again, as another key or to another server (the
+    // old state file put back would bring back the old key over the new one, A13a); the tailnet's own lock; and what it
+    // can't read: words from its input or a $, a verb it doesn't know.
+    if (x.unknownArgs || a.some(w => w.unknown) || !vw) r.lasting ??= 'tailscale is given words the sorter can’t read (from its input, a $ or a command): it may sign Tailscale out, which the net can’t put back.';
+    else if (v === 'logout') r.lasting ??= 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
+    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key, account or server; the net can’t put that back.`;
+    else if (v === 'lock') r.lasting ??= 'tailscale lock changes the tailnet’s own lock, on every machine of it; the net can’t put that back.';
+    else if (!/^(?:up|down|set|serve|funnel|cert|file|web|exit-node|drive|dns|configure|completion|update)$/.test(v)) r.lasting ??= `The sorter doesn’t know tailscale ${sortQ(v)}, so whether the net can put it back can’t be told.`;
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });
@@ -13666,6 +13682,8 @@ function sortProgram(words, ctx, r, x) {
     // (a shell, an interpreter, an editor or a build handed its file by words from its input: what it runs isn't shown)
     if (x.unknownArgs && ([sortShell, sortInterp, sortBuild].includes(SORT_HANDLERS[name]) || /^(?:n?vim?|view|ex|ed|nano|emacs|joe|micro)$/.test(name))) sortUnshown(r, `a file ${name} is handed by words from its input`);
     if (g?.cls === 'risky' && /^(?:npx|pnpx|bunx|uvx)$/.test(name)) sortUnshown(r, `the package ${name} downloads and runs`);
+    // (a program whose worst the net can't put back, handed its words by its input: sorted by that worst)
+    if (x.unknownArgs && /^(?:userdel|deluser|apt|apt-get|aptitude|dpkg|snap)$/.test(name)) { raise(r, 'lockout', `${sortQ(name)} gets words it reads from its input, which may change a way in.`); r.lasting ??= `${name} gets words the sorter can’t read, which may remove a user’s home or a package the ways in depend on: the net can’t put those back.`; }
     let own = args.length;
     if (h) { const n = h(args, ctx, r, { ...x, via, module: false }, name); if (typeof n === 'number' && n >= 0) own = n; }
     else if (reads != null) sortReads(name, reads, args, ctx, r);
@@ -14424,9 +14442,14 @@ async function tgApproveRoute(req) {
 // sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git
 // submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words
 // are its own, so the options check reads only those.
-const sortPkgs = (names, ctx, r) => {
+// The packages the ways in depend on: removed by any package tool (or by a trailing -), the net can't put them back.
+const SORT_WAY_PKGS = /^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/;
+const sortPkgs = (names, ctx, r, removes = false) => {
   for (const p of names) {
-    if (/^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/.test(p)) raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+    if (SORT_WAY_PKGS.test(p)) {
+      raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+      if (removes || /[^-]-$/.test(p)) r.lasting ??= `It removes ${sortQ(p.replace(/[-+]$/, ''))}, a package the ways in depend on: the net puts back files and units, not a package.`;
+    }
     else if (/^(?:linux-\S+|nvidia-\S+|libnvidia-\S+|cuda-drivers\S*|\S*firmware\S*|\S+-dkms|grub\S*|shim\S*)$/.test(p)) raise(r, 'risky', `${sortQ(p)} is the kernel, a driver or firmware.`);
     else if (/^(?:docker|containerd)/.test(p)) raise(r, 'risky', `${sortQ(p)} is the Docker service.`);
     else if (/^[.~/]|\.deb$/.test(p)) sortRuns(p, ctx, r, `It installs the package file ${sortQ(p)}.`);
@@ -14563,14 +14586,16 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|reinstall|remove|purge|autoremove|autopurge|update|upgrade|full-upgrade|dist-upgrade|satisfy|clean|autoclean|source|build-dep|download|changelog|check|dselect-upgrade)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (o.has('allow-unauthenticated', 'force-yes', 'allow-downgrades', 'allow-remove-essential', 'allow-change-held-packages')) raise(r, 'risky', `${sortQ(name)} is told to skip a check of its own (unsigned packages, downgrades, essential or held packages).`);
     if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
+    // (one that picks what goes itself may take a package the ways in depend on: which can't be told)
+    if (/^(?:autoremove|autopurge)$/.test(v) || (/^(?:remove|purge)$/.test(v) && o.plain.slice(1).some(w => w.unknown || w.glob))) { raise(r, 'lockout', `${sortQ(name)} ${sortQ(v)} picks what it removes itself, which may be a package the ways in depend on.`); r.lasting ??= `${name} ${v} may remove a package the ways in depend on (which can’t be told), and the net doesn’t put a package back: remove packages by name.`; }
     if (/^(?:upgrade|full-upgrade|dist-upgrade|dselect-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
     if (/^(?:install|reinstall|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|source|build-dep|download|changelog)$/.test(v)) ctx.reach.add('internet');
-    sortPkgs(p.slice(1), ctx, r);
+    sortPkgs(p.slice(1), ctx, r, /^(?:remove|purge|autoremove|autopurge)$/.test(v));
   },
   dpkg(a, ctx, r) {
     const t = a.map(w => w.text), v = t.find(s => s.startsWith('-')) ?? '';
     if (/^-[lLsSpcI]$|^--(?:list|listfiles|status|search|print-avail|get-selections|print-architecture|contents|info|audit)$/.test(v)) return;
-    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) return sortGone(ctx, r, 'dpkg removes packages, which are not put back.');
+    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) { sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r, true); if (a.some(w => w.unknown || w.glob)) { raise(r, 'lockout', 'dpkg removes packages it names by a $ or a pattern, which may be ones the ways in depend on.'); r.lasting ??= 'dpkg removes packages the sorter can’t name, maybe one the ways in depend on, and the net doesn’t put a package back.'; } return sortGone(ctx, r, 'dpkg removes packages, which are not put back.'); }
     if (!/^-i$|^--(?:install|configure|unpack)$/.test(v)) unsure(`The sorter doesn’t know dpkg ${sortQ(v)}.`);
     raise(r, 'change', 'dpkg installs packages.');
     sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r);
@@ -14666,6 +14691,15 @@ Object.assign(SORT_HANDLERS, {
     if (a.some(w => w.unknown || /^(?:run|exec|create|start|shell|login|attach|runp|login|enable|start-transient)$/.test(w.text))) raise(r, 'lockout', `${sortQ(n)} starts a container or a shell whose reach the sorter can't read: it may be the host’s own, where SSH, the firewall and users are a command away.`);
     sortOpen(ctx, r, `${sortQ(n)} needs a socket or another program, which the run wall hides.`);
   }])),
+  // (snapd's packages: one the ways in depend on, stopped, disabled or changed, is the lock-out class; removed, lasting)
+  snap(a, ctx, r) {
+    const p = a.filter(w => !w.text.startsWith('-')), v = p[0]?.text ?? '';
+    if (!/^(?:list|info|find|search|version|services|logs|changes|change|connections|interfaces|aliases|get|warnings|known|routine|help)$/.test(v) && p.slice(1).some(w => w.unknown || w.glob || SORT_WAY_PKGS.test(w.text.split('.')[0]))) {
+      raise(r, 'lockout', `snap ${sortQ(v)} changes a package the ways in depend on (or one it can’t name).`);
+      if (/^(?:remove|revert)$/.test(v)) r.lasting ??= `snap ${v} takes away a package the ways in depend on: the net doesn’t put a package back.`;
+    }
+    sortOpen(ctx, r, 'snap needs snapd’s socket, which the run wall hides.');
+  },
   hf(a, ctx, r, x, name = 'hf') {
     const o = sortOpts(SORT_OPTS.hf, a), p = o.plain.map(w => w.text);
     if (/^(?:env|version|scan-cache)$/.test(p[0]) || (p[0] === 'cache' && /^(?:ls|scan|list)$/.test(p[1]))) return;

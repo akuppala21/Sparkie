@@ -106,3 +106,24 @@ test('a command for Spark 2 from a compute Spark is not done, by any of its name
     r => (r.class === 'risky' && !r.kinds.includes('brain') ? null : 'changed')), []);
   assert.equal(sort('ssh spark3 uptime', { at: 'hub' }).class, 'risky');
 });
+
+// Item 4 (net 8): what the net can't put back was refused only in its plainest spelling.
+test('what the net can\'t put back is lasting by any spelling: a Tailscale sign-out or sign-in, a way-in package removed, an inline program that names one', () => {
+  const LASTING = ['tailscale --socket /run/tailscale/tailscaled.sock logout', 'echo logout | xargs tailscale', 'tailscale $(echo logout)', 'tailscale up --login-server https://hs.example',
+    'tailscale up --authkey=tskey-abc', 'apt-get purge -y openssh-server', 'apt remove tailscale', 'dpkg -P openssh-server', 'dpkg --purge tailscale', 'apt-get autoremove -y',
+    "python3 -c \"import os; os.system('tailscale logout')\"",
+    // (and spellings of our own: other options first, the verb from elsewhere, other package tools and forms, other interpreters)
+    'tailscale --socket=/tmp/s login', 'tailscale switch other', 'tailscale up --force-reauth', 'tailscale up --auth-key=$K', 'tailscale lock sign x', 'tailscale debug x',
+    "bash -c 'tailscale logout'", 'T=logout; tailscale $T', 'apt install openssh-server-', 'apt purge "sudo"', 'aptitude remove ufw', 'dpkg -r $P', 'snap remove tailscale',
+    'echo openssh-server | xargs apt-get purge -y', 'echo bob | xargs userdel', "node -e \"require('child_process').execSync('userdel bob')\"",
+    "perl -e 'system(qw(tailscale logout))'", "python3 -c \"import subprocess; subprocess.run(['apt','purge','-y','openssh-server'])\""];
+  assert.deepEqual(check(LASTING.map(c => [c]), r => (r.lasting && ['lockout', 'notdone'].includes(r.class) ? null : 'not lasting')), []);
+  assert.deepEqual(check(LASTING.filter(c => !/\$[A-Z]|\$\(/.test(c)).map(c => [c, null, ROOT]), r => (r.lasting ? null : 'not lasting as root')), []);
+  // (a lock-out change the net puts back is not lasting; nor is an ordinary package removed)
+  assert.deepEqual(check(['tailscale up', 'tailscale down', 'tailscale set --ssh=false', 'snap stop tailscale', 'ufw enable', 'userdel bob', 'apt remove htop', 'dpkg -r htop',
+    "perl -e 'system(\"loginctl disable-linger owner\")'", "python3 -c \"import os; os.system('ip link set eth0 down')\""].map(c => [c]), r => (r.lasting ? 'lasting' : null)), []);
+  // (a way in named inside an inline program is the lock-out class, never a plain change)
+  assert.deepEqual(check(["perl -e 'system(\"loginctl disable-linger owner\")'", "python3 -c \"import os; os.system('ip link set eth0 down')\"",
+    "python3 -c \"import os; os.system('systemctl stop ssh')\"", "ruby -e 'system(\"sysctl -w net.ipv4.ip_forward=0\")'"].map(c => [c, null, ROOT]), r => is('lockout', r)), []);
+  assert.match(sort('tailscale logout').lasting, /Tailscale logout/);
+});

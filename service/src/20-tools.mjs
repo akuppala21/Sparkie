@@ -8,9 +8,14 @@
 // sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git
 // submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words
 // are its own, so the options check reads only those.
-const sortPkgs = (names, ctx, r) => {
+// The packages the ways in depend on: removed by any package tool (or by a trailing -), the net can't put them back.
+const SORT_WAY_PKGS = /^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/;
+const sortPkgs = (names, ctx, r, removes = false) => {
   for (const p of names) {
-    if (/^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/.test(p)) raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+    if (SORT_WAY_PKGS.test(p)) {
+      raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+      if (removes || /[^-]-$/.test(p)) r.lasting ??= `It removes ${sortQ(p.replace(/[-+]$/, ''))}, a package the ways in depend on: the net puts back files and units, not a package.`;
+    }
     else if (/^(?:linux-\S+|nvidia-\S+|libnvidia-\S+|cuda-drivers\S*|\S*firmware\S*|\S+-dkms|grub\S*|shim\S*)$/.test(p)) raise(r, 'risky', `${sortQ(p)} is the kernel, a driver or firmware.`);
     else if (/^(?:docker|containerd)/.test(p)) raise(r, 'risky', `${sortQ(p)} is the Docker service.`);
     else if (/^[.~/]|\.deb$/.test(p)) sortRuns(p, ctx, r, `It installs the package file ${sortQ(p)}.`);
@@ -147,14 +152,16 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|reinstall|remove|purge|autoremove|autopurge|update|upgrade|full-upgrade|dist-upgrade|satisfy|clean|autoclean|source|build-dep|download|changelog|check|dselect-upgrade)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (o.has('allow-unauthenticated', 'force-yes', 'allow-downgrades', 'allow-remove-essential', 'allow-change-held-packages')) raise(r, 'risky', `${sortQ(name)} is told to skip a check of its own (unsigned packages, downgrades, essential or held packages).`);
     if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
+    // (one that picks what goes itself may take a package the ways in depend on: which can't be told)
+    if (/^(?:autoremove|autopurge)$/.test(v) || (/^(?:remove|purge)$/.test(v) && o.plain.slice(1).some(w => w.unknown || w.glob))) { raise(r, 'lockout', `${sortQ(name)} ${sortQ(v)} picks what it removes itself, which may be a package the ways in depend on.`); r.lasting ??= `${name} ${v} may remove a package the ways in depend on (which can’t be told), and the net doesn’t put a package back: remove packages by name.`; }
     if (/^(?:upgrade|full-upgrade|dist-upgrade|dselect-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
     if (/^(?:install|reinstall|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|source|build-dep|download|changelog)$/.test(v)) ctx.reach.add('internet');
-    sortPkgs(p.slice(1), ctx, r);
+    sortPkgs(p.slice(1), ctx, r, /^(?:remove|purge|autoremove|autopurge)$/.test(v));
   },
   dpkg(a, ctx, r) {
     const t = a.map(w => w.text), v = t.find(s => s.startsWith('-')) ?? '';
     if (/^-[lLsSpcI]$|^--(?:list|listfiles|status|search|print-avail|get-selections|print-architecture|contents|info|audit)$/.test(v)) return;
-    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) return sortGone(ctx, r, 'dpkg removes packages, which are not put back.');
+    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) { sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r, true); if (a.some(w => w.unknown || w.glob)) { raise(r, 'lockout', 'dpkg removes packages it names by a $ or a pattern, which may be ones the ways in depend on.'); r.lasting ??= 'dpkg removes packages the sorter can’t name, maybe one the ways in depend on, and the net doesn’t put a package back.'; } return sortGone(ctx, r, 'dpkg removes packages, which are not put back.'); }
     if (!/^-i$|^--(?:install|configure|unpack)$/.test(v)) unsure(`The sorter doesn’t know dpkg ${sortQ(v)}.`);
     raise(r, 'change', 'dpkg installs packages.');
     sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r);
@@ -250,6 +257,15 @@ Object.assign(SORT_HANDLERS, {
     if (a.some(w => w.unknown || /^(?:run|exec|create|start|shell|login|attach|runp|login|enable|start-transient)$/.test(w.text))) raise(r, 'lockout', `${sortQ(n)} starts a container or a shell whose reach the sorter can't read: it may be the host’s own, where SSH, the firewall and users are a command away.`);
     sortOpen(ctx, r, `${sortQ(n)} needs a socket or another program, which the run wall hides.`);
   }])),
+  // (snapd's packages: one the ways in depend on, stopped, disabled or changed, is the lock-out class; removed, lasting)
+  snap(a, ctx, r) {
+    const p = a.filter(w => !w.text.startsWith('-')), v = p[0]?.text ?? '';
+    if (!/^(?:list|info|find|search|version|services|logs|changes|change|connections|interfaces|aliases|get|warnings|known|routine|help)$/.test(v) && p.slice(1).some(w => w.unknown || w.glob || SORT_WAY_PKGS.test(w.text.split('.')[0]))) {
+      raise(r, 'lockout', `snap ${sortQ(v)} changes a package the ways in depend on (or one it can’t name).`);
+      if (/^(?:remove|revert)$/.test(v)) r.lasting ??= `snap ${v} takes away a package the ways in depend on: the net doesn’t put a package back.`;
+    }
+    sortOpen(ctx, r, 'snap needs snapd’s socket, which the run wall hides.');
+  },
   hf(a, ctx, r, x, name = 'hf') {
     const o = sortOpts(SORT_OPTS.hf, a), p = o.plain.map(w => w.text);
     if (/^(?:env|version|scan-cache)$/.test(p[0]) || (p[0] === 'cache' && /^(?:ls|scan|list)$/.test(p[1]))) return;

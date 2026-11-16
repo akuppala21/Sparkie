@@ -256,6 +256,14 @@ function sortScan(text, ctx, r, progs, touched = false) {
     if (LOCK_NAMES.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)}, one of the ways in.`);
     const g = progs && SORT_PROGS[s];
     if (g) raise(r, { delete: 'risky', open: 'risky', device: 'change' }[g.cls] ?? g.cls, `It names ${sortQ(s)} inside text it runs: ${g.why}.`);
+    if (progs && SORT_LOCK_HANDLERS.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)} inside text it runs, a program that changes a way in.`);
+  }
+  // (text it runs that names a program whose worst can't be put back: sorted by that worst, since the text isn't read)
+  if (progs) {
+    const w = text.split(/[\s;&|()<>`'"=,{}[\]]+/).map(s => s.split('/').pop());
+    if (w.includes('tailscale')) r.lasting ??= 'Code it runs names tailscale, and what that code does is never read: a Tailscale sign-out or sign-in as another key can’t be put back by the net.';
+    if (w.some(s => /^(?:userdel|deluser)$/.test(s))) r.lasting ??= 'Code it runs names userdel, and what that code does is never read: a deleted user’s home can’t be put back.';
+    if (w.some(s => /^(?:apt|apt-get|aptitude|dpkg|snap)$/.test(s)) && w.some(s => SORT_WAY_PKGS.test(s) || /^(?:remove|purge|autoremove|autopurge|-r|-P|--remove|--purge)$/.test(s))) { raise(r, 'lockout', 'Code it runs names a package tool beside a package the ways in depend on, or a removal.'); r.lasting ??= 'Code it runs may remove a package the ways in depend on, and what that code does is never read: the net doesn’t put a package back.'; }
   }
 }
 // Every word of a command that is not a look, as a place it may change (relative ones from where a cd may have left it).

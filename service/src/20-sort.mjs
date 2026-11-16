@@ -220,6 +220,8 @@ function sortProgram(words, ctx, r, x) {
     // (a shell, an interpreter, an editor or a build handed its file by words from its input: what it runs isn't shown)
     if (x.unknownArgs && ([sortShell, sortInterp, sortBuild].includes(SORT_HANDLERS[name]) || /^(?:n?vim?|view|ex|ed|nano|emacs|joe|micro)$/.test(name))) sortUnshown(r, `a file ${name} is handed by words from its input`);
     if (g?.cls === 'risky' && /^(?:npx|pnpx|bunx|uvx)$/.test(name)) sortUnshown(r, `the package ${name} downloads and runs`);
+    // (a program whose worst the net can't put back, handed its words by its input: sorted by that worst)
+    if (x.unknownArgs && /^(?:userdel|deluser|apt|apt-get|aptitude|dpkg|snap)$/.test(name)) { raise(r, 'lockout', `${sortQ(name)} gets words it reads from its input, which may change a way in.`); r.lasting ??= `${name} gets words the sorter can’t read, which may remove a user’s home or a package the ways in depend on: the net can’t put those back.`; }
     let own = args.length;
     if (h) { const n = h(args, ctx, r, { ...x, via, module: false }, name); if (typeof n === 'number' && n >= 0) own = n; }
     else if (reads != null) sortReads(name, reads, args, ctx, r);
