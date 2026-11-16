@@ -37,7 +37,9 @@ function workRead(ctx, id, title, args) {
 // (never trimmed: kept past 1,024, where the sorter doubts, so the commands after it are asked)
 function workWrote(ctx, sorted) {
   if (!Array.isArray(ctx?.written)) return;
-  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
+  // (a place it only read is no write: the sorter's reads, R64)
+  const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
+  for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
 }
 
 // Whether a change runs at once (design A 2.5): why not, or null when it may. 1, the owner (their chats, Telegram, the
@@ -52,10 +54,12 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
   const reached = runnerProtected(sorted, dir);
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
-  const outside = runnerOutside(sorted, command, dir, topDirs);
-  if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
-  const wide = runnerWiden(node, command, widen);
-  if (wide.fleet) return 'it reaches another Spark or your home network';
+  const walls = runnerWalls(sorted, command, dir, topDirs);
+  if (walls.open.length) return `${walls.open[0]}, so it runs outside that wall after your yes`;
+  if (walls.home.length) return `${walls.home[0]}, so it runs after your yes with the top of your home writable`;
+  const wide = runnerWiden(node, command, widen, sorted);
+  if (wide.fleet) return 'it reaches another Spark of this fleet';
+  if (wide.home) return 'it reaches your home network';
   if (wide.gpu) return 'it uses the GPU';
   // (no change runs at once while a Spark offers a shell with no key: Tailscale SSH, from the tailnet's own answer)
   const ts = workTailnetSsh();
@@ -150,9 +154,13 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen);
+  const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+  const wideLines = [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
-    ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
+    // (outside the plain wall, with its stark words; or the top of the home writable, keys still hidden; or what widens)
+    ...(walls.open.length ? [`Runs outside the plain wall: ${[...walls.open, ...walls.home].join('; ')}.`, RUNNER_OPEN_HOLDS]
+      : walls.home.length ? [`Runs with the top of your home writable: ${walls.home.join('; ')}. Keys stay hidden and it cannot reach Docker.`, ...wideLines] : wideLines),
+    ...(wide.internet ? [RUNNER_WIDE.internet] : []),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
 }
@@ -168,7 +176,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs) + runKeysLabel(node, command, keys), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs) + runKeysLabel(node, command, keys, sorted), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
@@ -183,7 +191,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
   // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63)
   const topDirs = await runnerTopDirs(node, sorted);
-  if (keys.length) runKeysOutside(runnerOutside(sorted, command, dir, topDirs));
+  if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
   if (ctx.button && ctx.ownerConfirmed) {
     const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
@@ -200,7 +208,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
   // (a key's first use on a Spark or with an address is asked, R51)
-  if (!why && keys.length) why = runKeysWhy(node, command, keys);
+  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted);
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
@@ -208,8 +216,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
-    const w = runnerWiden(node, command, widen);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs, keys });
+    const w = runnerWiden(node, command, widen, sorted);
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, command, viewer, ctx, { dir, widen, topDirs, keys });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, keys);

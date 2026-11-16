@@ -86,6 +86,8 @@ test('the call to the root helper: a change\'s cap and widenings as the helper t
   const far = { id: 'spark3', host: '100.0.0.3' }, at = opts => own.helperScript(far, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, ...opts });
   assert.match(at({ dir: '~', memory: 4, fleet: true, gpu: true }), / --dir "\$HOME" --memory 4G --fleet --gpu -- 'touch x'/);
   assert.match(at({ dir: '~/work', memory: 8, open: true, fleet: true }), / --dir "\$HOME"'\/work' --memory 8G --open -- 'touch x'/);
+  assert.match(at({ dir: '~', memory: 2, home: true, gpu: true }), / --dir "\$HOME" --memory 2G --home --gpu -- 'touch x'/);
+  assert.match(at({ dir: '~', open: true, home: true }), / --open -- 'touch x'/, 'never --home with --open');
   assert.match(own.helperScript(far, 'state', { id: 'abcdefgh1234' }), /"\$h" state --id "\$id"/);
   for (const dir of ['/tmp', '~/../x', 'work', '~/a b', '~/.']) {
     assert.throws(() => at({ dir }), e => e.status === 400 && /^dir isn’t in the right form for a change/.test(e.message), dir);

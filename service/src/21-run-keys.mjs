@@ -15,7 +15,9 @@
 // text prints the environment (env, printenv, set, export -p, declare -p, a shell's -x, /proc/…/environ, ps e), to a
 // run outside the plain wall after a yes (run --open: the home's keys are open there), to a delete that cannot be put back or a command naming the brain (the dangerous ask), to a script that changed after its
 // ask, or under a name that decides what programs run or load. A key's places, kept with it by code: the Sparks it has
-// run on and the addresses its commands named (a new value starts with none). A command given a key is never plain at
+// run on, the hosts its commands named (read as the sorter reads an address, usesHost, and a bare name), and, for a
+// command that names none, where the sorter says it reaches by itself (its reach: the internet, the home network,
+// another Spark). A new value starts with none. A command given a key is never plain at
 // once by that fact alone (a walled plain change may read the project's files and send them out, the wall's analyst
 // found): it runs at once only when the sorter calls it a look or a plain change, the ladder clears it as any change,
 // AND every place it names, its Spark too, is one that key has gone before. Otherwise it is asked, on a button that
@@ -28,22 +30,28 @@ const RUNKEY_BASH = /^(?:BASH\w*|UID|EUID|PPID|PWD|OLDPWD|SHELL|SHLVL|USER|LOGNA
 // empty line; then its input is nothing, as without keys. (sck_k: lower case, so no key's name can be it.)
 const RUNKEY_PREFIX = 'while IFS= read -r sck_k && [ -n "$sck_k" ]; do export -- "$sck_k"; done; unset sck_k; exec </dev/null\n';
 const RUNKEY_SCRIPT_CHANGED = 'Not run: a script it runs changed after you were asked, and a key is never given to a script you weren’t shown. Nothing ran: ask for it again to see the script as it is now.';
-// The addresses a command's text names: a scheme's host (https://host), user@host (ssh, scp, rsync, git), and a bare
-// name with a common top-level part (example.com, api.x.io/v1) or an IPv4 address. Read from the text alone: where a
-// program sends a key by itself (its own settings) isn't seen; that is said on the button.
+// The hosts a command's text names: each word as the sorter reads an address (usesHost: a scheme's host, host:path,
+// user@ and a port taken off; an option's value after = too), user@host, and a bare name with a common top-level part
+// (example.com, api.x.io/v1) or an IPv4 address. Read from the text alone: where a program sends a key by itself (its
+// own settings) isn't seen; that is said on the button.
 const RUNKEY_TLD = 'com|org|net|io|co|ai|dev|app|cloud|edu|gov|info|biz|tv|xyz|us|uk|de|fr|jp|cn|ca|au|eu|ch|nl|se|no|fi|be|it|es|kr|tw|sg|hk|nz';
 function runKeysHosts(command) {
   const t = String(command), out = new Set();
-  const add = h => { const x = String(h || '').toLowerCase().replace(/\.$/, ''); if (x && out.size < RUNKEY_HOSTS) out.add(x); };
-  for (const m of t.matchAll(/\b[a-z][a-z0-9+.-]{1,15}:\/\/(?:[^\s/@'"]*@)?(\[[0-9a-f:.]+\]|[a-z0-9.-]+)/gi)) add(m[1]);
+  const add = h => { const x = String(h || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''); if (x && !/[^\w.:%-]/.test(x) && out.size < RUNKEY_HOSTS) out.add(x); };
+  for (const { w } of shellWords(t)) if (typeof w === 'string') for (const s of [w, w.replace(/^-[^=]*=/, '')]) add(usesHost(s));
   for (const m of t.matchAll(/(?:^|[\s'"=])[a-z0-9._-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?=[:\s'"]|$)/gi)) add(m[1]);
   const bare = new RegExp(`(?:^|[\\s'"=@])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${RUNKEY_TLD})|\\d{1,3}(?:\\.\\d{1,3}){3})(?=[:/\\s'"]|$)`, 'gi');
   for (const m of t.matchAll(bare)) add(m[1]);
   return [...out];
 }
-// Where a key goes with this command: its Spark, then each address it names.
-const runKeysPlaces = (node, command) => [node.id, ...runKeysHosts(command).filter(h => h !== node.id)];
-const runKeysPlaceWords = (node, p) => (p === node.id ? sparkName(node) : p);
+// Where a key goes with this command: its Spark, then each host it names, or, naming none, where the sorter says it
+// reaches by itself (reach:internet, reach:home, reach:fleet).
+function runKeysPlaces(node, command, sorted) {
+  const hosts = runKeysHosts(command).filter(h => h !== node.id), reach = Array.isArray(sorted?.reach) ? sorted.reach : [];
+  return [node.id, ...hosts, ...(hosts.length ? [] : reach.filter(r => ['internet', 'home', 'fleet'].includes(r)).map(r => `reach:${r}`))];
+}
+const RUNKEY_REACH = { 'reach:internet': 'the internet (where the program goes by itself)', 'reach:home': 'your home network (where the program goes by itself)', 'reach:fleet': 'another Spark (where the program goes by itself)' };
+const runKeysPlaceWords = (node, p) => (p === node.id ? sparkName(node) : RUNKEY_REACH[p] || p);
 
 // Whether the command's own text prints the environment (where the key would be): a reason, or null. Its words are
 // read with quotes taken off, so a script a shell is handed (bash -c '…') counts too; a program counts where a command
@@ -106,28 +114,29 @@ function runKeysNever(node, command, sorted, ctx, keys) {
   }
 }
 // Each key's places this command would take it to that it hasn't gone to before: [{key, places}].
-function runKeysNew(node, command, keys) {
-  const kept = runKeysKept(), places = runKeysPlaces(node, command);
+function runKeysNew(node, command, keys, sorted) {
+  const kept = runKeysKept(), places = runKeysPlaces(node, command, sorted);
   return keys.map(k => ({ key: k, places: places.filter(p => !(Array.isArray(kept[k]?.hosts) && kept[k].hosts.includes(p))) })).filter(x => x.places.length);
 }
 // Why a command given keys is asked though the ladder cleared it, or null: a place a key hasn't gone to before.
-function runKeysWhy(node, command, keys) {
-  const fresh = runKeysNew(node, command, keys);
+function runKeysWhy(node, command, keys, sorted) {
+  const fresh = runKeysNew(node, command, keys, sorted);
   if (!fresh.length) return null;
   return fresh.map(x => `it gives the key ${x.key} to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' and ')}, where it hasn’t gone before`).join('; ');
 }
 // The button's own lines for a command given keys: which keys, their new places, what a $NAME on a command line shows.
-function runKeysLabel(node, command, keys) {
+function runKeysLabel(node, command, keys, sorted) {
   if (!keys?.length) return '';
-  const fresh = runKeysNew(node, command, keys), names = keys.join(', '), one = keys.length === 1;
+  const fresh = runKeysNew(node, command, keys, sorted), names = keys.join(', '), one = keys.length === 1;
   const spelled = keys.filter(k => new RegExp(`\\$(?:${k}\\b|\\{${k}\\})`).test(command));
   return ['', `It is given the key${one ? '' : 's'} ${names}, in its environment by name for this run only; ${one ? 'its value is' : 'their values are'} never shown.`,
     ...fresh.map(x => `${x.key} hasn’t gone to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' or ')} before: after your yes and the run, ${x.places.length === 1 ? 'that place is' : 'those places are'} kept with it.`),
-    'Where a program sends a key on its own (its own settings) isn’t read here, only the addresses the command names.',
+    'Where a program sends a key by its own settings isn’t read here: only the hosts the command names, or, naming none, where it reaches by itself.',
     ...(spelled.length ? [`${spelled.map(k => `$${k}`).join(', ')} on a program’s command line shows in ${sparkName(node)}’s process list while that program runs.`] : [])].join('\n');
 }
 // A change that would fail inside the plain wall runs, after the yes, outside it (run --open, 21-runner.mjs), where
-// every key and token in the home is open to it: never given a key there.
+// every key and token in the home is open to it: never given a key there. (One that runs with the top of the home
+// writable, --home, holds the home's keys hidden as the plain wall does: given one by the same rules.)
 function runKeysOutside(outside) {
   if (outside?.length) throw new HttpError(403, `Not run: ${String(outside[0]).slice(0, 200)}, so it would run outside the plain wall, where every key and token in your home is open to it; a key is never given to such a command. Nothing ran.`);
 }
@@ -136,10 +145,10 @@ function runKeysOutside(outside) {
 function runKeysGive(node, command, sorted, keys, ctx, asked, outside = []) {
   runKeysNever(node, command, sorted, ctx, keys);
   runKeysOutside(outside);
-  if (!asked) { const why = runKeysWhy(node, command, keys); if (why) throw new HttpError(409, `Not run: ${why}, and that is always asked first. Nothing ran.`); }
+  if (!asked) { const why = runKeysWhy(node, command, keys, sorted); if (why) throw new HttpError(409, `Not run: ${why}, and that is always asked first. Nothing ran.`); }
   const kept = runKeysKept(), sums = {};
   for (const k of keys) sums[k] = createHash('sha256').update(kept[k].value).digest('hex');
-  return { prefix: RUNKEY_PREFIX, payload: `${keys.map(k => `${k}=${kept[k].value}\n`).join('')}\n`, places: runKeysPlaces(node, command), sums };
+  return { prefix: RUNKEY_PREFIX, payload: `${keys.map(k => `${k}=${kept[k].value}\n`).join('')}\n`, places: runKeysPlaces(node, command, sorted), sums };
 }
 // After a run that started: each key's places kept with it (by code, the same value only: a key given anew since
 // starts with none). Never throws.

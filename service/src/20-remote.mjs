@@ -38,9 +38,12 @@ Object.assign(SORT_HANDLERS, {
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
     const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `${sortQ(name)} reaches ${sortQ(near)}, a Spark or the home network: inside the wall there is no route there, so it is asked.`);
+    for (const w of [...o.plain, ...o.all('url')]) if (!w.unknown) usesReach(usesHost(w.text) ?? (/^[^/:]+(?=[:/]|$)/.exec(w.text)?.[0]), ctx);
     // (an option that decides where it connects, or reads its addresses from a file, may point at the same: asked)
     const via = o.opts.find(([n]) => (name === 'curl' ? /^(?:resolve|connect-to|x|proxy|preproxy|socks\w*|dns-servers|doh-url)$/ : /^(?:i|input-file|B|base|e|execute)$/).test(n));
     if (via) raise(r, 'risky', `${sortQ(name)} ${sortQ(`${via[0].length > 1 ? '--' : '-'}${via[0]}`)} decides where it connects, maybe a Spark or the home network: asked.`);
+    // (and where that option points, when its words show it: a proxy's host, the address --resolve or --connect-to gives)
+    if (name === 'curl') for (const [n, v] of o.opts) if (typeof v?.text === 'string' && !v.unknown && /^(?:x|proxy|preproxy|socks\w*|resolve|connect-to|dns-servers|doh-url)$/.test(n)) for (const s of v.text.split(',')) usesReach(/^(?:resolve|connect-to)$/.test(n) ? /([^:[\]]+|\[[^\]]*\])$/.exec(s)?.[1] : usesHost(s) ?? /^[^/:]+/.exec(s)?.[0], ctx);
     if (ctx.root) {
       const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
       const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
@@ -89,6 +92,7 @@ Object.assign(SORT_HANDLERS, {
     if (!a[k] || a.some(w => w.unknown)) unsure('ssh’s host or command holds a $ or a command, which the sorter can’t read.');
     if (a[k + 1]?.text.startsWith('-')) unsure('ssh takes options after the host too, which the sorter does not read there.');
     const dest = a[k].text, host = dest.replace(/^[^@]*@/, ''), place = sortHost(ctx, host), remote = a.slice(k + 1).map(w => w.text).join(' ');
+    usesReach(host.replace(/^ssh:\/\/|[:/].*$/g, ''), ctx);
     user ??= /^([^@]*)@/.exec(dest)?.[1] ?? null;
     if (user === 'root') ctx.kinds.add('root');
     if (relay) return raise(r, place ? 'risky' : 'notdone', place ? `${sortQ(relay)} opens a tunnel between Sparks.` : `${sortQ(relay)} would open a tunnel or relay through ${sortQ(host)}, outside the fleet, round a network filter.`);
@@ -108,11 +112,14 @@ Object.assign(SORT_HANDLERS, {
     const o = sortOpts(SORT_OPTS[name], a), plain = o.plain, rec = name === 'sftp' || o.has('r', 'a', 'recursive', 'archive');
     if (name === 'sftp') {
       const host = plain.at(-1)?.text.replace(/^[^@]*@/, '').replace(/:.*$/, '') ?? '';
+      usesReach(host, ctx);
       return raise(r, 'risky', sortHost(ctx, host) ? `sftp to ${sortQ(host)} can write any file there, outside every wall and copy: asked.` : `It connects to ${sortQ(host)}, which isn’t one of the Sparks.`);
     }
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
-      if (!m) return sortTouch(w, ctx, r, rec && lastOne);
+      // (a local source is only read, unless it is moved away)
+      if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
+      usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);

@@ -68,6 +68,7 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUT
     const h = join(root, 'spark3');
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('notes/usekey.sh', `${USE}\n`);
+    put('notes/sum.sh', 'printf "%s" "$DEMO_KEY" | sha256sum | cut -d" " -f1 > notes/keysum.txt\necho summed\n');
     put('notes/other.sh', 'printf "%s" "$OTHER_KEY" | sha256sum | cut -d" " -f1 > notes/othersum.txt\n');
     put('notes/a.tmp', 'a\n');
   } }, async () => {
@@ -175,15 +176,30 @@ test('never into a command whose own text prints the environment: refused in pla
   }
 });
 
-test('never as root, nor into what the sorter calls open, nor a change that would run outside the plain wall after a yes', { timeout: 60000 * SLOW }, async () => {
+test('never as root, nor into what the sorter calls open, nor a change that would run outside the plain wall after a yes (--open)', { timeout: 60000 * SLOW }, async () => {
   const root = await run('sudo bash notes/usekey.sh', ['DEMO_KEY']);
   assert.deepEqual([root.status, root.json.error], [403, 'Not run: a key is never given to a command run as root (sudo or su). Nothing ran.']);
   const open = await run('docker pull alpine', ['DEMO_KEY']);
   assert.equal(open.status, 403, open.text);
   assert.match(open.json.error, /^Not run: it needs what the plain wall keeps out \(.*Docker socket.*\), so it would run outside that wall, where every key and token in your home is open to it; a key is never given to such a command\. Nothing ran\.$/);
-  const outside = await run('pip install --user requests', ['DEMO_KEY']);
+  const outside = await run('npm install -g left-pad', ['DEMO_KEY']);
   assert.equal(outside.status, 403, outside.text);
-  assert.match(outside.json.error, /^Not run: it installs into ~\/\.local, which the plain wall keeps read-only, so it would run outside the plain wall, where every key and token in your home is open to it/);
+  assert.match(outside.json.error, /^Not run: it installs into the system’s own folders \(npm -g\), which the plain wall keeps read-only, so it would run outside the plain wall, where every key and token in your home is open to it/);
+});
+
+test('a change that would fail in the plain wall but runs with the top of the home writable (--home, the home\'s keys still hidden) is given its key after the yes', { timeout: 120000 * SLOW }, async () => {
+  rmSync(at3('notes/keysum.txt'), { force: true });
+  const chat = await newChat(), words = 'update the notes on spark 3 into the home';
+  const r = await turn(chat, words, [[RUNK('bash notes/sum.sh > top.txt', ['DEMO_KEY'])]]);
+  const [asked] = sentBack(words);
+  assert.match(asked.question, /\nIt is given the key DEMO_KEY, in its environment by name for this run only; its value is never shown\./, asked.question);
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.deepEqual([p.json.outcome, p.json.message.content], ['change', 'Run it: done.'], p.text);
+  assert.equal(text('notes/keysum.txt').trim(), sha(VALUE));
+  const start = journalLines().filter(x => x.k === 'cmd' && x.start && x.args?.command === 'bash notes/sum.sh > top.txt').at(-1);
+  assert.deepEqual([start.wall, start.keys], ['home', ['DEMO_KEY']]);
+  assert.equal(text('top.txt'), 'summed\n', 'it wrote at the top of the home');
+  assert.deepEqual(holding(VALUE), []);
 });
 
 test('never into a delete that can\'t be put back (the dangerous ask)', { timeout: 60000 * SLOW }, async () => {

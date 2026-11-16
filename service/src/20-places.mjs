@@ -205,7 +205,11 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
 // writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
-function sortTouch(w, ctx, r, wide = false, write = true) {
+// (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
+// apart, R64)
+// (a redirection's word, and a word after --, is a name whatever its first sign: the word itself is a place too, R64)
+const sortCandsOf = (w, t) => (w?.literal ? [...new Set([t, ...sortCands(t)])] : sortCands(t));
+function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
   ctx.touched?.add(w);
@@ -213,18 +217,19 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
   const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
-  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
+  for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
-  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
-  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCandsOf(w, t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
+    (read ? ctx.readOnly : ctx.wrote)?.add(p);
   }
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
@@ -258,7 +263,7 @@ function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
     const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
