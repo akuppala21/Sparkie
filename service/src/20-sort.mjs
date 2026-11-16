@@ -57,7 +57,9 @@ const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_
 function sortAssign(name, ctx, r, prefix, value = null) {
   ctx.sets?.add(name);
   ctx.setTo?.set(name, value);
-  if (DANGER_ENV.test(name)) { sortUnshown(r, `what ${name} names: a program, a start file or a library loaded by itself`); raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`); }
+  // (where Docker connects: a host there that is Spark 2, or one that can't be told, R64)
+  if (/^DOCKER_(?:HOST|CONTEXT)$/i.test(name)) { if (value == null || /CONTEXT/i.test(name)) sortToHub('', ctx, r, name, true); else if (!/^(?:unix|fd|npipe):|^$/.test(value)) sortToHub(usesHost(value) ?? value.replace(/:\d+$/, ''), ctx, r, name); }
+  if (DANGER_ENV.test(name)) { if (!/^(?:DOCKER_\w+|\w*_PROXY|HF_ENDPOINT|TMPDIR|IFS|CDPATH|GLOBIGNORE|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS|DBUS_\w+|SYSTEMD_\w+|SUDO_\w+)$/i.test(name)) sortUnshown(r, `what ${name} names: a program, a start file or a library loaded by itself`); raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`); }
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
 // Each pipeline's first part reads what the command was handed (a group's commands inside a pipe too); the later parts
@@ -301,6 +303,7 @@ function sortCommand(command, opts) {
     const o = opts && typeof opts === 'object' ? opts : {};
     text = String(command ?? '');
     for (const [k, v] of Object.entries(o.hosts && typeof o.hosts === 'object' ? o.hosts : {})) ctx.hosts[k] = v === 'compute' ? 'compute' : 'hub';
+    sortHubNames(ctx);
     Object.assign(ctx, { at: o.at ?? 'compute', root: !!o.root, brain: (Array.isArray(o.brain) ? o.brain : []).filter(b => typeof b === 'string' && b.length > 2) });
     // (the owner's home on that Spark: given, or the configured user's; a path is placed against it alone)
     const home = o.home != null ? String(o.home).replace(/\/+$/, '') : typeof CONFIG === 'object' && /^[a-z_][a-z0-9_-]*$/i.test(String(CONFIG?.user)) ? `/home/${CONFIG.user}` : null;

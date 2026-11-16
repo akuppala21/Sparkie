@@ -121,7 +121,7 @@ Object.assign(SORT_HANDLERS, {
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
     // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
-    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) usesReach(usesHost(w.text), ctx);
+    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) { usesReach(usesHost(w.text), ctx); if (usesHost(w.text)) sortToHub(usesHost(w.text), ctx, r, `git ${v}`); }
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
@@ -232,6 +232,12 @@ Object.assign(SORT_HANDLERS, {
   },
   docker(a, ctx, r, x, name = 'docker') {
     r.simple = false;
+    // (the Docker it talks to: -H or --host names one, a context is a name its own settings point anywhere)
+    for (let k = 0; k < a.length && a[k].text.startsWith('-'); k++) {
+      const t = a[k].text, v = t.includes('=') ? { ...a[k], text: t.slice(t.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] };
+      if (/^(?:-H|--host|-c|--context)(?:=|$)/.test(t)) { if (!t.includes('=')) k++; if (v.unknown || /^(?:-c|--context)/.test(t)) sortToHub('', ctx, r, `${name} ${t.split('=')[0]}`, true); else if (!/^(?:unix|fd|npipe):/.test(v.text)) sortToHub(usesHost(v.text) ?? v.text.replace(/:\d+$/, ''), ctx, r, `${name} ${t.split('=')[0]}`); }
+      else if (/^(?:--config|-l|--log-level|--tlscacert|--tlscert|--tlskey)$/.test(t)) k++;
+    }
     sortOpen(ctx, r, `${sortQ(name)} needs the Docker socket, which the run wall hides (Docker is root by another name): free-form, it is always asked.`);
     const v = a.filter(w => !w.text.startsWith('-')).map(w => w.text);
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');

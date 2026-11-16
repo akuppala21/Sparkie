@@ -86,3 +86,23 @@ test('Docker that reaches the host, and nsenter, chroot and unshare, are the loc
   assert.deepEqual(check(['docker run -d --name x -p 8000:8000 img', 'docker run --rm -v ~/work:/w --gpus all img', 'docker run -e HF_TOKEN="$T" img',
     'docker run --security-opt no-new-privileges img', 'docker logs x', 'docker restart my-app', 'docker run -v /data/models:/m:ro img'].map(c => [c]), r => is('risky', r)), []);
 });
+
+// Item 3 (net 7): ssh spark2 '…' from a compute Spark was a plain risky ask with --open; the hub's refusals never applied.
+test('a command for Spark 2 from a compute Spark is not done, by any of its names; a host that can\'t be told is the dangerous ask', () => {
+  const HUB = ["ssh spark2 'docker run -d --name x img'", "ssh spark2 'pkill -f server.mjs'", "ssh spark2 'docker stop sparkie-main'",
+    // (and spellings of our own: its other names and addresses, each program the ruling names, the host behind an option)
+    'ssh akspark2 uptime', 'ssh owner@akspark2.tailab9aa9.ts.net uptime', 'ssh owner@100.64.0.2 ls', 'ssh -p 22 spark2 ls', 'scp x spark2:/tmp/',
+    'scp spark2:/etc/hosts .', 'rsync -a ~/x/ akspark2:x/', 'rsync -a rsync://spark2/mod/ /tmp/m/', 'sftp spark2', 'git clone spark2:repo',
+    'git push ssh://akspark2/home/owner/r.git main', 'docker -H ssh://spark2 ps', 'docker --host=tcp://akspark2:2375 run img', 'DOCKER_HOST=ssh://spark2 docker ps',
+    'tailscale ssh spark2 uptime', 'ssh -J spark2 spark3 ls', 'ssh -o HostName=akspark2 spark3 ls', "bash -c 'ssh spark2 reboot'"];
+  assert.deepEqual(check(HUB.map(c => [c]), r => is('notdone', r)), []);
+  assert.deepEqual(check(HUB.map(c => [c, null, ROOT]), r => is('notdone', r)), []);
+  // (where it can't be told: a $, a name ssh's own settings point anywhere, a tailnet address the console doesn't know, a context)
+  const MAYBE = ['ssh $H uptime', 'ssh buildbox uptime', 'ssh 100.100.1.1 ls', 'scp "$F" spark3:/tmp/', 'docker --context remote ps', 'DOCKER_HOST=$X docker ps',
+    'ssh -F ~/cfg spark3 ls', 'rsync -a x box:/tmp/'];
+  assert.deepEqual(check(MAYBE.map(c => [c]), r => (r.class === 'risky' && r.kinds.includes('brain') && /may be Spark 2/.test(r.why) ? null : 'not the dangerous ask saying it may be Spark 2')), []);
+  // (another compute Spark, a public host and the local Docker stay as they were; on Spark 2 itself nothing of this applies)
+  assert.deepEqual(check(['ssh spark3 uptime', 'scp spark3:~/work/out.json .', 'ssh github.com', 'docker -H unix:///run/docker.sock ps'].map(c => [c]),
+    r => (r.class === 'risky' && !r.kinds.includes('brain') ? null : 'changed')), []);
+  assert.equal(sort('ssh spark3 uptime', { at: 'hub' }).class, 'risky');
+});

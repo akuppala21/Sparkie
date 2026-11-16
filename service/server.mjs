@@ -13030,6 +13030,28 @@ const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
 const sortNear = (h, ctx) => !!h && (!h.includes('.') || !!sortHost(ctx, h.split('.')[0]) || /^(?:10|127)\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^169\.254\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^\[|(?:^|\.)(?:local|lan|home\.arpa|internal|ts\.net|localhost)\.?$/i.test(h));
 const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
   && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
+// A command for Spark 2 from a compute Spark (the final read `net`, 7): ssh, scp, rsync, sftp, git, docker -H or
+// DOCKER_HOST, tailscale ssh. Spark 2 by any name or address the console knows is not done: commands for Spark 2 go
+// through Spark 2's own path (run with on: spark2), where its rules hold. A host that can't be told (a $, a name ssh's own
+// settings may point anywhere, an address of the tailnet or the home network the console doesn't know, a host option)
+// may be Spark 2: the dangerous ask (kind brain, Spark 2 being the brain's), saying so.
+const sortHubHost = (h, ctx) => { const x = String(h ?? '').replace(/^\[|\]$/g, '').replace(/\.$/, ''); return sortHost(ctx, x) ?? sortHost(ctx, x.split('.')[0]); };
+function sortToHub(h, ctx, r, via, unknown = false) {
+  if (ctx.at !== 'compute') return;
+  const place = unknown ? null : sortHubHost(h, ctx);
+  if (place === 'hub') return raise(r, 'notdone', `${via} reaches Spark 2 (${sortQ(h)}): a command for Spark 2 is run on Spark 2 (run with on: "spark2"), where its own rules hold, never from another Spark.`);
+  if (place === 'compute') return;
+  if (unknown || !String(h ?? '').includes('.') || sortNear(String(h), ctx)) {
+    ctx.kinds.add('brain');
+    raise(r, 'risky', `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`);
+  }
+}
+// The names Spark 2 goes by that its callers may leave out: the console's own address and its first label, and the
+// hub's id, alias and address on the list of Sparks (as runnerSortOpts gives the compute Sparks').
+function sortHubNames(ctx) {
+  try { const h = new URL(String(CONFIG.origin)).hostname.toLowerCase(); if (h) { ctx.hosts[h] ??= 'hub'; ctx.hosts[h.split('.')[0]] ??= 'hub'; } } catch { /* no address */ }
+  try { for (const n of NODES) if (n?.host === 'local') for (const k of [n.id, n.alias, n.ip, n.name]) if (typeof k === 'string' && k) ctx.hosts[k] ??= 'hub'; } catch { /* no list */ }
+}
 // A far path, from the far home ('' and . are the home), placed as a path there (wide when it is where a copy lands).
 const sortFar = (path, ctx, r, wide) => sortPlace(sortNorm(/^[~/]/.test(path) ? path : `~/${path}`, null, ctx.home), /[*?[]/.test(path), ctx, r, wide, true);
 Object.assign(SORT_HANDLERS, {
@@ -13087,26 +13109,31 @@ Object.assign(SORT_HANDLERS, {
   ssh(a, ctx, r, x) {
     r.simple = false;
     let k = 0, relay = null, user = null, odd = null;
+    // (every host it may connect to: a jump host, a HostName given as an option, then the one it names)
+    const via = [];
     for (; k < a.length && a[k].text.startsWith('-'); k++) {
       const t = a[k].text;
       for (let j = 1; j < t.length; j++) {
         const c = t[j];
         if ('bcDEeFIiJLlmOopQRSWw'.includes(c)) {
           const v = j < t.length - 1 ? t.slice(j + 1) : a[++k]?.text ?? '';
+          if (c === 'J' || (c === 'o' && /^(?:ProxyJump|HostName)\b/i.test(v))) via.push(...(c === 'J' ? v : v.replace(/^\w+\s*=?\s*/, '')).split(',').map(x => x.replace(/^[^@]*@/, '').replace(/:\d+$/, '')));
           if ('RDLWwJ'.includes(c)) relay ??= `ssh -${c}`;
           if (c === 'l') user = v;
           if (c === 'p' || (c === 'o' && /^(?:HostName|HostKeyAlias|Port|Hostname)\b/i.test(v))) odd = v;
           if (c === 'o' && /^User\s*=?\s*(\S+)/i.test(v)) user = /^User\s*=?\s*(\S+)/i.exec(v)[1];
           if (/^(?:Proxy|\w*Forward|Tunnel)/i.test(v) && c === 'o') relay ??= `ssh -o ${v.split(/[= ]/)[0]}`;
-          else if ('FES'.includes(c) || (c === 'o' && /^(?:LocalCommand|PermitLocalCommand|RemoteCommand|Control|Include|KnownHostsCommand|PKCS11Provider)/i.test(v))) unsure('ssh is given an option that runs a command, or shares a connection, the sorter can’t see.');
+          else if ('FES'.includes(c) || (c === 'o' && /^(?:LocalCommand|PermitLocalCommand|RemoteCommand|Control|Include|KnownHostsCommand|PKCS11Provider)/i.test(v))) sortToHub('', ctx, r, 'ssh', true), unsure('ssh is given an option that runs a command, or shares a connection, the sorter can’t see.');
           break;
         }
         if (!'46AaCfGgKkMNnqsTtVvXxYy'.includes(c)) unsure(`The sorter doesn’t know ssh’s option ${sortQ(`-${c}`)}.`);
       }
     }
+    if (!a[k] || a.slice(0, k + 1).some(w => w.unknown)) sortToHub('', ctx, r, 'ssh', true);
     if (!a[k] || a.some(w => w.unknown)) unsure('ssh’s host or command holds a $ or a command, which the sorter can’t read.');
     if (a[k + 1]?.text.startsWith('-')) unsure('ssh takes options after the host too, which the sorter does not read there.');
     const dest = a[k].text, host = dest.replace(/^[^@]*@/, ''), place = sortHost(ctx, host), remote = a.slice(k + 1).map(w => w.text).join(' ');
+    for (const h of [...via, host.replace(/^ssh:\/\/|[:/].*$/g, '')]) sortToHub(h, ctx, r, 'ssh');
     usesReach(host.replace(/^ssh:\/\/|[:/].*$/g, ''), ctx);
     user ??= /^([^@]*)@/.exec(dest)?.[1] ?? null;
     if (user === 'root') ctx.kinds.add('root');
@@ -13123,11 +13150,13 @@ Object.assign(SORT_HANDLERS, {
   },
   scp(a, ctx, r, x, name = 'scp') {
     raise(r, 'change', `${sortQ(name)} copies files.`);
+    if (a.some(w => w.unknown)) sortToHub('', ctx, r, name, true);
     if (a.some(w => /^--(?:del|remove-source)/.test(w.text))) sortGone(ctx, r, `${sortQ(name)} --delete removes files it doesn’t name.`);
     const o = sortOpts(SORT_OPTS[name], a), plain = o.plain, rec = name === 'sftp' || o.has('r', 'a', 'recursive', 'archive');
     if (name === 'sftp') {
       const host = plain.at(-1)?.text.replace(/^[^@]*@/, '').replace(/:.*$/, '') ?? '';
       usesReach(host, ctx);
+      sortToHub(host, ctx, r, name);
       return raise(r, 'risky', sortHost(ctx, host) ? `sftp to ${sortQ(host)} can write any file there, outside every wall and copy: asked.` : `It connects to ${sortQ(host)}, which isn’t one of the Sparks.`);
     }
     plain.forEach((w, i) => {
@@ -13135,6 +13164,7 @@ Object.assign(SORT_HANDLERS, {
       // (a local source is only read, unless it is moved away)
       if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
+      sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
@@ -13155,8 +13185,10 @@ Object.assign(SORT_HANDLERS, {
     }
     if (a.some(w => (name !== 'rsync' && /^-[^-]*[oFJS]/.test(w.text)) || /^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
   },
-  tailscale(a, ctx, r) {
+  tailscale(a, ctx, r, x) {
     const v = a.find(w => !w.text.startsWith('-'))?.text ?? '';
+    // (tailscale ssh is ssh over the tailnet: sorted as ssh, its host too)
+    if (v === 'ssh') return SORT_HANDLERS.ssh(a.slice(a.findIndex(w => w.text === 'ssh') + 1), ctx, r, x);
     if (/^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
     if (v === 'logout') r.lasting = 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
     // (a sign-in as another key: putting back the old state file would bring back the old key over the new one, A13a)
@@ -13471,7 +13503,9 @@ const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_
 function sortAssign(name, ctx, r, prefix, value = null) {
   ctx.sets?.add(name);
   ctx.setTo?.set(name, value);
-  if (DANGER_ENV.test(name)) { sortUnshown(r, `what ${name} names: a program, a start file or a library loaded by itself`); raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`); }
+  // (where Docker connects: a host there that is Spark 2, or one that can't be told, R64)
+  if (/^DOCKER_(?:HOST|CONTEXT)$/i.test(name)) { if (value == null || /CONTEXT/i.test(name)) sortToHub('', ctx, r, name, true); else if (!/^(?:unix|fd|npipe):|^$/.test(value)) sortToHub(usesHost(value) ?? value.replace(/:\d+$/, ''), ctx, r, name); }
+  if (DANGER_ENV.test(name)) { if (!/^(?:DOCKER_\w+|\w*_PROXY|HF_ENDPOINT|TMPDIR|IFS|CDPATH|GLOBIGNORE|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS|DBUS_\w+|SYSTEMD_\w+|SUDO_\w+)$/i.test(name)) sortUnshown(r, `what ${name} names: a program, a start file or a library loaded by itself`); raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`); }
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
 // Each pipeline's first part reads what the command was handed (a group's commands inside a pipe too); the later parts
@@ -13715,6 +13749,7 @@ function sortCommand(command, opts) {
     const o = opts && typeof opts === 'object' ? opts : {};
     text = String(command ?? '');
     for (const [k, v] of Object.entries(o.hosts && typeof o.hosts === 'object' ? o.hosts : {})) ctx.hosts[k] = v === 'compute' ? 'compute' : 'hub';
+    sortHubNames(ctx);
     Object.assign(ctx, { at: o.at ?? 'compute', root: !!o.root, brain: (Array.isArray(o.brain) ? o.brain : []).filter(b => typeof b === 'string' && b.length > 2) });
     // (the owner's home on that Spark: given, or the configured user's; a path is placed against it alone)
     const home = o.home != null ? String(o.home).replace(/\/+$/, '') : typeof CONFIG === 'object' && /^[a-z_][a-z0-9_-]*$/i.test(String(CONFIG?.user)) ? `/home/${CONFIG.user}` : null;
@@ -14502,7 +14537,7 @@ Object.assign(SORT_HANDLERS, {
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
     // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
-    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) usesReach(usesHost(w.text), ctx);
+    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) { usesReach(usesHost(w.text), ctx); if (usesHost(w.text)) sortToHub(usesHost(w.text), ctx, r, `git ${v}`); }
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
@@ -14613,6 +14648,12 @@ Object.assign(SORT_HANDLERS, {
   },
   docker(a, ctx, r, x, name = 'docker') {
     r.simple = false;
+    // (the Docker it talks to: -H or --host names one, a context is a name its own settings point anywhere)
+    for (let k = 0; k < a.length && a[k].text.startsWith('-'); k++) {
+      const t = a[k].text, v = t.includes('=') ? { ...a[k], text: t.slice(t.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] };
+      if (/^(?:-H|--host|-c|--context)(?:=|$)/.test(t)) { if (!t.includes('=')) k++; if (v.unknown || /^(?:-c|--context)/.test(t)) sortToHub('', ctx, r, `${name} ${t.split('=')[0]}`, true); else if (!/^(?:unix|fd|npipe):/.test(v.text)) sortToHub(usesHost(v.text) ?? v.text.replace(/:\d+$/, ''), ctx, r, `${name} ${t.split('=')[0]}`); }
+      else if (/^(?:--config|-l|--log-level|--tlscacert|--tlscert|--tlskey)$/.test(t)) k++;
+    }
     sortOpen(ctx, r, `${sortQ(name)} needs the Docker socket, which the run wall hides (Docker is root by another name): free-form, it is always asked.`);
     const v = a.filter(w => !w.text.startsWith('-')).map(w => w.text);
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
