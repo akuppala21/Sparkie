@@ -3828,12 +3828,17 @@ function chatReadsKeep(conv, ctx) {
 }
 // What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
 // (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
-// dangerReadsLoaded ([{label, at, text, cut}]); answers, Sparkie's own earlier answers in the chat ([{at, text}]),
-// which can quote what was read. Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
+// dangerReadsLoaded ([{label, at, text, cut}]); answers ([{at, text, label?}]): Sparkie's own earlier answers in the
+// chat, which can quote what was read (no label), and everything else in it that isn't the owner's own typing, each
+// with a label of code's (final read C3): an agent's message, Spark Console's notices with what they quote (a pressed
+// command's last line, an operation's failure, a report, an ask again), its carry-on lines and a dangerous ask's text.
+// Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
 function chatEarlier(conv, ctx = {}) {
   const byId = new Map();
   for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
-  const answers = (conv?.messages || []).filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  const answer = m => m.role === 'assistant' && !m.notice && !m.danger, own = m => m.role === 'user' && !m.from && !m.auto;
+  const answers = (conv?.messages || []).filter(m => m.content && !own(m)).map(m => ({ at: m.createdAt, text: String(m.content),
+    ...(answer(m) ? {} : { label: m.from ? `a message from the agent ${dangerPlain(m.from, 60) || 'that started this chat'}` : m.auto ? 'Spark Console’s carry-on line in this chat' : 'Spark Console’s notice in this chat' }) }));
   return { reads: dangerReadsLoaded([...byId.values()]), answers };
 }
 // Results of operations started from a conversation are posted in it when they finish.
@@ -9533,9 +9538,11 @@ function dangerWhole(text, thing) {
   return false;
 }
 // "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
-// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
-// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
-// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of the chat's other messages
+// (answers). A pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never
+// shown; the newest 40 and 64 MB in all), answers [{at, text, label?}]: Sparkie's earlier answers, no label (the newest
+// 20), and the chat's other messages that aren't the owner's own, each with its label (all of them: chatEarlier,
+// 14-chats.mjs). A label is built by code and never quotes its source.
 function cameFrom(things, ownerMessages, reads, answers) {
   const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
   const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
@@ -9548,7 +9555,9 @@ function cameFrom(things, ownerMessages, reads, answers) {
     budget -= text.length;
     searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
   }
-  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const all = [...(answers || [])].sort(newest), labelled = a => typeof a?.label === 'string' && a.label;
+  const said = [...all.filter(a => !labelled(a)).slice(0, DANGER_ANSWERS), ...all.filter(labelled)].sort(newest)
+    .map(a => ({ at: a.at, what: labelled(a) ? dangerPlain(a.label, 120) || 'an earlier message in this chat' : 'Sparkie’s earlier answer', lower: String(a.text ?? '').toLowerCase() }));
   const lines = [], labels = [], list = [...(things || [])];
   // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
   if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
@@ -9564,7 +9573,7 @@ function cameFrom(things, ownerMessages, reads, answers) {
     if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
     const a = r === null ? null : seek(said, t);
     if (a === null) { cut = true; break; }
-    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+    if (a) { lines.push(`${thing}: ${a.what} (${dangerHhmm(a.at)})`); labels.push(a.what); }
   }
   return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
 }
