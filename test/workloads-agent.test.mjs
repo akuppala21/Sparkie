@@ -1,7 +1,9 @@
 // Covers: An agent's run of a saved workflow is the agent's in each of its steps (R57; the workloads review's B1): a
 // saved step that runs a job again, or powers a Spark off, is asked in the agent's run exactly as the agent's own call
 // is, and runs nothing; the owner's own run of the same workflow runs it. The clean-up after an agent's run that ended
-// badly still stops what the run started, as the run (no question it can't get answered).
+// badly still stops what the run started, as the run (no question it can't get answered). Removing the agent while its
+// run goes (R9, R1-02): the rest of the run goes on as it began and the removed key starts nothing new; a later step an
+// agent is asked for is still asked, and the clean-up stops only what the run started, never what ran before it.
 //
 // The stand-in fleet as in power-wake.test.mjs: plugs on Sparks 3 (node 2) and 4 (node 3), the stand-in sudo shuts a
 // Spark down. On Spark 4 a job runs its command to its end (~/.mock/jobs-run). The owner makes the job (wl-again, which
@@ -10,7 +12,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, waitFor, SLOW } from './lib.mjs';
 import { startPlugs } from './mock/plugs.mjs';
@@ -115,5 +117,61 @@ describe('an agent\'s run of a saved workflow is the agent\'s in its steps', { c
     const owners = await ownerRun('agent lights out');
     assert.equal(owners.status, 'completed', `${owners.error}\n${owners.log.join('\n')}`);
     assert.ok(offline().includes('spark3'), 'the owner’s run powered it off');
+  });
+});
+
+// R9 (R1-02): removing the agent cancels nothing already running, the rest of a saved workflow it started included; the
+// run goes on with the authority it began with (still the agent's: a step an agent is asked for is still asked), and
+// its clean-up never stops what ran before the run began. Every docker start on Spark 4 takes 4 s here, so the key is
+// removed while step 1's operation runs.
+describe('removing the agent while its saved workflow runs', { concurrency: 1 }, () => {
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', slowFile = () => join(T.fleet.root, 'spark4', '.mock', 'slow-start');
+  const noSlow = () => rmSync(slowFile(), { force: true });
+  const app = async name => {
+    const r = await act('keep_running', { spark: 'spark4', container: name, image: 'nginx:1.27', port: `${await freePort()}:80` });
+    assert.equal((await opEnd(r.json.operation, `${name} made`)).status, 'completed');
+    const s = await act('keep_running', { spark: 'spark4', container: name, do: 'stop' });
+    assert.equal((await opEnd(s.json.operation, `${name} stopped`)).status, 'completed');
+  };
+  // The agent's run, with its key removed once step 1 is under way (its key was read for run_workflow and step 1).
+  async function removedDuring(title, steps, atStep) {
+    const k = await createActKey(`saved-${title.replace(/\W+/g, '-')}`);
+    const s = await call(k.token, 'save_workflow', { title, steps });
+    assert.equal(s.isError, false, s.text);
+    const r = await call(k.token, 'run_workflow', { name: title });
+    assert.equal(r.isError, false, r.text);
+    const id = r.value.operation;
+    await waitFor(async () => (await api(`/jobs/${id}`)).json?.log?.some(l => String(l).includes(`Step ${atStep} of ${steps.length}`)), { timeout: 60000 * SLOW, every: 100, what: `step ${atStep} of ${title} begun` });
+    assert.equal((await api(`/jobs/${id}`)).json.status, 'running', `${title} still running when its agent is removed`);
+    const del = await api(`/agents/${k.id}`, { method: 'DELETE' });
+    assert.equal(del.status, 200, del.text);
+    const again = await call(k.token, 'run_workflow', { name: title });
+    assert.equal(again.status, 403, `the removed key starts nothing new: ${again.raw}`);
+    assert.match(again.raw, /A removed agent’s key stops working\./);
+    return opEnd(id, `the agent’s run of ${title}`);
+  }
+  before(async () => {
+    await app('wl-two');
+    await app('wl-three');
+    writeFileSync(slowFile(), '4');
+  }, { timeout: 180000 * SLOW });
+  after(() => noSlow());
+
+  test('the rest of the run goes on as it began, and nothing is stopped', { timeout: 300000 * SLOW }, async () => {
+    const run = await removedDuring('agent two apps', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-web' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-two' } }], 1);
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.ok(run.log.some(l => /Step 2 done/.test(l)), run.log.join('\n'));
+    assert.deepEqual([stateOf('wl-web'), stateOf('wl-two')], ['running', 'running']);
+  });
+
+  test('a later step an agent is asked for is still asked; the clean-up stops only what this run started, never a model or app that ran before it', { timeout: 300000 * SLOW }, async () => {
+    assert.deepEqual([stateOf(RADIX), stateOf('wl-web'), stateOf('wl-three')], ['running', 'running', 'exited']);
+    const run = await removedDuring('agent before and after', [{ action: 'restart_model', args: { spark: 'spark4', container: RADIX } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-web' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-three' } }, AGAIN], 3);
+    assert.equal(run.status, 'failed', run.log.join('\n'));
+    assert.match(run.error, /^Step 4 \(keep_running\) needs an answer first: Run wl-again on Spark 4 again\? Running a job again is the owner’s call\..* Stopped what this run had started: wl-three on Spark 4\./);
+    assert.doesNotMatch(run.error, /This agent was removed|wl-web on Spark 4|sc-RadixArk/, 'only what this run started is stopped');
+    assert.deepEqual([stateOf(RADIX), stateOf('wl-web'), stateOf('wl-three'), runs()], ['running', 'running', 'exited', 2]);
+    noSlow();
   });
 });
