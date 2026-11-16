@@ -287,11 +287,17 @@ function checkShape(tree, out) {
   }
 }
 
-// Every action's group, read from its own line (name: 'x', title: …, group: 'g'), against GROUP_WORDS' names. A tree
-// whose parts have no GROUP_WORDS has no groups to check.
+// Every action's group, read from its own line (name: 'x', title: …, group: 'g'), against GROUP_WORDS' names. Parts
+// with actions and no GROUP_WORDS are a problem of their own: the check reads that name by its text, and without it
+// it would stop checking in silence. Parts with no action have no groups to check.
+const ACTION_LINE = /^[ \t]*name: '([a-z_]+)', title: '[^']+', kind: '(?:read|change)'/m;
 function checkGroups(tree, out) {
   const table = Object.entries(tree.parts).find(([, t]) => /^const GROUP_WORDS = \[/m.test(t));
-  if (!table) return;
+  if (!table) {
+    const first = Object.entries(tree.parts).map(([part, text]) => [part, text, ACTION_LINE.exec(text)]).find(x => x[2]);
+    if (first) out.push({ check: 'groups', file: `service/src/${first[0]}`, line: lineAt(first[1], first[2].index), message: `has actions, but no part has GROUP_WORDS (const GROUP_WORDS = [ … ]), which tools/check-docs.mjs reads by its name to check each action’s group (R46): point the check at the name the service uses now, or put it back` });
+    return;
+  }
   const [home, homeText] = table, at = homeText.search(/^const GROUP_WORDS = \[/m), rest = homeText.slice(at);
   const names = [...rest.slice(0, rest.search(/^\];/m)).matchAll(/^\s*\['([a-z]+)',/gm)].map(m => m[1]);
   const choices = `core or one of ${names.join(', ')} (GROUP_WORDS in service/src/${home})`;

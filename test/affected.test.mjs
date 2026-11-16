@@ -1,14 +1,16 @@
 // Covers: Affected tests only (tools/affected.mjs, design C 2.4 and section 4 step 6): a made-up map and real git diffs
 // in a made-up repository give the right test files; every path on the "always" list, and a missing map, answer all; a
 // documents-only change picks the documents test alone; a changed test file is always picked. And the map itself, from
-// real coverage of two small test files run the way test/lock.mjs runs them. No fleet: git, node and temporary folders.
+// real coverage of two small test files run the way test/lock.mjs runs them. Each part the "always" lists name by its
+// file name is in service/src/, and one that isn't is said (checkAffected, which tools/make.mjs runs). No fleet: git,
+// node and temporary folders.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pick, buildMap, findMaps, noteMissed, failedIn, ALWAYS_PARTS, LANDING_ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
+import { pick, buildMap, findMaps, noteMissed, failedIn, checkAffected, ALWAYS_PARTS, LANDING_ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
 import { EACH_FILE } from './lock.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@test' };
@@ -268,4 +270,20 @@ describe('build', () => {
       });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+});
+
+// The "always" lists name parts by their file name: one renamed would drop off them in silence, so a change to it would
+// stop running everything. checkAffected says so, and tools/make.mjs fails with it.
+test('each part the always lists name is in service/src/; one that isn’t is said, with the list it is on', () => {
+  const root = mkdtempSync(join(tmpdir(), 'affected-names-'));
+  try {
+    mkdirSync(join(root, 'service', 'src'), { recursive: true });
+    const gone = '14-rounds.mjs', landingGone = '22-sessions.mjs';
+    for (const p of new Set([...ALWAYS_PARTS, ...LANDING_ALWAYS_PARTS])) if (p !== gone && p !== landingGone) writeFileSync(join(root, 'service', 'src', p), '\n');
+    writeFileSync(join(root, 'service', 'src', '14-turns.mjs'), '\n');
+    assert.deepEqual(checkAffected(root).map(p => [p.check, p.file, p.message.split(':')[0]]), [
+      ['affected', 'tools/affected.mjs', `names ${gone} (ALWAYS_PARTS), which service/src/ doesn’t have`],
+      ['affected', 'tools/affected.mjs', `names ${landingGone} (ALWAYS_PARTS, LANDING_ALWAYS_PARTS), which service/src/ doesn’t have`]]);
+    assert.deepEqual(checkAffected(), [], 'this tree');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

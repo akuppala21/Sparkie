@@ -1,16 +1,16 @@
 // Covers: The documents match the code (`tools/check-docs.mjs`): on this tree, and on a made-up tree with one fault at
 // a time (an id, a path, a name, an action, a line pointer, a typed count, a size, a heading, the task table, a stale
-// rules index); dated records are never checked, nor the lock's path. `--sizes`: every document's bytes, limit and
-// free bytes, the fullest first. `node tools/make.mjs --check` passes and changes
-// nothing. The parts' headers (`tools/parts.mjs`): every part has one and it matches its code, `docs/registry.md` is
-// current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
-// header cut short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
+// rules index, actions with no GROUP_WORDS); dated records are never checked, nor the lock's path. `--sizes`: every
+// document's bytes, limit and free bytes, the fullest first. `node tools/make.mjs --check` passes and changes nothing.
+// The parts' headers (`tools/parts.mjs`): every part has one and it matches its code, `docs/registry.md` is current,
+// and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a header cut
+// short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
 // declared-but-absent writer, a state file nobody owns, a helper writing a file it is given, an undeclared repeating
 // timer, an unlisted event or job type, a part outside its band, brackets it can't read, a table or function the tool
-// reads by its name that the service no longer has); the registry's Text column is what each lookup says itself
-// (`inside`: always, for some arguments, or nothing, so outside text). Each test file's “Covers:”
-// comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't have, a stale
-// table. `docs/status.md` (`tools/status.mjs`): a row per rule and contract requirement; built, partly from tests that
+// reads by its name that the service no longer has, an action not written as the tools read it); the registry's Text
+// column is what each lookup says itself (`inside`: always, for some arguments, or nothing, so outside text). Each test
+// file's “Covers:” comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't
+// have, a stale table. `docs/status.md` (`tools/status.mjs`): a row per rule and contract requirement; built, partly from tests that
 // hold part of an acceptance test (`// T2 (part): …`), and a part mark that says no part fails. The meaning diff
 // (`tools/meaning.mjs`): between two made-up trees, by id, exactly the contract requirements, acceptance tests, section
 // words, Rule paragraphs and glossary meanings whose words changed, and rule files added or removed; never a re-wrap, a
@@ -49,7 +49,7 @@ test('node tools/make.mjs --check passes here and changes nothing', () => {
 const RULE = n => `# R${n}\n\n## Rule\n\n**R${n}.** Every change goes through \`runAction\`. Today: one page route skips it.\n\n## Why\n\nOne way in.\n\n## Today\n\nMarked “Today:” in the Rule text above.\n\n## Where\n\n- \`16-actions.mjs\` (\`runAction\`)\n\n## Checked by\n\n- test: \`change.test.mjs\` (“a choice is used once”)\n`;
 const CARD = `# Add an action\n\n## Touch\n\n- \`action\` in \`16-actions.mjs\`.\n\n## Also update\n\n- \`TOOLS\` in \`test/lib.mjs\`.\n\n## Never\n\n- A second route.\n\n## Rules\n\n- R1.\n\n## Tests\n\n- \`change.test.mjs\`.\n\n## Copy from\n\n- \`fleet_status\` in \`16-actions.mjs\`.\n`;
 const BASE = {
-  'service/src/16-actions.mjs': `function action(a) {}\nasync function runAction(name) {}\naction({\n  name: 'fleet_status', title: 'Fleet status', kind: 'read',\n});\n// R1, contract 8.3, T1\n`,
+  'service/src/16-actions.mjs': `function action(a) {}\nasync function runAction(name) {}\nconst GROUP_WORDS = [\n];\naction({\n  name: 'fleet_status', title: 'Fleet status', kind: 'read', group: 'core',\n});\n// R1, contract 8.3, T1\n`,
   'service/src/17-changes.mjs': 'async function startModel(args) {}\n',
   'test/change.test.mjs': "// T1: a start\ntest('a choice is used once, alone, and only by whoever was asked', () => {});\n",
   'test/lib.mjs': "export const TOOLS = ['fleet_status'];\n",
@@ -210,6 +210,12 @@ describe('tool groups (R46)', () => {
     /^the action operation_log has no group: add group: '…' at the end of its line \(name: 'operation_log', title: …\), with core or one of dig, find \(GROUP_WORDS in service\/src\/16-actions\.mjs\)$/));
   test('a group GROUP_WORDS doesn’t have', () => fails(grouped([['fleet_status', 'core'], ['operation_log', 'digging']]), 'groups', /operation_log has the group digging, which isn’t one/));
   test('a group over six', () => fails(grouped([['fleet_status', 'core'], ...many(7, 'dig')]), 'groups', /^the group dig has 7 actions .*at most 6/));
+  // (the check reads GROUP_WORDS by its name: parts with actions and without it are said, never skipped in silence)
+  test('actions, and no GROUP_WORDS: said, at the first action', () => {
+    const bare = { 'service/src/16-actions.mjs': grouped([['fleet_status', 'core'], ['operation_log', 'dig']])['service/src/16-actions.mjs'].replace(WORDS, '') };
+    fails(bare, 'groups', /^has actions, but no part has GROUP_WORDS .*tools\/check-docs\.mjs reads by its name/);
+    assert.deepEqual(problemsWith(bare).map(x => [x.file, x.line]), [['service/src/16-actions.mjs', 4]]);
+  });
   test('a core over twelve', () => fails(grouped([['fleet_status', 'core'], ...many(12, 'core')]), 'groups', /^the core has 13 actions .*at most 12/));
 });
 
@@ -348,6 +354,7 @@ describe('headers', () => {
   test('an operation type R13 doesn’t name', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function powerOff() { return newJob('power-off', {}); }\n` }, /“power-off” \(powerOff in 17-changes\.mjs\).*R13/));
   test('a part outside its band', () => partsFail(part('07-jobs.mjs', HEAD('jobs', { area: 'core' }), PARTS['service/src/07-jobs.mjs'].split('\n').slice(4).join('\n')), /numbered 07, but its Area, core, is the band 16–19/));
   test('an area that isn’t one', () => partsFail(part('17-changes.mjs', HEAD('changes', { area: 'workloads' }), BASE['service/src/17-changes.mjs']), /an area is one of/));
+  test('an action not written as the tools read it (name, title, kind on one line, in that order)', () => partsFail({ 'service/src/16-actions.mjs': `${PARTS['service/src/16-actions.mjs']}action({\n  title: 'Jobs', name: 'jobs_list', kind: 'read',\n});\n` }, /defines the action jobs_list, but not on one line as name: 'jobs_list', title: '…', kind: 'read' or 'change'/));
   test('a ground part with an action', () => partsFail({ 'service/src/07-jobs.mjs': `${PARTS['service/src/07-jobs.mjs']}action({\n  name: 'jobs_list', title: 'Jobs', kind: 'read',\n});\n` }, /ground part .* defines jobs_list/));
   // (the registry once read its Text column from a table the service no longer had, and called every lookup outside
   // text without a word: each name the tool reads by its text is checked to be there)
