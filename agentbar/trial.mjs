@@ -344,7 +344,9 @@ async function runOne(task, n) {
 }
 
 // --- every run: each task once per round, so a slow hour of the brain falls on all of them ---
+// (the stand-in console that marked what the brain reads left its own handlers, which exit at once: they go first)
 for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.removeAllListeners(sig);
   process.on(sig, () => { const had = [...LIVE]; endBoxes(); console.error(`\nStopped (${sig})${had.length ? `: the box ${had.join(', ')} was removed` : ''}. No record was kept.`); process.exit(code); });
 }
 const results = TASK_IDS.map(id => ({ id, runs: [] })), STARTED = new Date().toISOString();
