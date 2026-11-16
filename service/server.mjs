@@ -18340,7 +18340,7 @@ async function doorUpgrade(req, socket, head) {
   }
 }
 /* ───────── the lock-out net: its calls to the root helper (the console's half is 21-net.mjs) ───────── */
-// Area: features        Rules: R60, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
+// Area: features        Rules: R60, R71, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes
@@ -18541,7 +18541,7 @@ action({
   },
 });
 /* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
-// Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
+// Area: features        Rules: R1, R60, R71, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
@@ -19185,11 +19185,11 @@ function longCutOff(r, conv) {
   return true;
 }
 /* ───────── the lock-out net, the console's half: asked, armed first, checked from outside, kept or put back (A13b) ───────── */
-// Area: features        Rules: R60, R54, R61, R13, R43        Tests: net.test.mjs
+// Area: features        Rules: R71, R60, R54, R61, R13, R43        Tests: net.test.mjs
 // Owns: net.json (writers: netSave)
 // Timers: none        Wakes: none
 // A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the
-// helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8), and only as root (21-root.mjs,
+// helper's own line) on a compute Spark runs only inside the net (R60, R71; design A 2.8), and only as root (21-root.mjs,
 // R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange:
 // set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when,
 // why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as
@@ -20719,7 +20719,7 @@ function wallWhNow(id) {
 }
 const power = Object.freeze({ state: sparkPowerState, wake: wakeSpark, wallW: wallWattsNow, wallWh: wallWhNow });
 /* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
-// Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
+// Area: features        Rules: R70, R60, R71, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark

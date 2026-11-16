@@ -1050,7 +1050,7 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 
 The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; it disarms only on the console's word (`keep`, after the check from outside), and otherwise what differs goes back when the timer fires, or at once with `putback`. Only the console's half calls these (21-net.mjs, A13b): guardScript builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came …
 
-- **Area:** features. **Rules:** R60, R42, R70. **Tests:** root-helper.test.mjs, root.test.mjs
+- **Area:** features. **Rules:** R60, R71, R42, R70. **Tests:** root-helper.test.mjs, root.test.mjs
 - **Lines:** 76
 - **Owns:** none
 - **Timers:** none
@@ -1077,7 +1077,7 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 
 Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or changes the …
 
-- **Area:** features. **Rules:** R1, R60, R61. **Tests:** hub-change.test.mjs
+- **Area:** features. **Rules:** R1, R60, R71, R61. **Tests:** hub-change.test.mjs
 - **Lines:** 210
 - **Owns:** none
 - **Timers:** none
@@ -1114,9 +1114,9 @@ run with minutes (design A 2.10, step 6) runs one command as an operation of typ
 
 ### `21-net.mjs`: the lock-out net, the console's half: asked, armed first, checked from outside, kept or put back (A13b)
 
-A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8), and only as root (21-root.mjs, R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange: set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a …
+A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the helper's own line) on a compute Spark runs only inside the net (R60, R71; design A 2.8), and only as root (21-root.mjs, R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange: set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another …
 
-- **Area:** features. **Rules:** R60, R54, R61, R13, R43. **Tests:** net.test.mjs
+- **Area:** features. **Rules:** R71, R60, R54, R61, R13, R43. **Tests:** net.test.mjs
 - **Lines:** 429
 - **Owns:** net.json (writers: netSave)
 - **Timers:** none
@@ -1156,7 +1156,7 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 
 run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark holding the brain, never with a key, minutes, fleet or gpu, never while changes are paused. It is never run at once, whatever the owner's words, and never covered by a go-ahead or the standing list: it is always the dangerous ask (20-danger.mjs, R54), "ROOT on Spark 3" (and "CAN LOCK YOU OUT" for the lock-out class), and only that ask's press runs it, through the net's seam (netGuarded, 21-net.mjs) and the root helper's `root --net` (--lockout for the lock-out class), armed in …
 
-- **Area:** features. **Rules:** R70, R60, R54. **Tests:** root.test.mjs
+- **Area:** features. **Rules:** R70, R60, R71, R54. **Tests:** root.test.mjs
 - **Lines:** 61
 - **Owns:** none
 - **Timers:** none

@@ -1,5 +1,5 @@
 /* ───────── the lock-out net: its calls to the root helper (the console's half is 21-net.mjs) ───────── */
-// Area: features        Rules: R60, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
+// Area: features        Rules: R60, R71, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes

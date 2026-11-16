@@ -1,5 +1,5 @@
 /* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
-// Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
+// Area: features        Rules: R70, R60, R71, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark

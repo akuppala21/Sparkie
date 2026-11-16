@@ -122,7 +122,7 @@ test('a root command in the lock-out class from an agent is refused, never asked
   assert.ok(ag.text.includes('Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from an agent.'), ag.text);
 });
 
-test('a root command in the lock-out class after the owner’s question, or after a change to something else, is refused, never asked, and the refusal says how to ask (the owner’s words, R60)', { timeout: 120000 * SLOW }, async () => {
+test('a root command in the lock-out class after the owner’s question, or after a change to something else, is refused, never asked, and the refusal says how to ask (the owner’s words, R71)', { timeout: 120000 * SLOW }, async () => {
   const keyAdd = "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAsked asked@net' >> .ssh/authorized_keys";
   for (const words of ['why is ssh open on spark 3 as root', 'as root on spark 3, fix the build']) {
     const chat = await newChat(), a = await ask(chat, words, keyAdd);

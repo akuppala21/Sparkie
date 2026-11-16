@@ -1,5 +1,5 @@
 /* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
-// Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
+// Area: features        Rules: R1, R60, R71, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder

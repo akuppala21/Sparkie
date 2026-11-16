@@ -49,7 +49,7 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
    one sentence followed from chat to a running model, one command followed to a Spark, and the known traps.
 3. **`docs/rules.md`.** One line per rule, R1 to R70 (there is no R44). Each rule's file in `docs/rules/` says why,
    where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
-   R55 and R60 to R70.
+   R55 and R60 to R71.
 4. **`docs/how/`.** One card per kind of work. For this review: `docs/how/call-the-root-helper.md`,
    `docs/how/raise-a-dangerous-ask.md`, `docs/how/find-why-a-change-was-refused.md`,
    `docs/how/run-the-brain-eval.md`, `docs/how/land-a-step.md`.
@@ -137,7 +137,7 @@ change nothing (the run wall keeps `~/.ssh` and the shell's start files read-onl
 only on the owner's own words with nothing read since; otherwise refused, not asked. Always the dangerous ask. The
 press copies the ways in, arms a timer in that Spark's own systemd, runs the change, then tries the ways in from
 outside: all still work, kept; one doesn't, put back at once; no answer, the timer puts it back. `/putback` puts
-the newest open one back by code. Rules R60, R70, R3. Parts `21-net.mjs`, `21-root.mjs`, `21-guard.mjs`. Tests
+the newest open one back by code. Rules R60, R71, R70, R3. Parts `21-net.mjs`, `21-root.mjs`, `21-guard.mjs`. Tests
 `net.test.mjs`, `root.test.mjs`, `root-helper.test.mjs`.
 
 **Change Spark 2.** Every change there is asked, one command a press, inside the net, with the console's own ways in
@@ -259,7 +259,7 @@ input; adding a Spark from chat (it waits for Spark 1); a brain across Sparks (i
 for Sparkie's own proposals; removing a kept key from chat.
 
 **A judgement that stays.** Whether the owner's words ask for a lock-out change is decided by word lists
-(`netAsks`, R60; section 9, item 4). A true ask they miss is refused, and the refusal says how to ask. A sentence that
+(`netAsks`, R71; section 9, item 4). A true ask they miss is refused, and the refusal says how to ask. A sentence that
 only looks like an ask gets the dangerous ask. Neither runs anything without the owner's press.
 
 **Existing tests changed.** Where behaviour changed on purpose, the tests that held the old behaviour changed with
@@ -459,11 +459,11 @@ R63; `test/root-helper.test.mjs`.
   says everything is back.
 
 **4. The lock-out net and its put-back.** `net_arm`, `net_after`, `restore_sh`, `guard_py`, `boot_unit`, `do_keep`
-and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60; `test/net.test.mjs`;
+and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60, R71; `test/net.test.mjs`;
 `docs/history/later-2026-11-15.md`.
 - A change that passes the check right after it and locks the owner out later: a unit disabled, a network file not
   applied until a restart. Live firewall rules are said, not put back.
-- "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R60). One sentence of the
+- "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R71). One sentence of the
   owner's, in this message or the one before, must do three things. It names the Spark. Right after a change verb it
   names a way in: SSH, a key, Tailscale, the firewall or a port, the network, a user, account, password, sudo or
   group, the shell's start files, signing in or access. And it is an instruction: no "don't"; not a question unless
@@ -534,7 +534,7 @@ beside it. It was left as written. The rules are the record of what was built.
 | Milestone | Became | Not built, or held back |
 |---|---|---|
 | 1 Ground | R29, R46, R47; `21-selftest.mjs`, `21-guide.mjs`, `21-brain-eval.mjs`; the tools in section 3 | |
-| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
+| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, R71, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
 | 3 Memory | R45, R48, R59; `20-memory.mjs` and the four parts beside it, `20-recall.mjs`, `20-digest.mjs`, `20-lessons.mjs` | |
 | 4 No laptop, lighter hub | R58, R49, R37; `21-updates.mjs`, `20-beat.mjs`, `20-state-copy.mjs`, `22-putback.mjs` | Clearing Spark 2 is a script the owner runs (`deploy/clear-spark2.sh`) |
 | 5 On its own, any brain | R50, R52, R66, R62, R67, R69; `14-tasks.mjs`, `21-brain-rail.mjs`, `21-box.mjs`, `21-selfchange.mjs` | Self-change is off; the coding trial waits for the owner |

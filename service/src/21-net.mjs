@@ -1,9 +1,9 @@
 /* ───────── the lock-out net, the console's half: asked, armed first, checked from outside, kept or put back (A13b) ───────── */
-// Area: features        Rules: R60, R54, R61, R13, R43        Tests: net.test.mjs
+// Area: features        Rules: R71, R60, R54, R61, R13, R43        Tests: net.test.mjs
 // Owns: net.json (writers: netSave)
 // Timers: none        Wakes: none
 // A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the
-// helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8), and only as root (21-root.mjs,
+// helper's own line) on a compute Spark runs only inside the net (R60, R71; design A 2.8), and only as root (21-root.mjs,
 // R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange:
 // set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when,
 // why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as
