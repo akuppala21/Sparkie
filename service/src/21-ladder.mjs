@@ -47,8 +47,9 @@ function workWrote(ctx, sorted) {
 // one), would not fail inside the run wall (runnerOutside) and needs neither another Spark nor the GPU (runnerWiden).
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
-// fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false) {
+// fails is the reason the button gives. file: write_file's (its path's words name no Spark, A7d). ahead: a go-ahead of
+// this task covers it (21-ahead.mjs), which stands in for 2 and 3 only.
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false, ahead = false) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
@@ -70,6 +71,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (!listeners?.ok) return `whether something listens on every address on ${sparkName(node)} couldn’t be told`;
   const own = workOwnPorts(node), wideOpen = listeners.wide.filter(x => !own.has(x.port));
   if (wideOpen.length) return `${wideOpen.slice(0, 3).map(x => `port ${x.port}${x.prog ? ` (${x.prog})` : ''}`).join(', ')} ${wideOpen.length === 1 ? 'listens' : 'listen'} on every address on ${sparkName(node)}, which a change could reach`;
+  if (ahead) return null;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
@@ -211,13 +213,18 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
       ...(ctx.long ? { minutes: ctx.long.minutes } : {}), ...(keys.length ? { keys } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  // (and, when it may be, "Run it, and don't ask again for this task: …", 21-ahead.mjs: its button shares the call, so it
+  // keeps the ask's record too)
+  // (never for a write_file, nor for a command given a key: those are always asked)
+  const offer = dangerous.length || spec || keys.length ? null : aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen);
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
       ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
+      [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), { label: 'No', call: null }], 'proposal',
       { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
@@ -261,7 +268,11 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     }
     return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node), Boolean(spec)) || spec?.ask || null;
+  const listeners = await workListeners(node);
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
+  // (asked only for the request's own rules, and a go-ahead of this task covers it: it runs, its record says so. Never a
+  // write_file, nor a command given a key, which is always asked)
+  if (why && !spec && !keys.length && aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) && !hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, false, true)) [why, gate] = [null, 'go-ahead'];
   // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
   if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (a command given a key is always asked, R51: the button names each key and each new place)
@@ -269,7 +280,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
+  if (!why) return runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {

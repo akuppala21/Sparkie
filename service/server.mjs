@@ -3672,6 +3672,9 @@ async function runChoice(viewer, conv, id, by) {
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
       content = outcomeText(c.label, out);
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
+      // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
+      const given = c.ahead && !['question', 'needs-ok'].includes(out?.outcome) ? aheadGive(conv, c.ahead, by) : null;
+      if (given) content = `${content}\n${given}`;
     } catch (e) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
@@ -3836,6 +3839,8 @@ const TURN_STOPPED = 'Stopped at your word.';
 // their results. True when there was something to stop.
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
+  // (and its go-ahead, 21-ahead.mjs)
+  aheadEnd(conv);
   conv.task = null;
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
@@ -3972,6 +3977,7 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
   // (written at once: a restart before this reply ends must not bring the last request back)
   if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
+  if (!task && !agent) aheadNewRequest(conv);
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -4022,7 +4028,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
-  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, [AHEAD_SINCE]: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (what it read and wrote goes on with it, A7c)
   if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
@@ -4056,6 +4062,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
 function endTask(conv, tell = true) {
   const task = conv?.task;
+  // (its go-ahead too, with or without a task to end: 21-ahead.mjs)
+  aheadEnd(conv);
   if (!task) return false;
   task.ended = true;
   conv.task = null;
@@ -6252,7 +6260,9 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
     pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
-      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}),
+      // (a go-ahead's answer keeps what its press gives, built by code: 21-ahead.mjs)
+      ...(c.ahead ? { ahead: c.ahead } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
@@ -13235,7 +13245,8 @@ function sortSedSafe(s) {
 // home: the owner's home there. written: what the task's earlier commands wrote (as placed lists it), counted as written here.
 // The result: class; why (the sorter's own words; a piece of the command in it is one quoted line, cut short); kinds
 // (design A 2.14's dangerous asks: root, lockout, delete, brain); form (run's exact form); simple (one program, no
-// chaining, redirection, wrapper or name set before it: only that may have an "always" kind); open (it needs what the
+// chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
+// command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
@@ -13411,6 +13422,8 @@ function sortProgram(words, ctx, r, x) {
       name = base;
     }
     if (/^(?:mkfs|fsck)\.\w+$/.test(name)) name = name.split('.')[0];
+    // (the first program it resolves: a simple command's tool, for a go-ahead's kind, 21-ahead.mjs)
+    ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     sortInstall(name, args, ctx, via);
     if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
@@ -13554,7 +13567,7 @@ function sortCommand(command, opts) {
   const why = r.why.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 400), changes = [...ctx.changes].filter(([p]) => plain(p));
   let uses = { reads: [], installs: [], reach: [] };
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
-  return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
+  return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses };
 }
 /* ───────── when the state's copy goes: only while another Spark is awake anyway ───────── */
@@ -14128,6 +14141,8 @@ function tgAsksVoid(everywhere) {
 // pairing wrote approve: true; its code came only from the passkey page).
 function tgNewPairing() {
   tgAsksVoid(true);
+  // (every chat's go-ahead goes with the old pairing, 21-ahead.mjs)
+  aheadEndAll();
   tgApproveOff = false;
 }
 // /lock in the paired chat: approvals from Telegram off at once, and every ask's Telegram side void. Only the page turns
@@ -14756,6 +14771,165 @@ async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' });
   res.write(`data: ${JSON.stringify({ type: 'started' })}\n\n`);
   res.end(`data: ${JSON.stringify({ type: 'done', message })}\n\n`);
+}
+/* ───────── the go-ahead: yes to one command, or one kind, for the rest of a task (A9a) ───────── */
+// Area: features        Rules: R65        Tests: ahead.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and don't ask again for this task: …".
+// For the rest of that request (the turns that carry it on), a command of that kind then runs without a button: the
+// kind is a plain change's tool (the program the sorter resolved, 20-sort.mjs), its place (the folder its places are
+// under) and the Spark, all built here by code from the sorter's answer, never from words the brain or a page gave. A
+// command with no kind (not one simple program, or working at the top of the home or outside it) gets "this same
+// command" instead.
+// One list a chat, in memory, for the request it was given in: gone when that request ends (a No, the way in it came
+// by gone, the owner's next request), at /stop, at a new pairing, and at a restart. A press in the paired Telegram chat
+// may give it too. It stands in only for the request's own rules (2 and 3 of design A 2.5: the owner's words asked for
+// a change and named the Spark, and nothing was read since): the sorter, the wall, the pause, the rail (R52), the
+// copies and the journal all still apply, and the run's record says gate "go-ahead". Never ahead (aheadWhyNot), and so
+// never offered: an agent's change; Spark 2 or a Spark holding the brain; root; a key read or sent; a script (its hash
+// is for one press); what an earlier command of the task fetched or wrote; what came from what Sparkie read (R54's
+// "came from"); a dangerous ask's kinds; anything the sorter calls risky, lock-out, open or not done; a protected
+// folder; a change that runs with --home or --open after its yes; an install (the sorter's installs); the GPU; a reach
+// beyond the Spark itself (another Spark, the home network, the internet).
+const AHEAD_MAX = 20;
+// Each chat's go-ahead: {at (its request's time), epoch, entries}; the request whose go-ahead ended there (/stop, its
+// end), so a later press of that request's button gives none; a new pairing's count.
+const aheadLists = new Map(), aheadDone = new Map();
+let aheadEpoch = 0;
+
+// The request a chat is on: the time its task began with (kept on the task under a symbol when keepTask makes it: never
+// written to chats.json, so a task read back after a restart has none; its own start moves when it waits at a button
+// or carries on), else the owner's last message of their own (a carry-on's is not one).
+const AHEAD_SINCE = Symbol('the request a task began with');
+function aheadMark(conv) {
+  if (conv?.task && !conv.task.ended) return String(conv.task[AHEAD_SINCE] || '');
+  const m = (conv?.messages || []).findLast(x => x.role === 'user' && !x.auto && !x.from);
+  return m ? String(m.createdAt || '') : '';
+}
+// What a command is, for a kind, from the sorter's answer alone: a plain change's tool (its one program) and the
+// folders it works in (each place's folder, a wide place itself; none placed, where it starts).
+function aheadFacts(sorted, command, dir) {
+  if (sorted?.class !== 'change' || !sorted.simple || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/.test(String(sorted.program || ''))) return null;
+  const places = [...(sorted.placed || []).map(p => String(p).replace(/\/[^/]*$/, '')), ...(sorted.wide || [])];
+  const folders = places.length ? places : [String(dir)];
+  if (folders.some(p => !/^~(?:\/[A-Za-z0-9._@+-]+)+$/.test(p) || /(?:^|\/)\.\.?(?:\/|$)/.test(p))) return null;
+  return { program: sorted.program, folders: [...new Set(folders)] };
+}
+// The kind, or null: the deepest folder all of them are under, never the home itself.
+function aheadKind(sorted, command, dir) {
+  const f = aheadFacts(sorted, command, dir);
+  if (!f) return null;
+  const parts = f.folders.map(p => p.split('/')), common = [];
+  for (let i = 0; i < parts[0].length && parts.every(x => x[i] === parts[0][i]); i++) common.push(parts[0][i]);
+  return common.length >= 2 ? { program: f.program, under: common.join('/') } : null;
+}
+const aheadIn = (p, under) => p === under || p.startsWith(`${under}/`);
+// Whether a command falls in an entry: that same command where it started, or one of its kind with every folder under its folder.
+function aheadFits(e, sorted, command, dir) {
+  if (e.command != null) return e.command === command && e.dir === dir;
+  const f = aheadFacts(sorted, command, dir);
+  return Boolean(f && f.program === e.program && f.folders.every(p => aheadIn(p, e.under)));
+}
+// The answer's words, built here: the kind, or "this same command".
+const aheadWords = (e, at) => (e.command != null ? 'this same command' : `“${e.program}” in ${e.under} on ${at}`);
+// What an earlier command of the task wrote or fetched (its places, ctx.written): a place inside one, or a wide place
+// over one, is that.
+const aheadWritten = (sorted, written) => (Array.isArray(written) ? written : []).some(w => typeof w === 'string'
+  && ((sorted?.placed || []).some(p => aheadIn(p, w.replace(/\/+$/, ''))) || (sorted?.wide || []).some(p => aheadIn(p, w.replace(/\/+$/, '')) || aheadIn(w, p))));
+// Why a command may never run on a go-ahead, or null. f: {agent, hub, brain, root, written, from (cameFrom's answer),
+// reached (protected folders), outside (runnerOutside: --open or --home after the yes), widen (runnerWiden)}; the
+// sorter's own installs, gpu and reach too.
+function aheadWhyNot(sorted, command, f) {
+  if (f.agent) return 'an agent asked for it';
+  if (f.hub) return 'it is on Spark 2';
+  if (f.brain) return 'that Spark holds the brain';
+  if (f.root || sorted?.kinds?.includes('root') || sorted?.answer) return 'it runs as root';
+  if (maskSecrets(command) !== command || lookWords(command).words.some(w => keyWord(w))) return 'it reads or sends a key';
+  if (sorted?.scripts?.length) return 'it runs a script, whose text can change after a yes';
+  if (aheadWritten(sorted, f.written)) return 'it uses what an earlier command of this task fetched or wrote';
+  if (f.from?.lines?.length || f.from?.cut) return 'part of it came from what Sparkie read';
+  if (sorted?.kinds?.includes('lockout')) return 'it could lock you out';
+  if (sorted?.kinds?.length) return `it ${sorted.kinds.includes('delete') ? 'deletes what can’t be put back' : 'names the brain'}, which is a dangerous ask`;
+  if (sorted?.class !== 'change') return sorted?.class === 'lockout' ? 'it could lock you out' : sorted?.class === 'notdone' ? 'it is never done' : sorted?.open ? 'it needs what the run wall hides' : 'the sorter calls it risky';
+  if (f.reached?.length) return `it reaches ${f.reached.join(', ')}`;
+  if (f.outside?.length) return 'it runs outside the plain wall after a yes';
+  if (sorted?.installs?.length) return 'it installs programs where the plain wall keeps them read-only';
+  if (sorted?.gpu || f.widen?.gpu) return 'it uses the GPU';
+  const reach = new Set([...(Array.isArray(sorted?.reach) ? sorted.reach : []), ...(f.widen?.fleet ? ['fleet'] : []), ...(f.widen?.home ? ['home'] : [])]);
+  if (reach.size) return `it reaches ${reach.has('fleet') ? 'another Spark of this fleet' : reach.has('home') ? 'your home network' : 'the internet'}`;
+  return null;
+}
+// The facts for aheadWhyNot, from the request (ctx) and the Spark; the chat's earlier answers and what was read go to
+// cameFrom (20-came-from.mjs), as for the dangerous ask.
+function aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen) {
+  const answers = conv.messages.filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  // (a command that names no thing came from nowhere: nothing to look for, nor a read to load)
+  const things = dangerThings(command);
+  return aheadWhyNot(sorted, command, { agent: Boolean(ctx.agent || ctx.agentId || viewer?.agentKey || conv.agent), hub: node.host === 'local',
+    brain: brainSparks().includes(node.id), root: Boolean(ctx.root), written: ctx.written,
+    from: things.length ? cameFrom(things, dangerOwnerWords(conv), dangerReadsLoaded(ctx.reads), answers) : null,
+    reached: runnerProtected(sorted, dir), outside: runnerOutside(sorted, command, dir, topDirs), widen: runnerWiden(node, command, widen, sorted) });
+}
+// The owner's own chat this call is in (Sparkie's turn in it, the owner viewing), or null.
+function aheadChat(viewer, ctx) {
+  if (!ctx?.conv || ctx.via !== 'sparkie' || ctx.agent || ctx.agentId || viewer?.role !== 'owner') return null;
+  const conv = chatData().conversations.find(c => c.id === ctx.conv);
+  return conv && !conv.agent && String(conv.login || '').toLowerCase() === String(accessList().owner || '').toLowerCase() ? conv : null;
+}
+
+// workAsk's extra answer, or null: its label and what the press gives.
+function aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen) {
+  try {
+    const conv = aheadChat(viewer, ctx);
+    if (!conv || aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen)) return null;
+    const kind = aheadKind(sorted, command, dir), entry = kind ? { spark: node.id, ...kind } : { spark: node.id, command, dir };
+    return { label: `Run it, and don’t ask again for this task: ${aheadWords(entry, sparkName(node))}`, ahead: { conv: conv.id, at: aheadMark(conv), epoch: aheadEpoch, entry } };
+  } catch (e) { console.error(`The go-ahead's answer: ${e.message}`); return null; }
+}
+// runChoice, after the press of that answer ran: the go-ahead is kept for the request it was asked in, while that
+// request is still the chat's and has not ended. The line it adds to the press's notice, or null.
+function aheadGive(conv, ahead, by = {}) {
+  const at = aheadMark(conv), e = ahead?.entry;
+  if (!e || ahead.conv !== conv.id || !at || at !== ahead.at || ahead.epoch !== aheadEpoch || aheadDone.get(conv.id) === at) return null;
+  let l = aheadLists.get(conv.id);
+  if (!l || l.at !== at) aheadLists.set(conv.id, (l = { at, entries: [] }));
+  const words = aheadWords(e, sparkName(nodeById(e.spark) || { id: e.spark }));
+  if (!l.entries.some(x => JSON.stringify({ ...x, since: 0, by: 0 }) === JSON.stringify({ ...e, since: 0, by: 0 }))) {
+    if (l.entries.length >= AHEAD_MAX) return `Not kept: this task already has ${AHEAD_MAX} go-aheads.`;
+    l.entries.push({ ...e, since: new Date().toISOString(), by: by.via === 'telegram' ? 'telegram' : 'page' });
+    audit({ via: by.via || 'page', actor: by.actor || 'owner', action: 'go-ahead', args: { chat: conv.id, spark: e.spark, words: maskSecrets(words).slice(0, 200) }, ok: true });
+  }
+  return `For the rest of this task, ${words} runs without asking.`;
+}
+// workChange: the entry of this chat's go-ahead a command falls in, when it may run on one, or null.
+function aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) {
+  const l = ctx?.conv ? aheadLists.get(ctx.conv) : null;
+  if (!l?.entries.length) return null;
+  const conv = aheadChat(viewer, ctx);
+  if (!conv || aheadMark(conv) !== l.at || aheadDone.get(conv.id) === l.at) return null;
+  const e = l.entries.find(x => x.spark === node.id && aheadFits(x, sorted, command, dir));
+  return e && !aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen) ? e : null;
+}
+// The go-ahead ends: this chat's (its request ended, /stop), or every chat's (a new pairing).
+function aheadEnd(conv) {
+  if (!conv?.id) return;
+  aheadLists.delete(conv.id);
+  const at = aheadMark(conv);
+  if (at) aheadDone.set(conv.id, at);
+}
+function aheadEndAll() {
+  for (const [id, l] of aheadLists) aheadDone.set(id, l.at);
+  aheadLists.clear();
+  aheadEpoch++;
+}
+// A new request in a chat: the last one's go-ahead is gone with it.
+const aheadNewRequest = conv => { aheadLists.delete(conv.id); aheadDone.delete(conv.id); };
+// What the chat's page reads (GET /chats/:id): the go-ahead holding now, in its own words.
+function aheadShown(conv) {
+  const l = aheadLists.get(conv?.id);
+  if (!l || aheadMark(conv) !== l.at) return [];
+  return l.entries.map(e => ({ words: aheadWords(e, sparkName(nodeById(e.spark) || { id: e.spark })), since: e.since, by: e.by }));
 }
 /* ───────── apps kept running (R38) ───────── */
 // Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
@@ -18015,8 +18189,9 @@ function workWrote(ctx, sorted) {
 // one), would not fail inside the run wall (runnerOutside) and needs neither another Spark nor the GPU (runnerWiden).
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
-// fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false) {
+// fails is the reason the button gives. file: write_file's (its path's words name no Spark, A7d). ahead: a go-ahead of
+// this task covers it (21-ahead.mjs), which stands in for 2 and 3 only.
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false, ahead = false) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
@@ -18038,6 +18213,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (!listeners?.ok) return `whether something listens on every address on ${sparkName(node)} couldn’t be told`;
   const own = workOwnPorts(node), wideOpen = listeners.wide.filter(x => !own.has(x.port));
   if (wideOpen.length) return `${wideOpen.slice(0, 3).map(x => `port ${x.port}${x.prog ? ` (${x.prog})` : ''}`).join(', ')} ${wideOpen.length === 1 ? 'listens' : 'listen'} on every address on ${sparkName(node)}, which a change could reach`;
+  if (ahead) return null;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
@@ -18179,13 +18355,18 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
       ...(ctx.long ? { minutes: ctx.long.minutes } : {}), ...(keys.length ? { keys } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  // (and, when it may be, "Run it, and don't ask again for this task: …", 21-ahead.mjs: its button shares the call, so it
+  // keeps the ask's record too)
+  // (never for a write_file, nor for a command given a key: those are always asked)
+  const offer = dangerous.length || spec || keys.length ? null : aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen);
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
       ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
+      [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), { label: 'No', call: null }], 'proposal',
       { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
@@ -18229,7 +18410,11 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     }
     return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node), Boolean(spec)) || spec?.ask || null;
+  const listeners = await workListeners(node);
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
+  // (asked only for the request's own rules, and a go-ahead of this task covers it: it runs, its record says so. Never a
+  // write_file, nor a command given a key, which is always asked)
+  if (why && !spec && !keys.length && aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) && !hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, false, true)) [why, gate] = [null, 'go-ahead'];
   // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
   if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (a command given a key is always asked, R51: the button names each key and each new place)
@@ -18237,7 +18422,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
+  if (!why) return runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
@@ -24242,7 +24427,8 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(chatWholeShown(conv.messages)) });
+      // (and the go-ahead holding in it now, in its own words: 21-ahead.mjs)
+      if (req.method === 'GET') { const ahead = owner ? aheadShown(conv) : []; return send(res, 200, { ...chatSummary(conv), messages: dangerShown(chatWholeShown(conv.messages)), ...(ahead.length ? { ahead } : {}) }); }
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);

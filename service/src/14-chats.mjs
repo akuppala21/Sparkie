@@ -170,6 +170,9 @@ async function runChoice(viewer, conv, id, by) {
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
       content = outcomeText(c.label, out);
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
+      // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
+      const given = c.ahead && !['question', 'needs-ok'].includes(out?.outcome) ? aheadGive(conv, c.ahead, by) : null;
+      if (given) content = `${content}\n${given}`;
     } catch (e) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
@@ -334,6 +337,8 @@ const TURN_STOPPED = 'Stopped at your word.';
 // their results. True when there was something to stop.
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
+  // (and its go-ahead, 21-ahead.mjs)
+  aheadEnd(conv);
   conv.task = null;
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
@@ -470,6 +475,7 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
   // (written at once: a restart before this reply ends must not bring the last request back)
   if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
+  if (!task && !agent) aheadNewRequest(conv);
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -520,7 +526,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
-  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, [AHEAD_SINCE]: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (what it read and wrote goes on with it, A7c)
   if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
@@ -554,6 +560,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
 function endTask(conv, tell = true) {
   const task = conv?.task;
+  // (its go-ahead too, with or without a task to end: 21-ahead.mjs)
+  aheadEnd(conv);
   if (!task) return false;
   task.ended = true;
   conv.task = null;

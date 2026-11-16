@@ -131,6 +131,8 @@ function tgAsksVoid(everywhere) {
 // pairing wrote approve: true; its code came only from the passkey page).
 function tgNewPairing() {
   tgAsksVoid(true);
+  // (every chat's go-ahead goes with the old pairing, 21-ahead.mjs)
+  aheadEndAll();
   tgApproveOff = false;
 }
 // /lock in the paired chat: approvals from Telegram off at once, and every ask's Telegram side void. Only the page turns
