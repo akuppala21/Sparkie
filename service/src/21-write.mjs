@@ -150,7 +150,7 @@ async function writeFile(input, viewer, ctx = {}) {
   // the plain write the sorter was handed, with nothing on its input)
   if (sorted.class === 'lockout') {
     throw new HttpError(403, NET_ON ? `Nothing ran: a change that can lock you out of ${sparkName(node)} runs only as a plain command inside the lock-out net, never as write_file. ${sorted.why}`
-      : `Nothing ran: a change that can lock you out of ${sparkName(node)} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+      : `Nothing ran: the lock-out net is switched off in this console, and a change that can lock you out of ${sparkName(node)} runs only inside it. ${sorted.why}`);
   }
   if (sorted.class === 'notdone') return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
   const old = await writeOld(node, place);

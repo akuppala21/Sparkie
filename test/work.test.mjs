@@ -393,14 +393,14 @@ test('Spark 2: the call goes through the owner\'s service manager (sudo fails in
   assert.deepEqual(via.slice(9, 11), ['look', '--id']);
   assert.equal(via.at(-1), 'cat hub.txt');
   assert.equal(sudoCalls('spark2').at(-1).userUnit, true);
-  // Not set up there: no command is given for the hub yet (its set-up waits for the lock-out net).
+  // Not set up there: with changes on Spark 2 switched off (this fleet), no command is given for the hub.
   const line = join(home('spark2'), '.rehearsal', 'etc/sudoers.d/spark-console-root');
   renameSync(line, `${line}.away`);
   try {
     const n = await look({ on: 'spark2', command: 'cat hub.txt' });
     assert.equal(n.json.ran, false);
     assert.ok(!('ownerCommand' in n.json) && !/root-for-sparkie/.test(n.text), n.text);
-    assert.equal(n.json.why, 'Commands on Spark 2, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.');
+    assert.equal(n.json.why, 'The root helper’s sudo line isn’t on Spark 2 (sudo asked for a password); changes on Spark 2 are switched off in this console, so its one-time command isn’t given, and nothing ran there.');
   } finally { renameSync(`${line}.away`, line); }
 });
 

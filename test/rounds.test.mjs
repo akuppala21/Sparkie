@@ -154,7 +154,7 @@ test('a change refused because an operation the same turn started still holds it
 test('a command refused, answered “nothing ran” or asked, before anything ran, is no outside text: the change after it runs at once', { timeout: 240000 * SLOW }, async () => {
   for (const [words, first, name] of [
     ['fix the s notes on spark 3', RUN('sudo ls'), 's'],
-    // (Spark 2's commands come with a later build: it answers that nothing ran)
+    // (changes on Spark 2 are switched off on this fleet: it answers that nothing ran)
     ['fix the t notes on spark 3', { name: 'run', arguments: { on: 'spark2', command: 'ls' } }, 't'],
     // (it uses the GPU: asked, with a button)
     ['fix the g notes on spark 3', RUN('echo g > notes/g.txt', { gpu: true }), 'g'],

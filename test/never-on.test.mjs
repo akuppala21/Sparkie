@@ -34,7 +34,7 @@ test('the pieces on: the prompt, the abilities text and run\'s text say what is 
   // here with the owner's one command, as root is off on this fleet's Spark 3)
   assert.match((await runInChat('fix the keys on spark 3', 'spark3', 'chmod 600 ~/.ssh/authorized_keys')).tail, /^A change to SSH, Tailscale, the firewall or users on Spark 3 is done only as root, and root is off there/);
   assert.equal((await runInChat('fix the notes on spark 2', 'spark2', 'touch notes/x.txt')).tail, 'Asked first, with a button: nothing ran yet.');
-  assert.match((await runInChat('fix the keys on spark 2', 'spark2', 'chmod 600 ~/.ssh/authorized_keys')).tail, /^Not done on Spark 2 yet: a change that can lock you out of Spark 2/);
+  assert.match((await runInChat('fix the keys on spark 2', 'spark2', 'chmod 600 ~/.ssh/authorized_keys')).tail, /^Not done on Spark 2: a change that can lock you out of Spark 2 is never made from Spark Console/);
   const root = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'sudo touch notes/root.txt', dir: '~' } });
   assert.deepEqual([root.status, root.json.error], [403, 'Nothing ran: a command becomes root only by setting root (run with root: true), which is always asked as root and runs inside the lock-out net. Leave out sudo and set root.']);
 });
