@@ -82,6 +82,8 @@ bash agentbar/trial-on-spark.sh
 It prints one line a run, then the verdict:
 
 ```
+Building the trial's runner image …
+Marking what this build’s brain reads (one stand-in console of this copy) …
 Coding trial: Qwen/Qwen3.8-27B (aphex) at https://akspark2.tailab9aa9.ts.net:8443/console/api/v1, model qwen-aphex. Build 0fe7d52a1793, task set 834bea86aab0: day-words, numbers-as-written, sparks-in-words, 3 runs each. Box: node:26-bookworm, no network.
 pass  day-words            run 1   14 rounds    6.2 min
 FAIL  numbers-as-written   run 1   31 rounds   30.0 min (its time ran out)  the task's test passes (test/trial-numbers-as-written.test.mjs)

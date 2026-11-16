@@ -302,7 +302,7 @@ describe('where a result is kept, and the read', { concurrency: 1 }, () => {
     await waitFor(() => tgSent().length > tgFrom, { timeout: 60000, what: 'Sparkie’s answer on Telegram' });
     // (an agent's call, and its press of the owner's button)
     const door = await call(act.token, 'keep_trial_result', { token: 'ab'.repeat(16), hash: recordHash(B), keep: true });
-    assert.equal(door.isError, true, door.text);
+    assert.match(door.json?.error?.message || '', /^No tool called keep_trial_result for this agent\./, door.raw);
     const pressed = await call(act.token, 'ask_sparkie', { conversation: w.conv, choice: w.keep.id });
     assert.equal(pressed.isError, true, pressed.text);
     assert.equal((await keptTrial()).length, count, 'nothing kept');
