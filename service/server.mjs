@@ -11553,7 +11553,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
-    if (t === '--' && !w.unknown) { rest(k + 1); break; }
+    // (after --, a word is a name whatever its first sign)
+    if (t === '--' && !w.unknown) { for (const x of args.slice(k + 1)) x.literal = true; rest(k + 1); break; }
     if (!t.startsWith('-') || t === '-' || (plainRe && !w.unknown && plainRe.test(t))) {
       if (first) { rest(k); break; }
       if (w.unknown && (!t || w.split)) unknown ??= w.text || '$…';
@@ -11890,6 +11891,8 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
 // (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
 // apart, R64)
+// (a redirection's word, and a word after --, is a name whatever its first sign: the word itself is a place too, R64)
+const sortCandsOf = (w, t) => (w?.literal ? [...new Set([t, ...sortCands(t)])] : sortCands(t));
 function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
@@ -11898,15 +11901,15 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
   const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
-  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
+  for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
-  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
-  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCandsOf(w, t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
@@ -11944,7 +11947,7 @@ function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
     const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
@@ -12939,6 +12942,7 @@ function sortCmd(cmd, ctx, r, inPipe) {
         continue;
       }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
+      d.w.literal = true;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
       raise(c, 'change', `It writes ${sortQ(d.w.text || 'a file')} (a redirection).`);
@@ -12973,7 +12977,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
-    else if (sortCands(w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
+    else if (sortCandsOf(w, w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
   }
   if (dir?.unknown) unsure('It runs code in a folder named by a $ or a command.');
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
