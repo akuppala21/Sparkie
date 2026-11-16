@@ -16,31 +16,50 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
-// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
-// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
-// its rounds, at most 30); the tool output it may read (40% of its context, budgetContext, at 3 characters a token);
-// and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4, held to 40 and 12 (design E 2.3). And the
+// loop's budgets (design A 2.10, R50), each counted by code on this turn, so per message and per chat, and each set
+// beside a setup's ask block, never in it (askBlock leaves them out): work steps, the run calls one message may make
+// (the setup's workSteps, else twice its rounds, at most 30), and one task may make over all its turns (120); the tool
+// output it may read (40% of its context, budgetContext, at 3 characters a token); and three refused calls in a row.
+// Reaching one makes the next round the last, as overBudget does. Which of them a turn gets is the brain's profile's
+// (turnLimits, 21-brain-rail.mjs: a brain not checked gets the careful ones).
+const ROUNDS_MOST = 40, CHANGES_MOST = 12;   // limits: tool rounds and changes in one message, whatever a setup says
 const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const TASK_STEPS = 120;            // limit: run calls in one task, over all its turns (design A 2.10)
 const CONTEXT_TOKENS = 32768;      // limit: the context of a setup that says none
 const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
 // (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
 const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
-function turnBudgets({ tuned }) {
-  const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
+// A setup's own limits, each held to the most any setup may have.
+function setupLimits(tuned) {
+  const rounds = Math.min(ROUNDS_MOST, Math.max(1, Math.floor(Number(tuned.toolRounds)) || 6)), changes = Math.min(CHANGES_MOST, Math.max(1, Math.floor(Number(tuned.maxChanges)) || 4));
   const steps = Number(tuned.workSteps);
-  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
-  const TOOL_OUTPUT = Math.floor(budgetContext(tuned) * 12 / 10);
-  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+  return { rounds, changes, steps: Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * rounds), output: Math.floor(budgetContext(tuned) * 12 / 10) };
 }
-// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
-// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
-// else 32,768.
-const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+// What one task has left of its 120 run calls (task.steps: those its turns made, taskStepsKept); 120 with no task. The one
+// place that says whether a task may run more (a task's carrying on asks it too).
+const taskStepsDone = task => (Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0);
+const taskStepsLeft = task => Math.max(0, TASK_STEPS - taskStepsDone(task));
+// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left. A task with none
+// left ends this turn's tools at once ('task').
+function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
+  const done = taskStepsDone(task), left = taskStepsLeft(task);
+  const WORK_STEPS = Math.min(limits.steps, left);
+  return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
+    works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
+}
+// After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
+// has only what is left of the 120. A new request starts a new task, and with it a new count.
+function taskStepsKept({ conv, task, agent, works = 0 }) {
+  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = taskStepsDone(task) + works;
+}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
+// the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup
+// saying it); one from 1,000 to 1,048,576, or else 32,768.
 function budgetContext(setup) {
-  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576, args = Array.isArray(setup?.args) ? setup.args.map(String) : [];
+  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576;
   if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);
-  const at = args.findIndex(a => BUDGET_CONTEXT_FLAG.test(a)), n = at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+  const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
@@ -54,14 +73,15 @@ function budgetCarries({ spent, agent, task, text, now, works, conv }) {
 }
 // What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
-// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
-// step that reaches them makes the next round the last.
+// One run call is one work step (runOne, before it is handed over): past the message's steps (or what its task has
+// left) it is not run, and the step that reaches them makes the next round the last.
 function workStep(turn) {
   if (turn.works >= turn.WORK_STEPS) {
     turn.notRun++;
-    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
+    throw new HttpError(429, turn.taskBound ? `Not run: one task may run ${TASK_STEPS} commands, and this one has. Answer now with what you found and what is left.`
+      : `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
   }
-  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= turn.taskBound ? 'task' : 'steps';
 }
 // After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
 // refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
@@ -96,7 +116,10 @@ function budgetReport(turn) {
   if (!turn.spent) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
-  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${more}.`);
+  // (a task's last: no carrying on, and the owner's next message is a new request with its own 120)
+  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');

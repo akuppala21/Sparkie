@@ -16,7 +16,8 @@
 // by then (another Telegram pairing or none, the device's sign-in over) ends instead, a record from before these limits
 // is taken off quietly, and one that was waiting on an operation gets one line saying the restart may have cut it off,
 // which wakes it as a result would.
-const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72, TASK_STEPS = 120;
+// (a task's 120 commands, TASK_STEPS, are E5b's: 14-rounds.mjs)
+const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72;
 const TASK_WORDS = /\b(?:on\s+your\s+own|by\s+yourself|unattended|overnight|while\s+i(?:'m|\s+am)\s+away|as\s+a\s+task)\b/i;
 const TASK_HOURS = /\b(?:for|up\s+to|over\s+the\s+next)\s+(\d{1,4})\s*(?:hours?|hrs?)\b/i;
 // An instruction's opening ("please", "could you", "I want you to", …), then a verb of working on it or carrying on.
