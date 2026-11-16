@@ -131,11 +131,14 @@ Rules R65, R32. Parts `21-ahead.mjs`, `20-tg-approve.mjs`. Tests `ahead.test.mjs
 journal sees it, and kept by name. `run` hands a key to a command by name; such a command is always asked. Rule R51.
 Parts `20-keys.mjs`, `21-run-keys.mjs`, `03-secrets.mjs`. Tests `app-keys.test.mjs`, `run-keys.test.mjs`.
 
-**Change SSH, Tailscale, the firewall or users on a compute Spark.** Only on the owner's own words with nothing read
-since; otherwise refused, not asked. Always the dangerous ask. The press copies the ways in, arms a timer in that
-Spark's own systemd, runs the change, then tries the ways in from outside: all still work, kept; one doesn't, put
-back at once; no answer, the timer puts it back. `/putback` puts the newest one back by code. Rules R60, R3. Parts
-`21-net.mjs`, `21-guard.mjs`. Tests `net.test.mjs`, `root-helper.test.mjs`.
+**Change SSH, Tailscale, the firewall or users on a compute Spark.** Only as root. As the owner such a change can
+change nothing (the run wall keeps `~/.ssh` and the shell's start files read-only, and `ufw`, `usermod` and
+`tailscale` need root), so one asked as the owner is answered "set root", and nothing is asked or run. As root:
+only on the owner's own words with nothing read since; otherwise refused, not asked. Always the dangerous ask. The
+press copies the ways in, arms a timer in that Spark's own systemd, runs the change, then tries the ways in from
+outside: all still work, kept; one doesn't, put back at once; no answer, the timer puts it back. `/putback` puts
+the newest open one back by code. Rules R60, R70, R3. Parts `21-net.mjs`, `21-root.mjs`, `21-guard.mjs`. Tests
+`net.test.mjs`, `root.test.mjs`, `root-helper.test.mjs`.
 
 **Change Spark 2.** Every change there is asked, one command a press, inside the net, with the console's own ways in
 checked after it. Refused by code: a lock-out change, anything touching the brain's container or model files, any
@@ -195,7 +198,7 @@ risk the owner has not been told about.
 - **Sparkie is the commander** (decisions 18, 20, 22). It may do everything the owner can on the Sparks, root and
   the lock-out class included. Nothing is refused for being powerful; the question is at once, or ask first.
 - **Never lock the owner out.** This is now the reason for a net, not a ban (contract 8.3). SSH, Tailscale, the
-  firewall and users change only on the owner's own words, after a dangerous ask, inside the net.
+  firewall and users change only as root, on the owner's own words, after a dangerous ask, inside the net.
 - **Root** goes only through the one helper. It is off on each Spark until the owner's `--with-root` there, and
   through the console it is always the dangerous ask.
 - **Keys** are given once and kept in one file on Spark 2. A key is never shown back.
@@ -229,7 +232,8 @@ to change.
 - 8.11 says a change on Spark 2 is kept only by a fresh visit through the changed way in. The build keeps a Spark 2
   change by code once the console's own ways in still answer, and refuses a lock-out change there.
 - 8.11 says the net is armed for every command on Spark 2. A look is not armed.
-- 8.11 allows a command 10 minutes on Spark 2 and for a lock-out change. The build gives both 30 seconds.
+- 8.11 allows a command 10 minutes on Spark 2. The build gives it 30 seconds. A lock-out change runs only as root,
+  with 10 minutes, on a compute Spark.
 - 8.14 lists plain root commands among the changes that run at once. In the build root is always the dangerous ask.
 - 8.15 says one command for each Spark, once. Root also needs `--with-root`.
 
@@ -545,6 +549,9 @@ beside it. It was left as written. The rules are the record of what was built.
   always the dangerous ask. A script's text is not on the button and can change before the press, so it is refused.
 - **A lock-out change is refused unless the owner's own words ask for it,** with nothing read since. The plan asked
   about any of them. Contract 8.3 says "never because an agent, a page or a fix suggested it".
+- **A lock-out change runs only as root.** The plan let one run as the owner inside the net. In the run wall the
+  owner's user can change none of the ways in, so that path changed nothing and still cost a dangerous press. It is
+  answered "set root" now.
 - **Spark 2.** The plan kept a hub change only after a fresh visit through the changed way in. That proof is not
   built. So a lock-out change on Spark 2 is refused, and any other change is kept by code once the console's own
   ways in still answer.
@@ -552,7 +559,7 @@ beside it. It was left as written. The rules are the record of what was built.
   address; not into the model store, the Hugging Face cache or the shared folder; not with the GPU, another Spark,
   `--home` or `--open`; not after a look in the same request.
 - **Times are shorter.** A change at once has 30 seconds, or up to 10 minutes with `minutes`; more is asked. A
-  lock-out change and a change on Spark 2 have 30 seconds, where the plan allowed 10 minutes.
+  change on Spark 2 has 30 seconds, where the plan allowed 10 minutes. A lock-out change, as root, has 10 minutes.
 - **A command given a key is always asked.** The plan asked once per new place. A command can show a key in a form
   no mask knows, so only the press stands before it (R51).
 - **Smaller points.** The go-ahead comes only from a button, never from the owner's words. Opening a box is a

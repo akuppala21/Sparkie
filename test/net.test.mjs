@@ -16,8 +16,9 @@
 // ($MOCK_DIR/status.json, which a test may change while a change runs). Linux only: run it on a Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, waitFor, sleep, SLOW, REPO } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
@@ -27,9 +28,16 @@ const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const ADDED = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINetAdded added@net';
 const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); });
-useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
+// (a lock-out change on a compute Spark is done only as root, R70: root's switch on here, as the one-time command with
+// --with-root writes it, and root's time limit this file's SECONDS)
+useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_ROOT_SECONDS: String(SECONDS), SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
+    const sw = join(root, 'var/lib/spark-console/root-on');
+    mkdirSync(join(root, 'var/lib/spark-console'), { recursive: true });
+    chmodSync(join(root, 'var/lib/spark-console'), 0o755);
+    writeFileSync(sw, `on 2026-11-15 helper ${createHash('sha256').update(readFileSync(join(root, 'usr/local/sbin/spark-console-root'))).digest('hex')}\n`, { mode: 0o600 });
+    chmodSync(sw, 0o600);
     const h = join(root, 'spark3');
     mkdirSync(join(h, '.ssh'), { recursive: true });
     chmodSync(join(h, '.ssh'), 0o700);
@@ -55,17 +63,17 @@ const journalLines = (dir = T.fleet.journalDir) => readdirSync(dir).filter(f => 
 const calls = () => lines(join(T.fleet.root, 'spark3', '.rehearsal', 'calls.log'));
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
-const RUN = command => ({ name: 'run', arguments: { on: 'spark3', command, dir: '~' } });
+const RUN = (command, more = {}) => ({ name: 'run', arguments: { on: 'spark3', command, dir: '~', ...more } });
 const ADD = `printf '%s\\n' '${ADDED}' >> .ssh/authorized_keys`;
 // Spark 3 seen by Tailscale as offline (or as the stand-in has it, with no file).
 const TAILNET = online => ({ BackendState: 'Running', Self: { HostName: 'akspark2', TailscaleIPs: ['100.64.0.2'] }, Peer: {
   'nodekey:1': { HostName: 'akspark1', TailscaleIPs: ['100.64.0.1'], Online: true }, 'nodekey:3': { HostName: 'akspark3', TailscaleIPs: ['100.64.0.3'], Online: online },
   'nodekey:4': { HostName: 'akspark4', TailscaleIPs: ['100.64.0.4'], Online: true } } });
 const tailnet = online => (online ? rmSync(join(T.fleet.dir, 'status.json'), { force: true }) : writeFileSync(join(T.fleet.dir, 'status.json'), JSON.stringify(TAILNET(false))));
-// One owner's message in a chat, the stand-in brain calling run once; then the dangerous ask it raised, as the owner's
-// page reads it (its pair), or null.
-async function ask(chat, words, command) {
-  script([{ match: `^${words}$`, rounds: [[RUN(command)]] }]);
+// One owner's message in a chat, the stand-in brain calling run once (as root unless more says otherwise: a lock-out
+// change is done only as root); then the dangerous ask it raised, as the owner's page reads it (its pair), or null.
+async function ask(chat, words, command, more = { root: true }) {
+  script([{ match: `^${words}$`, rounds: [[RUN(command, more)]] }]);
   let r;
   try { r = await say(chat, words); } finally { noScript(); }
   const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
@@ -85,7 +93,7 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
   let no;
   try {
     const shown = a.m.danger.lines.join('\n');
-    assert.match(shown, /^CAN LOCK YOU OUT of Spark 3\n/);
+    assert.match(shown, /^ROOT on Spark 3 · CAN LOCK YOU OUT\n/);
     assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts Spark 3 off, restarting Spark 3 is the way back.'), shown);
     assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
     assert.equal(a.m.danger.code, ADD);
@@ -112,7 +120,7 @@ test('pressed: the timer is armed first (its time limit plus 600 s), the change 
   assert.equal(keysNow(), `${KEYS_LINE}${ADDED}\n`, 'kept');
   // (the timer was asked for before the change, and stopped by the keep; nothing waits for it)
   const asked = calls().slice(before).map(c => c.find(x => String(x).startsWith('--unit=')) || c.slice(0, 3).join(' '));
-  const timer = asked.indexOf(`--unit=sw-guard-${g.id}`), change = asked.indexOf(`--unit=sw-run-${g.id}`);
+  const timer = asked.indexOf(`--unit=sw-guard-${g.id}`), change = asked.indexOf(`--unit=sw-root-${g.id}`);
   assert.ok(timer >= 0 && change > timer, `the timer first: ${asked.join(', ')}`);
   assert.ok(calls().slice(before).some(c => c[0] === 'systemd-run' && c.includes(`--unit=sw-guard-${g.id}`) && c.includes(`--on-active=${SECONDS + 600}s`)), 'its time limit plus 600 s');
   assert.ok(!timerWaits(g.id) && !existsSync(join(guardDir(g.id), 'pending')), 'kept: no timer, nothing pending');
@@ -201,7 +209,7 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
     ['switch spark 3 to my work tailnet', 'tailscale switch work', 'tailscale “switch” signs in again, as another key or account; the net can’t put that back'],
     ['sign spark 3 in again', 'tailscale up --force-reauth', 'tailscale “up” signs in again, as another key or account; the net can’t put that back']]) {
     const asks = (await chatMessages(chat)).filter(x => x.danger).length;
-    const a = await ask(chat, words, command);
+    const a = await ask(chat, words, command, {});
     assert.equal((await chatMessages(chat)).filter(x => x.danger).length, asks, `${command}: no ask`);
     const [r] = sentBack(words);
     assert.ok(String(r?.error || '').startsWith(`Not done: ${why}. `), `${command}: ${JSON.stringify(r)}`);
@@ -246,7 +254,7 @@ test('the owner’s words ask for a lock-out change only in one sentence that na
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const proposed = async words => {
     const chat = await newChat();
-    script([{ match: `^${esc(words)}$`, rounds: [[RUN(ADD)]] }]);
+    script([{ match: `^${esc(words)}$`, rounds: [[RUN(ADD, { root: true })]] }]);
     try { await say(chat, words); } finally { noScript(); }
     const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
     return { chat, m, no: m?.choices.find(c => c.label === 'No') };
@@ -267,6 +275,37 @@ test('the owner’s words ask for a lock-out change only in one sentence that na
     assert.ok(p.m, `${words}: the dangerous ask (${JSON.stringify(sentBack(words))})`);
     assert.equal((await press(p.chat, p.no.id)).status, 200);
   }
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+});
+
+// The final read's findings net-no-copy and nonroot-lockout-noop: as the owner a lock-out change ran in the run wall,
+// which keeps ~/.ssh and the start files read-only (so it changed nothing), with no copy first and the model store
+// writable, after a dangerous press.
+test('as the owner, a lock-out change on a compute Spark asks nothing and runs nothing: it can change nothing there (it needs root), so the answer is to set root; where root is off on that Spark, the owner’s one command with --with-root', { timeout: 120000 * SLOW }, async () => {
+  keysReset();
+  mkdirSync(join(T.fleet.root, 'spark3', 'keepme'), { recursive: true });
+  writeFileSync(join(T.fleet.root, 'spark3', 'keepme', 'data.txt'), 'precious\n');
+  const AS_ROOT = 'Nothing was asked or run: as you, a change to SSH, Tailscale, the firewall or users on Spark 3 can change nothing (it needs root), so it is done only as root. Set root (run with root: true): it is then asked as root, and runs inside the lock-out net.';
+  for (const [words, command] of [['add my key on spark 3 as me', ADD], ['remove my old shell aliases and the keepme folder on spark 3', 'rm -rf keepme .bash_aliases']]) {
+    const chat = await newChat(), a = await ask(chat, words, command, {});
+    if (a.no) await press(chat, a.no.id);
+    assert.equal(a.m, undefined, `${words}: nothing asked`);
+    assert.equal(sentBack(words).at(-1)?.error, AS_ROOT, words);
+  }
+  // (the owner's own call, POST /actions: the same answer)
+  const own = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: ADD, dir: '~' } });
+  assert.deepEqual([own.status, own.json?.error], [403, AS_ROOT], own.text);
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  assert.equal(readFileSync(join(T.fleet.root, 'spark3', 'keepme', 'data.txt'), 'utf8'), 'precious\n', 'nothing ran');
+  // Root off on Spark 3: the owner's one command with --with-root, and nothing asked.
+  const sw = join(T.fleet.root, 'var/lib/spark-console/root-on');
+  renameSync(sw, `${sw}.away`);
+  try {
+    const off = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: ADD, dir: '~' } });
+    assert.equal(off.status, 200, off.text);
+    assert.equal(off.json.ran, false, off.text);
+    assert.match(off.json.ownerCommand || '', /root-for-sparkie\.sh --with-root 3'?$/, off.text);
+  } finally { renameSync(`${sw}.away`, sw); }
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
 });
 
@@ -332,5 +371,7 @@ test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with 
   for (const dir of ['/etc', '~/../x', '~/a/./b', 'work']) await refused(seam({ id: 'spark3' }, 'true', { ctx: pressed, dir }), 400, /starts in ~ or a folder under it/);
   await refused(seam({ id: 'spark4' }, 'true', { ctx: pressed }), 409, /still open there \(record j_1\)/);
   // (past its gates the seam takes the Spark's claim: Spark 2 as any other, its caller having said yes)
-  for (const id of ['spark2', 'spark3']) await assert.rejects(seam({ id }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), e => e.message === `claimed ${id}`);
+  for (const [id, node, root] of [['spark2', { id: 'spark2', host: 'local' }, false], ['spark3', { id: 'spark3' }, true]]) await assert.rejects(seam(node, 'true', { ctx: pressed, seconds: 600, dir: '~', root }), e => e.message === `claimed ${id}`);
+  // (on a compute Spark only as root: as the owner a lock-out change can change nothing)
+  await refused(seam({ id: 'spark3' }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), 403, /^Nothing ran: on Spark 3 a change inside the lock-out net runs only as root\.$/);
 });
