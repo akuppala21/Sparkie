@@ -8,9 +8,14 @@
 // sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git
 // submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words
 // are its own, so the options check reads only those.
-const sortPkgs = (names, ctx, r) => {
+// The packages the ways in depend on: removed by any package tool (or by a trailing -), the net can't put them back.
+const SORT_WAY_PKGS = /^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/;
+const sortPkgs = (names, ctx, r, removes = false) => {
   for (const p of names) {
-    if (/^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/.test(p)) raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+    if (SORT_WAY_PKGS.test(p)) {
+      raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
+      if (removes || /[^-]-$/.test(p)) r.lasting ??= `It removes ${sortQ(p.replace(/[-+]$/, ''))}, a package the ways in depend on: the net puts back files and units, not a package.`;
+    }
     else if (/^(?:linux-\S+|nvidia-\S+|libnvidia-\S+|cuda-drivers\S*|\S*firmware\S*|\S+-dkms|grub\S*|shim\S*)$/.test(p)) raise(r, 'risky', `${sortQ(p)} is the kernel, a driver or firmware.`);
     else if (/^(?:docker|containerd)/.test(p)) raise(r, 'risky', `${sortQ(p)} is the Docker service.`);
     else if (/^[.~/]|\.deb$/.test(p)) sortRuns(p, ctx, r, `It installs the package file ${sortQ(p)}.`);
@@ -45,9 +50,75 @@ function sortBuild(a, ctx, r, x, name) {
   if (name === 'go' && v?.text === 'run' && o.plain.some(w => /@/.test(w.text))) raise(r, 'risky', 'go run with a @version downloads a package and runs it: always asked.');
   if (name === 'go' && a.some(w => /-extld|-toolexec|-exec\b/.test(w.text))) unsure('go is told to run another program (-extld, -toolexec, -exec).');
   for (const f of /make$/.test(name) ? o.all('f', 'file', 'makefile') : name === 'ninja' ? o.all('f') : []) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the file ${sortQ(f.text)}.`);
+  sortUnshown(r, `the build files ${name} reads (a Makefile, a build script, a project's own settings)`);
   sortRuns(null, ctx, r, `${sortQ(name)} builds or runs code.`, o.all('C', 'directory').at(-1));
   // (what a compiler writes: -o and the word after it, or -ofile)
   if (/^(?:gcc|g\+\+|cc|c\+\+|clang|clang\+\+|nvcc|go|rustc)$/.test(name)) a.forEach((w, i) => { const t = a[i - 1]?.text === '-o' ? w : /^-o./.test(w.text) && name !== 'go' ? { ...w, text: w.text.slice(2) } : null; if (t) { r.deletes = true; sortTouch(t, ctx, r); } });
+}
+// Docker that reaches the host (the final read `net`, 3): a container given every privilege, a capability, a device, a
+// security option, another container's mounts, or the host's network, processes, IPC, users, host name or control
+// groups (or another container's, which the sorter can't tell), or a mount of a folder at or above a way in or of the
+// system's own (/, /etc, /root, /home, /run, /proc, /sys, /dev, /boot, Docker's socket), can change SSH, the firewall
+// or users on the Spark itself: the lock-out class. So does a lock-out program among its words (an exec into a container
+// the sorter can't see into). A mount or a namespace it can't read counts as reaching the host.
+const DOCKER_NS = /^--(?:net|network|pid|ipc|uts|userns|cgroupns)(?:=|$)/;
+const DOCKER_SYS = /^\/(?:$|etc|root|home|run|var\/run|proc|sys|dev|boot|var\/spool|var\/lib\/(?:docker|containerd|tailscale|systemd))(?:\/|$)|(?:^|\/)docker\.sock$/;
+// (only what starts a container or runs in one: run, create, exec, a build; their words, from the sub-command on)
+const sortDockerVerb = a => {
+  let k = 0;
+  while (k < a.length && a[k].text.startsWith('-') && !a[k].unknown) k += /^(?:-H|--host|-c|--context|--config|-l|--log-level|--tlscacert|--tlscert|--tlskey)$/.test(a[k].text) ? 2 : 1;
+  const v = a[k]?.text ?? '', sub = /^(?:container|compose|image|buildx)$/.test(v) ? a.slice(k + 1).find(w => !w.text.startsWith('-'))?.text ?? '' : v;
+  return { k, v, sub, unknown: !!a[k]?.unknown };
+};
+function sortDockerHost(a0, ctx, r, name) {
+  const d = sortDockerVerb(a0);
+  if (!d.unknown && !(/^(?:run|create|exec|build|buildx)$/.test(d.sub) || (d.v === 'compose' && /^(?:up|run|create|exec)$/.test(d.sub)))) return;
+  const a = a0.slice(d.k), t = a.map(w => w.text), why = s => raise(r, 'lockout', `${sortQ(name)} ${s}: a container that reaches the host can change SSH, the firewall or users on the Spark itself, a way in.`);
+  for (let k = 0; k < a.length; k++) {
+    const w = a[k], s = t[k], val = () => (s.includes('=') ? { ...w, text: s.slice(s.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] });
+    if (w.unknown && (sortSplits(w) || /^-/.test(w.lit ?? ''))) return why('is given words through a $ or a command, which may be options that reach the host');
+    if (/^--privileged(?:=(?!false$).*)?$/.test(s)) return why('runs a container with every privilege (--privileged)');
+    if (/^--(?:cap-add|device|device-cgroup-rule|volumes-from)(?:=|$)/.test(s)) return why(`gives a container ${sortQ(s.split('=')[0])}, which reaches the host`);
+    if (/^--security-opt(?:=|$)/.test(s) && !/^no-new-privileges(?:[:=]true)?$/.test(val().text)) return why(`loosens a container’s guard (${sortQ(val().text || '$…')})`);
+    if (DOCKER_NS.test(s)) { const v = val(); if (v.unknown || /^(?:host|container:|ns:|\/)/.test(v.text)) return why(`gives a container the host’s ${sortQ(s.slice(2).split('=')[0])} (${sortQ(v.text || '$…')}), or one the sorter can't tell`); }
+    // (a mount: -v source:target[:options], --mount type=bind,source=…)
+    let src = null;
+    if (/^(?:-v|--volume)(?:=|$)|^-v./.test(s)) { const v = /^-v./.test(s) ? { ...w, text: s.slice(2) } : val(); if (v.unknown) return why('mounts a folder named by a $ or a command'); src = v.text.split(':')[0]; }
+    else if (/^--mount(?:=|$)/.test(s)) { const v = val(); if (v.unknown) return why('mounts a folder named by a $ or a command'); src = /(?:^|,)(?:source|src)=([^,]*)/.exec(v.text)?.[1] ?? null; }
+    if (src != null && /^[~/.]/.test(src)) {
+      const p = sortNorm(/^[~/]/.test(src) ? src : `~/${src}`, r, ctx.home);
+      if (DOCKER_SYS.test(p) || LOCK_PATHS.some(sortReach(p, /[*?[]/.test(p), true))) return why(`mounts ${sortQ(src)} into a container, at or above a way in or the system’s own files`);
+    }
+  }
+  // (a lock-out program among its words: what it reaches depends on a container the sorter can't see into)
+  const named = t.flatMap(s => s.split(/[\s;&|()<>`'"=,{}]+/)).map(s => s.split('/').pop()).find(s => SORT_PROGS[s]?.cls === 'lockout' || SORT_LOCK_HANDLERS.has(s));
+  if (named) why(`runs ${sortQ(named)} in a container the sorter can't see into`);
+}
+// The protected containers (the brain's, and those CONFIG.protect names, which the console never stops on its own:
+// the guide, R41): a command that stops, kills, removes, restarts, pauses, updates, renames or execs into one is not
+// done, on any Spark. Which container a word names can't be told for a $, a pattern, an id (hex, maybe a protected one's
+// prefix) or a compose project: the dangerous ask (kind brain), saying so.
+const DOCKER_STOPS = /^(?:stop|kill|rm|restart|pause|update|rename|exec|attach)$/;
+const DOCKER_TAKES = /^-(?:t|s|e|u|w|-time|-signal|-env|-env-file|-user|-workdir|-detach-keys|-cpus|-cpu-shares|-cpu-period|-cpu-quota|-cpuset-cpus|-cpuset-mems|-memory|-memory-reservation|-memory-swap|-kernel-memory|-pids-limit|-restart|-blkio-weight|-cpu-rt-period|-cpu-rt-runtime)$/;
+function sortDockerProtect(a, ctx, r, name) {
+  const { k, v, sub: sub0 } = sortDockerVerb(a), sub = v === 'compose' ? a.slice(k + 1).find(w => /^(?:down|stop|kill|rm|restart|pause)$/.test(w.text))?.text ?? sub0 : sub0;
+  // (the dangerous ask's reason says why: it stands before the socket's)
+  const ask = why => { ctx.kinds.add('brain'); raise(r, 'risky', ''); if (r.class === 'risky') r.why = `${sortQ(name)} ${sortQ(sub)} ${why}: a protected container (the brain’s, or one the owner keeps) may be among them, so it is asked the dangerous way.`; };
+  if (v === 'compose' && /^(?:down|stop|kill|rm|restart|pause)$/.test(sub)) return ask('works on a compose project’s containers, which the sorter can’t name');
+  if (!DOCKER_STOPS.test(sub)) return;
+  const at = a.findIndex((w, i) => i >= k && w.text === sub), names = [];
+  for (let i = at + 1; i < a.length; i++) {
+    if (a[i].text.startsWith('-') && !a[i].unknown) { if (DOCKER_TAKES.test(a[i].text)) i++; continue; }
+    names.push(a[i]);
+    if (/^(?:exec|attach|rename)$/.test(sub)) break;
+  }
+  const protectedName = n => ctx.brain.includes(n) || ctx.protect.some(g => sortGlob(g.replace(/\//g, '')).test(n));
+  const hit = names.find(w => !w.unknown && !w.glob && protectedName(w.text));
+  // (on Spark 2 the hub's own rules refuse it, in their words, on the kind: hubRefuses, 21-hub.mjs)
+  if (hit && ctx.at === 'hub') return ask(`names ${sortQ(hit.text)}, a protected container`);
+  if (hit) return raise(r, 'notdone', `${sortQ(name)} ${sortQ(sub)} ${sortQ(hit.text)}: it is a protected container (the brain’s, or one the owner keeps), which a command never stops or changes.`);
+  const odd = names.find(w => w.unknown || w.glob || w.brace || /^[0-9a-f]{1,64}$/.test(w.text));
+  if (odd) ask(`names ${odd.unknown ? 'containers through a $ or a command' : odd.glob || odd.brace ? 'containers by a pattern' : `${sortQ(odd.text)}, which may be the start of a protected container’s id`}`);
 }
 Object.assign(SORT_HANDLERS, {
   ...Object.fromEntries('make gmake cmake ninja meson cargo go rustc gcc g++ cc c++ clang clang++ nvcc javac mvn gradle bazel'.split(' ').map(n => [n, sortBuild])),
@@ -55,7 +126,7 @@ Object.assign(SORT_HANDLERS, {
     let k = 0, dir = null;
     for (; k < a.length && a[k].text.startsWith('-'); k++) {
       if (a[k].text === '-C') dir = a[++k];
-      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
+      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) r.simple = false, unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
     }
     if (a.some(w => /(?:^|[^\w])(?:ext|fd)::/.test(w.text))) unsure('git is handed an ext:: or fd:: address, which runs a command.');
     if (a[k]?.unknown) unsure('git’s sub-command comes from a $ or a command.');
@@ -75,7 +146,8 @@ Object.assign(SORT_HANDLERS, {
     const at = { bisect: 'run', submodule: 'foreach' }[v], cut = at ? own.findIndex(w => w.text === at) : -1;
     const o = GIT_LOOK.has(v) ? sortOpts(SORT_NOOPTS, []) : sortOpts(SORT_OPTS[`git:${v}`], cut < 0 ? own : own.slice(0, cut + 1)), p = o.plain;
     for (const c of v === 'rebase' ? o.all('x', 'exec') : v === 'difftool' ? o.all('x', 'extcmd') : []) sortElsewhere([c], ctx, r, `git ${v} -x`);
-    if (cut >= 0 && v === 'bisect') sortProgram(own.slice(cut + 1), ctx, r, x);
+    // (a program git runs is no git command: no go-ahead's git kind covers it, S-5)
+    if (cut >= 0 && v === 'bisect') { r.simple = false; sortProgram(own.slice(cut + 1), ctx, r, x); }
     if (cut >= 0 && v === 'submodule') { const s = own.slice(cut + 1), n = s.findIndex(w => !/^(?:--recursive|-q|--quiet)$/.test(w.text)); sortElsewhere(n < 0 ? [] : s.slice(n), ctx, r, 'git submodule foreach'); }
     // (timers that run git by themselves, or settings written for every repository)
     if ((v === 'maintenance' && /^(?:start|register|schedule)$/.test(p[0]?.text ?? '')) || (v === 'lfs' && /^(?:install|update)$/.test(p[0]?.text ?? ''))) raise(r, 'risky', `git ${sortQ(v)} ${sortQ(p[0].text)} sets timers or settings later git commands run by themselves.`);
@@ -90,10 +162,12 @@ Object.assign(SORT_HANDLERS, {
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
     // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
-    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) usesReach(usesHost(w.text), ctx);
+    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) { usesReach(usesHost(w.text), ctx); if (usesHost(w.text)) sortToHub(usesHost(w.text), ctx, r, `git ${v}`); }
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
+    // (what git rm, mv and apply take away or write over in the work tree: copied first, or nothing runs)
+    if (/^(?:rm|mv|apply|am)$/.test(v)) r.deletes = true;
     if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && o.has('hard')) || (v === 'checkout' && (o.has('f', 'force') || rest.some(s => /^(?:--|\.)$/.test(s)))) || (v === 'stash' && /^(?:drop|clear)$/.test(p[0]?.text))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
     // reaches the folder it stands in (-C's, or where a cd left it), everything under it; a clone, the folder it makes.
@@ -105,7 +179,7 @@ Object.assign(SORT_HANDLERS, {
       sortGitOwn(to, ctx, r);
     }
     // (the words that name files it writes: a look's, those of a sub-command that changes the work tree, and -o)
-    for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree');
+    for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree' || (v === 'rm' && o.has('r')));
     if (o.unknown) unsure(`The sorter doesn’t know git ${sortQ(v)}’s option ${sortQ(o.unknown)}.`);
   },
   apt(a, ctx, r, x, name = 'apt') {
@@ -116,14 +190,16 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|reinstall|remove|purge|autoremove|autopurge|update|upgrade|full-upgrade|dist-upgrade|satisfy|clean|autoclean|source|build-dep|download|changelog|check|dselect-upgrade)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (o.has('allow-unauthenticated', 'force-yes', 'allow-downgrades', 'allow-remove-essential', 'allow-change-held-packages')) raise(r, 'risky', `${sortQ(name)} is told to skip a check of its own (unsigned packages, downgrades, essential or held packages).`);
     if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
+    // (one that picks what goes itself may take a package the ways in depend on: which can't be told)
+    if (/^(?:autoremove|autopurge)$/.test(v) || (/^(?:remove|purge)$/.test(v) && o.plain.slice(1).some(w => w.unknown || w.glob))) { raise(r, 'lockout', `${sortQ(name)} ${sortQ(v)} picks what it removes itself, which may be a package the ways in depend on.`); r.lasting ??= `${name} ${v} may remove a package the ways in depend on (which can’t be told), and the net doesn’t put a package back: remove packages by name.`; }
     if (/^(?:upgrade|full-upgrade|dist-upgrade|dselect-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
     if (/^(?:install|reinstall|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|source|build-dep|download|changelog)$/.test(v)) ctx.reach.add('internet');
-    sortPkgs(p.slice(1), ctx, r);
+    sortPkgs(p.slice(1), ctx, r, /^(?:remove|purge|autoremove|autopurge)$/.test(v));
   },
   dpkg(a, ctx, r) {
     const t = a.map(w => w.text), v = t.find(s => s.startsWith('-')) ?? '';
     if (/^-[lLsSpcI]$|^--(?:list|listfiles|status|search|print-avail|get-selections|print-architecture|contents|info|audit)$/.test(v)) return;
-    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) return sortGone(ctx, r, 'dpkg removes packages, which are not put back.');
+    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) { sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r, true); if (a.some(w => w.unknown || w.glob)) { raise(r, 'lockout', 'dpkg removes packages it names by a $ or a pattern, which may be ones the ways in depend on.'); r.lasting ??= 'dpkg removes packages the sorter can’t name, maybe one the ways in depend on, and the net doesn’t put a package back.'; } return sortGone(ctx, r, 'dpkg removes packages, which are not put back.'); }
     if (!/^-i$|^--(?:install|configure|unpack)$/.test(v)) unsure(`The sorter doesn’t know dpkg ${sortQ(v)}.`);
     raise(r, 'change', 'dpkg installs packages.');
     sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r);
@@ -141,7 +217,10 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'uninstall') return sortGone(ctx, r, `${sortQ(name)} uninstall removes packages, which are not put back.`);
     for (const s of a.map(w => w.text)) if (/:\/\/|^git\+/.test(s)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} installs code from an address: ${sortQ(s)}, always asked.`);
     // (a list it installs, a folder of packages it takes from, a local path with or without [extras]: code that runs)
-    for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))].map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
+    // (a local package, a folder of them or an editable one: its own setup code runs, and no word shows it)
+    const local = [...o.all('e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))];
+    if (local.length) sortUnshown(r, `the setup code of the local package ${local[0].text}`);
+    for (const f of [...o.all('r', 'requirement', 'c', 'constraint'), ...local].filter(w => !/:\/\//.test(w.text)).map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
     for (const d of o.all('d', 'dest')) sortTouch(d, ctx, r);
     // (an address it is handed, or the default index when none replaces it)
@@ -153,6 +232,7 @@ Object.assign(SORT_HANDLERS, {
     if (!v || /^(?:list|info|search)$/.test(v) || (/^(?:env|config)$/.test(v) && (p[0] === 'list' || o.has('show', 'get')))) return;
     if (v === 'run') {
       const ro = sortOpts(SORT_OPTS['conda:run'], a.slice(g.end + 1), null, []);
+      sortUnshown(r, `the activation scripts of the environment ${name} run sets up`);
       sortRuns(null, ctx, r, `${sortQ(name)} run runs a program inside an environment.`);
       sortProgram(a.slice(g.end + 1 + ro.end).length ? a.slice(g.end + 1 + ro.end) : unsure(`${sortQ(name)} run with no program.`), ctx, r, x);
       if (ro.unknown) unsure(`The sorter doesn’t know ${sortQ(name)} run’s option ${sortQ(ro.unknown)}.`);
@@ -164,13 +244,13 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
     const t = a.map(w => w.text);
     // (a channel that is a folder here is packages whose scripts run)
-    for (const c of o.all('c', 'channel')) if (/^(?:[.~/]|file:)/.test(c.text)) sortRuns(c.text.replace(/^file:(?:\/\/)?/, ''), ctx, r, `${sortQ(name)} installs from the folder ${sortQ(c.text)}, whose packages' scripts run.`);
+    for (const c of o.all('c', 'channel')) if (/^(?:[.~/]|file:)/.test(c.text)) sortUnshown(r, `the scripts of the packages in the folder ${c.text}`), sortRuns(c.text.replace(/^file:(?:\/\/)?/, ''), ctx, r, `${sortQ(name)} installs from the folder ${sortQ(c.text)}, whose packages' scripts run.`);
     if (t.some((s, i) => /:\/\//.test(s) && (/^-c$|^--channel$/.test(t[i - 1] ?? '') || /^--channel=|^-c./.test(s)))) raise(r, 'risky', `${sortQ(name)} installs from a channel at an address: always asked.`);
     if (/^(?:remove|uninstall)$/.test(v) || (v === 'env' && p[0] === 'remove')) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages or an environment, which are not put back.`);
     // (env export -f writes the list; elsewhere -f is a list it installs)
     if (v === 'env' && p[0] === 'export' && ctx.root) raise(r, 'risky', `As root, ${sortQ(name)} env export is asked.`);
     for (const f of o.all('f', 'file')) if (v === 'env' && p[0] === 'export') { r.deletes = true; sortTouch(f, ctx, r); } else sortRuns(f.text, ctx, r, `${sortQ(name)} installs what the file ${sortQ(f.text)} lists.`);
-    for (const w of o.plain) if (/^(?:\.{0,2}\/|~|file:)|\.(?:conda|tar\.bz2)$/.test(w.text)) sortRuns(w.text.replace(/^file:\/*/, '/'), ctx, r, `${sortQ(name)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
+    for (const w of o.plain) if (/^(?:\.{0,2}\/|~|file:)|\.(?:conda|tar\.bz2)$/.test(w.text)) sortUnshown(r, `the scripts of the local package ${w.text}`), sortRuns(w.text.replace(/^file:\/*/, '/'), ctx, r, `${sortQ(name)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
     for (const d of o.all('p', 'prefix')) sortInto(d, ctx, r);
     for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=/, '')), ctx);
     if (/^(?:install|create|update|upgrade)$/.test(v) && !t.includes('--offline')) ctx.reach.add('internet');
@@ -183,23 +263,49 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the packages there.`);
     if (v === 'explore') { const i = t.indexOf('--'); sortElsewhere(i < 0 ? [] : a.slice(i + 1), ctx, r, `${name} explore`); return i; }
     if (v === 'node' && name === 'yarn') { const i = t.indexOf('node'); sortProgram(a.slice(i), ctx, r, x); return i; }
-    if (!/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|uninstall|remove|rm|r|un|unlink|update|up|upgrade|run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|link|ln|prune|dedupe|audit|fund|doctor|cache|whoami|ping|search|pkg|query|sbom|shrinkwrap|global|store|import|env|init|create|innit)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
+    if (!/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|uninstall|remove|rm|r|un|unlink|update|up|upgrade|run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|link|ln|prune|dedupe|ddp|audit|fund|doctor|cache|whoami|ping|search|pkg|query|sbom|shrinkwrap|global|store|import|env|init|create|innit)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (t.some(s => /:\/\/|^git\+|^github:|^--registry/.test(s))) raise(r, 'risky', `${sortQ(name)} installs code from an address or another registry: always asked.`);
     // (an address or registry it is handed, else the default registry for what fetches packages)
     for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=|^git\+/, '')), ctx);
-    if (/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|update|up|upgrade|global)$/.test(v) && !t.some(s => /^--(?:registry|offline)/.test(s))) ctx.reach.add('internet');
+    if (/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|update|up|upgrade|global|audit|dedupe|ddp)$/.test(v) && !t.some(s => /^--(?:registry|offline)/.test(s))) ctx.reach.add('internet');
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
     // fetched into that folder, or as root)
-    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global|link|ln)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
+    // (audit fix and dedupe install too: they fetch packages and run their scripts, S-5)
+    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global|link|ln|dedupe|ddp)$/.test(v) || (v === 'audit' && p.includes('fix'))) { sortUnshown(r, `the scripts the project's package.json holds (${name} ${v})`); sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1)); }
     // (a package from a folder or a file is code whose install scripts run)
-    for (const w of o.plain.slice(1)) if (/^(?:\.{0,2}\/|~|file:)|\.(?:tgz|tar\.gz|tar)$/.test(w.text)) sortRuns(w.text.replace(/^file:/, ''), ctx, r, `${sortQ(name)} ${sortQ(v)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
+    for (const w of o.plain.slice(1)) if (/^(?:\.{0,2}\/|~|file:)|\.(?:tgz|tar\.gz|tar)$/.test(w.text)) { sortUnshown(r, `the install scripts of the local package ${w.text}`); sortRuns(w.text.replace(/^file:/, ''), ctx, r, `${sortQ(name)} ${sortQ(v)} installs the local package ${sortQ(w.text)}, whose scripts run.`); }
   },
   docker(a, ctx, r, x, name = 'docker') {
     r.simple = false;
+    // (the Docker it talks to: -H or --host names one, a context is a name its own settings point anywhere)
+    for (let k = 0; k < a.length && a[k].text.startsWith('-'); k++) {
+      const t = a[k].text, v = t.includes('=') ? { ...a[k], text: t.slice(t.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] };
+      if (/^(?:-H|--host|-c|--context)(?:=|$)/.test(t)) { if (!t.includes('=')) k++; if (v.unknown || /^(?:-c|--context)/.test(t)) sortToHub('', ctx, r, `${name} ${t.split('=')[0]}`, true); else if (!/^(?:unix|fd|npipe):/.test(v.text)) sortToHub(usesHost(v.text) ?? v.text.replace(/:\d+$/, ''), ctx, r, `${name} ${t.split('=')[0]}`); }
+      else if (/^(?:--config|-l|--log-level|--tlscacert|--tlscert|--tlskey)$/.test(t)) k++;
+    }
     sortOpen(ctx, r, `${sortQ(name)} needs the Docker socket, which the run wall hides (Docker is root by another name): free-form, it is always asked.`);
     const v = a.filter(w => !w.text.startsWith('-')).map(w => w.text);
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
+    // (what an image, a container, a Dockerfile or a compose file runs is in none of its words)
+    if (v.some(t => /^(?:run|create|start|exec|build|buildx|compose|up|restart)$/.test(t))) sortUnshown(r, `the code the image, the container or the file ${name} is given runs`);
+    const all = name === 'docker-compose' ? [{ text: 'compose', subs: [] }, ...a] : a;
+    sortDockerHost(all, ctx, r, name);
+    sortDockerProtect(all, ctx, r, name);
+  },
+  // (containerd's and the kubelet's own tools, and machinectl's shells: a container or a shell they start may reach the host)
+  ...Object.fromEntries(['ctr', 'crictl', 'machinectl'].map(n => [n, (a, ctx, r) => {
+    if (a.some(w => w.unknown || /^(?:run|exec|create|start|shell|login|attach|runp|login|enable|start-transient)$/.test(w.text))) raise(r, 'lockout', `${sortQ(n)} starts a container or a shell whose reach the sorter can't read: it may be the host’s own, where SSH, the firewall and users are a command away.`);
+    sortOpen(ctx, r, `${sortQ(n)} needs a socket or another program, which the run wall hides.`);
+  }])),
+  // (snapd's packages: one the ways in depend on, stopped, disabled or changed, is the lock-out class; removed, lasting)
+  snap(a, ctx, r) {
+    const p = a.filter(w => !w.text.startsWith('-')), v = p[0]?.text ?? '';
+    if (!/^(?:list|info|find|search|version|services|logs|changes|change|connections|interfaces|aliases|get|warnings|known|routine|help)$/.test(v) && p.slice(1).some(w => w.unknown || w.glob || SORT_WAY_PKGS.test(w.text.split('.')[0]))) {
+      raise(r, 'lockout', `snap ${sortQ(v)} changes a package the ways in depend on (or one it can’t name).`);
+      if (/^(?:remove|revert)$/.test(v)) r.lasting ??= `snap ${v} takes away a package the ways in depend on: the net doesn’t put a package back.`;
+    }
+    sortOpen(ctx, r, 'snap needs snapd’s socket, which the run wall hides.');
   },
   hf(a, ctx, r, x, name = 'hf') {
     const o = sortOpts(SORT_OPTS.hf, a), p = o.plain.map(w => w.text);
@@ -224,7 +330,10 @@ Object.assign(SORT_HANDLERS, {
     if (t.some(s => /^(?:-H|--host|-M|--machine)/.test(s))) unsure('systemctl -H or -M reaches another machine.');
     const plain = o.plain, v = plain[0]?.text ?? 'list-units', at = ctx.root && !user;
     if (plain[0]?.unknown) unsure('systemctl’s sub-command comes from a $ or a command.');
+    // (one user, or a target the sorter can't tell from one: SSH and the network stop with everything else)
+    if (/^(?:rescue|emergency|isolate|default)$/.test(v)) { r.lasting ??= `systemctl ${v} stops the net’s own timer with everything else, so only a restart puts it back.`; return raise(r, 'lockout', `systemctl ${sortQ(v)} takes the Spark to another target: SSH and the network may stop with everything else.`); }
     if (SYSTEMCTL_POWER.test(v)) return raise(r, 'risky', `systemctl ${sortQ(v)}: power, so what runs on that Spark stops.`);
+    if (v === 'set-default' && plain.slice(1).some(u => u.unknown || !/^(?:graphical|multi-user)\.target$/.test(u.text))) { raise(r, 'lockout', 'systemctl set-default picks the target the Spark starts in next time, which may have no SSH or network.'); r.lasting ??= 'systemctl set-default takes effect at the next start, after the net has kept or put it back: the net can’t put that back.'; }
     if (/^(?:status|show|cat|list-\S+|is-\S+|get-default|show-environment|help)$/.test(v)) return at ? raise(r, 'change', `systemctl ${sortQ(v)} needs systemd’s bus, which a look’s wall hides.`) : sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`);
     if (!SYSTEMCTL_CHANGE.test(v)) unsure(`The sorter doesn’t know systemctl ${sortQ(v)}.`);
     for (const u of plain.slice(1)) {
@@ -232,9 +341,9 @@ Object.assign(SORT_HANDLERS, {
       // (systemctl matches a pattern itself, quoted or not; an instance, name@x, is its template's unit)
       const pat = u.glob || /[*?[]/.test(u.text), base = u.text.replace(/@.*$/, '').replace(/\.(?:service|socket)$/, '');
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);
-      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
+      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager|systemd-user-sessions$|user-runtime-dir|wg-quick|rfkill|systemd-timesyncd$|chrony|ntp)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
-      else if (['docker', 'containerd'].some(is)) raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`);
+      else if (['docker', 'containerd'].some(is)) { raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`); if (/^(?:stop|restart|kill|try-restart|reload-or-restart|disable|mask|freeze|isolate)$/.test(v)) ctx.kinds.add('brain'); }
       else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);
       if (at && (pat || !/^[A-Za-z0-9_-]+(?:\.service)?$/.test(u.text))) raise(r, 'risky', `As root, systemctl changes at once only a service named plainly, not ${sortQ(u.text)} (a pattern, a target, a slice, an instance, a path or another kind of unit).`);
     }
