@@ -2,7 +2,9 @@
 // chat (or caller), and runs the command there (A4: its output and exit code, an end line nothing it prints can pass
 // for, past its seconds the box goes with its folder, /stop while it runs cuts it off); write_file {on: "box"} writes
 // the whole file or its lines from inside it (a link at the name or one leading out of /work refused, a key refused,
-// one button with what is written while Sparkie's brain isn't checked). The box is on a compute Spark that is on:
+// one button with what is written while Sparkie's brain isn't checked; with too little memory free beyond the 8 GB
+// kept no box opens and no command runs; under the 50 GB disk floor no command runs, and one that takes the disk under
+// it ends the box; what a command leaves running is ended after it). The box is on a compute Spark that is on:
 // the first use fetches the pinned image (config.json work.images.python) and opens nothing; then the one docker
 // run line, pinned here whole, word for word (the name, the label, the owner's ids,
 // plain runc and NVIDIA_VISIBLE_DEVICES=void, no network or IPC, no capabilities, no new privileges, a read-only root,
@@ -173,6 +175,53 @@ test('past its seconds the box goes, with its folder; /stop while a command runs
   assert.deepEqual([cut.status, cut.json.exit, cut.json.ended], [200, null, 'The box was removed while it ran (/stop), so it was cut off there; the next call opens a new one.'], cut.text);
   assert.ok(!hasBox('spark3', API_BOX) && !existsSync(folder(API_BOX)));
   assert.equal((await act('run', { on: 'box', command: 'true' })).json.box, 'opened');
+});
+
+test('the 8 GB rule: with too little memory free beyond the 8 GB kept, no command runs in an open box, and no box opens', { timeout: 120000 * SLOW }, async () => {
+  const mi = s => join(mock(s), 'meminfo'), was = { spark3: text(mi('spark3')), spark4: text(mi('spark4')) };
+  const low = t => t.replace(/^MemAvailable:.*$/m, 'MemAvailable:   10485760 kB');
+  assert.equal((await act('run', { on: 'box', command: 'true' })).json.box, 'open');
+  try {
+    writeFileSync(mi('spark3'), low(was.spark3));
+    const r = await act('run', { on: 'box', command: 'touch ran.txt' });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'Spark 3 doesn’t have room for the box now: it needs 4 GB free beyond the 8 GB kept for the system, and 2 GB is. Nothing ran.');
+    assert.ok(!existsSync(join(folder(API_BOX), 'ran.txt')), 'nothing ran');
+    assert.equal((await act('run', { on: 'box', command: '/stop' })).json.box, 'removed');
+    writeFileSync(mi('spark4'), low(was.spark4));
+    const o = await act('run', { on: 'box', command: 'true' });
+    assert.equal(o.status, 409, o.text);
+    assert.equal(o.json.error, 'Spark 4 doesn’t have room for the box now: it needs 4 GB free beyond the 8 GB kept for the system, and 2 GB is. Nothing ran.');
+    assert.deepEqual([boxLines('spark3'), boxLines('spark4')], [[], []], 'no box opened');
+  } finally { writeFileSync(mi('spark3'), was.spark3); writeFileSync(mi('spark4'), was.spark4); }
+  assert.equal((await act('run', { on: 'box', command: 'true' })).json.box, 'opened');
+});
+
+test('the disk floor: under 50 GB free no command runs; a command that takes the disk under it ends the box, with its folder', { timeout: 120000 * SLOW }, async () => {
+  const free = join(mock('spark3'), 'disk-free');
+  try {
+    writeFileSync(free, '49000000000\n');
+    const r = await act('run', { on: 'box', command: 'touch ran.txt' });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'Spark 3’s disk has 49 GB free, and a box command needs 50 GB free (the floor the plain wall keeps), so the command didn’t run. Free space there first.');
+    assert.ok(!existsSync(join(folder(API_BOX), 'ran.txt')), 'nothing ran');
+    writeFileSync(free, '');
+    const took = await act('run', { on: 'box', command: `printf 49000000000 > ${free}; echo filled` });
+    assert.equal(took.status, 200, took.text);
+    assert.deepEqual([took.json.exit, took.json.output, took.json.ended], [0, 'filled\n', 'Spark 3’s disk had 49 GB free after it, under the 50 GB a box command needs, so the box was removed, with its folder; the next call opens a new one.']);
+    assert.ok(!hasBox('spark3', API_BOX) && !existsSync(folder(API_BOX)), 'the box and its folder went');
+  } finally { writeFileSync(free, ''); }
+  assert.equal((await act('run', { on: 'box', command: 'true' })).json.box, 'opened');
+});
+
+test('what a command leaves running in the box is ended after it', { timeout: 60000 * SLOW }, async () => {
+  const r = await act('run', { on: 'box', command: 'sleep 60 >/dev/null 2>&1 & echo $!' });
+  assert.equal(r.status, 200, r.text);
+  const pid = Number(r.json.output.trim());
+  assert.ok(pid > 1, r.json.output);
+  const gone = () => { try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
+  await waitFor(gone, { timeout: 10000 * SLOW, every: 200, what: 'the program it left running to end' });
+  assert.ok(hasBox('spark3', API_BOX), 'the box stays');
 });
 
 test('in a chat: a command full of quotes and flags changes nothing in the line; /stop while its Spark doesn’t answer keeps it and says so, and once it answers removes that chat’s box and its folder, and no other', { timeout: 180000 * SLOW }, async () => {
