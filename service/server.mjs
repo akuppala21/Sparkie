@@ -5252,14 +5252,32 @@ function ownSentences(text) {
   });
   return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
 }
+// A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
+// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
+// it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
+const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|scratch\s+that|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
+const OFF_FILL = String.raw`(?:oh|ok|okay|no|nope|sorry|hmm+|um+|uh+|actually|please)`;
+const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
+// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one after a comma or a dash.
+function calledOff(sentence) {
+  let rest = sentence.slice(-160), word = false, sep = '';
+  // ("stop it now - don't wait" asks for it at once)
+  if (/\b(?:don't|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
+  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
+  if (!word) return null;
+  if (!rest.trim()) return sentence.length <= 160 ? 'only' : null;
+  return /[,;:–—-]/.test(sep) ? 'tail' : null;
+}
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
+    const callOff = calledOff(sentence);
+    if (asked.size && callOff === 'only') { for (const k of asked) { negated.add(k); worded.add(k); } continue; }
     if (KEEP.test(sentence)) negated.add('stop');
-    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence);
+    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
     const here = new Set();
     for (const [kind, re] of CHANGE_FORMS) for (const m of sentence.matchAll(re)) if (NEGATOR.test(sentence.slice(Math.max(0, m.index - 50), m.index))) { negated.add(kind); worded.add(kind); }
     for (const [kind, re] of CHANGE_WORDS) {

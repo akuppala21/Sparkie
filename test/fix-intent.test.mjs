@@ -64,3 +64,12 @@ test('C-1: a line the owner pasted in a code block, or quoted with ">", is no as
   assert.equal(text('notes/f3o.txt'), 'own\n');
 });
 
+test('C-6, R1-08: a change called off in the next sentence is asked, never run at once: a command, and a power-off', { timeout: 120000 * SLOW }, async () => {
+  const r = await turn(await newChat(), 'fix the notes on spark 3. Actually don’t.', [[RUN('echo called-off > notes/f8.txt')]], 'Actually don');
+  assert.equal(r.tools[0]?.tail, ASKED, shown(r.tools));
+  assert.ok(!existsSync(at3('notes/f8.txt')));
+  const p = await turn(await newChat(), 'Shut down Spark 4. Actually don\'t.', [[{ name: 'power_off', arguments: { spark: 'spark4' } }]], 'Shut down Spark 4');
+  assert.ok(['needs-ok', 'question'].includes(p.tools[0]?.outcome), shown(p.tools));
+  assert.ok(p.choices.length > 0, 'a button');
+});
+

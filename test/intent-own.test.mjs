@@ -47,6 +47,36 @@ test('C-1: text the owner pasted or quoted is no ask; their own sentence around 
   assert.ok(!/ERROR|stop gemma|fix notes/.test(own), own);
 });
 
+// One plain ask for each kind the intent reader knows (CHANGE_WORDS), and the kind it asks for.
+const KINDS = [
+  ['start gemma on spark 3', 'start'], ['stop gemma on spark 4', 'stop'], ['restart gemma on spark 4', 'restart'],
+  ['keep open webui on spark 3 running', 'keep'], ['cancel the download', 'cancel'], ['undo that', 'undo'], ['find setups for gemma', 'find'],
+  ['save that as a workflow', 'save'], ['compare qwen against gemma on nightly', 'compare'], ['forget the nightly workflow', 'forget'],
+  ['test the changes', 'test'], ['fix yourself', 'code'], ['install the new build', 'install'], ['run the self-test', 'selftest'],
+  ['save this as notes.md on spark 3', 'file'], ['shut down spark 4', 'poweroff'], ['turn on spark 3', 'poweron'],
+  ['set the idle shutdown to 45 minutes', 'powerset'], ['remember that spark 3 keeps the notes', 'remember'], ['fix the notes on spark 3', 'work'],
+];
+test('C-6, R1-08: a later sentence that calls the work off wins, for every kind the intent reader knows', () => {
+  const kinds = new Set(KINDS.map(([, k]) => k));
+  assert.equal(kinds.size, 20, 'every kind');
+  for (const [words, kind] of KINDS) {
+    assert.ok(asks(words, kind), `${words} asks ${kind}: ${JSON.stringify(changeIntent(words))}`);
+    for (const off of ['Actually don’t.', 'Actually don\'t.', 'Never mind.', 'Wait.', 'Cancel that.', 'Not yet.', 'No wait, leave it.', 'Hold on.', 'Scratch that.']) {
+      const said = `${words}. ${off}`, i = changeIntent(said);
+      assert.deepEqual(i.asked, [], `${said}: ${JSON.stringify(i)}`);
+      assert.ok(i.negated.includes(kind), `${said}: ${JSON.stringify(i)}`);
+    }
+    // (and called off in its own sentence, after a dash or a comma)
+    for (const said of [`${words} - no wait, leave it`, `${words}, actually no`, `${words}, never mind`]) assert.deepEqual(changeIntent(said).asked, [], said);
+  }
+  // A call-off before a new ask leaves the new one asked; words that only sound like one call nothing off.
+  assert.deepEqual(changeIntent('Stop gemma. Never mind. Restart qwen on spark 4 instead.').asked, ['restart']);
+  for (const [words, kind] of [['restart gemma on spark 3, then wait for it to load', 'restart'], ['stop it now - don\'t wait', 'stop'], ['start gemma on spark 3. Ok.', 'start'],
+    ['Start gemma on spark 3 please', 'start'], ['restart gemma on spark 3, then leave it', 'restart'], ['Cancel that.', 'cancel']]) {
+    assert.ok(asks(words, kind), `${words}: ${JSON.stringify(changeIntent(words))}`);
+  }
+});
+
 test('the reader stays short work on megabytes of the worst input', () => {
   const n = 400000;
   for (const text of ['wait '.repeat(n), 'no wait, '.repeat(n), '`'.repeat(n), '"a '.repeat(n), '```'.repeat(n), 'a:\n'.repeat(n), '2026-11-15 10:00 x\nplain\n'.repeat(n / 10),
