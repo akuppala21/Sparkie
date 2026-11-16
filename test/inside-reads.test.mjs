@@ -95,7 +95,8 @@ test('every planted sentence reaches an outside read (the plants landed), and th
     events: await waitFor(async () => { const t = (await act('fleet_events', { limit: 50 })).text; return t.includes('PLANTLOG') && t; }, { timeout: 60000, what: 'the log line in fleet_events' }),
     workflows: (await act('workflows')).text,
   };
-  assert.deepEqual(planted(outside.models).sort(), ['arch', 'dtype', 'title', 'type']);
+  // (models_on_disk gives a model's title, architecture and quantization; its type rides nowhere the brain reads)
+  assert.deepEqual(planted(outside.models).sort(), ['arch', 'dtype', 'title']);
   assert.ok(outside.workflows.includes('PLANTWHEN'));
 });
 
