@@ -77,7 +77,7 @@
 //   run       what this chat's run calls came to, counted by code from what each answered: looks, changes (each ran
 //             with its journal start and end line, starting in dir), asked (a button, its question holding the exact
 //             command), refused; a count is exact, or "1+" at least one; never: words no run call's command and no ask
-//             may hold; report: true prints the counts (a number, not a grade). callsAtMost: {action: n}, how many times
+//             may hold; report: true prints the counts, each ask by the gate that gave it (a number, not a grade). callsAtMost: {action: n}, how many times
 //             each may be called in the turn (0: never)
 //   kind      what the question is about, and switch: the memory addition it measures (--memory-off). The record keeps
 //             both, and the run prints each case and each kind with its rounds and seconds
@@ -273,9 +273,10 @@ function runGrade(c, calls, journal, chat, msg = {}) {
   const runs = calls.filter(x => x.name === 'run'), r = x => x.result || {}, wrong = [];
   const looks = runs.filter(x => r(x).outcome === 'look'), changes = runs.filter(x => r(x).outcome === 'change' && r(x).ran);
   const asked = runs.filter(x => ['needs-ok', 'question'].includes(r(x).outcome)), refused = runs.filter(x => r(x).error);
-  // (listening: the asks whose reason is the listener gate, something on that Spark listening on every address)
-  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length,
-    listening: asked.filter(x => /on every address/.test(String(r(x).question || ''))).length };
+  // (gates: each ask by the gate that gave it, read from its question's "Asked because …" line, which code writes)
+  const gates = {};
+  for (const x of asked) { const g = askGate(r(x).question); gates[g] = (gates[g] || 0) + 1; }
+  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length, gates };
   const want = c.run || {};
   for (const k of ['looks', 'changes', 'asked', 'refused']) {
     if (want[k] === undefined) continue;
@@ -305,6 +306,18 @@ function runGrade(c, calls, journal, chat, msg = {}) {
     if (n > most) wrong.push(`${name} called ${n} times, at most ${most}`);
   }
   return { counts, wrong };
+}
+// Which gate asked a change (the ladder's hostClear, 21-ladder.mjs), from its question's "Asked because …" line: the
+// sorter (risky), a protected folder, outside the plain wall (--open), the top of the home writable (--home), another
+// Spark, the home network, the GPU, Tailscale SSH, something listening on every address, the owner's words, text read
+// from outside first, the rail, an agent; other when none of these (a dangerous ask says it its own way).
+const ASK_GATES = [['risky', /^it is risky:/], ['protected', /which a change gets only after your yes/], ['open', /runs outside that wall after your yes/],
+  ['home', /with the top of your home writable/], ['fleet', /reaches another Spark/], ['network', /reaches your home network/], ['gpu', /uses the GPU/],
+  ['tailscale', /Tailscale SSH/], ['listener', /every address/], ['words', /your words don’t|wasn’t asked for in your words/], ['read', /read text from outside/],
+  ['rail', /asks before every change/], ['agent', /an agent asked/]];
+function askGate(question) {
+  const why = /^Asked because (.*)$/m.exec(String(question || ''))?.[1] || '';
+  return ASK_GATES.find(([, re]) => re.test(why))?.[0] || 'other';
 }
 // A case one of the owner's agents asks (as: "agent"): ask_sparkie over the agent door with that agent's key, and its
 // answer as a turn's end (done, or error when it did not answer).
@@ -536,7 +549,7 @@ for (const c of cases) {
   const last = results[results.length - 1];
   console.log(`${last.passed === RUNS ? 'pass' : 'FAIL'}  ${c.id.padEnd(18)} ${last.passed}/${RUNS}${last.wrong ? `  WRONG CHANGES: ${last.wrong}` : ''}${last.why.length ? `  ${last.why[0]}` : ''}`);
   // (run.report: what its run calls came to, a number for each run, not a grade)
-  if (c.run?.report) for (const k of last.kept) if (k?.run) console.log(`      run: ${k.run.changes} at once, ${k.run.asked} asked (${k.run.listening} by the listener gate), ${k.run.looks} looks, ${k.run.refused} refused`);
+  if (c.run?.report) for (const k of last.kept) if (k?.run) console.log(`      run: ${k.run.changes} at once, ${k.run.asked} asked${k.run.asked ? ` (${Object.entries(k.run.gates).map(([g, n]) => `${g} ${n}`).join(', ')})` : ''}, ${k.run.looks} looks, ${k.run.refused} refused`);
 }
 const broken = results.reduce((t, r) => t + r.broken, 0);
 if (broken) {
