@@ -4,7 +4,8 @@
 // nothing ran and why, and shows the owner's one-time command where the result carries it (on the page; Telegram says
 // where it is); one that exits 1 says so, with its exit code and last line; a write_file into a folder that isn't there
 // says nothing was written; one ended at its time limit says so. A task parked at the button and woken by a failed press
-// reads what happened, not "done".
+// reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
+// them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
 // on Spark 4, the stand-in brain told by a script which tools to call, and the paired Telegram chat (test/mock/
 // telegram.mjs) with approvals from there on. Linux only: run it on a Spark with tools/test-on-spark.sh.
@@ -139,7 +140,30 @@ test('a task parked at its button and woken by a press that failed reads what ha
     const woken = await waitFor(() => lines(join(T.fleet.dir, 'model-history.jsonl')).find(x => new RegExp(ANSWERED).test(x.words)), { timeout: 90000, what: 'the carry-on turn after the press' });
     assert.ok(woken.history.some(h => h.includes(`Run it: ${FAILED}`)), JSON.stringify(woken.history));
     assert.ok(!woken.history.some(h => /Run it: done\./.test(h)), JSON.stringify(woken.history));
+    // (K5: its report counts the change, which ran, after the yes)
+    const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report), { timeout: 90000, what: 'the task’s report' });
+    assert.equal(report.content.split('\n')[2], 'Changes: 0 made at once, 1 after your yes; 1 question asked of you. Undone: 0.', report.content);
   } finally { noScript(); rmSync(marker, { force: true }); }
+});
+
+// K5 (R66): the runner writes its start line before the root helper is called; on a Spark with no helper the end line
+// says it never ran, and the report counts no change.
+test('a task’s change that never ran (no root helper on Spark 4) is no change in its report', { timeout: 300000 * SLOW }, async () => {
+  const words = 'make the k5 note on the other one, then tell me what changed', chat = await newChat();
+  script([{ match: `^${esc(words)}$`, rounds: [[RUN('spark4', 'touch notes/k5.txt')]] }, { match: ANSWERED, calls: [] }]);
+  try {
+    const r = await say(chat, words);
+    const yes = (r.message.choices || []).find(c => c.label === 'Run it');
+    assert.ok(yes, JSON.stringify(r.message));
+    assert.equal((await pressed(chat, yes)).message.content, `Run it: ${NONE4}`);
+    const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report), { timeout: 120000, what: 'the task’s report' });
+    assert.equal(report.content.split('\n')[2], 'Changes: 0 made at once, 0 after your yes; 1 question asked of you. Undone: 0.', report.content);
+    // (through the real path: the start line carries the task, and its end line says it never ran)
+    const start = journal().filter(x => x.k === 'cmd' && x.start && x.args?.command === 'touch notes/k5.txt').at(-1);
+    assert.equal(start?.task, report.report, JSON.stringify(start));
+    assert.equal(journal().find(x => x.id === start.id && x.end)?.ran, false);
+    assert.ok(!existsSync(join(T.fleet.root, 'spark4', 'notes', 'k5.txt')));
+  } finally { noScript(); }
 });
 
 // The two functions, cut from their parts, for every kind of result (Telegram's approvals allow 3 presses an hour, so

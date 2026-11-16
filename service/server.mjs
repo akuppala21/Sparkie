@@ -4474,7 +4474,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   return { role: 'tool', tool_call_id: calls[i].id || `call_${round}_${i}`, content: out };
 }
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
-// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
+// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
 // Owns: none        Timers: none        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
@@ -4708,8 +4708,10 @@ const TASK_ENDS = {
 function taskCounts(id) {
   const c = { ops: 0, finished: 0, failed: [], cancelled: 0, undone: 0, atOnce: 0, afterYes: 0, asked: 0, turns: 0, wh: 0, measured: 0, unmeasured: 0 };
   if (!id) return c;
-  const tag = `"task":${JSON.stringify(id)}`, allowed = new Map();
+  const tag = `"task":${JSON.stringify(id)}`, allowed = new Map(), changes = new Map(), never = new Set();
   for (const f of journalFiles().slice(0, 2).reverse()) for (const line of jLinesOf(f)) {
+    // (a command's end line carries no task: one that says it never ran takes its start line off the count below, K5)
+    if (line.includes('"ran":false')) { const e = jParse(line); if (e?.k === 'cmd' && e.end && e.ran === false) never.add(e.id); }
     if (!line.includes(tag)) continue;
     const r = jParse(line);
     if (r?.task !== id) continue;
@@ -4722,9 +4724,10 @@ function taskCounts(id) {
       // (a cancel is counted once, by the operation it cancelled, below)
       if (r.act === 'undo_last_change') c.undone++;
     } else if (r.k === 'cmd') {
-      // (a command that changed something: the runner's start line marks it a change, and after the owner's yes when it
-      // was asked; a look is no change, run being a lookup to runAction)
-      if (r.start && r.act === 'run' && r.class === 'change') (['asked', 'button'].includes(r.gate) ? c.afterYes++ : c.atOnce++);
+      // (a command that changed something: the runner's start line marks it a change, and the net's seam marks every one
+      // it runs (net: a lock-out change, one on Spark 2, root), whatever the sorter called it; after the owner's yes when
+      // it was asked. A look is no change, run being a lookup to runAction; one whose end says it never ran is none, K5)
+      if (r.start && r.act === 'run' && (r.class === 'change' || r.net)) changes.set(r.id, ['asked', 'button'].includes(r.gate));
     } else if (r.k === 'op') {
       c.ops++;
       if (r.outcome === 'completed') c.finished++;
@@ -4733,6 +4736,7 @@ function taskCounts(id) {
       if (typeof r.wh === 'number' && Number.isFinite(r.wh)) { c.wh += r.wh; c.measured++; } else c.unmeasured++;
     }
   }
+  for (const [rid, yes] of changes) if (!never.has(rid)) (yes ? c.afterYes++ : c.atOnce++);
   return c;
 }
 const taskTook = ms => { const m = Math.round(ms / 60000); return m < 1 ? `${Math.max(0, Math.round(ms / 1000))} s` : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
@@ -19451,7 +19455,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     g.ways = Object.keys(NET_PROBES).filter(p => before[p] === true);
     // (on record before the call: a restart from here on puts it back at start)
     netSave(f => f.guards.push({ ...g, state: 'arming', at: new Date().toISOString(), goesBackAt: new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString() }));
-    rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: cls, gate, unit, seconds,
+    rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: cls, gate, unit, seconds,
       root: root === true, net: id, args: { spark: node.id, command: command.slice(0, 600), dir }, sub: jSub(node.id) });
     if (!rid) { netMark(id, { state: 'never' }); throw new HttpError(507, JOURNAL_REFUSED); }
     netMark(id, { record: rid });
