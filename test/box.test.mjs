@@ -294,9 +294,9 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
   const post = async (path, body) => { const r = await fetch(`${F.base}${path}`, { method: 'POST', headers: asF(F), body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => null) }; };
   const chat = (await post('/chats', {})).json.id, words = 'open a box for me';
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'box', command: 'true' } }] }], F);
-  const r = await fetch(`${F.base}/chats/${chat}/messages`, { method: 'POST', headers: asF(F), body: JSON.stringify({ text: words }) });
-  noScript(F);
-  const done = (await r.text()).split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done');
+  let body;
+  try { body = await (await fetch(`${F.base}/chats/${chat}/messages`, { method: 'POST', headers: asF(F), body: JSON.stringify({ text: words }) })).text(); } finally { noScript(F); }
+  const done = body.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done');
   const choices = done.message.choices || [];
   assert.equal(choices.length, 1, JSON.stringify(done.message));
   assert.equal(choices[0].label, 'Open the box (a throw-away container on a compute Spark: no network, nothing of the Spark but its own folder) for: true');
