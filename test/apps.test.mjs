@@ -26,7 +26,8 @@
 // `jobs/<name>` at `/out`, never joins the list, is told once when it ends (also in the chat it was started from), runs
 // again and stops, and is refused by name, new or run again, when its folder or the jobs folder is a link; Sparkie's
 // button for a GPU app or a dev box shows every setting, and typed in full it runs at once;
-// a stack of `keep_running` steps runs as a saved workflow, and one with a new image needs an answer first.
+// a stack of `keep_running` steps runs as a saved workflow, and one with a new image needs an answer first. A stopped
+// GPU app's start and a stopped model's restart look at the GPU and memory again inside their claim (A-2, A-2b).
 //
 // Apps kept running (A12, R38): keep_running puts an app that isn't a model (Open WebUI, a database) on the list of what
 // should be running, with its link; restarts or stops one kept that way; and starts a new one from an image the owner
@@ -829,6 +830,48 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
         assert.match(w.error, re, what);
         assert.equal(stateOf('spark3', 'gpu-box'), 'exited', `${what}: gpu-box wasn’t started`);
         assert.ok(!w.recentLog.some(l => /It didn’t come up/.test(String(l.text ?? l))), `${what}: nothing to put back: ${JSON.stringify(w.recentLog)}`);
+        noOther();
+        writeFileSync(m('spark3', 'meminfo'), meminfo);
+      }
+    } finally {
+      rmSync(m('spark3', 'slow-inspect'), { force: true });
+      noOther();
+      writeFileSync(m('spark3', 'meminfo'), meminfo);
+      setState('spark3', MODEL3, 'running', 'Up 1 second');
+    }
+  });
+
+  // The same for restart_model (A-2b): its room and the GPU are looked at again inside its claim, from a fresh look,
+  // just before docker start, so what came between the first look and the claim starts nothing.
+  test('a stopped model’s restart is checked again inside its claim: a GPU app there, or less free memory, since the first look starts nothing', { timeout: 300000 * SLOW }, async () => {
+    assert.equal(stateOf('spark3', 'gpu-box'), 'exited');
+    setState('spark3', MODEL3, 'exited', 'Exited (0) just now');
+    const meminfo = readFileSync(m('spark3', 'meminfo'), 'utf8');
+    const other = () => {
+      appendFileSync(m('spark3', 'containers'), 'gpu-other|running|Up 1 second|app||||||\n');
+      writeFileSync(m('spark3', 'run-gpu-other'), ['-d', '--name', 'gpu-other', '--label', 'spark.app=1', '--label', 'spark.gpu=1', '--gpus', 'all', '--memory', '8g', 'nvcr.io/nvidia/pytorch:25.01-py3', ''].join('\n'));
+    };
+    const noOther = () => {
+      const f = m('spark3', 'containers');
+      writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter(l => !l.startsWith('gpu-other|')).join('\n'));
+      rmSync(m('spark3', 'run-gpu-other'), { force: true });
+    };
+    // (every docker inspect on Spark 3 takes 2 s more: when restart_model answers, its claim is taken and the job's own
+    // look is still to come, so the change lands between the two)
+    writeFileSync(m('spark3', 'slow-inspect'), '2');
+    try {
+      for (const [what, change, re] of [
+        ['a GPU app', other, /^gpu-other has Spark 3’s GPU now\. start_model can ask to stop it\.$/],
+        // (the stand-in model's files are a few MB: with 8 GB free, nothing is left beyond the 8 GB kept)
+        ['less free memory', () => writeFileSync(m('spark3', 'meminfo'), meminfo.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${8 * 1024 * 1024} kB`)),
+          new RegExp(`^spark3 doesn’t have room for ${MODEL3.replace(/\./g, '\\.')} now \\(it takes about \\d+ GB beyond the 8 GB kept free\\)\\. start_model can make room\\.$`)]]) {
+        const r = await api('/actions/restart_model', { method: 'POST', body: { spark: 'spark3', container: MODEL3 } });
+        assert.equal(r.json?.outcome, 'started', `${what}: ${r.text}`);
+        change();
+        const w = await finished(r.json.operation);
+        assert.equal(w.status, 'failed', `${what}: ${JSON.stringify(w)}`);
+        assert.match(w.error, re, what);
+        assert.equal(stateOf('spark3', MODEL3), 'exited', `${what}: ${MODEL3} wasn’t started`);
         noOther();
         writeFileSync(m('spark3', 'meminfo'), meminfo);
       }

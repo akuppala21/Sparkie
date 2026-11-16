@@ -60,6 +60,8 @@ test('one tap validates start, stop and restart with a small model on Spark 3 or
   }
   assert.deepEqual(await workflows(), { start_model: 'active', start_model_across: 'needs-validation', stop_model: 'active', find_setups: 'active', restart_model: 'active' });
   assert.ok(w.recentLog.some(l => /across two Sparks” still needs its first run/.test(l)), w.recentLog.join('\n'));
+  // (the page has no Deploy view: the owner is told to ask Sparkie, TR-5)
+  assert.ok(w.recentLog.some(l => /across two Sparks” still needs its first run: when Spark 3 and Spark 4 are both free, ask Sparkie to start one model across them\.$/.test(l)), w.recentLog.join('\n'));
   // What ran on Spark 3 and 4 runs again; Spark 2 was never touched.
   assert.deepEqual({ spark3: running('spark3'), spark4: running('spark4'), spark2: running('spark2') }, before);
   assert.ok(!(await api('/jobs')).json.notices.some(n => /Auto-restart is paused/.test(n.text)));

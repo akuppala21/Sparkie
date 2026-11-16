@@ -14,7 +14,7 @@ const workerName = model => `${containerName(model)}-part2`;
 async function clusterNet(headId, workerId) {
   const f = await fabric({ nodeIds: null }, false);
   const pair = (lastCheck?.pairs || []).find(p => [p.a, p.b].sort().join() === [headId, workerId].sort().join());
-  if (!pair) throw new HttpError(409, `The cable between ${headId} and ${workerId} hasn’t been tested yet. Test it on Clusters first.`);
+  if (!pair) throw new HttpError(409, `The cable between ${headId} and ${workerId} hasn’t been tested yet. Test it first with Spark Console’s cable test (GET /fabric?check=1).`);
   if (pair.fastLink !== 'full') throw new HttpError(409, `The cable between ${headId} and ${workerId} isn’t passing full-size packets, so they can’t run a model together.`);
   const head = f.sparks.find(s => s.id === headId), worker = f.sparks.find(s => s.id === workerId);
   const matches = [];
@@ -99,7 +99,7 @@ async function cableCheck(job, nodeIds, net, freesPort = false) {
   const why = { timeout: 'it timed out', refused: 'it was refused', unreachable: 'there was no route', error: 'it failed' };
   // Into one Spark from the other: a port its listener couldn't take says nothing about the cable.
   const into = (them, us, ports, name, ip, iface, from) => {
-    if (ports.some(p => them[`in ${p}`] === 'error')) return problems.push(`${name} couldn’t listen on its cable address ${ip}; it may have changed since the last cable test. Test the cable again on Clusters.`);
+    if (ports.some(p => them[`in ${p}`] === 'error')) return problems.push(`${name} couldn’t listen on its cable address ${ip}; it may have changed since the last cable test. Test the cable again with Spark Console’s cable test (GET /fabric?check=1).`);
     const bad = ports.find(p => them[`in ${p}`] !== 'busy' && us[`out ${p}`] !== 'ok');
     if (bad != null) problems.push(`${from} can’t open a connection to ${name} over the cable (${why[us[`out ${bad}`]] || 'no answer'}), though pings get through. Most likely a firewall on ${name} refuses connections coming in on the cable. The owner can let them in on ${name}; with ufw: sudo ufw allow in on ${iface}`);
   };
