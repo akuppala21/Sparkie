@@ -248,7 +248,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
-      ...(as?.result || {}),
+      // (write_file's own fields: what it wrote only when its program ended well; else what it said)
+      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: `Nothing was written: ${maskSecrets(last || (a.exit == null ? 'it was ended before it finished' : `exit ${a.exit}`)).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
