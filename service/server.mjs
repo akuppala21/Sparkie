@@ -180,13 +180,14 @@ function spawnOn(node, { script, command, limit, fresh = false }) {
 const unreachableUntil = new Map();
 const knownOffline = node => (unreachableUntil.get(node.id) || 0) > Date.now();
 // Two failed connections (or timed-out commands: a frozen Spark accepts SSH but never answers) in a row, so a dropped
-// handshake (a burst of SSH, a Tailscale blip) doesn't count. A failure of a command begun before the Spark last
-// answered says nothing new (it was begun while the Spark was away, and ended late), so it marks nothing: else a Spark
-// back on would read offline again for a minute (startedAt: when its command began; left out, it counts).
+// handshake (a burst of SSH, a Tailscale blip) doesn't count. Each failure is judged by the moment it speaks for: a
+// connection that failed says the Spark was away when its command began, so one begun before the Spark last answered
+// marks nothing (it ended late; else a Spark back on would read offline again for a minute); a time-out says the Spark
+// gave no answer right up to when it ended, so it always counts. (startedAt: when its command began; left out, now.)
 const reachMisses = new Map(), reachOkAt = new Map();
-function noteReach(node, code, startedAt = Date.now()) {
+function noteReach(node, code, startedAt = Date.now(), timedOut = false) {
   if (code === 255) {
-    if (startedAt < (reachOkAt.get(node.id) || 0)) return;
+    if (!timedOut && startedAt < (reachOkAt.get(node.id) || 0)) return;
     const misses = (reachMisses.get(node.id) || 0) + 1;
     reachMisses.set(node.id, misses);
     if (misses >= 2) unreachableUntil.set(node.id, Date.now() + OFFLINE_TTL);
@@ -218,7 +219,7 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
     child.on('close', code => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
-      noteReach(node, timedOut ? 255 : code, began);
+      noteReach(node, timedOut ? 255 : code, began, timedOut);
       resolve({ code: code ?? -1, out, err: err.trim() });
     });
   });
@@ -2928,7 +2929,7 @@ function runWorker(node, payload, timeout = 30000) {
     child.on('error', e => { error ||= e.message; });
     child.on('close', exit => {
       clearTimeout(timer);
-      noteReach(node, timedOut ? 255 : exit, began);
+      noteReach(node, timedOut ? 255 : exit, began, timedOut);
       if (result && !error) resolve(result);
       else reject(Object.assign(new Error(error || (exit === 255 ? `${node.id} isn’t reachable.` : 'The Spark didn’t finish.')), { refused: refused && !timedOut, conflict }));
     });

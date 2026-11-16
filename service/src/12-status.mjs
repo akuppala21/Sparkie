@@ -36,7 +36,7 @@ function runWorker(node, payload, timeout = 30000) {
     child.on('error', e => { error ||= e.message; });
     child.on('close', exit => {
       clearTimeout(timer);
-      noteReach(node, timedOut ? 255 : exit, began);
+      noteReach(node, timedOut ? 255 : exit, began, timedOut);
       if (result && !error) resolve(result);
       else reject(Object.assign(new Error(error || (exit === 255 ? `${node.id} isn’t reachable.` : 'The Spark didn’t finish.')), { refused: refused && !timedOut, conflict }));
     });

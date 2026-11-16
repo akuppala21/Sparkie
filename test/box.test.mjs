@@ -502,7 +502,7 @@ test('a command’s end line counts only at the very end: a line of the same fre
 
 // (the race these tests met under load: a command begun while Spark 3 was off, ending late, marked it offline again just
 // after it answered, and the next box opened on Spark 4; 02-ssh.mjs noteReach)
-test('a Spark that answers again isn’t marked offline by commands begun while it was away that end late; failures of ones begun after it answered count', () => {
+test('a Spark that answers again isn’t marked offline by connections that failed late, begun while it was away; failures of ones begun after it answered, and time-outs, count', () => {
   const src = readFileSync(join(REPO, 'service', 'src', '02-ssh.mjs'), 'utf8'), from = src.indexOf('const unreachableUntil'), to = src.indexOf('\nfunction run(');
   const lib = new Function('OFFLINE_TTL', `${src.slice(from, to)}\nreturn { noteReach, knownOffline };`)(60000);
   const n = { id: 'spark3' }, away = Date.now() - 5000;
@@ -515,6 +515,10 @@ test('a Spark that answers again isn’t marked offline by commands begun while 
   const after = Date.now() + 10;
   lib.noteReach(n, 255, after); lib.noteReach(n, 255, after);
   assert.equal(lib.knownOffline(n), true, 'two failures of commands begun after it count');
+  // (a time-out speaks for when it ended: a Spark that took the command and never answered, as a frozen worker does)
+  lib.noteReach(n, 0);
+  lib.noteReach(n, 255, away, true); lib.noteReach(n, 255, away, true);
+  assert.equal(lib.knownOffline(n), true, 'two time-outs in a row count, though their commands began before the last answer');
 });
 
 test('changeLabel names the box, the command whole and keys masked', async () => {
