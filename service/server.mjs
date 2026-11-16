@@ -4493,6 +4493,8 @@ function taskAgain(conv, text) {
   // (parked at a button: this turn carries it on, so Sparkie asks again; its budget stays)
   if (!t.stopped) { taskUnpark(t); return t; }
   Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
+  // (its next end is reported again: E7)
+  delete t.reported;
   delete t.carry;
   delete t.parked;
   return t;
