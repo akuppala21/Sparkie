@@ -225,8 +225,8 @@ test('a command the sorter can\'t read ($ for a program, python -c, a script) is
   assert.equal(starts().filter(r => /stop/.test(r.args?.command || '')).length, 0, 'none ran');
 });
 
-test('off (no SPARK_CONSOLE_HUB): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
-  const off = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_NET: '1' } });
+test('off (SPARK_CONSOLE_HUB=0, its own fleet): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
+  const off = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_HUB: '0' } });
   later.push(off);
   const r = await fetch(`${off.base}/actions/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: off.origin },
     body: JSON.stringify({ on: 'spark2', command: 'echo hi > notes/off.txt', dir: '~' }) });

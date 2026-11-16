@@ -167,7 +167,7 @@ test('sudo in a plain command is answered “set root”; root with sudo, a key 
 test('off: run has no root in its schema, so what the brain reads is as before; on, it has', { timeout: 120000 * SLOW }, async () => {
   const on = (await api('/actions')).json.actions.find(a => a.name === 'run');
   assert.equal(on.input.properties.root?.type, 'boolean');
-  const B = await startMock({ env: { SPARK_CONSOLE_NET: '1' } });
+  const B = await startMock({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '0' } });
   later.push(B);
   const off = (await (await fetch(`${B.base}/actions`)).json()).actions.find(a => a.name === 'run');
   assert.ok(off && !('root' in off.input.properties), JSON.stringify(off?.input.properties));

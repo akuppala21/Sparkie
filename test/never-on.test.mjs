@@ -10,7 +10,9 @@ import { T, useFleet, api, newChat, say, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { brainSent } from './lock.mjs';
 
-useFleet({ watchMs: 60000, prepare: ({ root }) => { rehearse(root, 'spark3', { run: true }); rehearse(root, 'spark2', { run: true }); } });
+useFleet({ watchMs: 60000, prepare: ({ root }) => { rehearse(root, 'spark3', { run: true }); rehearse(root, 'spark2'); } });
+// (the root helper on both, so each change is asked: one Spark a fleet runs changes in a rehearsal, so Spark 2's is a
+// look's rehearsal; nothing here is pressed)
 const ASKED = 'On a compute Spark a change to SSH, Tailscale, the firewall or users runs only inside the put-back net, after the owner’s press. A command as root runs only on a compute Spark where the owner turned root on, always asked and always inside that net. On Spark 2 every change is asked and runs inside the net; one that could lock the owner out is refused, and so is a long one (minutes).';
 // One owner's message whose stand-in brain calls run once: the reply's step for it.
 async function runInChat(words, on, command) {
