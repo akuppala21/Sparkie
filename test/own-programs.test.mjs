@@ -27,7 +27,9 @@ writeFileSync(join(dir, 'own.mjs'), [
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies-prune.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies.mjs'), 'utf8'),
-  'export { helperScript, lookForm, LOOK_FORMS, KEY_SCRIPT, q, copiesOn, ran };',
+  // (the net's own sentences, 21-guard.mjs: GUARD_SAYS alone, as that part keeps it)
+  /^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(readFileSync(join(SRC, '21-guard.mjs'), 'utf8'))[0],
+  'export { helperScript, lookForm, LOOK_FORMS, KEY_SCRIPT, q, copiesOn, ran, HELPER_SAYS, GUARD_SAYS };',
 ].join('\n'));
 const own = await import(pathToFileURL(join(dir, 'own.mjs')).href);
 
@@ -92,4 +94,34 @@ test('the call to the root helper: a change\'s cap and widenings as the helper t
   for (const dir of ['/tmp', '~/../x', 'work', '~/a b', '~/.']) {
     assert.throws(() => at({ dir }), e => e.status === 400 && /^dir isn’t in the right form for a change/.test(e.message), dir);
   }
+});
+
+// Every sentence of the helper's that the console reads (HELPER_SAYS, and the net's GUARD_SAYS) is one the helper can
+// print, as its own file says: a sentence the helper changes fails here, not on a Spark (the disk floor's, 2026-11-15).
+test('every helper sentence the console reads is one deploy/spark-console-root prints', () => {
+  const helper = readFileSync(join(REPO, 'deploy', 'spark-console-root'), 'utf8');
+  const render = t => t.replace(/\$\(\([^)]*\)\)/g, '12').replace(/\$\([^)]*\)/g, 'X').replace(/\$\{[^}]*\}/g, 'X').replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, 'X')
+    .replace(/\\"/g, '"').replace(/%s/g, '12').replace(/\\n/g, '\n');
+  // (a double-quoted word as bash reads it: a $( … ) inside it may hold quotes of its own)
+  const quoted = (t, i) => {
+    let depth = 0, out = '';
+    for (; i < t.length; i++) {
+      const c = t[i];
+      if (c === '\\') { out += c + t[++i]; continue; }
+      if (c === '$' && t[i + 1] === '(') { depth++; out += '$('; i++; continue; }
+      if (c === ')' && depth) { depth--; out += c; continue; }
+      if (c === '"' && !depth) return out;
+      out += c;
+    }
+    return out;
+  };
+  const said = [];
+  for (const m of helper.matchAll(/\b(say|refuse)\s+"/g)) said.push((m[1] === 'refuse' ? 'refused: ' : '') + render(quoted(helper, m.index + m[0].length)));
+  for (const m of helper.matchAll(/\bprintf\s+'([^']*)'/g)) said.push(render(m[1]));
+  for (const m of helper.matchAll(/\btail\+=\("/g)) said.push(render(quoted(helper, m.index + m[0].length)));
+  const lines = said.flatMap(s => s.split('\n')).map(s => s.trim()).filter(Boolean);
+  // (a line as said, without the id or the line break printf puts before it, and refuse's way of passing a found reason)
+  const seen = [...new Set(lines.flatMap(l => [l, l.replace(/^\S+ /, ''), `refused: ${l}`, `refused: ${l.replace(/^\S+ /, '')}`]))];
+  assert.ok(seen.length > 100, `the helper's sentences were read: ${seen.length}`);
+  for (const [name, re] of Object.entries({ ...own.HELPER_SAYS, ...own.GUARD_SAYS })) assert.ok(seen.some(l => re.test(l)), `${name} (${re}) matches nothing the helper prints`);
 });

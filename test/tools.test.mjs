@@ -122,6 +122,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['is there a newer tested build?', 'updates'],
     ['install the newest tested build', 'updates'],
     ['check for updates to spark console', 'updates'],
+    ['propose a change to your own code', 'updates'],
     // (longer: more groups match than fit, and the ones it began with stay)
     ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
     ['why did it fail? check the logs and the config file', 'dig', 'find'],

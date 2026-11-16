@@ -87,6 +87,7 @@ export const CHANGE_TOOLS = [
   'power_off',
   'power_on',
   'power_settings',
+  'propose_update',
   'remember',
   'restart_model',
   'run_workflow',
