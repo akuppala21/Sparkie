@@ -713,6 +713,9 @@ test('a2: a key is refused for code the command doesn\'t show (a module, a build
   }
   keyCode({ unshown: 'the file notes/x.sh', scripts: ['notes/x.sh'] });
   keyCode({ unshown: null, scripts: [] });
+  // (the sorter's unpinnable, every unseen piece that is not a named script: it decides when it is there)
+  assert.throws(() => keyCode({ unshown: 'the file a.sh', scripts: ['a.sh'], unpinnable: ['the python3 module train'] }), e => e.status === 409 && e.message.includes('(the python3 module train)'));
+  keyCode({ unshown: 'the file a.sh', scripts: ['a.sh'], unpinnable: [] });
 });
 
 test('a2: on the stand-in fleet a key for python3 -m train is refused with what to do, and nothing runs', { timeout: 60000 * SLOW }, async () => {

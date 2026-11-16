@@ -371,12 +371,15 @@ function workFetchRun(command) {
 }
 // A key goes only to code the owner is shown (R51; P-5, A-16's "beside it"): never to a command the sorter says runs
 // code it doesn't show (a module run by name, a build tool's or a package's own scripts, a one-liner's file, what a pipe
-// hands a shell), but a script it names, which the ask reads, shows and pins (workScripts). The sorter keeps the first
-// such code it meets: "the file <script>" counts as shown only when that script is one it named.
+// hands a shell), but a script it names, which the ask reads, shows and pins (workScripts). The sorter lists every such
+// piece that is not a script named as a word (its unpinnable); with an older sorter that has only unshown (the first
+// it met), "the file <script>" counts as shown only when that script is one it named.
 function workKeyCode(sorted) {
-  const u = typeof sorted?.unshown === 'string' ? sorted.unshown : null;
-  if (!u || (sorted.scripts || []).some(s => u === `the file ${s}`)) return;
-  throw new HttpError(409, `Not run: it runs code the command doesn’t show (${u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160)}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+  const list = Array.isArray(sorted?.unpinnable) ? sorted.unpinnable.filter(x => typeof x === 'string' && x)
+    : typeof sorted?.unshown === 'string' && !(sorted.scripts || []).some(s => sorted.unshown === `the file ${s}`) ? [sorted.unshown] : [];
+  if (!list.length) return;
+  const said = list.slice(0, 3).map(u => u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 120)).join('; ');
+  throw new HttpError(409, `Not run: it runs code the command doesn’t show (${said}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
 }
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
 // refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
