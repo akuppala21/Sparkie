@@ -18,7 +18,8 @@ function sortShell(args, ctx, r, x, name) {
     if (t === '--' || t === '-') { input ||= t === '-'; k++; break; }
     if (/^--(?:norc|noprofile|posix|login|noediting|restricted|verbose)$/.test(t)) continue;
     if (/^[-+]O$/.test(t)) unsure(`${sortQ(name)} ${sortQ(t)} sets a shell option (dotglob, nocaseglob) that changes what its globs match.`);
-    if (/^[-+]o$/.test(t)) { k++; continue; }
+    if (/^[-+]o$/.test(t)) { if (args[k + 1]?.text === 'keyword' || args[k + 1]?.unknown) unsure(`${sortQ(name)} -o keyword makes a later NAME=value word a setting the program gets.`); k++; continue; }
+    if (/^-[^-]*k/.test(t)) unsure(`${sortQ(name)} -k makes a later NAME=value word a setting the program gets (a GIT_ name among them), which the sorter reads as a plain word.`);
     if (!/^[-+]/.test(t)) break;
     if (/^--|[^euxvnfabhkmtBCHPETlrcs]/.test(t.slice(1))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`);
     if (t[0] === '-' && t.includes('c')) { code = args[k + 1] ?? unsure(`${sortQ(name)} -c with nothing after it.`); break; }
@@ -232,7 +233,11 @@ const SORT_HANDLERS = {
     if (/(?:^|\/)bin\/activate$/.test(f.text)) ctx.venv = true;
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
-  set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
+  set(a) {
+    // (-k, or -o keyword: a later NAME=value word goes into the program's environment, which the sorter reads as a word, S-14)
+    if (a.some(w => /^-[a-zA-Z]*k/.test(w.text) || w.text === 'keyword')) unsure('set -k makes a later NAME=value word a setting the program gets (a GIT_ name among them), which the sorter reads as a plain word.');
+    if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.');
+  },
   cd(a, ctx) { const t = a.find(w => !/^-[LPe@]+$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text.startsWith('-') ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
   pushd(a, ctx) { sortCd(null, ctx); ctx.cdTo = [null]; },
   // (crontab -l only lists; anything else is a job that runs by itself)

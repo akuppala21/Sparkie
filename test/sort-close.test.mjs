@@ -207,3 +207,10 @@ test('no kind covers a command that runs another program or fetched code: git bi
   // (git's own commands keep their kind)
   for (const c of ['git pull', 'git commit -m x', 'git status']) assert.equal(sort(c, { dir: '~/work' }).program === 'git' || sort(c, { dir: '~/work' }).class === 'look', true, c);
 });
+
+// S-14 (the sorter's final read): set -k; git pull GIT_CONFIG_COUNT=0 was a plain change and undid the runner's git settings.
+test('set -k, set -o keyword and a shell started with -k are a doubt: a later NAME=value word becomes a setting', () => {
+  assert.deepEqual(check(['set -k; git pull GIT_CONFIG_COUNT=0', 'set -k; git commit -m x GIT_CONFIG_COUNT=0', 'set -o keyword; git pull GIT_CONFIG_COUNT=0', 'set -ek; git pull',
+    'bash -k -c "git pull GIT_CONFIG_COUNT=0"', 'sh -ek -c "git pull"', 'bash -o keyword -c "git pull"', 'bash -c "set -k; git pull X=1"'].map(c => [c, null, { dir: '~/work' }]), r => is('risky', r)), []);
+  assert.deepEqual(check(['set -e; git pull', 'set -eu; make', 'set -o pipefail; make'].map(c => [c, null, { dir: '~/work' }]), r => is('change', r)), []);
+});
