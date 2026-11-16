@@ -14,7 +14,7 @@
 // command's SHA-256 and its seconds. Spark 2's console unit forbids new privileges, so there the call goes through the
 // owner's service manager. Before the owner's one-time command has run on a Spark (deploy/root-for-sparkie.sh), with a
 // helper this build doesn't know, or with a proof of the walls that is out of date or failed, a look answers with that
-// command and runs nothing: never another way. What a look prints is outside text (not in INSIDE_READS): masked, without
+// command and runs nothing: never another way. What a look prints is outside text (run doesn't say inside, R26): masked, without
 // escape codes, cut for the brain to the first 2,000 and the last 3,500 characters, and kept whole (up to 16 MB) in the
 // one journal record each look, answer and refusal writes when it ends (R43).
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
