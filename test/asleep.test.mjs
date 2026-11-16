@@ -10,7 +10,7 @@
 // home and a stand-in ssh that never connects.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, mkdtempSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdtempSync, mkdirSync, chmodSync, existsSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -129,6 +129,102 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
       assert.equal(bad.status, 0, bad.stderr);
       assert.deepEqual(bad.stdout.replace(/\n+$/, '').split('\n').map(l => l.replace(/: .*/, '')), ['  spark2', '  spark3', '  spark4']);
       assert.match(bad.stdout, /spark4: NOT reachable without a password/);
+      // (a record that carries a problem, a wake that failed: not asleep, and the problem is said; text from the file is
+      // printed only as far as it can be, so an escape sequence or half of a character pair in it neither reaches the
+      // terminal nor ends the check in an error)
+      writeFileSync(join(home, '.local/state/spark-console/power.json'), JSON.stringify({ off: {
+        spark3: { at: '2026-11-14T10:00:00.000Z', why: 'asked', problem: 'Turning it on didn’t work: Spark 3’s plug is on, but Spark 3 didn’t answer within 5 minutes.' },
+        spark4: { at: '\u001b[2J2026-11-14T10:00\ud800', why: 'idle' } } }));
+      const odd = spawnSync('python3', [join(home, 'reach.py')], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+      assert.equal(odd.status, 0, odd.stderr);
+      assert.deepEqual(odd.stdout.replace(/\n+$/, '').split('\n'), [
+        '  spark2: this machine',
+        '  spark3: NOT reachable (ssh: connect to host port 22: Connection timed out); Spark Console powered it off at 2026-11-14 10:00 UTC and its record says: Turning it on didn’t work: Spark 3’s plug is on, but Spark 3 didn’t answer within 5 minutes.',
+        '  spark4: asleep (Spark Console powered it off at [2J2026-11-14 10 UTC; a start or power_on turns it on)',
+      ]);
     } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  // (from here, a fault after a planned wake, a wake that fails, and a power.json edited by hand: R56)
+  const setOffline = (spark, off) => writeFileSync(T.fleet.offlineFile, `${[...readFileSync(T.fleet.offlineFile, 'utf8').split(/\s+/).filter(x => x && x !== spark), ...(off ? [spark] : [])].join('\n')}\n`);
+  const seen = (type, since, what) => waitFor(() => eventLines().findLast(e => e.type === type && e.spark === 'spark4' && e.at > since), { timeout: 90000, what });
+  const ended = async id => { for (const until = Date.now() + 240000 * SLOW; ;) { const w = await look('wait_operation', { id, seconds: 20 }); if (w.status !== 'running') return w; assert.ok(Date.now() < until, `still running: ${JSON.stringify(w)}`); } };
+  // (what Sparkie is sent about Spark 4 with a message of the owner's: the stand-in brain logs it)
+  async function notesOn4() {
+    const words = `how are the sparks? ${Date.now()}`;
+    await say(await newChat(), words);
+    const sent = readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).findLast(x => x.words === words);
+    return `${sent?.system || ''}\n${sent?.lastUser || ''}`.split('\n').filter(l => /^Spark 4: /.test(l));
+  }
+
+  test('a real outage after a planned wake is still an outage: its events aren’t planned, and a crash after it is held', { timeout: 300000 * SLOW }, async () => {
+    // (Spark 4 was put to sleep and woken by Spark Console above, and its model runs again there)
+    await waitFor(async () => (await look('running_models')).models.some(m => m.spark === 'spark4' && m.container === RADIX), { timeout: 90000, what: `${RADIX} running` });
+    const t1 = new Date().toISOString();
+    setOffline('spark4', true);
+    const dark = await seen('spark-offline', t1, 'Spark 4 going dark by itself');
+    await new Promise(res => setTimeout(res, 3000));
+    setOffline('spark4', false);
+    const back = await seen('spark-online', dark.at, 'its return');
+    assert.equal(power().off.spark4, undefined, 'no record: not Spark Console’s doing');
+    assert.deepEqual([dark.planned ?? null, back.planned ?? null], [null, null], JSON.stringify({ dark, back }));
+    await new Promise(res => setTimeout(res, 3000));
+    const since = new Date().toISOString(), f = mock('spark4', 'containers');
+    const before = readFileSync(f, 'utf8'), crashed = before.replace(new RegExp(`^${RADIX.replace(/[.+]/g, '\\$&')}\\|running\\|[^|]*\\|`, 'm'), `${RADIX}|exited|Exited (1) just now|`);
+    assert.notEqual(crashed, before, 'it was running');
+    writeFileSync(f, crashed);
+    rmSync(mock('spark4', `up-${RADIX}`), { force: true });
+    const e = await waitFor(() => eventLines().find(x => x.at > since && x.spark === 'spark4' && x.container === RADIX && ['healing', 'heal-skipped'].includes(x.type)),
+      { timeout: 60000, what: 'self-healing to look at it' });
+    assert.equal(e.type, 'heal-skipped', JSON.stringify(e));
+    assert.match(String(e.why), /was offline in the last half hour/);
+  });
+
+  test('a wake that fails reads as a fault, with its problem, in fleet_status, /status and the fleet notes, never as asleep', { timeout: 300000 * SLOW }, async () => {
+    await done(await act('power_off', { spark: 'spark4' }));
+    // (its plug switches on, and the Spark doesn't boot)
+    plugs.setNoBoot(3);
+    try {
+      const w = await ended((await act('power_on', { spark: 'spark4' })).json.operation);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      assert.match(String(power().off.spark4?.problem), /^Turning it on didn’t work: /);
+      const row = (await look('fleet_status')).sparks.find(x => x.id === 'spark4');
+      assert.equal(row.state, 'off', JSON.stringify(row));
+      assert.equal(row.offOnPurpose.asleep, null, JSON.stringify(row.offOnPurpose));
+      assert.match(row.offOnPurpose.words, /^Shut down by Spark Console \(asked\) at .* UTC\. Turning it on didn’t work: /);
+      const node = (await api('/status?fresh=1')).json.nodes.find(n => n.id === 'spark4');
+      assert.equal(node.asleep, false, JSON.stringify(node));
+      assert.equal(node.poweredOff.asleep, null);
+      const lines = await notesOn4();
+      assert.ok(lines.some(l => /^Spark 4: Shut down by Spark Console \(asked\) at .* UTC\. Turning it on didn’t work: /.test(l)), JSON.stringify(lines));
+      assert.ok(!lines.some(l => /asleep|not a fault/.test(l)), JSON.stringify(lines));
+    } finally {
+      plugs.setNoBoot(3, false);
+      // (its button pressed: it answers, and its record goes)
+      setOffline('spark4', false);
+      await waitFor(() => !power().off.spark4, { timeout: 90000, what: 'its record cleared' });
+    }
+  });
+
+  test('a power.json edited by hand to hold null or a word for a Spark beside a real record: the looks, the chat and a start still work, and only the real record counts', { timeout: 300000 * SLOW }, async () => {
+    await done(await act('power_off', { spark: 'spark4' }));
+    const file = join(T.fleet.stateDir, 'power.json'), good = power();
+    const write = p => { writeFileSync(`${file}.t`, JSON.stringify(p), { mode: 0o600 }); renameSync(`${file}.t`, file); };
+    write({ ...good, off: { ...good.off, spark3: null, spark1: 'asleep' } });
+    try {
+      const status = await api('/status?fresh=1');
+      assert.equal(status.status, 200, status.text);
+      const by = Object.fromEntries(status.json.nodes.map(n => [n.id, n]));
+      assert.match(by.spark4.poweredOff?.asleep || '', ASLEEP);
+      assert.deepEqual([by.spark3.poweredOff, by.spark1.poweredOff], [undefined, undefined]);
+      const fleet = await look('fleet_status');
+      assert.equal(fleet.sparks.find(x => x.id === 'spark4').state, 'off');
+      await look('models_on_disk');
+      assert.ok((await notesOn4()).some(l => /^Spark 4: asleep, on purpose \(not a fault\)\./.test(l)), 'the chat turn answered, with Spark 4 asleep');
+      // (a download that fits on Spark 3, which is on: it reads the status, whose marks read every record)
+      const start = await act('start_model', { model: 'qwen3.5-0.8b' });
+      assert.equal(start.status, 200, start.text);
+      if (start.json?.operation) await ended(start.json.operation);
+    } finally { write({ ...power(), off: Object.fromEntries(Object.entries(power().off).filter(([, r]) => r && typeof r === 'object')) }); }
   });
 });

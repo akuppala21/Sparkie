@@ -77,6 +77,8 @@ Object.assign(SORT_HANDLERS, {
     for (const c of v === 'rebase' ? o.all('x', 'exec') : v === 'difftool' ? o.all('x', 'extcmd') : []) sortElsewhere([c], ctx, r, `git ${v} -x`);
     if (cut >= 0 && v === 'bisect') sortProgram(own.slice(cut + 1), ctx, r, x);
     if (cut >= 0 && v === 'submodule') { const s = own.slice(cut + 1), n = s.findIndex(w => !/^(?:--recursive|-q|--quiet)$/.test(w.text)); sortElsewhere(n < 0 ? [] : s.slice(n), ctx, r, 'git submodule foreach'); }
+    // (timers that run git by themselves, or settings written for every repository)
+    if ((v === 'maintenance' && /^(?:start|register|schedule)$/.test(p[0]?.text ?? '')) || (v === 'lfs' && /^(?:install|update)$/.test(p[0]?.text ?? ''))) raise(r, 'risky', `git ${sortQ(v)} ${sortQ(p[0].text)} sets timers or settings later git commands run by themselves.`);
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
@@ -87,6 +89,10 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
+    // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
+    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) usesReach(usesHost(w.text), ctx);
+    const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
     if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && o.has('hard')) || (v === 'checkout' && (o.has('f', 'force') || rest.some(s => /^(?:--|\.)$/.test(s)))) || (v === 'stash' && /^(?:drop|clear)$/.test(p[0]?.text))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
@@ -111,6 +117,7 @@ Object.assign(SORT_HANDLERS, {
     if (o.has('allow-unauthenticated', 'force-yes', 'allow-downgrades', 'allow-remove-essential', 'allow-change-held-packages')) raise(r, 'risky', `${sortQ(name)} is told to skip a check of its own (unsigned packages, downgrades, essential or held packages).`);
     if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     if (/^(?:upgrade|full-upgrade|dist-upgrade|dselect-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
+    if (/^(?:install|reinstall|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|source|build-dep|download|changelog)$/.test(v)) ctx.reach.add('internet');
     sortPkgs(p.slice(1), ctx, r);
   },
   dpkg(a, ctx, r) {
@@ -137,6 +144,9 @@ Object.assign(SORT_HANDLERS, {
     for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))].map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
     for (const d of o.all('d', 'dest')) sortTouch(d, ctx, r);
+    // (an address it is handed, or the default index when none replaces it)
+    for (const w of a) if (!w.unknown && /:\/\//.test(w.text)) usesReach(usesHost(w.text.replace(/^[^:]*?=|^git\+/, '')), ctx);
+    if (/^(?:install|download|wheel|lock)$/.test(v) && !o.has('no-index') && !o.has('i', 'index-url')) ctx.reach.add('internet');
   },
   conda(a, ctx, r, x, name = 'conda') {
     const g = sortOpts(SORT_OPTS.conda, a, null, []), v = a[g.end]?.text ?? '', o = sortOpts(SORT_OPTS.conda, a.slice(g.end + 1)), p = o.plain.map(w => w.text);
@@ -162,6 +172,8 @@ Object.assign(SORT_HANDLERS, {
     for (const f of o.all('f', 'file')) if (v === 'env' && p[0] === 'export') { r.deletes = true; sortTouch(f, ctx, r); } else sortRuns(f.text, ctx, r, `${sortQ(name)} installs what the file ${sortQ(f.text)} lists.`);
     for (const w of o.plain) if (/^(?:\.{0,2}\/|~|file:)|\.(?:conda|tar\.bz2)$/.test(w.text)) sortRuns(w.text.replace(/^file:\/*/, '/'), ctx, r, `${sortQ(name)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
     for (const d of o.all('p', 'prefix')) sortInto(d, ctx, r);
+    for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=/, '')), ctx);
+    if (/^(?:install|create|update|upgrade)$/.test(v) && !t.includes('--offline')) ctx.reach.add('internet');
   },
   npm(a, ctx, r, x, name = 'npm') {
     const o = sortOpts(SORT_OPTS.npm, a), p = o.plain.map(w => w.text), t = a.map(w => w.text), v = p[0] ?? (name === 'yarn' ? 'install' : '');
@@ -173,6 +185,9 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'node' && name === 'yarn') { const i = t.indexOf('node'); sortProgram(a.slice(i), ctx, r, x); return i; }
     if (!/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|uninstall|remove|rm|r|un|unlink|update|up|upgrade|run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|link|ln|prune|dedupe|audit|fund|doctor|cache|whoami|ping|search|pkg|query|sbom|shrinkwrap|global|store|import|env|init|create|innit)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (t.some(s => /:\/\/|^git\+|^github:|^--registry/.test(s))) raise(r, 'risky', `${sortQ(name)} installs code from an address or another registry: always asked.`);
+    // (an address or registry it is handed, else the default registry for what fetches packages)
+    for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=|^git\+/, '')), ctx);
+    if (/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|update|up|upgrade|global)$/.test(v) && !t.some(s => /^--(?:registry|offline)/.test(s))) ctx.reach.add('internet');
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
     // fetched into that folder, or as root)
@@ -194,9 +209,15 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:upload|upload-large-folder|repo|repo-files|tag|lfs-\S+|jobs)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes files or runs jobs on the Hugging Face hub, another machine.`);
     if (/^(?:login|logout|auth)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes the Hugging Face sign-in on that Spark.`);
     if (p[0] === 'delete-cache' || (p[0] === 'cache' && /^(?:rm|delete|prune)$/.test(p[1]))) sortGone(ctx, r, `${sortQ(name)} ${sortQ(p[0])} removes downloaded models.`);
-    const d = o.all('local-dir').at(-1);
+    // (a download goes where it says, or into the model store under the repository's own name: the whole store when the
+    // name, its kind or the store is not plain)
+    const d = o.all('local-dir').at(-1), id = o.plain[1], kind = o.all('repo-type').at(-1), cd = o.all('cache-dir').at(-1);
+    const store = cd ?? { text: '~/.cache/huggingface/hub', bare: '', tilde: true, plain: true, subs: [] }, sure = [id, kind, cd].every(w => !w || !(w.unknown || w.glob || w.brace));
     if (d) sortInto(d, ctx, r);
-    for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false);
+    else if (p[0] === 'download' && id) sortInto(sure ? { ...store, text: `${store.text.replace(/\/+$/, '')}/${kind?.text ?? 'model'}s--${id.text.replace(/\//g, '--')}` } : store, ctx, r);
+    // (what download names is fetched by name, not written there; it reaches the hub unless told to stay offline)
+    for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false, true, p[0] === 'download');
+    if (!/^(?:cache|delete-cache)$/.test(p[0]) && !/^(?:1|true|yes|on)$/i.test(ctx.setTo.get('HF_HUB_OFFLINE') ?? '')) ctx.reach.add('internet');
   },
   systemctl(a, ctx, r) {
     const o = sortOpts(SORT_OPTS.systemctl, a), t = a.map(w => w.text), user = o.has('user'), bus = user ? 'the owner’s service manager' : 'systemd’s bus';

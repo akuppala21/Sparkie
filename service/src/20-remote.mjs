@@ -10,6 +10,9 @@
 // one-word name, a name of the fleet or of a service that turns a name into the number in it (nip.io), or forces an
 // address (--resolve, --connect-to, a proxy, a socket) is asked; a name that DNS alone turns into the Spark is not seen.
 const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
+// A host of the fleet or the home network: a one-word name, a fleet name, a private, link-local or tailnet address, or a
+// name under .local, .lan, .home.arpa, .internal or .ts.net.
+const sortNear = (h, ctx) => !!h && (!h.includes('.') || !!sortHost(ctx, h.split('.')[0]) || /^(?:10|127)\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^169\.254\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^\[|(?:^|\.)(?:local|lan|home\.arpa|internal|ts\.net|localhost)\.?$/i.test(h));
 const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
   && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
 // A far path, from the far home ('' and . are the home), placed as a path there (wide when it is where a copy lands).
@@ -33,6 +36,14 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'change', `${sortQ(name)} reaches the network, which a look’s wall has none of.`);
     ctx.piped = ctx.fetchSeen = ctx.fetched = true;
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
+    const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `${sortQ(name)} reaches ${sortQ(near)}, a Spark or the home network: inside the wall there is no route there, so it is asked.`);
+    for (const w of [...o.plain, ...o.all('url')]) if (!w.unknown) usesReach(usesHost(w.text) ?? (/^[^/:]+(?=[:/]|$)/.exec(w.text)?.[0]), ctx);
+    // (an option that decides where it connects, or reads its addresses from a file, may point at the same: asked)
+    const via = o.opts.find(([n]) => (name === 'curl' ? /^(?:resolve|connect-to|x|proxy|preproxy|socks\w*|dns-servers|doh-url)$/ : /^(?:i|input-file|B|base|e|execute)$/).test(n));
+    if (via) raise(r, 'risky', `${sortQ(name)} ${sortQ(`${via[0].length > 1 ? '--' : '-'}${via[0]}`)} decides where it connects, maybe a Spark or the home network: asked.`);
+    // (and where that option points, when its words show it: a proxy's host, the address --resolve or --connect-to gives)
+    if (name === 'curl') for (const [n, v] of o.opts) if (typeof v?.text === 'string' && !v.unknown && /^(?:x|proxy|preproxy|socks\w*|resolve|connect-to|dns-servers|doh-url)$/.test(n)) for (const s of v.text.split(',')) usesReach(/^(?:resolve|connect-to)$/.test(n) ? /([^:[\]]+|\[[^\]]*\])$/.exec(s)?.[1] : usesHost(s) ?? /^[^/:]+/.exec(s)?.[0], ctx);
     if (ctx.root) {
       const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
       const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
@@ -81,6 +92,7 @@ Object.assign(SORT_HANDLERS, {
     if (!a[k] || a.some(w => w.unknown)) unsure('ssh’s host or command holds a $ or a command, which the sorter can’t read.');
     if (a[k + 1]?.text.startsWith('-')) unsure('ssh takes options after the host too, which the sorter does not read there.');
     const dest = a[k].text, host = dest.replace(/^[^@]*@/, ''), place = sortHost(ctx, host), remote = a.slice(k + 1).map(w => w.text).join(' ');
+    usesReach(host.replace(/^ssh:\/\/|[:/].*$/g, ''), ctx);
     user ??= /^([^@]*)@/.exec(dest)?.[1] ?? null;
     if (user === 'root') ctx.kinds.add('root');
     if (relay) return raise(r, place ? 'risky' : 'notdone', place ? `${sortQ(relay)} opens a tunnel between Sparks.` : `${sortQ(relay)} would open a tunnel or relay through ${sortQ(host)}, outside the fleet, round a network filter.`);
@@ -100,14 +112,19 @@ Object.assign(SORT_HANDLERS, {
     const o = sortOpts(SORT_OPTS[name], a), plain = o.plain, rec = name === 'sftp' || o.has('r', 'a', 'recursive', 'archive');
     if (name === 'sftp') {
       const host = plain.at(-1)?.text.replace(/^[^@]*@/, '').replace(/:.*$/, '') ?? '';
+      usesReach(host, ctx);
       return raise(r, 'risky', sortHost(ctx, host) ? `sftp to ${sortQ(host)} can write any file there, outside every wall and copy: asked.` : `It connects to ${sortQ(host)}, which isn’t one of the Sparks.`);
     }
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
-      if (!m) return sortTouch(w, ctx, r, rec && lastOne);
+      // (a local source is only read, unless it is moved away)
+      if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
+      usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
+      // (a copy from another Spark too: inside the wall it has no key and no route, so it is asked, not left to fail)
+      else raise(r, 'risky', `It copies from ${sortQ(m[1])}, another Spark: inside the wall there is no key and no route there, so it is asked.`);
       sortFar(m[2], ctx, r, rec && lastOne);
     });
     // (each source lands in the folder under its own name, a source ending in / as what it holds; rsync -b keeps what

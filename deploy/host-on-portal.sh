@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs or updates Spark Console on Spark 2 (the name is from when it ran next to the original portal):
 #   https://<Spark 2>:8443/console/      the UI (static files; :8443/ serves the same folder since the portal's cutover)
-#   https://<Spark 2>:8443/console/api/  its service: status, live metrics, models, deploys, chats, files, VS Code
+#   https://<Spark 2>:8443/console/api/  its service: status, live metrics, models, deploys, chats
 # The :8443/ route is left alone here; deploy/cutover.sh owns it.
 #
 #   bash spark-console/deploy/host-on-portal.sh [user@host]
@@ -141,13 +141,32 @@ path_check() {
   fail "Spark 2 is missing programs Spark Console's commands call. $out. Nothing was changed. Install them where that path finds them (not in your home), then run this again."
 }
 
-# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes.
-NODE=$(command -v node || ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
-[ -n "$NODE" ] && [ -x "$NODE" ] || fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again."
+# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes: Spark
+# 2's own, from the fixed path (R53), never code-server's (~/.local/opt/code-server-*/lib/node: it goes when Spark 2 is
+# cleared, E 2.6) nor one kept in the home. (With --stand-in, the stand-in fleet's tests, from the PATH they give.)
+# (no /snap/bin: a snap's Node doesn't start under the unit's NoNewPrivileges)
+NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[ -z "$STAND_IN" ] || NODE_FROM=$PATH
+NODE=$(PATH=$NODE_FROM command -v node 2>/dev/null || true)
+# (22 or newer: the plug control uses Node's built-in WebSocket client, 12-plugs.mjs. NodeSource's package has it; Ubuntu's
+# own is older, a snap doesn't start)
+NODE_HOW='Install Node.js 22 from NodeSource: curl -q -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs. Then run this again. Nothing was changed.'
+if [ -z "$NODE" ]; then
+  CS_NODE=$(ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
+  [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE). $NODE_HOW"
+  fail "No Node.js found on Spark 2. $NODE_HOW"
+fi
+# (where it leads, not only its name: a link on the fixed path into the home is the home's)
+NODE_REAL=$(readlink -f "$NODE" 2>/dev/null || echo "$NODE")
+case "$NODE_REAL" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home ($NODE_REAL); Spark Console runs only on Spark 2's own. $NODE_HOW" ;; esac
+[ -x "$NODE" ] || fail "No Node.js found on Spark 2. $NODE_HOW"
 NODE_V=$("$NODE" --version 2>/dev/null || true)
 NODE_MAJOR=${NODE_V#v}; NODE_MAJOR=${NODE_MAJOR%%.*}
-[[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 18 ] \
-  || fail "Spark Console needs Node.js 18 or newer, but the one it would run with ($NODE) is ${NODE_V:-unreadable}. Install a newer one, then run this again."
+[[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 22 ] \
+  || fail "Spark Console needs Node.js 22 or newer, but the one it would run with ($NODE) is ${NODE_V:-unreadable}. $NODE_HOW"
+# What the service needs of it, looked at before anything changes: the built-in WebSocket client (the plug control).
+"$NODE" -e 'process.exit(typeof WebSocket === "function" ? 0 : 1)' 2>/dev/null \
+  || fail "The Node.js it would run with ($NODE, $NODE_V) has no built-in WebSocket client, which the plug control needs. $NODE_HOW"
 
 # /health on the socket Tailscale uses (empty if nothing answers).
 socket_health() { curl -q -s -m 3 --unix-socket "$API" http://localhost/health 2>/dev/null || true; }
@@ -375,6 +394,9 @@ put_back "$S/spark-console" "$HOME/spark-console"
 put_back "$S/spark-console-service" "$HOME/spark-console-service"
 if [ -f "$S/spark-console-api.service" ]; then
   mkdir -p "$HOME/.config/systemd/user"; cp -p "$S/spark-console-api.service" "$HOME/.config/systemd/user/"
+  # (said plainly when the Node that unit starts the service with is no longer there, as code-server's goes, E 2.6)
+  n=$(sed -n 's/^ExecStart=\([^ ]*\) .*/\1/p' "$S/spark-console-api.service" | head -n 1)
+  [ -z "$n" ] || [ -x "$n" ] || echo "  The build put back starts with the Node.js at $n, which is no longer there, so it can't start. Install Node.js 22 from NodeSource, then install again." >&2
 fi
 if [ -n "$WITH_STATE" ] && [ -d "$S/state" ]; then
   mkdir -p "$HOME/.local/state/spark-console"
@@ -544,9 +566,9 @@ cat > "$HOME/.local/share/spark-console/watchdog.sh" <<'DOG'
 SPARK_CONSOLE_ALL_LOCAL=''; [ "${1:-}" != --stand-in ] || SPARK_CONSOLE_ALL_LOCAL=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$HOME/.local/state/spark-console"; U=spark-console-api; D="$HOME/.local/share/spark-console"
-# put <file> <text>: the file becomes that text whole, by a new file renamed over it, never written through a link that
-# is there; read <file>: its text, or nothing when it is a link.
-put() { local t; t=$(mktemp "$S/.watchdog.XXXXXX") || return 0; if printf '%s\n' "$2" > "$t"; then mv -f "$t" "$1"; else rm -f "$t"; fi; }
+# put <file> <text>: the file becomes that text whole, by a new file renamed over it (mv -T: never into a folder of that
+# name), never written through a link that is there; read <file>: its text, or nothing when it is a link.
+put() { local t; t=$(mktemp "$S/.watchdog.XXXXXX") || return 0; if printf '%s\n' "$2" > "$t" && mv -f -T "$t" "$1"; then :; else rm -f "$t"; fi; }
 read_plain() { [ -L "$1" ] || cat "$1" 2>/dev/null; }
 state=$(systemctl --user show -p ActiveState --value "$U" 2>/dev/null)
 restart() {
@@ -618,6 +640,8 @@ cfg = json.load(open(os.path.expanduser('~/spark-console-service/config.json')))
 # (a Spark Spark Console powered off on purpose is asleep, not unreachable: its record in power.json, R41)
 try: asleep = {k: v for k, v in json.load(open(os.path.expanduser('~/.local/state/spark-console/power.json')))['off'].items() if isinstance(v, dict)}
 except Exception: asleep = {}
+# (only what can be printed of the file's text: no escape sequence reaches the terminal, and print never fails on it)
+clean = lambda s: ''.join(c for c in str(s) if c.isprintable())
 for n in cfg['nodes']:
     if n['host'] == 'local':
         print(f"  {n['id']}: this machine"); continue
@@ -628,7 +652,10 @@ for n in cfg['nodes']:
     except subprocess.TimeoutExpired:
         ok, why = False, 'timed out'
     if not ok and n['id'] in asleep:
-        print(f"  {n['id']}: asleep (Spark Console powered it off at {str(asleep[n['id']].get('at') or '?')[:16].replace('T', ' ')} UTC; a start or power_on turns it on)"); continue
+        at = clean(asleep[n['id']].get('at') or '?')[:16].replace('T', ' ')
+        # (its record carries a problem, a wake that failed: not asleep, and the problem is said)
+        if asleep[n['id']].get('problem'): print(f"  {n['id']}: NOT reachable ({clean(why)[:200]}); Spark Console powered it off at {at} UTC and its record says: {clean(asleep[n['id']]['problem'])[:300]}"); continue
+        print(f"  {n['id']}: asleep (Spark Console powered it off at {at} UTC; a start or power_on turns it on)"); continue
     print(f"  {n['id']}: " + ('ok' if ok else 'NOT reachable without a password: ' + why))
 PY
 fi
