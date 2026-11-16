@@ -256,11 +256,14 @@ function taskReportText(conv, r) {
   const ops = c.ops ? `Operations: ${c.ops} (${[c.finished && `${c.finished} finished`, c.failed.length && `${c.failed.length} failed`, c.cancelled && `${c.cancelled} cancelled`].filter(Boolean).join(', ')}).` : 'Operations: none.';
   const energy = !c.ops ? null : c.measured ? `Energy at the wall: ${Math.round(c.wh * 10) / 10} Wh for ${taskPlural(c.measured, 'operation')}${c.unmeasured ? `; ${c.unmeasured} not measured` : ''}.` : 'Energy at the wall: not measured.';
   const open = taskOpen(conv, r);
+  // (at a limit its last line says which, and how to go on: design E 2.1)
+  const limit = ['turns', 'hours', 'steps'].includes(r.how) ? `It stopped at ${how.replace(/^stopped at /, '')}: say “carry on” for another ${taskPlural(r.hours, 'hour')} and ${r.turns} turns.`
+    : r.how === 'full' ? 'It stopped because this chat is full: start a new chat and ask again there.' : null;
   return [`Report on your request “${taskText(r.request, 120)}”: ${how}.`,
     `${ops}${failed.length ? ` Failed: ${failed.join('; ')}.` : ''}`,
     `Changes: ${c.atOnce} made at once, ${c.afterYes} after your yes; ${taskPlural(c.asked, 'question')} asked of you. Undone: ${c.undone}.`,
     `Time: ${taskTook(took)}, ${taskPlural(Math.max(1, c.turns), 'turn')}.`,
-    energy, open.length ? `Still open: ${open.join('; ')}.` : 'Still open: nothing.'].filter(Boolean).join('\n');
+    energy, open.length ? `Still open: ${open.join('; ')}.` : 'Still open: nothing.', limit].filter(Boolean).join('\n');
 }
 // A task ends: its report is owed (kept on the chat first), then written and told a moment later, once the turn that
 // ended it has written its last journal line.
