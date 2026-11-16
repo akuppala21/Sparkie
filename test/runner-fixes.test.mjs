@@ -675,5 +675,5 @@ test('TA-8: a change\'s unit is asked with its time limit, 5 seconds to stop, no
 test('TA-9: the ports a change may find open: sshd\'s, the serve port, and the apps the console published on that Spark', () => {
   const own = new Function('CONFIG', 'desired', `${fnOf(part('21-ladder.mjs'), 'workOwnPorts')}\nreturn workOwnPorts;`)({ servePort: 30000 },
     () => ({ running: [{ spark: 'spark3', app: 'notebook', port: '7860:7860' }, { spark: 'spark4', app: 'other', port: '7861' }, { spark: 'spark3', model: 'm', port: '7862' }] }));
-  assert.deepEqual([...own({ id: 'spark3' })].sort(), [22, 7860, 30000]);
+  assert.deepEqual([...own({ id: 'spark3' })].sort((a, b) => a - b), [22, 7860, 30000]);
 });
