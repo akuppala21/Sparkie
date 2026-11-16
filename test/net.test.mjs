@@ -557,13 +557,13 @@ const seamWith = (answer, more = {}) => {
   class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
   const stubs = { NET_ON: true, HttpError, sparkName: n => `Spark ${n.id.slice(5)}`, netOpenOn: () => null, netHhmm: () => '22:10 UTC', RUNNER_DIR: '~/work', RUNNER_SECONDS: 30,
     NET_LATE_MS: 45000, randomBytes: () => Buffer.from('abcdef0123456789abcdef01', 'hex'), claimSparks: () => () => {}, NET_PROBES: { ssh: 'a new SSH connection', helper: 'the root helper', tailnet: 'its Tailscale connection' },
-    netProbe: async () => ({ ssh: true, helper: true, tailnet: true }), netHelperFirst: async () => ({}), netSave: () => {}, NET_AFTER_S: 600, journal: () => 'j_000000000001', jSub: () => null,
+    memNow: async () => ({ total: 128 * 2 ** 30, available: 100 * 2 ** 30 }), KEEP_FREE: 8 * 2 ** 30, netProbe: async () => ({ ssh: true, helper: true, tailnet: true }), netHelperFirst: async () => ({}), netSave: () => {}, NET_AFTER_S: 600, journal: () => 'j_000000000001', jSub: () => null,
     netMark: (id, f) => seen.marks.push(f.state || null), JOURNAL_REFUSED: 'no record', run: async () => ({ code: 0, out: '' }), lookClean: s => s, forBrain: s => ({ text: s }),
     netTell: (g, text) => seen.told.push(text), netHold: (spark) => seen.held.push(spark), netAfterTime: () => {}, netStillLost: async () => [], netStillWords: () => '', tripBreaker: () => {}, jErr: e => e.message, maskSecrets: s => s,
     guardCall: async (node, verb) => { seen.verbs.push(verb); return { out: verb === 'keep' ? 'abcdef0123456789abcdef01 kept: it stays\n' : answer }; }, ...more };
   const scope = new Proxy(stubs, { has: (t, k) => k in t });
   const netGuarded = new Function('scope', `with (scope) { ${says}\n${reads}\n${ends}\n${out}\n${why}\n${fn}\nreturn netGuarded; }`)(scope);
-  return { seen, go: () => netGuarded({ id: 'spark3' }, 'ufw allow 8000', { ctx: { button: true, ownerConfirmed: true }, dir: '~', seconds: 30, root: true }) };
+  return { seen, go: (node = { id: 'spark3' }, args = { root: true }) => netGuarded(node, 'ufw allow 8000', { ctx: { button: true, ownerConfirmed: true }, dir: '~', seconds: 30, ...args }) };
 };
 const ID = 'abcdef0123456789abcdef01', armed = `${ID} net armed: the ways in go back at 2026-11-15T22:10:00Z unless they are kept\n${ID} as root: sw-root-${ID} runs the command whose SHA-256 is 00, inside the net\n`;
 
@@ -640,4 +640,23 @@ test('a folder kept read-only that is a link is passed as where it leads; one th
     assert.equal(lineFor(['~/models', '~/.cache/huggingface', '~/notthere']), `--protect\n${store}\n--protect\n~/.cache/huggingface\n`);
     assert.equal(lineFor(['~/models', '~/gone']), 'said protect ~/gone\n');
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+// From the sorter's reviewer, S-10: the 8 GB rule (R2) wasn't held through the net: a root command (8 GB cap, up to 30
+// minutes) and a Spark 2 change (2 GB) ran with no look at what was free.
+test('a change inside the net runs only when its memory cap fits in what is free beyond the 8 GB kept: root’s 8 GB, Spark 2’s 2 GB', async () => {
+  const GB = 2 ** 30, room = gb => ({ memNow: async () => ({ total: 128 * GB, available: (8 + gb) * GB + 1 }) });
+  for (const [gb, ok] of [[7, false], [8, true]]) {
+    const s = seamWith(`${armed}out\n${ID} net open: nothing differs now; it is kept on the console's word, else at 22:10 what differs then goes back\n${ID} end 0\n`, room(gb));
+    if (ok) { assert.equal((await s.go()).net.outcome, 'kept'); continue; }
+    await assert.rejects(s.go(), e => e.status === 409 && e.message === `Spark 3 doesn’t have room for this change now: it may use up to 8 GB, and ${gb} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
+    assert.deepEqual(s.seen.verbs, [], 'nothing called on the Spark');
+  }
+  // (Spark 2's own cap, 2 GB, which the hub passes as memory: the brain is never squeezed)
+  assert.match(readFileSync(join(REPO, 'service', 'src', '21-hub.mjs'), 'utf8'), /netGuarded\(node, command, \{[^}]*memory: HUB_MEMORY/, 'Spark 2 passes its own cap');
+  const spark2 = { id: 'spark2', host: 'local' }, open = `${armed}out\n${ID} net open: nothing differs now; it is kept on the console's word, else at 22:10 what differs then goes back\n${ID} end 0\n`;
+  await assert.rejects(seamWith(open, room(1)).go(spark2, { memory: 2 }), e => e.status === 409 && e.message === 'Spark 2 doesn’t have room for this change now: it may use up to 2 GB, and 1 GB is free beyond the 8 GB kept for the system and its models. Nothing ran.');
+  assert.equal((await seamWith(open, room(2)).go(spark2, { memory: 2 })).net.outcome, 'kept');
+  const unread = seamWith('', { memNow: async () => null });
+  await assert.rejects(unread.go(), e => e.status === 409 && /^Free memory on Spark 3 can’t be read right now, so nothing ran/.test(e.message));
 });

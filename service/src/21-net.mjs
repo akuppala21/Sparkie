@@ -312,6 +312,13 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   const g = { id, spark: node.id, chat: ctx.chat || null };
   const end = (fields, text = null) => { if (rid && !ended) { ended = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, net: id, ms: Date.now() - t0, ...fields }, text); } };
   try {
+    // (the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
+    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
+    // squeezes a model or, on Spark 2, the brain)
+    const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
+    if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
+    const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
+    if (room < cap) throw new HttpError(409, `${at} doesn’t have room for this change now: it may use up to ${cap} GB, and ${Math.max(0, room)} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
     // (its caller's own ways in, beside the net's, tried before and after it: A11's Spark 2)
     const probe = async () => ({ ...(await netProbe(node)), ...(ways ? await ways.probe(node) : {}) }), names = { ...NET_PROBES, ...(ways?.words || {}) };
     const before = await probe();
