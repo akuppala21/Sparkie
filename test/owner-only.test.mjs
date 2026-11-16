@@ -209,11 +209,9 @@ describe('no check that lived in member code lets anyone else through, and the o
 });
 
 describe('no answer, notice or page names a view the page no longer has', () => {
-  const GONE = /Access →|Access ->|→ People|→ Agents(?! and Telegram)|\bon Models\b|Models →|Clusters →|Preview as a member|Request access|\b(?:Home|Files|Models|Access|People) (?:page|view|tab)\b/;
-  // In runAction, which the rail's builder holds: known, and nothing else.
-  const KNOWN = [
-    'The owner can resume them in Access → Agents.',
-  ];
+  const GONE = /Access →|Access ->|→ People|→ Agents(?! and Telegram)|\bon Models\b|\bfrom Models\b|Models →|Clusters →|Preview as a member|Request access|\b(?:Home|Files|Models|Access|People) (?:page|view|tab)\b/;
+  // Known: none (C-17 said both where they are today).
+  const KNOWN = [];
 
   test('the service: nothing but the one known line', () => {
     const server = read('service/server.mjs');
