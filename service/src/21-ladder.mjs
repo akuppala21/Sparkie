@@ -200,14 +200,16 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = []) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
   const scripts = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
+  // (a key goes only to a script pinned by its hash, R51: one whose text isn't, or couldn't be read, is refused)
+  if (keys.length && (scripts.unread || scripts.unpinned?.length)) throw new HttpError(409, RUNKEY_SCRIPT_UNPINNED);
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
-      ...(ctx.long ? { minutes: ctx.long.minutes } : {}) } };
+      ...(ctx.long ? { minutes: ctx.long.minutes } : {}), ...(keys.length ? { keys } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
@@ -215,7 +217,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
       { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
@@ -224,9 +226,11 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
 // spec (write_file, 21-write.mjs): its own call, key and lines for the button, and what the runner runs in its place
-// (as); command is then the plain write the sorter was handed.
-async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null) {
+// (as); command is then the plain write the sorter was handed. keys (run's, 21-run-keys.mjs): the names it is given.
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null, keys = []) {
   whoMayLook(viewer, ctx);
+  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
+  if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
@@ -236,12 +240,13 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // fails stops here: "none is there" would widen the wall)
   const topDirs = await runnerTopDirs(node, sorted);
   if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
+  if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
   // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
     const was = workAsks.get(String(ctx.pressed || ''));
     workAsks.delete(String(ctx.pressed || ''));
-    const again = why => workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${why}, so that yes was void`, dir, widen, topDirs, spec);
+    const again = why => workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${why}, so that yes was void`, dir, widen, topDirs, spec, keys);
     if (!was || was.spark !== node.id || was.command !== (spec?.key ?? command) || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
@@ -249,23 +254,28 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
       // (write_file's: the file as it is read again for this press, 21-write.mjs)
       const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
       if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
+        if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
+        return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+      }
     }
-    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as });
+    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node), Boolean(spec)) || spec?.ask || null;
   // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
   if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
+  // (a command given a key is always asked, R51: the button names each key and each new place)
+  if (!why && keys.length) why = runKeysWhy(node, command, keys, sorted) || 'it is given a key, which is always asked';
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
+  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, spec ? '' : command, widen, sorted);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
-  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec);
+  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec, keys);
 }

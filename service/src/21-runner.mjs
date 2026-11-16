@@ -176,9 +176,12 @@ async function runnerTopDirs(node, sorted) {
 }
 // as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null } = {}) {
+// keys (run's, 21-run-keys.mjs): the names of the keys it is given.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [] } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
+  // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
+  if (keys.length && sorted.class === 'look') sorted.class = 'change';
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
@@ -194,10 +197,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys }));
     workWrote(ctx, sorted);
     return started;
   }
+  // (its keys, checked again now: never outside the wall (--open; --home holds the home's keys hidden), and at once only
+  // where each has gone before)
+  const given = keys.length ? runKeysGive(node, command, sorted, keys, ctx, asked, walls.open) : null;
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false, afterLook = null;
@@ -228,7 +234,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
     if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha, ...(given ? { keys } : {}),
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
@@ -252,7 +258,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(as?.stdin ? { stdin: as.stdin } : {}) });
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu,
+      ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -263,6 +270,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     if (a.kind === 'ended') afterLook = wayCheck;
     // (what it wrote, for the commands after it in this request: a command that runs one is asked, 21-ladder.mjs)
     if (!Object.hasOwn(RUNNER_NEVER, a.kind)) workWrote(ctx, sorted);
+    // (where its keys went, kept with them, once it started)
+    if (given && !Object.hasOwn(RUNNER_NEVER, a.kind)) runKeysUsed(given, keys);
     const why = String(a.detail || '').slice(0, 300);
     if (!['ran', 'ended'].includes(a.kind)) {
       const never = Object.hasOwn(RUNNER_NEVER, a.kind);

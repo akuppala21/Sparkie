@@ -145,16 +145,17 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument)
-  const input = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input != null ? ' --stdin' : ''}` : '';
+  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument;
+  // input, a change's keys, 21-run-keys.mjs: after this script on the same input, which --stdin reads to its end)
+  const bytes = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${bytes != null || input === true ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -170,8 +171,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : input != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${input}SPARKIE_INPUT\nexit $?`
-        : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
+        : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
@@ -181,7 +182,8 @@ function helperCall(node, verb, opts = {}) {
   const id = /^[a-z0-9]{8,40}$/.test(opts.id || '') ? opts.id : randomBytes(12).toString('hex'), limitMs = opts.limitMs || ((opts.seconds || LOOK_SECONDS) + LOOK_SLACK) * 1000;
   if (knownOffline(node)) return Promise.resolve({ id, code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id }), limit: limitMs / 1000 + 5 });
+    // (a change's keys, 21-run-keys.mjs: after the script on the same input, which the helper's --stdin reads to its end)
+    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id, input: verb === 'run' && typeof opts.input === 'string' }) + (verb === 'run' && typeof opts.input === 'string' ? `\n${opts.input}` : ''), limit: limitMs / 1000 + 5 });
     const chunks = [];
     let bytes = 0, cut = false, timedOut = false, err = '', done = false;
     const finish = code => {
@@ -319,6 +321,7 @@ async function runCommand(input, viewer, ctx = {}) {
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = ctx.long?.job ? ctx.long.seconds : LOOK_SECONDS;
   // (not on Spark 2 yet: a long command there would run outside the lock-out net its changes run in, A11)
   if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
+  if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
@@ -393,6 +396,7 @@ action({
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
     minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
+    keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only. A command given a key is always asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });
