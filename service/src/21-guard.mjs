@@ -1,11 +1,11 @@
-/* ───────── the lock-out net: its calls to the root helper (dark: the console's half, 21-net.mjs, is off) ───────── */
+/* ───────── the lock-out net: its calls to the root helper (the console's half is 21-net.mjs) ───────── */
 // Area: features        Rules: R60, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes
 // restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; it disarms only on the
 // console's word (`keep`, after the check from outside), and otherwise what differs goes back when the timer fires, or
-// at once with `putback`. Only the console's half calls these (21-net.mjs, A13b: dark until its switch is on): guardScript
+// at once with `putback`. Only the console's half calls these (21-net.mjs, A13b): guardScript
 // builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
 // ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
 function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false }) {

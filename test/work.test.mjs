@@ -95,8 +95,10 @@ const SEEDED_RUNNING = [
   { spark: 'spark3', container: 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', model: 'testorg--Qwen3.8-27B-abliterated-GGUF', since: SINCE, by: 'owner' },
 ];
 const keys = {};
+// (Spark 2's changes and root are off for this fleet: its hub and sudo tests are their off side; hub-change.test and
+// root.test have the on side)
 useFleet({ watchMs: 2000, statusMs: 3000,
-  env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_JOURNAL_MAX_BYTES: '300000', SPARK_CONSOLE_LOOK_SECONDS: '4',
+  env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_JOURNAL_MAX_BYTES: '300000', SPARK_CONSOLE_LOOK_SECONDS: '4', SPARK_CONSOLE_HUB: '0', SPARK_CONSOLE_ROOT: '0',
     SPARK_CONSOLE_SELFTEST_PORT: String(page.address().port), SPARK_CONSOLE_JOB_WAIT_MS: '500', SPARK_CONSOLE_APP_ANSWER_MS: '20000',
     SPARK_CONSOLE_DIG_FIXTURE: join(REPO, 'test', 'mock', 'dig-fixture.json') },
   prepare: ({ root, stateDir }) => {
@@ -421,7 +423,7 @@ test('key files are never read back: by name, through a link, through *, and und
   // A sudo line whose rest is a change is root (design A 2.8, "set root"; A7c): refused in the runner's words, with
   // nothing run and nothing written.
   for (const command of ['ls | sudo tee x', 'true && sudo touch x']) {
-    await refused(command, 403, /^A change as root waits for the put-back net, which isn’t built yet, so nothing ran\.$/);
+    await refused(command, 403, /^Nothing ran: root is off in this console, so a command runs as the owner\. Leave out sudo\.$/);
     assert.ok(!existsSync(join(home('spark3'), 'x')), `${command}: nothing written`);
   }
   for (const command of ['grep sudo /var/log/auth.log', 'ls -l /usr/bin/sudo', 'journalctl -t sudo']) {

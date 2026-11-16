@@ -25,7 +25,8 @@ import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, sl
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
+// (the lock-out net is off for this fleet: a write to a way in is its off side; net.test has the on side)
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_NET: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');

@@ -1,4 +1,4 @@
-/* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12, dark) ───────── */
+/* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
 // Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -17,12 +17,10 @@
 const ROOT_SET = 'Nothing ran: a command becomes root only by setting root (run with root: true), which is always asked as root and runs inside the lock-out net. Leave out sudo and set root.';
 // The line the ask adds (line 5): what the net puts back for a root command, and what it never does.
 const rootLine = at => `It runs as root on ${at}, with no wall around it: the net puts back the ways in (SSH, Tailscale, the firewall, the sign-in files), never anything else it changes.`;
-
-// Root's switch on the Spark, as the helper's check says it: why it is off, or null (on, or not said: the press finds out).
-async function rootOff(node) {
-  const c = await helperCall(node, 'check', { limitMs: 30000 }).catch(() => null);
-  return c ? new RegExp(`(?:^|\\n)${c.id} root off: ([^\\n]*)`).exec(c.out)?.[1] || null : null;
-}
+// A root command's time limit: the helper's own (R70: 30 minutes, 10 in the lock-out class), so apt and dpkg finish; the
+// stand-in fleet may shorten it (SPARK_CONSOLE_ROOT_SECONDS).
+const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
+const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
@@ -41,14 +39,21 @@ async function rootChange(input, viewer, ctx = {}) {
   const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
-  // The dangerous ask's press, and only that: inside the net, as root.
-  if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', root: true });
+  // (a file run as code: its text isn't on the button and can change before the press, so as root it is never run)
+  if (sorted.scripts?.length) throw new HttpError(403, `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`);
+  const seconds = rootSeconds(lockout);
+  // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
+  if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
-  // (root's switch off there: the owner's one command, and nothing is asked)
-  const off = await rootOff(node);
-  if (off) return needsOwner(node, 'root off', `Root is off on ${at}: ${off}`);
+  // (no helper there, one this build doesn't know, walls not proven, or root's switch off there: the owner's one command,
+  // and nothing is asked)
+  const first = await netHelperFirst(node);
+  if (first.needs) return first.needs;
+  if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
   return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : [])], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at), ...(lockout ? { lockWhy: sorted.why } : {}), lines: [rootLine(at)] } });
+    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+      lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
+        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : [])] } });
 }
