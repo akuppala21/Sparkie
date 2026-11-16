@@ -13,13 +13,14 @@
 // folder of one name, a path twice, a path over 255 bytes), naming the entry masked and bounded. With agents paused,
 // an agent's fill and read back are refused; with no eval on record, Sparkie's fill is a button and opens nothing. Each
 // fill and read back is a journal record. A box removed and opened again by the same caller (the same name, on the same
-// Spark, another container) isn't the box that was filled: read back refuses it. Starts stand-in fleets: run it on a
+// Spark, another container) isn't the box that was filled: read back refuses it. The eval's held-out set never goes into
+// a box: a fill leaves it out, a read back never says it went, and a file of its name in the box refuses the read. Starts stand-in fleets: run it on a
 // Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, agentSettings, newChat, say, REPO, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
@@ -74,6 +75,7 @@ function prepareRepo(root) {
   const hub = { snap: { tree: { 'config.json': { link: '../blobs/cfg1' }, 'real.txt': 'kept\n' } }, blobs: { tree: { cfg1: '{}\n' } } };
   T_.mainlike = makeTree(dir, { ...GOOD, test: { tree: { mock: { tree: { root: { tree: { spark2: { tree: { hub: { tree: hub } } } } } } } } } });
   T_.linkelse = makeTree(dir, { ...GOOD, test: { tree: { mock: { tree: { evil: { link: '/etc/passwd' } } } } } });
+  T_.heldout = makeTree(dir, { ...GOOD, test: { tree: { eval: { tree: { 'memory-held-out.json': '{"questions":["held"]}\n', 'cases.json': '[]\n' } } } } });
 }
 function prepare({ root }) {
   for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `${IMAGE}\n`);
@@ -218,6 +220,8 @@ test('each hostile tar refuses the whole read with the entry’s name, masked an
     ['a file over 8 MiB', tar(entry('spark-console/big', { data: Buffer.alloc(8 * MiB + 1) })), /^a file is over 8 MiB: spark-console\/big\./],
     ['over 5,000 entries', tar(...Array.from({ length: 5001 }, (_, i) => entry(`spark-console/f${i}`, { data: 'x' }))), /^there are more than 5,000 files and folders\./],
     ['over the bounds in all', tar(...Array.from({ length: 9 }, (_, i) => entry(`spark-console/p${i}`, { data: Buffer.alloc(8 * MiB) }))), /^(the box’s folder is over the bounds|the files are over 64 MiB in all)/],
+    // (over 64 MiB in all but under the stream's own cap: only the reader's bound refuses it; final read TD-08)
+    ['over 64 MiB in all, under the stream’s cap', tar(...Array.from({ length: 8 }, (_, i) => entry(`spark-console/p${i}`, { data: Buffer.alloc(8 * MiB) })), entry('spark-console/q', { data: Buffer.alloc(MiB) })), /^the files are over 64 MiB in all\. Nothing was changed\.$/],
     ['a file and a folder of one name', tar(entry('spark-console/x', { data: 'x' }), entry('spark-console/x/y', { data: 'y' })), /^a file and a folder have one name: spark-console\/x\/y\./],
     ['a path twice', tar(ok, ok), /^a path is there twice: spark-console\/README\.md\./],
     ['a path over 255 bytes', tar(pax({ path: `spark-console/${'p'.repeat(300)}` }), entry('spark-console/short', { data: 'x' })), /^a path is over 255 bytes: spark-console\/p+\. Nothing was changed\.$/],
@@ -289,4 +293,19 @@ test('a box removed and opened again by the same caller has the same name and Sp
     assert.ok(r.isError, r.raw);
     assert.match(r.text, /The box that was filled has ended \(or was opened again since\), so there is nothing to read back\./);
   } finally { for (const sp of ['spark3', 'spark4']) rmSync(join(mock(sp), 'ids-per-run'), { force: true }); }
+});
+
+test('the eval’s held-out set never goes into a box: a fill leaves it out, a read back never says it went, and a file of its name in the box refuses the read', { timeout: 180000 * SLOW }, async () => {
+  const k = await createActKey('fill-held'), name = boxName(`agent ${k.id}`);
+  const f = await call(k.token, 'run', { on: 'box', command: `/fill ${T_.heldout}` });
+  assert.equal(f.isError, false, f.text);
+  assert.deepEqual([f.value.filled, f.value.files], [true, 6], f.text);
+  const at = (...p) => join(folder(name, f.value.spark), 'spark-console', 'test', 'eval', ...p);
+  assert.ok(existsSync(at('cases.json')) && !existsSync(at('memory-held-out.json')), 'the held-out set was left out of the box');
+  const r = await call(k.token, 'run', { on: 'box', command: '/read-back' });
+  assert.deepEqual([r.isError, r.value?.changes], [false, []], r.raw);
+  writeFileSync(at('memory-held-out.json'), '{"questions":[]}\n');
+  const again = await call(k.token, 'run', { on: 'box', command: '/read-back' });
+  assert.ok(again.isError, again.raw);
+  assert.match(again.text, /the eval’s held-out set is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
 });
