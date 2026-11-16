@@ -5,7 +5,7 @@
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
 // (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's
 // words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the
-// sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only
+// sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (it is kept only
 // by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
 // removes or changes the brain's container or its model files; nothing that starts a model, a job or any other workload
 // there; nothing that touches Spark Console's own unit, state, secrets or repository copy (only its installer changes

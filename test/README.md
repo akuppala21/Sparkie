@@ -50,14 +50,18 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 - **A compute Spark** (the fast way, before an install): `tools/test-on-spark.sh akuppala@<spark>` copies this folder
   there and runs `node test/lock.mjs` in a container with no network: about 46 minutes on a compute Spark (2026-11-15: 2,353 tests, the map
   recorded). The lock comes
-  back to `../spark-test-runs/`. Never on Spark 2.
+  back to `../spark-test-runs/`, naming the tree that was copied (`SPARK_TEST_TREE`), so `pull.sh` on Spark 2 can find
+  its commit on `main` (R58). Never on Spark 2.
 - **GitHub, on every push to `main` and every pull request** (`.github/workflows/full-run.yml`): one job runs the build
   check and `node test/lock.mjs` two files at a time (`SPARK_TEST_SLOW=2`; the runner has 2 cores) and can only read.
-  On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build,
-  and pushes it on top of the tested commit as the tag `tested/<first 12 hex of the tree>`. Today it refuses every lock
-  `lock.mjs` writes (the lock has `evalSet`, the job's list of keys does not), so it pushes no tag. The lock is no longer kept
-  on `main`. Its minutes are not measured yet: the end of the suite's log lists the seconds each file took. If the job
-  is over 30 minutes, split it into jobs side by side.
+  On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build
+  and holds only the keys `lockFor` writes, and pushes it on top of the tested commit as the tag
+  `tested/<first 12 hex of the tree>`. From the commit that gave the lock `evalSet` (2026-11-14) until the job's list of
+  keys was fixed (2026-11-15) the job refused every lock, so no tree between those two has a tag; a `main` that holds the
+  fix is marked again when its full run passes. `lock.test.mjs` (“the mark job takes the lock lockFor writes on GitHub”)
+  now holds the job's keys to `lockFor`'s. The lock is no longer kept on `main`. Its minutes are not measured yet: the
+  end of the suite's log lists the seconds each file took. If the job is over 30 minutes, split it into jobs side by
+  side.
 - **A step onto `main`**: `node tools/land.mjs <branch>` runs only the files its change needs (R29). Recording the
   map (`SPARK_TEST_MAP=1`) on `workflows.test.mjs` here: 452 and 425 s without, 434 and 436 s with.
 - **This Mac, by hand, one file at a time**: `SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/<file>.test.mjs`.

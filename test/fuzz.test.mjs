@@ -108,8 +108,8 @@ async function send(tool, args, label) {
     return r;
   } catch (e) { check(req, e); return e; }
 }
-// search_huggingface reaches Hugging Face for anything that passes validation: only send values that will be refused,
-// plus a few odd ones that pass.
+// search_huggingface answers from the stand-in fixture here (HF_FIXTURE, 10-recipes.mjs; Hugging Face is never reached).
+// Still, only values that will be refused are sent, plus a few odd ones that pass.
 const passesHf = v => typeof v === 'string' && v.length <= 200 && /\S\S/.test(v);
 const HF_ODD_OK = ['🚀🚀', '$(id)', '__proto__'];
 const healthy = () => fetch(`${T.base}/health`).then(r => r.status).catch(() => 0);

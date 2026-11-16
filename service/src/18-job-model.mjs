@@ -17,7 +17,7 @@
 // whether its step names its image or not, and the run says so and which model it was made to ask (the workloads
 // review, C1). Nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these
 // run-time settings).
-// Real use waits on the self-test's fifth line passing on the real Sparks: a container reaches the one address (R57's
+// Real use waits on the self-test's sixth line passing on the real Sparks: a container reaches the one address (R57's
 // Today).
 const JOB_MODEL_PARALLEL = 4;
 const JOB_MODEL_KEYS = ['SPARK_MODEL_URL', 'SPARK_MODEL_NAME', 'SPARK_MODEL_PARALLEL'];

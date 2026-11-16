@@ -7,7 +7,7 @@
 // Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark
 // so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after
 // reboots until someone stops it here, and it's labeled protected, so deploys never stop it.
-// Setups come from config.json (`main`, or `main.presets`) plus any made from Library models in the console; the one
+// Setups come from config.json (`main`, or `main.presets`) plus any made from a model the Sparks hold (setupFromLibrary); the one
 // in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its
 // brain is asked and read (13-ask.mjs, R50); its fields go over the same names beside it.
 const MAIN_FILE = `${STATE_DIR}/main.json`;

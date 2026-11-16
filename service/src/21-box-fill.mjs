@@ -1,4 +1,4 @@
-/* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
+/* ───────── the box filled from an exact tree, and read back as data (C8b; called by propose_update, C8c) ───────── */
 // Area: features        Rules: R62, R52, R43, R23, R47        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -13,8 +13,8 @@
 // back is the paths that differ from the tree filled, with their new blob ids; each new blob goes into the bare copy
 // by `git hash-object -w --no-filters --stdin` (bytes only, no index, no checkout, nothing run). Both are a change:
 // Sparkie's and an agent's call meet the pause, Sparkie's the rail (R52), as opening the box does. The tree each box
-// was filled from lives only in memory. Nothing calls them yet but run's test door on the stand-in fleet
-// (BOX_FILL_DOOR, 21-work.mjs); design C's propose_update (C8c) is the first caller.
+// was filled from lives only in memory. Their callers: propose_update (21-selfchange.mjs, C8c; off while
+// SELF_CHANGE_ON is false) and run's test door on the stand-in fleet (BOX_FILL_DOOR, 21-work.mjs).
 const FILL_FOLDER = 'spark-console';
 // The bounds, for a fill and a read back alike: entries (files and folders), one file, all files, one path (bytes).
 const FILL_MAX_ENTRIES = 5000, FILL_MAX_FILE = 8 * 2 ** 20, FILL_MAX_BYTES = 64 * 2 ** 20, FILL_MAX_PATH = 255, FILL_MS = 120000;

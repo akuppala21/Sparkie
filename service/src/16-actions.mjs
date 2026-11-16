@@ -266,8 +266,8 @@ function changeIntent(text) {
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
 // phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
 // owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
-// to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
-// installs, joins this list.
+// to Sparkie there. Keeping an eval or trial result and propose_update are here too. install_update is not: it is the
+// dangerous ask, which the owner may answer on the page or in the paired chat (R54).
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
 const PAGE_ONLY = new Set([
   'undo_update',

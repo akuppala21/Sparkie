@@ -1,6 +1,6 @@
-// Covers: a command as root, the console's half (A12; 21-root.mjs; R70, R60, R54; design A 2.13, step 12), switched on
-// for this fleet (SPARK_CONSOLE_ROOT=1, with the net, SPARK_CONSOLE_NET=1; off, run has no root in its schema: the
-// last test starts a console with it off). run with root: true is always the dangerous ask, "ROOT on Spark 3" (with
+// Covers: a command as root, the console's half (A12; 21-root.mjs; R70, R60, R54; design A 2.13, step 12), on as in
+// the build (only SPARK_CONSOLE_ROOT=0 or SPARK_CONSOLE_NET=0 turns it off; off, run has no root in its schema: one
+// test starts a console with it off). run with root: true is always the dangerous ask, "ROOT on Spark 3" (with
 // "CAN LOCK YOU OUT" for the lock-out class), with the net's line and root's own, and no go-ahead button: never at once,
 // even when the owner's words ask for it; nothing runs before the press. The press runs it through the root helper's
 // `root --net` (its unit sw-root-<id>, the net's timer first; --lockout for the lock-out class), checked from outside and

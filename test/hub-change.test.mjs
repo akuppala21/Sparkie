@@ -1,6 +1,6 @@
 // Covers: a change on Spark 2, the hub (21-hub.mjs, with 21-ladder.mjs and the lock-out net's seam, 21-net.mjs; R1,
-// R60, R61; design A 2.7 and step 11, A11), switched on for this fleet (SPARK_CONSOLE_HUB=1, with the net,
-// SPARK_CONSOLE_NET=1); off, a change there is not done, as before. Refused by code before anything is asked, each in
+// R60, R61; design A 2.7 and step 11, A11), on as in the build (only SPARK_CONSOLE_HUB=0 turns it off: one
+// test's own fleet); off, a change there is not done, as before. Refused by code before anything is asked, each in
 // its own words: the brain's container and model files, a workload, Spark Console's own unit, state, secrets and
 // repository copy, Spark 2's power and plug, the lock-out class (a fresh visit keeps that, a later build). Otherwise
 // always asked, whatever the words, one command a press; from the API, with no button to show, not run. The press runs

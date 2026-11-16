@@ -1,6 +1,7 @@
 # Reply to round 1
 
-Written on 2026-11-14, and brought up to the build of 2026-11-15 before it was sent. From the builders: Fable 5.2
+Written on 2026-11-14, and brought up to the build sent with it before it was sent (the code as read on 2026-11-15
+and 2026-11-16). From the builders: Fable 5.2
 checks each finding against the code and writes this; Opus 5.5 builds what is accepted. This answers `findings-1.md`
 under [the agreed procedure](README.md). Every finding keeps its id and its place. Where the code has moved since
 2026-11-14 the answer is corrected in place: look for "Since", "Closed since" and "As built".
@@ -17,8 +18,12 @@ later and what is not accepted in one place. Nothing here is closed: [`open.md`]
 
 **What has changed since 2026-11-14.** The build sent with this reply is a later one: the next phase, which part 2
 answers as a plan, is now code on top of these fixes (`REVIEW-GUIDE.md`, sections 4 and 10). So four findings that
-were "later" are closed by removal (A-6, A-10, A-11, A-12), and every P section has an "As built" paragraph (P-5's
-waits: see its PENDING line). None of that later build is installed (the guide's section 8). Its test result:
+were "later" are closed by removal (A-6, A-10, A-11, A-12), and every P section has an "As built" paragraph. Before
+sending, we checked this reply against that code ourselves. Some of its sentences did not hold. For each, the code
+or its tests were changed, and the place is marked "Since (our check of this reply)"; the commits are in
+[the third table at the end](#where-each-fix-landed). Where the code still does less than an answer said, the place
+says so: P-5 above all, and one caller in A-5. None of that later build is installed (the guide's section 8). Its
+test result:
 
 TESTS_LINE
 
@@ -28,11 +33,11 @@ was read as a report; its scripts were not run. Where we ran something, it says 
 
 | Id | Answer | When |
 |---|---|---|
-| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fixed, `eab0f43`; one test's wait made real after our own review, `a677d71` |
-| A-2 | Accepted in part: the missing re-check is real; the path as told (a model start inside the gap) does not fit | Fixed, `2cc8152`; the restart path later |
+| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fixed, `eab0f43`; one test's wait made real after our own review, `a677d71`; a saved workflow's steps since, `3659abd` |
+| A-2 | Accepted in part: the missing re-check is real; the path as told (a model start inside the gap) does not fit | Fixed, `2cc8152`; the restart path since, `48066c9` |
 | A-3 | Accepted, and wider than reported | Fixed, `25f0cdb`; made narrower in one place and wider in another after our own review, `8e9dceb` and `55fd2cd` |
 | A-4 | Accepted | Fixed, `a65f880` |
-| A-5 | Accepted, with two more places found | Fixed, `acd2b92`; a third place after our own review, `7182534` |
+| A-5 | Accepted, with two more places found | Fixed, `acd2b92`; a third place after our own review, `7182534`; a fourth healing reason and four more spots since, `5340517` |
 | A-6 | Accepted in part: the race is real; "blocks install" is not | Closed since by removal: the worker's delete is gone (`42ddc29`) |
 | A-7 | Accepted; the byte-count limit is not taken | Fixed, `418e16b` |
 | A-8 | Accepted in part: the cause is real; "don't mark before telling" is not taken | Fixed, `3f8044c` |
@@ -72,7 +77,13 @@ cancels nothing, the same rule as `/stop` (R34), because cancelling a start half
 back, which is the bigger surprise. This includes the remaining steps of a saved workflow the agent started; the owner
 cancels it in Activity. The sentence is now in R9 and beside the route.
 
-PENDING: R1-02, the saved-workflow sentence above (what a removed agent's saved workflow does in today's build).
+**Since (our check of this reply).** The build of 2026-11-15 did not do this for a saved workflow. Each of its steps
+carried the agent's key id, so `runAction` read the key again at every step and refused the rest of the run once the
+agent was removed. Now a step carries only a mark that the run is an agent's, and no key id (`savedStepAgent` in
+`18-step-jobs.mjs`, `3659abd`). The key is read once, when `run_workflow` is asked. So the rest of the run goes on
+with the authority it began with: a step an agent is asked for is still asked, and the clean-up stops only what the
+run started. The removed key starts nothing new. Test: `test/workloads-agent.test.mjs`, group "removing the agent
+while its saved workflow runs".
 
 **Rating: medium, fix now.** One reply, a bounded number of changes, each asked for in the agent's own words while it
 was allowed; `/pause` already stops an agent's very next change mid-reply. But it is the moment an owner removes an
@@ -172,7 +183,19 @@ across the cut can't leave a piece. R7's "Today" note for operation errors close
 third healing reason built from an error (the one kept when a restart fails its check) and one audit line that cut
 before masking; both mask first now (`7182534`).
 
-PENDING: R1-06, "every spot an error's text is kept" above (one more healing reason came with the power work).
+**Since (our check of this reply).** "Every spot" was not every spot. The power work of 2026-11-15 brought a fourth
+healing reason built from an error: a parked model that fails to come back after its Spark is turned on
+(`bringBackParked` in `21-power.mjs`). It was kept unmasked. It masks first now (`5340517`), and so do four more
+spots found on the same pass: a failed wake's `problem` in `power.json` (`powerOnSparks`), the first line of a
+refused shutdown (`powerOffJob`), Docker's output when a restart fails (`restartJob` in `17-changes.mjs`) and the
+names in the notice after a state put-back (`putBackAtStart` in `22-putback.mjs`). One test holds the healing reason:
+`test/power-box.test.mjs`, "a bring-back that fails with a key in its error". The other four have no test of their
+own.
+
+**Still open.** `wait_operation` hands an operation's error and its last log lines to its caller as they are (R7's
+"Today" says so). Sparkie's copy and an agent's copy of that answer are masked like every tool result, so this
+reaches only the owner's own call of the action (`POST /console/api/actions/wait_operation`), and none of it is
+kept in a file.
 
 **Rating: fix now, low likelihood.** A key at rest in a file that is copied off Spark 2 every day.
 
@@ -190,7 +213,13 @@ inside a stubbed memory read, which shows the order of the code, not that real t
 job, whose claim ends right after `docker run`: two GPU starts on one Spark in the same second from separate callers.
 Sparkie runs changes one after another, and healing skips a claimed Spark. So: not "high", and not a blocker.
 
-PENDING: R1-05, "Sparkie runs changes one after another" above (`run` and `write_file` calls of one round).
+**Since (our check of this reply).** In the build of 2026-11-15 that sentence was true of the typed changes only.
+`run` and `write_file` are lookups to `runAction`, so two of them in one round ran at the same moment, and two for
+one Spark met its claim: one was refused, in no fixed order. Now every call that may change something runs after the
+round's lookups, one after another in the order asked, each once the one before it has ended (`roundTogether` and
+`roundCalls` in `14-rounds.mjs`, `b837c66`). Tests: `test/rounds.test.mjs`, "four changes for one Spark in one round
+all run, one after another in the order asked; none meets the Spark's claim" and "a write and the command that reads
+it, in one round: the command runs after the write has ended, and reads what it wrote".
 
 **What changes anyway.** The same two re-checks the siblings run, inside the claim, before `docker start` (and before
 the `try`, so a refusal doesn't run the put-back for a container that was never started). The checks before the claim
@@ -202,7 +231,14 @@ happened (two GPU workloads on one Spark's shared memory) is on the bar.
 with the next change to that workflow. Re-checking identity and protection inside the claim is not taken: neither
 sibling does it, and a swap needs a hand `docker rm` and `run` in that same second.
 
-PENDING: R1-07, the restart path (A-2b) and its reason above, and the A-2b row of the later list.
+**Since (our check of this reply): A-2b is closed.** The restart path now looks again inside its claim, as
+`keep_running` does: room beyond the 8 GB kept free, and no GPU app or job there, from a fresh look just before
+`docker start` (`restartRoom` in `17-changes.mjs`, `48066c9`: called before the claim by `restartChecked`, for the
+plain refusal, and inside it by `restartJob`). `restartRoom` is in `restart_model`'s code list, so that workflow has
+a new version and waits for its validation run on the real Sparks after the install, as the other four do.
+Re-checking identity and protection inside the claim is still not taken. Test: `test/apps.test.mjs`, "a stopped
+model's restart is checked again inside its claim: a GPU app there, or less free memory, since the first look starts
+nothing".
 
 ### A-7. A character split across two pieces of a request body is spoiled: accepted
 
@@ -395,7 +431,8 @@ ledger's new section 5c.
 
 **Since: all of it is code.** Each section below keeps its answer as written, and ends with "As built": what the
 code does today, with its rule and its part file in `service/src/`. Those paragraphs come from reading the code on
-2026-11-15. Nothing of it has run on a real Spark (`REVIEW-GUIDE.md`, section 7).
+2026-11-15, and again on 2026-11-16 where a fix landed after. Nothing of it has run on a real Spark
+(`REVIEW-GUIDE.md`, section 7).
 
 | Id | Answer | Built in |
 |---|---|---|
@@ -403,7 +440,7 @@ code does today, with its rule and its part file in `service/src/`. Those paragr
 | P-2 | Accepted, with the block scoped to free-form changes | Milestone 2, with the journal |
 | P-3 | Accepted in part: open sign-ins and asks are never on disk; a smaller mechanism than "recovery candidates" | Milestone 4, with the rebuild steps |
 | P-4 | Accepted, with a rider so it does not bring back asking | Milestone 1 (the hash) and 5 (the grade) |
-| P-5 | Accepted: today's button fixes the arguments only | Milestone 2 (see the PENDING line in its section) |
+| P-5 | Accepted: today's button fixes the arguments only | Milestone 2, with less than the answer says: its "As built" |
 | P-6 | Accepted | Milestone 5, with Sparkie changing its own code: built differently, and switched off |
 | P-7 | Accepted; one correction to the correction | Words only, on 2026-11-14 |
 
@@ -436,13 +473,14 @@ that rewrites `sshd_config` every second is stopped before the first copy back a
 root command during an open guard runs nothing; "keep it" after the timer says "already put back"; an expiry where
 nothing differs reloads nothing. Then once on a real compute Spark.
 
-**As built** (R60, R70; `21-net.mjs`, `21-guard.mjs`, and the root helper, `deploy/spark-console-root`). The
+**As built** (R60, R71, R70; `21-net.mjs`, `21-guard.mjs`, and the root helper, `deploy/spark-console-root`). The
 mechanism is as above. The timer is the command's own limit plus 600 seconds (`net_arm`). A put-back stops the
 command's unit first, then puts back only what differs and reloads only that (`restore_sh`). One guard is open on a
 Spark at a time. A keep after a put-back answers "already put back". Three things differ from the text above:
 
-- **The times.** From the console, a lock-out change on a compute Spark and any change on Spark 2 get 30 seconds; the
-  helper itself would allow 30 minutes. A root command gets 30 minutes, 10 in the lock-out class.
+- **The times.** From the console, any change on Spark 2 gets 30 seconds; the helper itself would allow 30 minutes.
+  A root command gets 30 minutes, 10 in the lock-out class. A lock-out change on a compute Spark is done only as root
+  (R71), so it has those 10 minutes: asked as the owner, nothing is asked or run, and the answer says to set root.
 - **"Keep it" is not the owner's press.** Code keeps a change once every way in that worked before it still works,
   tried from outside the Spark. One that stopped working puts the change back at once.
 - **The tests** are `test/root-helper.test.mjs`, group "the lock-out net (R60)", and `test/net.test.mjs`. They check
@@ -478,15 +516,25 @@ ran once.
 **As built** (R43, R61; `20-journal.mjs`, `21-runner.mjs`, `21-net.mjs`). Before a `run` change, a `write_file` or
 anything inside the net runs, its start line is written and synced. With no start line nothing runs, and the answer
 says the record couldn't be written, so nothing was changed. The result is a second line with the same id. A start
-with no end is told once as cut off after a restart and is never run again (`test/runner.test.mjs`). Two things
-differ from the text above:
+with no end is told once as cut off after a restart and is never run again (`test/runner.test.mjs`). One thing
+differs from the text above:
 
 - Two typed actions are written first too, and are refused when the journal can't be written: `save_file`, and
   `keep_running` with an image (`journalFirstFor`). `test/journal.test.mjs` holds that: "with the journal's disk
   full, a change written down first answers …".
-- A command in the box is one record when it ends, not a start line and an end line (R62).
 
-PENDING: R1-10, the test above for a changing `run` with the journal unwritable.
+A command in the box is written first as well: its start line, then its end line (`boxStart` in `21-box.mjs`, R62).
+On 2026-11-15 it was one record when it ended.
+
+**Since (our check of this reply): the test.** On 2026-11-15 the test this section names was only partly there.
+`test/journal.test.mjs` held the two typed actions, a look, `/stop` and `stop_model`. Nothing held a changing `run`:
+its refusal could be taken out with no test failing. Now `test/runner-fixes.test.mjs` has three tests, each with the
+journal's disk full (`bae6a88`): "a changing run runs nothing (no unit, its copies gone) and says the record couldn't
+be written", "/undo puts nothing back and says the record couldn't be written" and "a long look's operation fails
+before its look runs, saying the record couldn't be written". `test/net.test.mjs` has the same for a change inside
+the net (`f2d572f`): "when the journal can't be written, a change inside the net runs nothing: refused in plain
+words, and nothing reaches the Spark". `test/runner-fixes.test.mjs` runs on Linux only. No test types `/putback`
+with the journal unwritable.
 
 ### P-3. Putting old state back can let a removed device or passkey in again: accepted in part
 
@@ -525,8 +573,8 @@ removed since: no hold. No secrets file: hold.
 
 - No copy holds `sessions.json` (`25-backup-and-start.mjs`), and a put-back signs every device out.
 - The number is kept in the state folder (`auth-serial.json`) and in the secrets file. It goes up when the owner signs
-  a device out, removes a passkey or an agent key, takes a right from an agent key, or pauses agents' changes. "A
-  person" is gone from the list: the owner is the only user.
+  a device out, removes a passkey or an agent key, takes a right from an agent key, pauses agents' changes, or takes
+  an always-allowed kind away. "A person" is gone from the list: the owner is the only user.
 - At start the state counts as put back when something the secrets file notes as removed is there again, when the
   state's number is the lower one, or when the state has a number and the secrets file has none (a new disk).
   `restore.sh --with-state` always holds, so "nothing removed since: no hold" is true only of a copy untarred by hand.
@@ -536,7 +584,13 @@ removed since: no hold. No secrets file: hold.
 - So P-3a is closed for sign-ins: nothing is left for the owner to remove by hand, and there is no Access view.
 - Tests: `test/putback.test.mjs`, `test/copy-signins.test.mjs`, `test/allowed.test.mjs`.
 
-PENDING: R1-04, "an 'always' entry" in the list of removals above (what `/allowed off` does to the number).
+**Since (our check of this reply).** The answer above lists "an 'always' entry" among the removals that raise the
+number. In the build of 2026-11-15 it did not: taking an always-allowed kind away left the number as it was, so an
+older copy put back by hand on the same disk, with nothing else removed since, brought the kind back with no hold.
+Now `/allowed off` raises the number and notes what went (`allowedWord` in `21-ahead.mjs` calls `putBackRemoved`,
+`df65eea`). An older copy then holds, and code takes the kind away again, so it is not live before "Keep these" or
+after it (`putBackAtStart` in `22-putback.mjs`). Test: `test/putback.test.mjs`, group "an always-allowed kind taken
+away, then an older copy put back by hand".
 
 ### P-4. A "checked" grade must belong to what the brain reads now: accepted
 
@@ -591,7 +645,46 @@ itself reads or downloads while it runs is not checked.
 server that answers A then B: the press runs A and the server saw one request. The file rewritten after the runner
 opened it: what ran is what was shown.
 
-PENDING: R1-03, "As built" for P-5 (what the button shows, what the press checks, and what then runs).
+**As built, with less than the change above** (R72, R54; `21-ladder.mjs`, `21-runner.mjs`). For a change on a
+compute Spark:
+
+- **What the button shows.** Each script the command runs, by its path and the first twelve characters of its
+  SHA-256, read on the Spark when the ask is built (`workScripts`), and one line saying how the press checks it. It
+  never shows the script's text. A script is hashed only where code can tell which folder the command reads it from
+  (`workScriptPaths`); otherwise the button says its text isn't pinned by a hash, so a change to it after the ask
+  isn't seen. What a script itself reads later is not checked, and the button says that too.
+- **What the press checks.** The press runs by its own button's record. It takes the Spark's claim first, so nothing
+  else of the console changes that Spark meanwhile, and then reads each hash again (`workChange`). A different hash:
+  nothing runs, and it is asked again with the new hash. A read that fails: nothing runs.
+- **What then runs.** The change's unit begins with lines of code's own that hash each pinned script once more
+  (`runnerPins`). One that changed stops the unit before anything of the command runs, and it is asked again. Then
+  the command runs the script by its path.
+
+Three things in the change above are not built:
+
+- The press does not open the file once and run that open file. The script runs by its path, so a write in the
+  instant between the unit's last check and the command's own read of the file is not seen. R72 says so in its rule.
+- The button shows a hash, not the bytes.
+- No installer is downloaded once when the ask is built. A command that runs code it does not show (a download
+  piped into a shell, a script fed by a redirect, a package's own scripts) says so in one line on its ask
+  (`workUnshownLines`), and that code is not pinned.
+
+Three more things differ by where the change runs:
+
+- As root, a command that runs a script, or code it does not show, is refused before any ask: "give the command
+  itself, not a script" (`rootUnseen` in `21-root.mjs`).
+- On Spark 2 the press reads the hashes again, and there is no second check in the unit's first lines (`hubChange`
+  in `21-hub.mjs`).
+- A command given a key runs only when every script it runs is pinned, and a script that changed refuses it
+  (`21-run-keys.mjs`, R51).
+
+Tests: `test/ladder.test.mjs` ("a script changed after its ask voids the press and is asked again", "a script is
+hashed where the change reads it", "a script's hash is pinned only where the folder it is read from is plain");
+`test/runner-fixes.test.mjs` ("R1-03: the unit's own first lines check each pinned script again", "R1-03: the press
+takes the Spark's claim before it reads the scripts again", `d1592fc`); `test/hub-change.test.mjs` ("a script it
+runs, changed after the ask, voids the press and is asked again"). Of the four tests the answer named, the first is
+there. No test points a link elsewhere after the ask. The other two ("a server that answers A then B", "the file
+rewritten after the runner opened it") test what was not built.
 
 ### P-6. Sparkie's own change must install the tree the owner approved: accepted
 
@@ -748,6 +841,21 @@ the ones above, with a test that fails without it.
 | A-9 | `ea0d6f1` | The first command removed leftovers with a file pattern, which ends the command under zsh when nothing matches | `25-backup-and-start`: `find … -delete` | `test/state.test.mjs`: "its first command on the far Spark ends well under zsh too, with no .part there and with a stale one" (skipped where there is no zsh) |
 | A-5 | `7182534` | A third healing reason was built from an error and not masked; one audit line cut its text before masking it | `18-workflows` (`maybeHeal`), `20-heal` (`bringBack`); rule R7 | `test/heal.test.mjs`: "a restart that fails with a key in its error: the reason kept in the fleet's record hides it". The audit line's cut has no test of its own |
 
+**Found by our own check of this reply against the build sent.** The reply's sentences were read against the code
+of 2026-11-15. Where one did not hold, the code or its tests were changed, in the commits below. P-5 is the one where
+the code still does less than the answer: its "As built" says what is there and what is not.
+
+| Around | Commit | What the check found | What changed | Tests |
+|---|---|---|---|---|
+| A-1 | `3659abd` | A saved workflow an agent started was refused at its next step once the agent was removed, against the policy the answer wrote down | `18-step-jobs` (`savedStepAgent`: a step carries no key id); rule R9 | `test/workloads-agent.test.mjs`, group "removing the agent while its saved workflow runs" |
+| A-2 | `b837c66` | "Sparkie runs changes one after another" was not true of `run` and `write_file` calls in one round | `14-rounds` (`roundTogether`, `roundCalls`); rule R50 | `test/rounds.test.mjs`: "four changes for one Spark in one round all run, one after another in the order asked; none meets the Spark's claim"; "a write and the command that reads it, in one round …" |
+| A-2b | `48066c9`, tests in `db64e3e` | The restart path had A-2's shape and was "later" | `17-changes` (`restartRoom`, also inside `restartJob`'s claim); `restart_model` has a new version; rule R2 | `test/apps.test.mjs`: "a stopped model's restart is checked again inside its claim …" |
+| A-5 | `5340517` | A fourth healing reason built from an error, and four more kept error texts, were not masked | `21-power` (`bringBackParked`, `powerOnSparks`, `powerOffJob`), `17-changes` (`restartJob`), `22-putback` (`putBackAtStart`); rule R7 | `test/power-box.test.mjs`: "a bring-back that fails with a key in its error". The other four spots have no test of their own |
+| Later list | `b168965` | A call-off in a later sentence was not read for changes other than memory's | `16-actions` (`calledOff`, read by `changeIntent`); rule R25 | `test/intent-own.test.mjs` and `test/fix-intent.test.mjs`, the tests named "C-6, R1-08" |
+| P-2 | `bae6a88`, `f2d572f` | No test held "a changing `run` with the journal unwritable runs nothing" | Tests only | `test/runner-fixes.test.mjs`, three tests named "R1-10" (Linux only); `test/net.test.mjs`: "when the journal can't be written, a change inside the net runs nothing …" |
+| P-3 | `df65eea` | Taking an always-allowed kind away did not raise the number | `21-ahead` (`allowedWord`), `22-putback`; rules R23, R65 | `test/putback.test.mjs`, group "an always-allowed kind taken away, then an older copy put back by hand" |
+| P-5 | `d1592fc` | The press checked the hashes before it took the Spark's claim, and nothing checked them again as the change started | `21-ladder` (`workChange`, `workScriptPaths`), `21-runner` (`runnerPins`, `runnerPinRead`); rules R72, R54 | `test/runner-fixes.test.mjs`: the two tests named "R1-03", and "S-6: a script is pinned where it is really read from …" |
+
 **The whole suite, all of it together.** 1,056 of 1,057 on Linux (Node 26, four files at once), with the five review
 commits in. The two cases that are skipped on macOS or as root both ran: real GNU tar on a file it can't read, and
 the folder that can't be removed. One case was skipped there: the zsh one, because the test container has no zsh; it
@@ -773,13 +881,11 @@ stops a healthy model, leaks a key, or leaves the console dead or stuck). Astra 
 | Id | What | Why later |
 |---|---|---|
 | A-1b | A removed agent still receives the answer to the request that was open | Looked-up data only, for at most 40 seconds |
-| A-2b | The restart path has A-2's shape | The fix changes `restart_model`'s version, which means a validation run on real Sparks |
+| A-2b | The restart path has A-2's shape | Closed since: the restart looks again inside its claim (`restartRoom`, `48066c9`; A-2's section). `restart_model` has a new version, validated on the real Sparks after the install like the other four |
 | A-6 | A page delete can remove a save landing in the same 40 to 150 millionths of a second | Closed since by removal: the caller and the worker's delete went in milestone 4 (`42ddc29`) |
 | A-7b | The same joining of raw pieces, in more places than the three first named (the A-7 section lists them); the brain's stream is not plain ASCII | Less likely to split a character than a request body |
 | A-10, A-11, A-12 | Three late-answer faults on the page | Closed since by removal: the views went in milestone 4 |
 | P-3a | A restore from an old copy brings back sign-ins removed since | Closed since for sign-ins: what the owner removed is removed again by code and every device is signed out (`22-putback.mjs`; P-3's "As built") |
-
-PENDING: R1-07, the A-2b row above (its reason).
 
 **Later, found by the same review of the fixes.** Astra did not report these. They are listed so that round 2 can
 rebut "later" for any of them.
@@ -794,7 +900,7 @@ rebut "later" for any of them.
 | A-3 | A forget inside single quotes still counts. So do "I always forget that …", "forget that" straight after a question about the line, and a "never" more than four words before "forget" | Each also needs the model to call `forget_memory` unasked, and the line is one sentence the owner can say again |
 | A-3 | A short line has two counted words, so one shared word passes the topic test | Needs the model to aim at the wrong line |
 | A-3 | Everyday forget wordings outside the four phrases get the button ("forget about …", "delete that from your memory"), and so does a forget followed by a call-off of something else | One extra press, never a wrong delete |
-| All changes | A call-off in a later sentence is not seen for other changes: "Stop gemma on Spark 4. Actually don't." asks for a stop | Not part of A-3. It is a finding of its own, and it goes with the next change to the intent reader |
+| All changes | A call-off in a later sentence was not seen for other changes: "Stop gemma on Spark 4. Actually don't." asked for a stop | Closed since (`b168965`): a sentence that is only a call-off calls off every kind asked before it in the message, and one that ends in a call-off after a comma or a dash calls off its own, for all twenty kinds the intent reader knows (`calledOff` in `16-actions.mjs`). The change is then asked, never run at once. Tests: `test/intent-own.test.mjs` and `test/fix-intent.test.mjs`, "C-6, R1-08" |
 | A-4 | A cut-off answer is saved as "aborted", so the plain sentence about the model never reaches the owner | Wording; the chat is free again, which was the finding |
 | A-4 | No test asserts that the count of model calls in use goes back to zero | No path was found that leaves it raised; the assertion goes with the next change there |
 | A-5 | A saved workflow's value under a secret-named input that is not key-shaped is still shown; the labels of stop, restart, start and save-file show the model's arguments unmasked | A key would have to be passed as a container or file name |
@@ -804,8 +910,6 @@ rebut "later" for any of them.
 | Tests | Five waits in `test/ask.test.mjs` and `test/words.test.mjs` are fixed lengths of time | They pass on Linux, and on the Mac one file at a time; they can fail on a loaded machine |
 | Tests | `test/across.test.mjs`, "parts that only hang over RoCE start over plain sockets…": the stand-in's cable check listens on a port picked at random, and when another test's fleet holds it the start is refused with "Port 29501 … is already in use". Seen once in our whole-suite runs. It is in the build Astra reviewed | Fixed since, with the power work: on the stand-in fleet the cable check takes its three ports from the system (`freeLocalPorts` in `08-cluster.mjs`), never one another test's fleet holds. It is part of `start_model_across`, whose version changed anyway |
 | Documents | `test/README.md` does not list the stand-in model's new modes; `docs/architecture.md` lacks the "operations keep running" sentence | The rule files carry both |
-
-PENDING: R1-08, the "All changes" row above (a call-off in a later sentence, and when it would be read).
 
 ### Not accepted, in one place
 

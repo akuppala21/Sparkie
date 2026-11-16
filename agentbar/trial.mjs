@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // The coding trial (C8a; contract 10.4, T100; R67): can the brain in use change Spark Console's own code? Each task is
 // a slip planted in a copy of this repository, with a failing test that shows it. The brain works alone, with a loop
-// and two tools shaped as Sparkie's in its box will be, and code scores each run: the task's test passes, the short
+// and two tools shaped as Sparkie's in its box are, and code scores each run: the task's test passes, the short
 // check passes, no existing test line changed, no protected path touched, the generated files are the build's. The
 // bar is the contract's (10.4): every task passes at least 2 of 3 runs. The run's one record is kept with the profile
 // of the brain serving now (POST /main/trial: the owner's, with the passkey's press on the page), and
 // trialPassed() (service/src/21-brain-trial.mjs) is what propose_update asks.
 //
-// A STAND-IN: the box and its tools (A4: run and write_file with on: "box") aren't built yet. The loop and the two
+// A STAND-IN: the trial doesn't use Sparkie's box (21-box.mjs: run and write_file with on: "box") yet. The loop and the two
 // tools here stand in for them, with the same shapes: run {on: "box", command, root?, dir?, minutes?} and
 // write_file {on: "box", path, text, from?, to?, root?}. The box is a container from node:26-bookworm with no network,
 // no Docker socket and no keys, holding the copy at /work: the brain's commands run there, and so does the grade. It
