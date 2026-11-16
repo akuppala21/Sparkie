@@ -107,7 +107,7 @@ LISTED='.bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .loca
   .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
   .git-credentials .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .bash_history .zsh_history .sh_history
   .python_history .node_repl_history .psql_history .mysql_history .local/share/fish/fish_history
-  .local/state/spark-console'
+  .local/state/spark-console .config/git/credentials .Xauthority'
 # Where an enabled unit of yours may take its program from without a change being able to rewrite it.
 SAFE_RUN=".local/opt .local/share/code-server spark-console spark-console-service spark-console-src .cache/spark-console
   .config/systemd .local/share/systemd"

@@ -1933,6 +1933,30 @@ describe('what bounds a plain change (R63)', () => {
     for (const p of ['/home/owner/.m2', '/home/owner/.gradle']) assert.ok(rw.includes(p), p);
   });
 
+  // The final read's "hidden-misses": secrets a look read that no list named.
+  test('crash dumps, old password hashes, systemd\'s, apt\'s, WireGuard\'s and Wi-Fi\'s secrets, X\'s cookie, git\'s other credentials and Docker\'s moved data are hidden in both walls', () => {
+    const s = proven();
+    const dirs = ['/var/crash', '/var/lib/systemd/coredump', '/var/lib/apport/coredump', '/etc/apt/auth.conf.d', '/etc/wireguard', '/etc/wpa_supplicant', '/data/docker'];
+    const files = ['/etc/security/opasswd', '/var/lib/systemd/credential.secret', '/etc/apt/auth.conf', '/home/owner/.Xauthority', '/home/owner/.config/git/credentials'];
+    for (const d of dirs) mkdirSync(join(s.R, d), { recursive: true });
+    for (const f of files) s.put(f.slice(1), 'secret');
+    s.put('etc/docker/daemon.json', '{"data-root": "/data/docker/", "log-driver": "json-file"}');
+    const r = change(s, 'true'), l = look(s, 'true');
+    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      for (const d of dirs) assert.ok(c.includes(`TemporaryFileSystem=${d}:ro`), d);
+      for (const f of files) assert.ok(c.includes(`InaccessiblePaths=${f}`), f);
+    }
+    // (Docker's own place is hidden once; settings that cannot be read move nothing and stop nothing)
+    for (const bad of ['{"data-root": "/var/lib/docker"}', 'not json', '[1, 2]', '{"data-root": "relative/docker"}']) {
+      s.put('etc/docker/daemon.json', bad);
+      const q = look(s, 'true');
+      assert.equal(q.status, 0, `${bad}: ${q.stdout}`);
+      const c = unitCall(s, `sw-look-${q.id}`);
+      assert.equal(c.filter(a => a === 'TemporaryFileSystem=/var/lib/docker:ro').length, 1, bad);
+      assert.ok(!c.some(a => a.includes('/data/docker') || a.includes('relative')), bad);
+    }
+  });
+
   test('Bun\'s, Yarn\'s and pnpm\'s folders are never writable whole (each holds a folder on the PATH): only the cache inside (second read, fix 1)', () => {
     const s = proven();
     for (const d of ['.bun/bin', '.bun/install/cache', '.yarn/bin', '.yarn/berry', '.local/share/pnpm/store']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });

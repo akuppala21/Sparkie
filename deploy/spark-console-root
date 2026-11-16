@@ -415,7 +415,7 @@ hide_home() {
            snap/firefox snap/chromium .mozilla .config/google-chrome .config/chromium .config/BraveSoftware \
            .gnupg .aws .kube .ngc .config/gh .config/code-server .config/spark-console .local/share/spark-console \
            .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc .git-credentials \
-           .docker .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf \
+           .docker .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .config/git/credentials .Xauthority \
            .bash_history .zsh_history .sh_history .python_history .node_repl_history .psql_history .mysql_history \
            .local/share/fish/fish_history; do
     hide "$h/$p"
@@ -440,6 +440,17 @@ hide_home() {
     done
   else hide "$p"; fi
 }
+docker_root() {   # Docker's data folder when its settings move it ("data-root" in /etc/docker/daemon.json), or nothing
+  [ -n "$PY" ] && [ -f "$R/etc/docker/daemon.json" ] || return 0
+  "$PY" -I -S -c 'import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    p = d.get("data-root") or d.get("graph") or ""
+except Exception:
+    p = ""
+p = p.rstrip("/") if isinstance(p, str) else ""
+print(p if p.startswith("/") and p != "/var/lib/docker" and "\n" not in p else "")' "$R/etc/docker/daemon.json" 2> /dev/null | head -n 1
+}
 ro() {
   unreal "$1" && return 0
   safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"
@@ -454,10 +465,16 @@ lists() {
     safe_path "$home" || refuse "a home folder's name cannot stand in a setting"
     hide_home "$home"
   done < "$R/etc/passwd"
+  # (and old password hashes, systemd's and apt's secrets, WireGuard's and Wi-Fi's keys, and the memory of programs that
+  # crashed: after the console crashes on Spark 2, every key it held; Docker's data also where its settings put it)
   for p in /run /root /etc/ssl/private /etc/netplan /etc/NetworkManager/system-connections /var/lib/tailscale \
-           /var/lib/docker /var/lib/containerd /var/lib/spark-console /var/backups; do
+           /var/lib/docker /var/lib/containerd /var/lib/spark-console /var/backups /etc/security/opasswd \
+           /var/lib/systemd/credential.secret /etc/apt/auth.conf /etc/apt/auth.conf.d /etc/wireguard /etc/wpa_supplicant \
+           /var/crash /var/lib/systemd/coredump /var/lib/apport/coredump; do
     hide "$p"
   done
+  p=$(docker_root)
+  [ -z "$p" ] || hide "$p"
   for f in "$R"/etc/shadow* "$R"/etc/gshadow* "$R"/etc/ssh/ssh_host_*_key; do
     [ -e "$f" ] && hide "${f#"$R"}"
   done
