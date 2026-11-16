@@ -491,5 +491,8 @@ describe('propose_update', { concurrency: 1 }, () => {
     }
     for (const p of ['AGENTS', 'docs\\/architecture', 'docs\\/contract']) assert.ok(listed.includes(`/^${p}\\.md$/`), p);
     for (const p of ALWAYS_PARTS) assert.ok(listed.includes(`'${p.replace(/\.mjs$/, '')}'`), p);
+    // (and the parts that hold the gates, the page and the test helpers)
+    for (const p of ['21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner']) assert.ok(listed.includes(`'${p}'`), p);
+    for (const p of ['public', 'test\\/authenticator\\.mjs', 'test\\/eval\\.mjs', 'test\\/eval\\/cases\\.json']) assert.ok(listed.includes(`/^${p}`), p);
   });
 });
