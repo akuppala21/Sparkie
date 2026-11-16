@@ -1,0 +1,11 @@
+{
+  "id": "numbers-as-written",
+  "title": "Two versions are two numbers",
+  "minutes": 30,
+  "test": "test/trial-numbers-as-written.test.mjs",
+  "plant": {
+    "file": "service/src/20-memory-time.mjs",
+    "good": "const LINE_NUMBER = /\\d+(?:[.:/-]\\d+)*/g;",
+    "bad": "const LINE_NUMBER = /\\d+/g;"
+  }
+}

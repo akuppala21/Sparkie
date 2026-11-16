@@ -24,7 +24,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, lstatSync, readlinkSync, copyFileSync, chmodSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, lstatSync, readlinkSync, copyFileSync, chmodSync, unlinkSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -578,6 +578,8 @@ const NO_PUT_BACK = variant(INSTALLER_TEXT, 'bash "$SNAP/restore.sh" > "$SNAP/re
 const NO_VERSION = variant(INSTALLER_TEXT, 'cp "$IN/ui/version.json" "$HOME/spark-console/"', 'rm -f "$HOME/spark-console/version.json"');
 // (it checks the routes whatever SKIP_ROUTES says)
 // (an installer that says whether the eval's held-out set is in the tree it runs from)
+// (an installer that writes down the files of the tree it runs from, name for name)
+const LIST_LOOK = variant(INSTALLER_TEXT, 'HERE="$(cd "$(dirname "$0")/.." && pwd)"\n', `HERE="$(cd "$(dirname "$0")/.." && pwd)"\n(cd "$HERE" && find . \\( -type f -o -type l \\) | sed 's#^\\./##' | LC_ALL=C sort) > "$HOME/unpacked-list"\n`);
 const HELD_LOOK = variant(INSTALLER_TEXT, 'HERE="$(cd "$(dirname "$0")/.." && pwd)"\n', 'HERE="$(cd "$(dirname "$0")/.." && pwd)"\n[ ! -e "$HERE/test/eval/memory-held-out.json" ] || : > "$HOME/held-out-seen"\n');
 const ROUTES_ANYWAY = variant(INSTALLER_TEXT, 'if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "The /console routes', 'if false; then echo "The /console routes');
 
@@ -1246,5 +1248,79 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.deepEqual([resultOf(home).tree, resultOf(home).result, resultOf(home).why], [g.t12, 'refused', 'the install was stopped before it changed anything']);
       await fromBefore(r, mk);
     } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
+  });
+
+  // (attributes git archive would obey: none but the tree's, and the tree may hold none)
+  test('a tree holding a .gitattributes anywhere (in any case, with no export- in it) is refused in plain words, as is an attributes file in the copy; nothing changes', CASE, async () => {
+    needs('kept');
+    for (const [n, path] of [[80, 'docs/.gitattributes'], [81, 'service/.GitAttributes']]) {
+      const g = push({ ...treeFiles(n), [path]: { text: '*.md text\n' } }, `An attributes file, ${n}`);
+      mark(g);
+      const was = installedNow(home);
+      refused(home, await pull(home, ['install', g.t12]), g.t12,
+        new RegExp(`has ${path.replace(/\./g, '\\.')}: git archive obeys a \\.gitattributes file, so what is unpacked could differ from the tested tree\\. A tree with one isn't installed\\.`), was);
+    }
+    const g = push(treeFiles(82), 'No attributes in the tree');
+    mark(g);
+    const info = join(home, '.local', 'share', 'spark-console', 'repo.git', 'info', 'attributes');
+    mkdirSync(dirname(info), { recursive: true });
+    writeFileSync(info, 'deploy/REBUILD.txt export-ignore\n');
+    try {
+      const was = installedNow(home);
+      refused(home, await pull(home, ['install', g.t12]), g.t12, /This Spark's copy of the repository has an attributes file, which git archive would obey\. Remove it once \(rm '[^']*repo\.git\/info\/attributes'\), then run this again\./, was);
+    } finally { rmSync(info, { force: true }); }
+    // (a setting in the copy that changes what git archive gives out, CRLF line ends: only the file-by-file check sees
+    // it)
+    const cfg = join(home, '.local', 'share', 'spark-console', 'repo.git', 'config'), was = read(cfg);
+    writeFileSync(cfg, `${was}[core]\n\tautocrlf = true\n`);
+    try {
+      refused(home, await pull(home, ['install', g.t12]), g.t12, /Tree [0-9a-f]{12} unpacked as something other than itself \([^)]+ differs from the tree\), so nothing was installed\./, installedNow(home));
+    } finally { writeFileSync(cfg, was); }
+  });
+
+  test('the file-by-file check also compares each name’s kind (a file or a link) and a file’s executable bit', () => {
+    const text = read(REPO, 'deploy', 'pull.sh'), a = text.indexOf("python3 -I -c 'import hashlib"), b = text.indexOf(`' "$W/tree")`, a);
+    assert.ok(a > 0 && b > a, 'pull.sh’s check is where it was');
+    const prog = text.slice(a + "python3 -I -c '".length, b);
+    const blob = data => createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${Buffer.byteLength(data)}\0`), Buffer.from(data)])).digest('hex');
+    const tree = Buffer.from([['100644', 'a.txt', 'x\n'], ['100755', 'run.sh', '#!/bin/sh\n'], ['120000', 'l', 'a.txt']].map(([m, p, d]) => `${m} blob ${blob(d)}\t${p}\0`).join(''));
+    const lay = () => {
+      const d = mkdtempSync(join(tmpdir(), 'same-tree-'));
+      writeFileSync(join(d, 'a.txt'), 'x\n');
+      writeFileSync(join(d, 'run.sh'), '#!/bin/sh\n', { mode: 0o755 });
+      chmodSync(join(d, 'run.sh'), 0o755);
+      symlinkSync('a.txt', join(d, 'l'));
+      return d;
+    };
+    const check = d => spawnSync('python3', ['-I', '-c', prog, d], { input: tree, encoding: 'utf8' }).stdout.trim();
+    const same = lay();
+    assert.equal(check(same), '', 'the same tree passes');
+    const link = lay(), outside = `${link}-target`;
+    rmSync(join(link, 'a.txt'));
+    writeFileSync(outside, 'x\n');
+    symlinkSync(outside, join(link, 'a.txt'));
+    assert.equal(check(link), 'a.txt', 'a link where the tree holds a file, its target the same bytes');
+    const bit = lay();
+    chmodSync(join(bit, 'run.sh'), 0o644);
+    assert.equal(check(bit), 'run.sh', 'an executable that lost its bit');
+    for (const d of [same, link, bit, outside]) rmSync(d, { recursive: true, force: true });
+  });
+
+  test('an attributes file in the owner’s home (export-ignore) changes nothing an install unpacks: the tree’s files, name for name', CASE, async () => {
+    needs('kept');
+    const attrs = join(home, '.config', 'git', 'attributes');
+    mkdirSync(dirname(attrs), { recursive: true });
+    writeFileSync(attrs, 'test/eval/cases.json export-ignore\ndeploy/REBUILD.txt export-ignore\n');
+    try {
+      const g = push(treeFiles(83, 'good', { installer: LIST_LOOK }), 'Unpacked as it is');
+      mark(g);
+      rmSync(join(home, 'unpacked-list'), { force: true });
+      const r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 0, r.out);
+      // (the tested tree: the commit's files and the lock its tag adds, but the held-out set)
+      const want = [...Object.entries(g.files).filter(([, v]) => v && v.mode !== '160000').map(([p]) => p), LOCK].filter(p => p !== 'test/eval/memory-held-out.json').sort();
+      assert.deepEqual(lines(home, 'unpacked-list'), want);
+      base = g;
+    } finally { rmSync(attrs, { force: true }); }
   });
 });

@@ -1,0 +1,3 @@
+When Sparkie says back the last day a memory line is true, the year comes out the wrong way round: a day in another year, like 2 January 2031, reads "Thursday 2 January" with no year, and a day this year gets one. The test test/trial-day-words.test.mjs shows it and fails now.
+
+Fix it in Spark Console's code, the way AGENTS.md says to change it, so that test passes. Don't change or remove any line of an existing test, that one included; add tests if you like. Make the generated files with the build (node tools/make.mjs), never by hand. Leave .github/, AGENTS.md, docs/architecture.md and docs/contract.md alone. When you're done, say in a few lines what you changed.
