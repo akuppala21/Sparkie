@@ -244,9 +244,9 @@ async function signinRoute(req, res, path, viewer) {
   if (path === '/auth/signout') {
     const s = sessionFor(req);
     if (s) {
-      saveSessions(sessionList().filter(x => x.id !== s.id));
+      // (its note outside the state first, then the save: 22-putback.mjs)
+      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
-      putBackRemoved('session', s.id, s.name);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
@@ -351,12 +351,11 @@ async function sessionRoute(req, res, path, viewer) {
   if (req.method === 'DELETE' && one) {
     const list = sessionList(), s = list.find(x => x.id === one[1]);
     if (!s) throw new HttpError(404, 'That device was already signed out.');
-    saveSessions(list.filter(x => x !== s));
+    const unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(list.filter(x => x !== s)));
     if (s.id === viewer.session?.id) clearSessionCookie(res);
     endSession(s.id);
-    putBackRemoved('session', s.id, s.name);
     audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   return false;
 }
