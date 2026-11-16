@@ -149,7 +149,8 @@ Object.assign(SORT_HANDLERS, {
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
       // (a local source is only read, unless it is moved away)
-      if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
+      // (a local target is written over: what was there goes, unless it is copied first)
+      if (!m) { if (lastOne || a.some(v => /^--remove-source/.test(v.text))) r.deletes = true; return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text))); }
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);
       const place = sortHost(ctx, m[1]);
@@ -185,7 +186,7 @@ Object.assign(SORT_HANDLERS, {
     // can't read: words from its input or a $, a verb it doesn't know.
     if (x.unknownArgs || a.some(w => w.unknown) || !vw) r.lasting ??= 'tailscale is given words the sorter can’t read (from its input, a $ or a command): it may sign Tailscale out, which the net can’t put back.';
     else if (v === 'logout') r.lasting ??= 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
-    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key, account or server; the net can’t put that back.`;
+    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key or account; the net can’t put that back.`;
     else if (v === 'lock') r.lasting ??= 'tailscale lock changes the tailnet’s own lock, on every machine of it; the net can’t put that back.';
     else if (!/^(?:up|down|set|serve|funnel|cert|file|web|exit-node|drive|dns|configure|completion|update)$/.test(v)) r.lasting ??= `The sorter doesn’t know tailscale ${sortQ(v)}, so whether the net can put it back can’t be told.`;
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);

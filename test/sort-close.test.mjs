@@ -174,3 +174,22 @@ test('a protected container is never stopped or changed by a command, by any spe
   // (the console's own list, when the caller gives none)
   assert.equal(sortCommand('docker stop x', {}).class, 'risky');
 });
+
+// Item 8 and S-1 (keys, in passing; the sorter's final read): a rewrite in place was deletes: false, so it ran when its
+// file could not be copied first.
+test('a command that writes over or removes a file\'s old content is marked deletes, and overwrites names what it writes', () => {
+  const OVER = ["sed -i 's/a/b/' big.jsonl", "sed -i '1,$d' big.jsonl", 'sed -i d big.jsonl', 'sed --in-place=.bak s/a/b/ big.jsonl', "perl -pi -e 's/a/b/' big.jsonl",
+    "ruby -pi -e 'x' big.jsonl", 'sort -o big.jsonl small.txt', 'patch big.jsonl fix.diff', 'rsync -a small.txt big.jsonl', 'scp small.txt big.jsonl',
+    'uniq small.txt big.jsonl', 'xxd -r small.hex big.jsonl', '7z x a.7z', 'git apply fix.diff', 'git rm -f big.jsonl', 'git rm -rf data',
+    // (and the in-place editors the brief names, and kin of our own)
+    'ed big.jsonl', 'ex big.jsonl', 'vim big.jsonl', 'truncate -s 0 big.jsonl', 'echo x | tee big.jsonl', 'echo x > big.jsonl', 'dd if=/dev/zero of=big.jsonl count=1',
+    'mv small.txt big.jsonl', 'install small.txt big.jsonl', 'rsync -a --delete src/ dst/', 'tar czf big.tgz src', 'zip -r big.zip src', 'git mv a b', 'cp small.txt big.jsonl',
+    "awk -i inplace '{print}' big.jsonl", 'gzip big.jsonl', 'split -l 10 big.jsonl'];
+  assert.deepEqual(check(OVER.map(c => [c, null, { dir: '~/work' }]), r => (r.deletes && r.overwrites.length > 0 ? null : `deletes ${r.deletes}, overwrites ${JSON.stringify(r.overwrites)}`)), []);
+  // (the file it writes is named, and git rm -r reaches everything under its folder)
+  assert.deepEqual(sort("sed -i 's/a/b/' big.jsonl", { dir: '~/work' }).overwrites, ['~/work/big.jsonl']);
+  assert.deepEqual(sort('git rm -rf data', { dir: '~/work' }).wide, ['~/work/data']);
+  assert.ok(!sort('tar czf ~/b.tgz ~/work/src').overwrites.includes('~/work/src'), 'what tar only reads is not overwritten');
+  // (what writes nothing over: no mark, and no list)
+  for (const c of ['mkdir x', 'touch y', 'cat a >> b', 'hf download Qwen/Q --local-dir ~/m', 'ls']) assert.deepEqual([c, sort(c).deletes, sort(c).overwrites], [c, false, []]);
+});

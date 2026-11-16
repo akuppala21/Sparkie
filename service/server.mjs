@@ -12592,7 +12592,7 @@ function sortInterp(args, ctx, r, x, name) {
   const pre = o.all(...({ node: ['r', 'require', 'import'], ruby: ['r'], perl: ['M', 'm'], lua: ['l'] }[key] ?? []));
   if (pre.length) sortUnshown(r, `the code ${name} loads by name (${pre[0].text || 'a $'})`);
   for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else { sortUnshown(r, `the code a $ or a command hands ${name}`); if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); } }
-  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
+  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
@@ -12667,7 +12667,7 @@ const SORT_HANDLERS = {
   ...Object.fromEntries('vi vim nvim view ex ed nano emacs joe micro'.split(' ').map(n => [n, (a, ctx, r, x = {}) => {
     if (typeof x.stdin !== 'string') sortUnshown(r, `the commands the editor ${n} is given`);
     sortRuns(null, ctx, r, `${sortQ(n)} is an editor, which can run anything it is told.`);
-    for (const w of a.filter(w => !w.unknown && !/^[-+]/.test(w.text))) sortTouch(w, ctx, r);
+    for (const w of a.filter(w => !w.unknown && !/^[-+]/.test(w.text))) { r.deletes = true; sortTouch(w, ctx, r); }
     const odd = a.find(w => w.unknown || /^[-+]/.test(w.text));
     if (odd) unsure(`${sortQ(n)} ${sortQ(odd.text || '$…')}: an editor’s option or + command can run anything, and the sorter reads none.`);
   }])),
@@ -12724,6 +12724,7 @@ const SORT_HANDLERS = {
     if (scripts.some(s => !s || s.unknown)) unsure('A sed script comes from a $ or a command, so the sorter can’t read it.');
     if (inPlace) {
       raise(r, 'change', 'sed -i rewrites the files it names.');
+      r.deletes = true;
       // (and with a suffix keeps the old one beside it, or where a / in the suffix says)
       for (const f of files) { sortTouch(f, ctx, r); if (suffix) sortTouch({ ...f, text: suffix.includes('*') ? (suffix.includes('/') ? '' : f.text.replace(/[^/]*$/, '')) + suffix.replace(/\*/g, f.text.split('/').pop()) : f.text + suffix }, ctx, r); }
     }
@@ -12817,6 +12818,8 @@ const SORT_HANDLERS = {
     };
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
+    // (an archive it makes, adds to or unpacks over replaces what was there)
+    r.deletes = true;
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
     // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
     const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
@@ -12839,6 +12842,7 @@ const SORT_HANDLERS = {
     const odd = a.find(w => w.unknown || (w.text.startsWith('-') && !/^-(?:o.+|y|p.*|r-?|t\w+|m\S+|[xi][!@r]\S*|ao[asut]|bb\d?|bd|bs\S*|so|si\S*|w\S*|scs\S*|mmt\S*|v\d+\w?|sse|ssc-?|slt|-)$/.test(w.text)));
     if (!/^[lt]$/.test(v ?? '')) {
       raise(r, 'change', '7z writes files.');
+      r.deletes = true;
       if (/^[xe]$/.test(v ?? '')) { const o = a.find(w => /^-o./.test(w.text)); sortInto(o ? { ...o, text: o.text.slice(2), subs: [] } : null, ctx, r); }
       for (const w of a) sortTouch(w, ctx, r);
     }
@@ -12846,6 +12850,7 @@ const SORT_HANDLERS = {
   },
   patch(a, ctx, r) {
     raise(r, 'change', 'patch changes the files its diff names.');
+    r.deletes = true;
     const o = sortOpts(SORT_OPTS.patch, a), out = o.all('o', 'output');
     if (out.length) for (const w of out) sortTouch(w, ctx, r); else sortInto(o.all('d', 'directory').at(-1) ?? null, ctx, r);
     for (const w of [...o.plain, ...o.all('i', 'input')]) sortTouch(w, ctx, r, false, false);
@@ -13236,7 +13241,8 @@ Object.assign(SORT_HANDLERS, {
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
       // (a local source is only read, unless it is moved away)
-      if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
+      // (a local target is written over: what was there goes, unless it is copied first)
+      if (!m) { if (lastOne || a.some(v => /^--remove-source/.test(v.text))) r.deletes = true; return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text))); }
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);
       const place = sortHost(ctx, m[1]);
@@ -13272,7 +13278,7 @@ Object.assign(SORT_HANDLERS, {
     // can't read: words from its input or a $, a verb it doesn't know.
     if (x.unknownArgs || a.some(w => w.unknown) || !vw) r.lasting ??= 'tailscale is given words the sorter can’t read (from its input, a $ or a command): it may sign Tailscale out, which the net can’t put back.';
     else if (v === 'logout') r.lasting ??= 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
-    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key, account or server; the net can’t put that back.`;
+    else if (/^(?:login|switch)$/.test(v) || rest.some(w => /^--(?:force-reauth|auth-?key|login-server)(?:=|$)/.test(w.text))) r.lasting ??= `tailscale ${sortQ(v)} signs in again, as another key or account; the net can’t put that back.`;
     else if (v === 'lock') r.lasting ??= 'tailscale lock changes the tailnet’s own lock, on every machine of it; the net can’t put that back.';
     else if (!/^(?:up|down|set|serve|funnel|cert|file|web|exit-node|drive|dns|configure|completion|update)$/.test(v)) r.lasting ??= `The sorter doesn’t know tailscale ${sortQ(v)}, so whether the net can put it back can’t be told.`;
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
@@ -13556,7 +13562,8 @@ function sortSedSafe(s) {
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
-// (files it runs, to hash for the ask); answer ('set root' for sudo or su, 'owner command' for the root helper or its
+// (files it runs, to hash for the ask); unshown (code it runs that it does not show, in the sorter's words); overwrites (with
+// deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
 // everything under, placed the rest; what the runner copies first, A7b; a superset: sources and the words an option may
@@ -13800,6 +13807,8 @@ function sortReads(name, spec, args, ctx, r) {
   const hit = args.map(a => a.text).find(t => bad.some(b => is(t, b.replace(/^!/, ''))));
   if (!hit && args.filter(a => !a.text.startsWith('-')).length <= most) return;
   raise(r, 'change', `${sortQ(name)} ${hit ? sortQ(hit) : 'with that many files'} writes or runs something, so it is a change, not a look.`);
+  // (what it writes there, sort -o, uniq's second file, xxd -r's, replaces what was in it)
+  r.deletes = true;
   args.forEach((a, i) => { if (bad.some(b => b.startsWith('!') && is(a.text, b.slice(1)))) sortRuns((a.text.includes('=') ? a.text.slice(a.text.indexOf('=') + 1) : args[i + 1]?.text) || null, ctx, r, `${sortQ(name)} ${sortQ(a.text)} runs the program it is given.`); });
   for (const a of args) sortTouch(a, ctx, r);
 }
@@ -13811,7 +13820,7 @@ const sortSetuid = m => (/^[0-7]{1,6}$/.test(m) ? (parseInt(m, 8) & 0o6000) !== 
 function sortFile(name, kind, args, ctx, r) {
   const o = sortOpts(SORT_OPTS[name], args, SORT_MODES[name]), plain = o.plain, rec = o.has('r', 'R', 'recursive');
   raise(r, 'change', `${sortQ(name)} changes files.`);
-  if (/del|over/.test(kind)) r.deletes = true;
+  if (/del|over/.test(kind) || /^(?:zip|c?split)$/.test(name)) r.deletes = true;
   if (kind === 'del' && plain.some(a => a.unknown || a.glob || a.brace)) sortGone(ctx, r, `${sortQ(name)} removes files it doesn't name (a $, a * or a {…}).`);
   const mode = name === 'chmod' ? plain[0]?.text : name === 'install' ? o.all('m', 'mode').at(-1)?.text : null;
   if (mode && mode.split(',').some(sortSetuid)) raise(r, 'risky', `${sortQ(name)} sets a set-user-id or set-group-id bit: such a program runs as its owner, root by another name.`);
@@ -13912,7 +13921,9 @@ function sortCommand(command, opts) {
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     unshown: r.class === 'look' || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
-    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses };
+    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses,
+    // (with deletes: the places whose old content it removes or writes over, placed less what it only reads, and wide)
+    overwrites: r.deletes ? changes.filter(([p, w]) => w || !uses.reads.includes(p)).map(([p]) => p) : [] };
 }
 /* ───────── when the state's copy goes: only while another Spark is awake anyway ───────── */
 // Area: safety        Rules: R23, R41        Tests: copy.test.mjs, state.test.mjs
@@ -14699,6 +14710,8 @@ Object.assign(SORT_HANDLERS, {
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
+    // (what git rm, mv and apply take away or write over in the work tree: copied first, or nothing runs)
+    if (/^(?:rm|mv|apply|am)$/.test(v)) r.deletes = true;
     if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && o.has('hard')) || (v === 'checkout' && (o.has('f', 'force') || rest.some(s => /^(?:--|\.)$/.test(s)))) || (v === 'stash' && /^(?:drop|clear)$/.test(p[0]?.text))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
     // reaches the folder it stands in (-C's, or where a cd left it), everything under it; a clone, the folder it makes.
@@ -14710,7 +14723,7 @@ Object.assign(SORT_HANDLERS, {
       sortGitOwn(to, ctx, r);
     }
     // (the words that name files it writes: a look's, those of a sub-command that changes the work tree, and -o)
-    for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree');
+    for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree' || (v === 'rm' && o.has('r')));
     if (o.unknown) unsure(`The sorter doesn’t know git ${sortQ(v)}’s option ${sortQ(o.unknown)}.`);
   },
   apt(a, ctx, r, x, name = 'apt') {

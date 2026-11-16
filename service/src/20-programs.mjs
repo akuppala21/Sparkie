@@ -58,7 +58,7 @@ function sortInterp(args, ctx, r, x, name) {
   const pre = o.all(...({ node: ['r', 'require', 'import'], ruby: ['r'], perl: ['M', 'm'], lua: ['l'] }[key] ?? []));
   if (pre.length) sortUnshown(r, `the code ${name} loads by name (${pre[0].text || 'a $'})`);
   for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else { sortUnshown(r, `the code a $ or a command hands ${name}`); if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); } }
-  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
+  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
@@ -133,7 +133,7 @@ const SORT_HANDLERS = {
   ...Object.fromEntries('vi vim nvim view ex ed nano emacs joe micro'.split(' ').map(n => [n, (a, ctx, r, x = {}) => {
     if (typeof x.stdin !== 'string') sortUnshown(r, `the commands the editor ${n} is given`);
     sortRuns(null, ctx, r, `${sortQ(n)} is an editor, which can run anything it is told.`);
-    for (const w of a.filter(w => !w.unknown && !/^[-+]/.test(w.text))) sortTouch(w, ctx, r);
+    for (const w of a.filter(w => !w.unknown && !/^[-+]/.test(w.text))) { r.deletes = true; sortTouch(w, ctx, r); }
     const odd = a.find(w => w.unknown || /^[-+]/.test(w.text));
     if (odd) unsure(`${sortQ(n)} ${sortQ(odd.text || '$…')}: an editor’s option or + command can run anything, and the sorter reads none.`);
   }])),
@@ -190,6 +190,7 @@ const SORT_HANDLERS = {
     if (scripts.some(s => !s || s.unknown)) unsure('A sed script comes from a $ or a command, so the sorter can’t read it.');
     if (inPlace) {
       raise(r, 'change', 'sed -i rewrites the files it names.');
+      r.deletes = true;
       // (and with a suffix keeps the old one beside it, or where a / in the suffix says)
       for (const f of files) { sortTouch(f, ctx, r); if (suffix) sortTouch({ ...f, text: suffix.includes('*') ? (suffix.includes('/') ? '' : f.text.replace(/[^/]*$/, '')) + suffix.replace(/\*/g, f.text.split('/').pop()) : f.text + suffix }, ctx, r); }
     }
@@ -283,6 +284,8 @@ const SORT_HANDLERS = {
     };
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
+    // (an archive it makes, adds to or unpacks over replaces what was there)
+    r.deletes = true;
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
     // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
     const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
@@ -305,6 +308,7 @@ const SORT_HANDLERS = {
     const odd = a.find(w => w.unknown || (w.text.startsWith('-') && !/^-(?:o.+|y|p.*|r-?|t\w+|m\S+|[xi][!@r]\S*|ao[asut]|bb\d?|bd|bs\S*|so|si\S*|w\S*|scs\S*|mmt\S*|v\d+\w?|sse|ssc-?|slt|-)$/.test(w.text)));
     if (!/^[lt]$/.test(v ?? '')) {
       raise(r, 'change', '7z writes files.');
+      r.deletes = true;
       if (/^[xe]$/.test(v ?? '')) { const o = a.find(w => /^-o./.test(w.text)); sortInto(o ? { ...o, text: o.text.slice(2), subs: [] } : null, ctx, r); }
       for (const w of a) sortTouch(w, ctx, r);
     }
@@ -312,6 +316,7 @@ const SORT_HANDLERS = {
   },
   patch(a, ctx, r) {
     raise(r, 'change', 'patch changes the files its diff names.');
+    r.deletes = true;
     const o = sortOpts(SORT_OPTS.patch, a), out = o.all('o', 'output');
     if (out.length) for (const w of out) sortTouch(w, ctx, r); else sortInto(o.all('d', 'directory').at(-1) ?? null, ctx, r);
     for (const w of [...o.plain, ...o.all('i', 'input')]) sortTouch(w, ctx, r, false, false);

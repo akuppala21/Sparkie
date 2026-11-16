@@ -28,7 +28,8 @@
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
-// (files it runs, to hash for the ask); answer ('set root' for sudo or su, 'owner command' for the root helper or its
+// (files it runs, to hash for the ask); unshown (code it runs that it does not show, in the sorter's words); overwrites (with
+// deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
 // everything under, placed the rest; what the runner copies first, A7b; a superset: sources and the words an option may
@@ -272,6 +273,8 @@ function sortReads(name, spec, args, ctx, r) {
   const hit = args.map(a => a.text).find(t => bad.some(b => is(t, b.replace(/^!/, ''))));
   if (!hit && args.filter(a => !a.text.startsWith('-')).length <= most) return;
   raise(r, 'change', `${sortQ(name)} ${hit ? sortQ(hit) : 'with that many files'} writes or runs something, so it is a change, not a look.`);
+  // (what it writes there, sort -o, uniq's second file, xxd -r's, replaces what was in it)
+  r.deletes = true;
   args.forEach((a, i) => { if (bad.some(b => b.startsWith('!') && is(a.text, b.slice(1)))) sortRuns((a.text.includes('=') ? a.text.slice(a.text.indexOf('=') + 1) : args[i + 1]?.text) || null, ctx, r, `${sortQ(name)} ${sortQ(a.text)} runs the program it is given.`); });
   for (const a of args) sortTouch(a, ctx, r);
 }
@@ -283,7 +286,7 @@ const sortSetuid = m => (/^[0-7]{1,6}$/.test(m) ? (parseInt(m, 8) & 0o6000) !== 
 function sortFile(name, kind, args, ctx, r) {
   const o = sortOpts(SORT_OPTS[name], args, SORT_MODES[name]), plain = o.plain, rec = o.has('r', 'R', 'recursive');
   raise(r, 'change', `${sortQ(name)} changes files.`);
-  if (/del|over/.test(kind)) r.deletes = true;
+  if (/del|over/.test(kind) || /^(?:zip|c?split)$/.test(name)) r.deletes = true;
   if (kind === 'del' && plain.some(a => a.unknown || a.glob || a.brace)) sortGone(ctx, r, `${sortQ(name)} removes files it doesn't name (a $, a * or a {…}).`);
   const mode = name === 'chmod' ? plain[0]?.text : name === 'install' ? o.all('m', 'mode').at(-1)?.text : null;
   if (mode && mode.split(',').some(sortSetuid)) raise(r, 'risky', `${sortQ(name)} sets a set-user-id or set-group-id bit: such a program runs as its owner, root by another name.`);
@@ -384,5 +387,7 @@ function sortCommand(command, opts) {
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     unshown: r.class === 'look' || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
-    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses };
+    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses,
+    // (with deletes: the places whose old content it removes or writes over, placed less what it only reads, and wide)
+    overwrites: r.deletes ? changes.filter(([p, w]) => w || !uses.reads.includes(p)).map(([p]) => p) : [] };
 }
