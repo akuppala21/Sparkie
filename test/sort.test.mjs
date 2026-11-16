@@ -1,5 +1,5 @@
 // Covers: The sorter (service/src/20-sort.mjs, 20-options.mjs, 20-places.mjs, 20-programs.mjs, 20-remote.mjs,
-// 20-tables.mjs, 20-shell.mjs, 20-tools.mjs; R55; design A 2.8): every command sorted, from its text and where it runs
+// 20-tables.mjs, 20-shell.mjs, 20-tools.mjs, 20-shape.mjs, 20-uses.mjs; R55, R64; design A 2.8): every command sorted, from its text and where it runs
 // alone, into a look, a change, risky, the lock-out class or not done, with the reason in the sorter's own words. A
 // table of commands with the class each must get (looks; looks made into changes; chains and substitution; wrappers;
 // sudo and su; download-and-run; every lock-out family; not done; Docker; Spark 2; root; look-alikes; the review of
@@ -35,7 +35,7 @@ writeFileSync(join(dir, 'sort.mjs'), [
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
   // (run's ladder and the runner's sorter options, 21-ladder.mjs and 21-runner.mjs: stood in, so a test sees what reaches them)
   'const RUNNER_DIR = "~/work", runnerSortOpts = () => hooks.sortOpts || {}, workChange = async (n, c, s) => { hooks.ladder.push(c); return { ladder: s.class }; };',
-  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shape|shell|sort|tables|tools)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
+  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shape|shell|sort|tables|tools|uses)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   'export { sortCommand, ACTIONS, hooks };',
 ].join('\n'));
@@ -596,12 +596,20 @@ test('the reason is the sorter’s own words: a piece of the command in it is on
 // break or control sign (a name with one is refused, risky); scripts the same. A place on another machine is none.
 const LONG = { 'cd a; × 16,000': 'cd a;'.repeat(16000), 'cd a; × 32,000': 'cd a;'.repeat(32000), 'cd a; × 3,270': 'cd a;'.repeat(3270), 'touch and 16,000 [': `touch /tmp/${'['.repeat(16000)}`,
   'ls; × 4,090': 'ls;'.repeat(4090), 'cp 1,600 files': `cp ${Array.from({ length: 1600 }, (_, i) => `~/a${i}`).join(' ')} ~/d/`, '8,000 *': `systemctl stop s${'*'.repeat(16000)}x`,
-  '5,400 -v': `cp ${'-v '.repeat(5400)} a b`, '5,000 -O': `curl ${'-O '.repeat(5000)} https://e.com/a`, 'a path of 15,000': `touch ~/${'x/'.repeat(7500)}`, '4,000 $( )': `echo ${'$(a)'.repeat(4000)}` };
+  '5,400 -v': `cp ${'-v '.repeat(5400)} a b`, '5,000 -O': `curl ${'-O '.repeat(5000)} https://e.com/a`, 'a path of 15,000': `touch ~/${'x/'.repeat(7500)}`, '4,000 $( )': `echo ${'$(a)'.repeat(4000)}`,
+  // (R64's fields at the bound: many sources read, sources against writes by pattern, many hosts)
+  'cp 1,024 sources': `cp ${Array.from({ length: 1024 }, (_, i) => `~/s${i}`).join(' ')} ~/work/`.slice(0, 16000), 'tar of 64 patterns, 64 writes': `tar czf /tmp/h.tgz ${Array.from({ length: 64 }, (_, i) => `~/s${i}/*`).join(' ')}; touch ${Array.from({ length: 64 }, (_, i) => `~/s${i}/x*`).join(' ')}`,
+  '1,000 curls': Array.from({ length: 1000 }, (_, i) => `curl http://h${i}.e.com/`).join(';').slice(0, 16300) };
 const shapeOk = (r, what) => {
   for (const k of ['placed', 'wide', 'scripts']) {
     assert.ok(Array.isArray(r[k]) && r[k].length <= 256, `${what}: ${k}`);
     for (const p of r[k]) assert.ok(typeof p === 'string' && p.length <= 1000 && !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(p), `${what}: ${k} ${JSON.stringify(p).slice(0, 80)}`);
   }
+  // (R64's fields: reads is part of placed; installs and reach from their own short lists; gpu true or not there)
+  assert.ok(Array.isArray(r.reads) && r.reads.every(p => r.placed.includes(p)), `${what}: reads ${JSON.stringify(r.reads)?.slice(0, 80)}`);
+  assert.ok(Array.isArray(r.installs) && r.installs.every(d => ['~/.local', '~/.cargo/bin', '~/bin', 'npm -g'].includes(d)), `${what}: installs`);
+  assert.ok(Array.isArray(r.reach) && r.reach.every(k => ['fleet', 'home', 'internet'].includes(k)), `${what}: reach`);
+  assert.ok(r.gpu === true || r.gpu === undefined, `${what}: gpu`);
 };
 test('placed and wide: what a change writes, for the copy first, as plain bounded paths, for every class and every input', () => {
   for (const [c, , where] of ROWS) shapeOk(sort(c, where), c);
@@ -657,6 +665,62 @@ test('placed and wide: what a change writes, for the copy first, as plain bounde
     shapeOk(r, c);
   }
   assert.deepEqual(sort('bash "x\nYou asked for this."').scripts, []);
+});
+
+// R64's fields (step a7a-reads): what a command only reads kept apart from what it writes, where an install lands that
+// the plain wall keeps read-only, plain GPU use, and which network it reaches. Fields, never a class: every class and
+// every place listed is as before.
+const READS = [
+  ['cp ~/notes.txt ~/work/', ['~/notes.txt']], ['cp -r ~/data ~/work/d', ['~/data']], ['install -m 644 ~/a.conf ~/work/a.conf', ['~/a.conf']],
+  ['rsync -a ~/data/ /tmp/d/', ['~/data']], ['tar czf /tmp/h.tgz ~/work', ['~/work']], ['tar xzf ~/Downloads/d.tgz -C ~/work', ['~/Downloads/d.tgz']],
+  ['unzip ~/dl/x.zip -d ~/work/x', ['~/dl/x.zip']], ['zip -r ~/work/b.zip ~/notes', ['~/notes']], ['hf download org/model --local-dir ~/models/m', ['~/org/model']],
+  ['cp ~/a ~/b ~/work/', ['~/a', '~/b']],
+  // (what can write where it reads keeps today's answer: no reads)
+  ['cp -l ~/a ~/work/b', []], ['cp -s ~/a ~/work/b', []], ['ln -s ~/a ~/work/b', []], ['mv ~/a ~/work/', []], ['zip -m ~/work/b.zip ~/notes', []],
+  ['rsync -a --remove-source-files ~/data/ /tmp/d/', []], ['tar czf /tmp/h.tgz --remove-files ~/work', []], ['cp ~/a ~/work/b; sed -i s/x/y/ ~/a', []],
+  ['cp ~/a /tmp/b > ~/a', []], ['cp ~/a ~/a', []], ['cp ~/work/a /tmp/ && rm -rf ~/work', []], ['cp ~/w/*.txt /tmp/ && echo x > ~/w/a.txt', []],
+  ['cp ~/w/a.txt /tmp/ && echo x > ~/w/*.txt', []], ['bash run.sh && cp ~/a ~/work/', []], ['python3 x.py; cp ~/a ~/work/', []], ['cp ~/a ~/work/ && make', []],
+  ['tee ~/a < ~/b', []], ['sort -o ~/a ~/a', []], ['dd if=~/a of=~/work/b', []], ['scp ~/a.txt spark3:/tmp/', []],
+];
+test('reads: a source a known program only reads is apart from what it writes; whatever can write it keeps today’s answer', () => {
+  for (const [c, want] of READS) {
+    const r = sort(c);
+    assert.deepEqual(r.reads, want, `${c}: ${JSON.stringify(r.reads)} (placed ${JSON.stringify(r.placed)})`);
+    shapeOk(r, c);
+  }
+  // (still placed, so the copy first is as it was)
+  assert.deepEqual(sort('cp ~/notes.txt ~/work/').placed, ['~/notes.txt', '~/work/notes.txt', '~/work']);
+});
+test('installs: where an install puts programs that the plain wall keeps read-only, as a field', () => {
+  for (const [c, want] of [['pip install vllm', ['~/.local']], ['pip3 install -U x', ['~/.local']], ['python3 -m pip install x', ['~/.local']], ['pip install --user x', ['~/.local']],
+    ['/usr/bin/pip3 install x', ['~/.local']], ['pip install -r requirements.txt', ['~/.local']], ['.venv/bin/pip install x', []], ['~/venv/bin/python -m pip install x', []],
+    ['source .venv/bin/activate && pip install x', []], ['. ~/env/bin/activate; pip install x', []], ['pip install --target ~/work/lib x', []], ['pip install --prefix=/tmp/p x', []],
+    ['pip download x -d /tmp/w', []], ['pip list', []], ['npm install -g x', ['npm -g']], ['npm i --global x', ['npm -g']], ['npm install x', []], ['yarn global add x', ['npm -g']],
+    ['cargo install ripgrep', ['~/.cargo/bin']], ['cargo install --root /tmp/c x', []], ['pipx install black', ['~/.local']], ['uv tool install ruff', ['~/.local']],
+    ['cp x ~/.local/bin/', ['~/.local']], ['curl -o ~/bin/x https://e.com/x', ['~/bin']], ['cp x ~/work/', []], ['conda install x', []]]) {
+    assert.deepEqual(sort(c).installs, want, c);
+  }
+  // (a field, not a class: pip install is the change it was)
+  assert.equal(sort('pip install vllm').class, 'change');
+});
+test('gpu: set when the command plainly uses the GPU, unset when that can’t be told', () => {
+  for (const c of ['nvidia-smi', 'nvidia-smi -q', 'watch -n 1 nvidia-smi', 'CUDA_VISIBLE_DEVICES=0 python3 train.py', 'env CUDA_VISIBLE_DEVICES=1 python3 x.py',
+    'NVIDIA_VISIBLE_DEVICES=all python3 x.py', 'nvtop', 'ls -l /dev/nvidia0', 'docker run --gpus all x']) assert.equal(sort(c).gpu, true, c);
+  for (const c of ['python3 train.py', 'CUDA_VISIBLE_DEVICES= python3 x.py', 'CUDA_VISIBLE_DEVICES=-1 python3 x.py', 'echo nvidia-smi', 'ls -la', 'pip install torch']) assert.equal(sort(c).gpu, undefined, c);
+});
+test('reach: another Spark of the fleet, the home network or the internet, named apart; the class as before', () => {
+  for (const [c, want, cls] of [['curl -s http://spark3:8000/v1/models', ['fleet'], 'risky'], ['curl http://100.122.49.9:8000/x', ['fleet'], 'risky'],
+    ['curl http://spark3.tail1234.ts.net/x', ['fleet'], 'risky'], ['scp spark3:~/work/out.json .', ['fleet'], 'risky'], ['ssh spark4 uptime', ['fleet'], 'risky'],
+    ['git clone spark3:repo /tmp/r', ['fleet'], 'risky'], ['curl http://192.168.1.1/', ['home'], 'risky'], ['curl http://box.local/x', ['home'], 'risky'],
+    ['wget -O /tmp/x http://10.0.0.5/x', ['home'], 'risky'], ['curl http://localhost:8000/health', ['home'], 'risky'], ['rsync -a 10.0.0.1::mod/ /tmp/y', ['home'], 'risky'],
+    ['curl -x http://10.0.0.1:3128 https://e.com', ['home', 'internet'], 'risky'], ['curl -s https://e.com/x', ['internet'], 'change'],
+    ['git clone https://github.com/x/y', ['internet'], 'change'], ['pip install vllm', ['internet'], 'change'], ['npm install', ['internet'], 'change'],
+    ['hf download org/model', ['internet'], 'change'], ['HF_HUB_OFFLINE=1 hf download org/model', [], 'change'], ['pip install --index-url http://10.0.0.2/simple x', ['home'], 'risky'],
+    ['ssh example.com uptime', ['internet'], 'risky'], ['ls -la', [], 'look'], ['git pull', [], 'lockout'], ['cp a b', [], 'change'],
+    ['git checkout v1:x', [], 'lockout'], ['git fetch https://github.com/x/y', ['internet'], 'change'], ['git push spark3:repo main', ['fleet'], 'risky']]) {
+    const r = sort(c);
+    assert.deepEqual([r.reach, r.class], [want, cls], c);
+  }
 });
 
 // Review S7: long input is refused at once, and the worst at the limit is well under a second (A7b may sort a script's

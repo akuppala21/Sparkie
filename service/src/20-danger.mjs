@@ -11,9 +11,9 @@
 // journal, the audit, a button's label, a tool result or an event. On the page one request carries the press and the
 // pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
 // minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
-// close it; /lock and the switch going off close its Telegram side. run's ladder raises one for a risky delete and for
-// the brain's names on a compute Spark (21-ladder.mjs, A7c); the rest come with A12, A13, C5 and D12; on the stand-in
-// fleet a test raises one through dangerForTest.
+// close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5),
+// and run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c); the rest come
+// with A12, A13 and D12; on the stand-in fleet a test raises one through dangerForTest.
 const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
 // Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
 const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
@@ -35,6 +35,11 @@ const dangerPlain = (s, n = 200) => String(s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}
 // character, nor a space that is not a space to the shell: what is shown is what runs.
 const DANGER_HIDDEN = /(?![\n\t ])[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]/u;
 const dangerHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? '?' : d.toTimeString().slice(0, 5); };
+// The day and the time, in Spark 2's time: "2026-11-15 10:00".
+const dangerDay = t => {
+  const d = new Date(t), two = n => String(n).padStart(2, '0');
+  return Number.isNaN(d.getTime()) ? '?' : `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${d.toTimeString().slice(0, 5)}`;
+};
 const dangerSha = s => createHash('sha256').update(s).digest('hex');
 const dangerSame = (typed, digits) => typeof digits === 'string' && /^\d{2}$/.test(typed) && timingSafeEqual(Buffer.from(typed), Buffer.from(digits));
 
@@ -61,16 +66,17 @@ function dangerBack(f) {
   if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
   return [];
 }
-// Lines 5 and 6: the ways-in files a command names; an install's tree, when it was tested, what differs, what the brain
-// reads; why it runs outside the wall.
+// Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
+// that it isn't known: differs null), what the brain reads; why it runs outside the wall.
 function dangerMore(f) {
   const out = [];
   if (f.lockWhy) out.push(`Why it can lock you out: ${dangerPlain(f.lockWhy, 300)}`);
   if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
   if (f.install) {
-    const d = Array.isArray(f.install.differs) ? f.install.differs : [];
-    out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerHhmm(f.install.testedAt) : 'never'}.`,
-      d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
+    const d = Array.isArray(f.install.differs) ? f.install.differs : null;
+    out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerDay(f.install.testedAt) : 'never'}.`,
+      !d ? 'What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository.'
+        : d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
