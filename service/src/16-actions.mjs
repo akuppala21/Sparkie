@@ -214,6 +214,7 @@ function changeIntent(text) {
 const PAGE_ONLY = new Set([
   'undo_update',
   'keep_eval_result',
+  'keep_trial_result',
   'remember',
   'forget_memory',
   'save_workflow',
@@ -464,6 +465,8 @@ const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200)
 async function runAction(name, viewer, args, ctx = {}) {
   // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
   if (name === EVAL_YES) return evalYes(args, viewer, ctx);
+  // (a coding trial result waiting for the owner's yes, the same way: 21-brain-trial.mjs)
+  if (name === TRIAL_YES) return trialYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
