@@ -12,7 +12,8 @@
 // still told; a yes after that very tree was installed another way says so; a check at the yes that takes longer than
 // the press waits is answered at once and what comes of it is told in the chat; install_update is no saved
 // workflow's step; the unit it runs in has a time limit of its own. The eighth read's: an asked time ahead of the
-// clock counts as old. The final read's: a yes after a build whose commit can't be told was installed says that.
+// clock counts as old. The final read's: a yes after a build whose commit can't be told was installed says that; a
+// way back that couldn't put the build from before back whole is told as that.
 // The service runs pull.sh check --json against a stand-in GitHub (a bare repository with tested/ tags as the mark job
 // makes them); `install` is a stand-in that writes the console's update-result.json as pull.sh would, so the
 // install itself (test/pull.test.mjs covers it) never runs here and the console never restarts.
@@ -329,5 +330,17 @@ describe('install_update', { concurrency: 1 }, () => {
       writeFileSync(lock, was);
       if (!pressed) await press(a.chat, a.no.id);
     }
+  });
+
+  // (the final read with Astra, A-13: when the way back couldn't put the build from before back whole, the chat was
+  // told "so the build from before is back")
+  test('a result whose way back couldn’t put the build from before back whole is told as that, never as “the build from before is back”', async () => {
+    const chat = await newChat(), tree = 'f'.repeat(12);
+    writeFileSync(join(STATE, 'update-asked.json'), JSON.stringify({ tree, build: tree, conv: chat, channel: null, at: new Date(Date.now() - 2000).toISOString() }), { mode: 0o600 });
+    const why = 'the build from before couldn\'t be put back whole, and its copy is kept (make room if the disk is full, then run bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand); nothing confirmed the new build through the real address in time; the build answering now is ' + tree;
+    writeFileSync(join(STATE, 'update-result.json'), JSON.stringify({ tree, build: tree, result: 'not kept', why, at: new Date().toISOString() }));
+    await waitFor(async () => (await chatMessages(chat)).some(m => m.content === `The install of tree ${tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`),
+      { timeout: 30000, what: 'said in its chat' });
+    assert.ok(!(await chatMessages(chat)).some(m => /so the build from before is back/.test(String(m.content || ''))));
   });
 });

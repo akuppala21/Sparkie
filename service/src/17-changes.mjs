@@ -157,9 +157,12 @@ function changeLabel(name, input) {
   return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}`;
 }
 // A change Sparkie suggests but wasn't clearly asked for: one button, which runs exactly this when pressed.
-function propose(viewer, ctx, name, input) {
+// because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
+// for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
+function propose(viewer, ctx, name, input, because = null) {
   const label = `${changeLabel(name, input)}${input.__validate ? ' (its first run, which validates it)' : ''}`;
-  return question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
   const c = pendingChoices.get(id);
@@ -281,9 +284,13 @@ function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) 
 // runs out of memory, the start cuts it again, and the new figure is kept.
 function fullContext(how, v, free) {
   const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
-  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  if (!flag || !(cut > 0)) return how;
   const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
-  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free: a
+  // context is never cut below 16,384 by itself, A-26)
+  const low = at >= 0 && Number(pair === 1 ? String(how.args[at]).split('=')[1] : how.args[at + 1]) < CONTEXT_FLOOR;
+  if (!low && (!Number.isFinite(free) || free < cut + HEADROOM)) return how;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free, ...(low ? { floor: true } : {}) } };
 }
 // The least free memory on these Sparks right now, or null when one can't be read.
 async function freeOn(ids) {
@@ -303,6 +310,7 @@ async function deployPlaced(job, viewer, ctx, m, placed, how) {
 // What can go wrong starting a model: how to tell (from the error and the last lines of its log), the fix to try
 // (next() gives the next attempt's settings, or null when there's nothing more to try), and what to do when it's out
 // of fixes.
+const CONTEXT_FLOOR = 16384;
 const START_FAILURES = [
   // First: its message carries the parts' logs, which another problem's signs could match.
   // Two Sparks whose connection check passed, but whose engines never connected (2026-11-10, Spark 3 + 4: both parts sat
@@ -322,9 +330,10 @@ const START_FAILURES = [
     advice: 'Known on GB10 with some NVFP4 builds: another image of the engine, or its Marlin backend, usually fixes it.', next: () => null },
   { id: 'out-of-memory', title: 'it ran out of memory while loading',
     sign: /out of memory|OutOfMemoryError|cudaMalloc|insufficient memory|not enough (?:GPU )?memory|no available memory for the cache blocks|larger than the maximum number of tokens that can be stored in KV cache|KV cache[^\n]{0,80}(?:insufficient|too small|exceed)|(?:max_model_len|max_seq_len|context.length)[^\n]{0,80}(?:larger|greater|exceed)/i,
-    fix: 'Starting it with a shorter context (32,768 tokens, then 8,192).',
-    advice: 'Even a short context didn’t fit: it needs a Spark with more free memory, or a smaller version of the model.',
-    next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > 8192 ? { fix: { ...fix, contextCap: 8192 } } : null) },
+    // (never below 16,384 by itself, contract 6.9 and T12: shorter needs the owner's yes, and no ask is built yet, A-26)
+    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384; never shorter without asking).',
+    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest it is cut to without asking): it needs a Spark with more free memory, or a smaller version of the model.',
+    next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > CONTEXT_FLOOR ? { fix: { ...fix, contextCap: CONTEXT_FLOOR } } : null) },
   { id: 'bad-flag', title: 'the engine didn’t accept one of the settings',
     sign: /unrecognized arguments|no such option|error: argument|invalid choice|unexpected keyword argument|unknown (?:argument|option)/i,
     fix: 'Starting it again without the setting the engine rejected (the rest of the setup stays).',
@@ -386,7 +395,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
+  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which isn’t done without asking (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -399,7 +409,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       return;
     } catch (e) {
       // Cancelled: put back what this did, and stop there (no fix to try).
-      if (job.cancelled) { await putBack(job, m, placed); throw Object.assign(new Error(`Cancelled by ${job.cancelled}. What it had changed was put back.`), { cancelled: true }); }
+      // (it says "put back" only when it was: else what is still owed, A-23)
+      if (job.cancelled) { await putBack(job, m, placed); throw Object.assign(new Error(`Cancelled by ${job.cancelled}. ${job.cleanUp || 'What it had changed was put back.'}`), { cancelled: true }); }
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
@@ -407,9 +418,9 @@ async function startWithFixes(job, m, placed, how, attempt) {
       if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
-        if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
-        if (!known) throw e;
-        throw new Error(`It didn’t start: ${known.title}${n > 1 ? ` (${n} attempts)` : ''}. ${known.advice}\n${e.message}`);
+        if (!known && n > 1) throw new Error(withOwed(job, `It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`));
+        if (!known) throw Object.assign(e, { message: withOwed(job, e.message) });
+        throw new Error(withOwed(job, `It didn’t start: ${known.title}${n > 1 ? ` (${n} attempts)` : ''}. ${known.advice}\n${e.message}`));
       }
       // What the failed attempt said (its first line), kept: the next attempt replaces its containers and their logs.
       note(job, `Attempt ${n}: ${String(e.message).split('\n')[0].slice(0, 600)}`);
@@ -430,19 +441,31 @@ function launch(viewer, ctx, m, placed, how) {
 async function putBack(job, m, placed) {
   step(job, 'It didn’t start, so putting back what was there');
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
-  // stopped are started again.
-  const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x));
+  // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
+  // have stopped, nothing is started again; both stay on the operation's lists, and its words say so (cleanUp). A copy
+  // set aside is asideBack's, after these stops.
+  const aside = new Set((job.asideHere || []).map(a => `${a.node}/${a.name}`));
+  const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x) && !aside.has(x));
   for (const x of ran) consoleStopped.set(x, Date.now());
-  await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return run(nodeById(id), `docker stop --time 20 ${q(c)} >/dev/null 2>&1; true`, { timeout: 90000 }); }));
+  const ends = await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return stopChecked(nodeById(id), c); }));
+  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [];
   for (const x of stopped) {
     const [id, container] = x.split('/');
+    if (still.some(y => y.split('/')[0] === id)) { held.push(x); continue; }
     consoleStopped.delete(x);
     // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
     // a link while this start ran is refused by name, and the job isn't started)
     const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
     note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
   }
-  job.ranHere = []; job.stoppedHere = [];
+  job.ranHere = still;
+  await asideBack(job);
+  const kept = job.asideHere || [];
+  job.stoppedHere = [...held, ...kept.map(a => `${a.node}/${a.name}`)];
+  if (!job.ranHere.length) return;
+  const owed = owedWords(job.ranHere, job.stoppedHere, kept);
+  for (const line of owed) note(job, line);
+  job.cleanUp = owed.map(l => `${l}.`).join(' ');
 }
 
 // Turning a name into one model: on disk, a recipe, a Hugging Face repo, or a question when it could be several.
@@ -790,6 +813,8 @@ async function restartRoom(viewer, spark, container, model, inv = null) {
   if (!Number.isFinite(avail) || !need) throw new HttpError(409, `free memory on ${spark} is unknown right now, so it can’t be checked`);
   if (avail - KEEP_FREE < need) throw new HttpError(409, `${spark} doesn’t have room for ${container} now (it takes about ${Math.round(need / 1e9)} GB beyond the 8 GB kept free). start_model can make room.`);
 }
+// How long a restart waits for it to answer (settable on the stand-in fleet, as the other waits are).
+const RESTART_WAIT_MS = Number(process.env.SPARK_CONSOLE_RESTART_WAIT_MS || 30 * 60000);
 function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
   const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
@@ -803,32 +828,35 @@ function restartJob(viewer, ctx, spark, container, model) {
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');
-    const deadline = Date.now() + 30 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await sleep(5000);
-      if (j.cancelled) {
-        consoleStopped.set(`${spark}/${container}`, Date.now());
-        await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
+    // From here every bad end stops it again, looked at, and says which it was (A-24, A-23): a cancel, a test prompt it
+    // didn't answer, a Spark that answered nothing until the limit, the limit itself. One that ended by itself is
+    // stopped already.
+    try {
+      const deadline = Date.now() + RESTART_WAIT_MS;
+      while (Date.now() < deadline) {
+        await sleep(5000);
         cancelCheck(j);
-      }
-      const h = await run(node, `if curl -sf -m 4 http://127.0.0.1:${CONFIG.servePort}/v1/models >/dev/null; then echo up; else docker inspect -f '{{.State.Status}}' ${q(container)} 2>/dev/null || echo missing; fi`, { timeout: 20000 });
-      const s = h.out.trim();
-      if (s === 'up') {
-        const tsip = node.host === 'local' || ALL_LOCAL ? '127.0.0.1' : (await inventory(null)).sparks.find(x => x.id === spark)?.tsip;
-        try {
+        // (Docker there not answering is no answer, never "missing": as waitJobEnd asks it)
+        const h = await run(node, `if curl -sf -m 4 http://127.0.0.1:${CONFIG.servePort}/v1/models >/dev/null; then echo up; else docker inspect -f '{{.State.Status}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }; fi`, { timeout: 20000 });
+        const s = h.out.trim();
+        if (s === 'up') {
+          const tsip = node.host === 'local' || ALL_LOCAL ? '127.0.0.1' : (await inventory(null)).sparks.find(x => x.id === spark)?.tsip;
           if (!tsip) throw new Error(`It’s up, but ${spark}’s address is unknown, so it couldn’t be checked with a test prompt.`);
           await answers(j, tsip, CONFIG.servePort);
-        } catch (e) {
-          consoleStopped.set(`${spark}/${container}`, Date.now());
-          await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
-          note(j, `Stopped ${container} again`);
-          throw e;
+          return;
         }
-        return;
+        if (h.code === 0 && ['exited', 'dead', 'missing'].includes(s)) throw Object.assign(new Error(`${container} stopped again while loading. container_logs shows why.`), { ended: true });
       }
-      if (h.code === 0 && ['exited', 'dead', 'missing'].includes(s)) throw new Error(`${container} stopped again while loading. container_logs shows why.`);
+      throw new Error(`It didn’t answer within ${spanOf(RESTART_WAIT_MS)}.`);
+    } catch (e) {
+      if (e.ended) throw e;
+      consoleStopped.set(`${spark}/${container}`, Date.now());
+      const stopped = (await stopChecked(node, container)) === 'stopped', at = sparkName(node);
+      note(j, stopped ? `Stopped ${container} again` : `Couldn’t stop ${container} again: it may still be running on ${at}`);
+      if (!stopped) j.cleanUp = `${container} couldn’t be stopped again: it may still be running on ${at}.`;
+      const [first, ...rest] = String(e.message).split('\n');
+      throw Object.assign(e, { message: [`${first.replace(/[.:]\s*$/, '')}, ${stopped ? 'so it was stopped again' : `and it couldn’t be stopped: it may still be running on ${at}`}.`, ...rest].join('\n') });
     }
-    throw new Error('It didn’t answer within 30 minutes.');
   });
   return job;
 }

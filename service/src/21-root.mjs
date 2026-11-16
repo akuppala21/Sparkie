@@ -22,13 +22,18 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
-// Code a root command runs that isn't in its own words (the button shows only those, and the code can change before the
-// press): a file run as code (the sorter's scripts), or what the sorter says runs unseen (its unshown: input from < or a
-// pipe into a shell, a build, -m, a project's scripts, BASH_ENV). The refusal's words, or null. (unshown is the sorter's
-// field from its next step; while it is absent, scripts alone decide.)
+// What root never runs, by the sorter's own fields (no list of spellings of root's own beside them): code the command
+// runs that isn't all on the button (its scripts: a file named as a word; its unshown: every interpreter given code
+// inline, from input, a module or a file, awk with system or getline, sed's e or w, find -exec, xargs, git -c naming a
+// program, make, an editor, and, as root, an interpreter that loads from a folder the owner can write), and work it
+// starts later, outside the button and the net (its later: systemd-run, at, batch, crontab, a schedule or unit file
+// written). The refusal says the plain truth: root never runs code it doesn't show, nor work that starts off the button
+// later (there is no way round it, a file run by name included); the steps go on the button as plain commands, and a
+// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH (a limit of root's). Or null.
 function rootUnseen(sorted) {
   if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
-  if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
+  if (sorted?.unshown) return `Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}). Give its steps as plain commands instead, each one on the button.`;
+  if (sorted?.later) return `Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (${String(sorted.later).replace(/\.$/, '').slice(0, 160)}). Run the work itself now, as its own command; a timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH.`;
   return null;
 }
 // A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
@@ -56,6 +61,11 @@ function rootMounts(command, depth = 0) {
   };
   return walk(items);
 }
+// A command the sorter's own reader can't read whole (shellLex and shellParse, 20-shell.mjs: a here-document that runs
+// commands, a loop, arithmetic, a ${ … } form): its doubt, or null. As root such a command isn't run.
+function rootUnreadable(command) {
+  try { shellParse(shellLex(String(command)).toks); return null; } catch (e) { return String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200); }
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -70,12 +80,16 @@ async function rootChange(input, viewer, ctx = {}) {
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
   // (shown whole on the button: nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button. Nothing was asked or run.');
-  const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
+  // (sorted as root: the sorter's root-only rules apply, kill 1 is the lock-out class; dir and home as run takes them)
+  const sorted = sortCommand(command, { ...runnerSortOpts(node, ctx, dir), root: true }), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (a command the reader can't read whole: as root it isn't run)
+  const doubt = rootUnreadable(command);
+  if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
   // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
   const mounts = rootMounts(command);
   if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
@@ -100,6 +114,12 @@ async function rootChange(input, viewer, ctx = {}) {
     // (line 2 of a lock-out ask follows the decision that let it through, netWhose: the owner's words asked for it)
     facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why, asked: true } : {}),
       ...(gone ? { gone: { what: gone } } : {}),
-      lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
+      lines: rootLines(at, seconds, command, dir, sorted) } });
+}
+// The root ask's own lines (line 5 on): what the net puts back for a root command, its time limit, ~ as root, the folder
+// it starts in, and a program the sorter doesn't know, named in one line (sorted.unknownProgram).
+function rootLines(at, seconds, command, dir, sorted) {
+  return [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
+    ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir),
+    ...(sorted?.unknownProgram ? [`Sparkie doesn’t know the program ${String(sorted.unknownProgram).slice(0, 60)}, so it can’t tell you what it does as root: read the command before you answer.`] : [])];
 }

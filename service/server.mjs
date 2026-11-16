@@ -1262,11 +1262,14 @@ ${hfEachFile('snapshots/$snap', ':', 16 * 2 ** 20)}
 [ -d "$dir/refs" ] || exit 0
 ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
   if (checked.code) throw new Error(`${name} wasn’t copied from ${from.id}: ${String(checked.err || checked.out || '').trim().split('\n').pop() || 'its files couldn’t be checked'}`);
-  return new Promise((resolve, reject) => {
+  // Both ends first: the receiving Spark only unpacks into its staging folder (A-21: a sender that ends badly after a
+  // whole archive, a file it couldn't read left out, must never leave a copy that looks whole). Anything but 0 is a
+  // failure: a process ended by a signal (a cancel kills both) closes with null.
+  let { failed, errText } = await new Promise(resolve => {
     const src = spawnOn(from, { command: store === 'hf'
       ? `cd ${HF_HUB} || exit 1; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 1; tar -chf - ${q(folder)}/snapshots/"$snap" $([ -d ${q(folder)}/refs ] && echo ${q(folder)}/refs)`
       : `tar -C ${base} -cf - ${q(folder)}` });
-    const dst = spawnOn(to, { command: `rm -rf ${staging}/${q(folder)} && mkdir -p ${staging} && tar -C ${staging} -xf - && rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }` });
+    const dst = spawnOn(to, { command: `rm -rf ${staging}/${q(folder)} && mkdir -p ${staging} && tar -C ${staging} -xf -` });
     let done = 0, errText = '', closed = 0, failed = false;
     const abort = () => { errText += '\n(cancelled)'; src.kill('SIGKILL'); dst.kill('SIGKILL'); };
     if (job.abort?.signal.aborted) abort(); else job.abort?.signal.addEventListener('abort', abort, { once: true });
@@ -1276,17 +1279,23 @@ ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
     for (const p of [src, dst]) {
       p.stderr.on('data', d => { errText = (errText + d).slice(-4000); });
       p.on('close', code => {
-        if (code) failed = true;
-        if (++closed < 2) return;
-        if (failed) {
-          run(to, `rm -rf ${staging}/${q(folder)}`);
-          reject(new Error(/Permission denied/.test(errText)
-            ? `Copy failed: some files on ${from.id} can’t be read as your user (a container downloaded them as root). On ${from.id} run: sudo chown -R $USER ${store === 'hf' ? `~/.cache/huggingface/hub/${folder}` : `~/${CONFIG.modelsDir}/${folder}`}`
-            : `Copy failed: ${errText.trim() || 'connection closed'}`));
-        } else resolve();
+        if (code !== 0) failed = true;
+        if (++closed === 2) { job.abort?.signal.removeEventListener('abort', abort); resolve({ failed, errText }); }
       });
     }
   });
+  // Both ended 0: a second command moves it into place, and the copy counts only if that ended 0 too.
+  if (!failed) {
+    const moved = await run(to, `rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }`, { timeout: 600000 });
+    if (moved.code === 0) return;
+    errText = `${errText}\n${moved.err || moved.out || `it couldn’t be moved into place on ${to.id}`}`;
+  }
+  // Otherwise what was copied goes, and whether it went is looked at: left there, it would hold up to a whole model.
+  const gone = await run(to, `rm -rf ${staging}/${q(folder)}`, { timeout: 600000 });
+  const left = gone.code ? `\nThe part-copied folder on ${to.id} couldn’t be removed: on ${to.id} run rm -rf ${store === 'hf' ? `~/.cache/huggingface/hub/.spark-console-incoming/${folder}` : `~/${CONFIG.modelsDir}/.incoming/${folder}`}` : '';
+  throw new Error(/Permission denied/.test(errText)
+    ? `Copy failed: some files on ${from.id} can’t be read as your user (a container downloaded them as root). On ${from.id} run: sudo chown -R $USER ${store === 'hf' ? `~/.cache/huggingface/hub/${folder}` : `~/${CONFIG.modelsDir}/${folder}`}${left}`
+    : `Copy failed: ${errText.trim() || 'connection closed'}${left}`);
 }
 
 // What a plan stops beyond what was shown and approved (`approved`: "spark/container" strings), so nothing that started
@@ -1295,6 +1304,8 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
+// How long a one-Spark start waits for its model to answer (settable on the stand-in fleet, as the other waits are).
+const START_READY_MS = Number(process.env.SPARK_CONSOLE_READY_MS || 45 * 60000);
 const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
@@ -1336,11 +1347,12 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     const share = [...memoryShare(model, [measured ? { node: nodeId, steps: [], memory: { ...p.memory, ...measured } } : { ...p, node: nodeId }], keep), ...fixFlags(model, fix)];
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
+    // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
+    if (!started.code || started.code === 255 || /\(timed out\)$/.test(started.err)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
-    (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     consoleStopped.delete(`${nodeId}/${cname}`);
     step(job, 'Loading the model; this can take a few minutes');
-    const deadline = Date.now() + 45 * 60 * 1000;
+    const deadline = Date.now() + START_READY_MS;
     for (let i = 0; Date.now() < deadline; i++) {
       await sleep(5000);
       job.checkPause?.();
@@ -1370,7 +1382,8 @@ docker logs --tail 1 ${q(cname)} 2>&1 | tail -1`, { timeout: 20000 });
         throw new Error(`The model server stopped while loading.\n${causeLines(logs.out)}${logs.out.trim().slice(-2500)}`);
       }
     }
-    throw new Error('The model didn’t become ready within 45 minutes. It may still be loading; check its logs.');
+    // (the put-back that follows stops it, and says so if it couldn't: A-23)
+    throw new Error(`The model didn’t become ready within ${spanOf(START_READY_MS)}, so the start gave up on it. Its log (container_logs) may say why.`);
   } catch (e) {
     // It didn't start: the copy that was set aside gets its name back and starts again.
     await asideBack(job);
@@ -1783,15 +1796,19 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 // It didn't start: what was set aside gets its name back and starts again. It's taken off this start's lists, so
 // putting the rest back (putBack) doesn't stop it again as one of this start's parts.
 async function asideBack(job) {
+  const held = [];
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
+    // (never beside a part this start ran on that Spark that isn't known to have stopped: it stays set aside, and the
+    // put-back looks again once its own stops are done, A-23)
+    if ((await runningOn(job, a.node, x)).length) { held.push(a); continue; }
     const r = await run(nodeById(a.node), `docker stop --time 20 ${q(a.name)} >/dev/null 2>&1; docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} && docker start ${q(a.name)} >/dev/null`, { timeout: 120000 });
     job.ranHere = (job.ranHere || []).filter(y => y !== x);
     job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
     consoleStopped.delete(x);
     note(job, r.code ? `Couldn’t start ${a.name} on ${a.node} again (it’s there as ${a.aside}); start it from Spark Console.` : `Started ${a.name} on ${a.node} again`);
   }
-  job.asideHere = [];
+  job.asideHere = held;
 }
 
 // Copies and images, then both parts, then waiting until the first answers (both still running).
@@ -1811,10 +1828,14 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   }
   job.checkPause?.();
   await engineCheck(job, { cp, model, net, nodeIds, fix });
+  // (each stop looked at, A-23: a Spark that didn't answer, and a stop that didn't take there, are both said)
   const stopAll = async () => {
-    const r = await Promise.all(cp.members.map((m, i) => run(nodeById(m.node), `docker stop --time 20 ${q(names[i])} >/dev/null 2>&1; true`, { timeout: 90000 })));
-    const missed = cp.members.filter((m, i) => r[i].code !== 0);
-    for (const m of missed) note(job, `Couldn’t reach ${m.node} to stop its part. Stop it there: docker stop ${names[cp.members.indexOf(m)]}`);
+    const r = await Promise.all(cp.members.map((m, i) => stopChecked(nodeById(m.node), names[i])));
+    const missed = cp.members.filter((m, i) => r[i] !== 'stopped');
+    for (const m of missed) {
+      const i = cp.members.indexOf(m);
+      note(job, r[i] === 'unknown' ? `Couldn’t reach ${m.node} to stop its part. Stop it there: docker stop ${names[i]}` : `Its part on ${m.node} didn’t stop: it is still running there. Stop it there: docker stop ${names[i]}`);
+    }
     return missed;
   };
   let unknownChecks = 0;
@@ -5853,8 +5874,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
   if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
-    const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
-      [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+    const out = { ...question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
+      [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true }), askedBecause: 'page' };
     audit({ via: ctx.via || null, actor: ctx.actor || null, channel: ctx.channel, ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: 'question' });
     return out;
   }
@@ -5872,12 +5893,14 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
+    // (which gate asked goes on the question as askedBecause: the words, or the rail)
+    const because = !check.clear ? 'words' : !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked ? 'rail' : null;
+    if (because) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
       const firm = await firmModel(name, input);
-      return propose(viewer, ctx, name, validating ? { ...firm, __validate: was.id } : firm);
+      return propose(viewer, ctx, name, validating ? { ...firm, __validate: was.id } : firm, because);
     }
     ctx = { ...ctx, auto: true };
   }
@@ -6814,9 +6837,12 @@ function changeLabel(name, input) {
   return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}`;
 }
 // A change Sparkie suggests but wasn't clearly asked for: one button, which runs exactly this when pressed.
-function propose(viewer, ctx, name, input) {
+// because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
+// for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
+function propose(viewer, ctx, name, input, because = null) {
   const label = `${changeLabel(name, input)}${input.__validate ? ' (its first run, which validates it)' : ''}`;
-  return question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
   const c = pendingChoices.get(id);
@@ -6938,9 +6964,13 @@ function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) 
 // runs out of memory, the start cuts it again, and the new figure is kept.
 function fullContext(how, v, free) {
   const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
-  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  if (!flag || !(cut > 0)) return how;
   const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
-  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free: a
+  // context is never cut below 16,384 by itself, A-26)
+  const low = at >= 0 && Number(pair === 1 ? String(how.args[at]).split('=')[1] : how.args[at + 1]) < CONTEXT_FLOOR;
+  if (!low && (!Number.isFinite(free) || free < cut + HEADROOM)) return how;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free, ...(low ? { floor: true } : {}) } };
 }
 // The least free memory on these Sparks right now, or null when one can't be read.
 async function freeOn(ids) {
@@ -6960,6 +6990,7 @@ async function deployPlaced(job, viewer, ctx, m, placed, how) {
 // What can go wrong starting a model: how to tell (from the error and the last lines of its log), the fix to try
 // (next() gives the next attempt's settings, or null when there's nothing more to try), and what to do when it's out
 // of fixes.
+const CONTEXT_FLOOR = 16384;
 const START_FAILURES = [
   // First: its message carries the parts' logs, which another problem's signs could match.
   // Two Sparks whose connection check passed, but whose engines never connected (2026-11-10, Spark 3 + 4: both parts sat
@@ -6979,9 +7010,10 @@ const START_FAILURES = [
     advice: 'Known on GB10 with some NVFP4 builds: another image of the engine, or its Marlin backend, usually fixes it.', next: () => null },
   { id: 'out-of-memory', title: 'it ran out of memory while loading',
     sign: /out of memory|OutOfMemoryError|cudaMalloc|insufficient memory|not enough (?:GPU )?memory|no available memory for the cache blocks|larger than the maximum number of tokens that can be stored in KV cache|KV cache[^\n]{0,80}(?:insufficient|too small|exceed)|(?:max_model_len|max_seq_len|context.length)[^\n]{0,80}(?:larger|greater|exceed)/i,
-    fix: 'Starting it with a shorter context (32,768 tokens, then 8,192).',
-    advice: 'Even a short context didn’t fit: it needs a Spark with more free memory, or a smaller version of the model.',
-    next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > 8192 ? { fix: { ...fix, contextCap: 8192 } } : null) },
+    // (never below 16,384 by itself, contract 6.9 and T12: shorter needs the owner's yes, and no ask is built yet, A-26)
+    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384; never shorter without asking).',
+    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest it is cut to without asking): it needs a Spark with more free memory, or a smaller version of the model.',
+    next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > CONTEXT_FLOOR ? { fix: { ...fix, contextCap: CONTEXT_FLOOR } } : null) },
   { id: 'bad-flag', title: 'the engine didn’t accept one of the settings',
     sign: /unrecognized arguments|no such option|error: argument|invalid choice|unexpected keyword argument|unknown (?:argument|option)/i,
     fix: 'Starting it again without the setting the engine rejected (the rest of the setup stays).',
@@ -7043,7 +7075,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
+  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which isn’t done without asking (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -7056,7 +7089,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       return;
     } catch (e) {
       // Cancelled: put back what this did, and stop there (no fix to try).
-      if (job.cancelled) { await putBack(job, m, placed); throw Object.assign(new Error(`Cancelled by ${job.cancelled}. What it had changed was put back.`), { cancelled: true }); }
+      // (it says "put back" only when it was: else what is still owed, A-23)
+      if (job.cancelled) { await putBack(job, m, placed); throw Object.assign(new Error(`Cancelled by ${job.cancelled}. ${job.cleanUp || 'What it had changed was put back.'}`), { cancelled: true }); }
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
@@ -7064,9 +7098,9 @@ async function startWithFixes(job, m, placed, how, attempt) {
       if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
-        if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
-        if (!known) throw e;
-        throw new Error(`It didn’t start: ${known.title}${n > 1 ? ` (${n} attempts)` : ''}. ${known.advice}\n${e.message}`);
+        if (!known && n > 1) throw new Error(withOwed(job, `It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`));
+        if (!known) throw Object.assign(e, { message: withOwed(job, e.message) });
+        throw new Error(withOwed(job, `It didn’t start: ${known.title}${n > 1 ? ` (${n} attempts)` : ''}. ${known.advice}\n${e.message}`));
       }
       // What the failed attempt said (its first line), kept: the next attempt replaces its containers and their logs.
       note(job, `Attempt ${n}: ${String(e.message).split('\n')[0].slice(0, 600)}`);
@@ -7087,19 +7121,31 @@ function launch(viewer, ctx, m, placed, how) {
 async function putBack(job, m, placed) {
   step(job, 'It didn’t start, so putting back what was there');
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
-  // stopped are started again.
-  const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x));
+  // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
+  // have stopped, nothing is started again; both stay on the operation's lists, and its words say so (cleanUp). A copy
+  // set aside is asideBack's, after these stops.
+  const aside = new Set((job.asideHere || []).map(a => `${a.node}/${a.name}`));
+  const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x) && !aside.has(x));
   for (const x of ran) consoleStopped.set(x, Date.now());
-  await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return run(nodeById(id), `docker stop --time 20 ${q(c)} >/dev/null 2>&1; true`, { timeout: 90000 }); }));
+  const ends = await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return stopChecked(nodeById(id), c); }));
+  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [];
   for (const x of stopped) {
     const [id, container] = x.split('/');
+    if (still.some(y => y.split('/')[0] === id)) { held.push(x); continue; }
     consoleStopped.delete(x);
     // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
     // a link while this start ran is refused by name, and the job isn't started)
     const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
     note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
   }
-  job.ranHere = []; job.stoppedHere = [];
+  job.ranHere = still;
+  await asideBack(job);
+  const kept = job.asideHere || [];
+  job.stoppedHere = [...held, ...kept.map(a => `${a.node}/${a.name}`)];
+  if (!job.ranHere.length) return;
+  const owed = owedWords(job.ranHere, job.stoppedHere, kept);
+  for (const line of owed) note(job, line);
+  job.cleanUp = owed.map(l => `${l}.`).join(' ');
 }
 
 // Turning a name into one model: on disk, a recipe, a Hugging Face repo, or a question when it could be several.
@@ -7447,6 +7493,8 @@ async function restartRoom(viewer, spark, container, model, inv = null) {
   if (!Number.isFinite(avail) || !need) throw new HttpError(409, `free memory on ${spark} is unknown right now, so it can’t be checked`);
   if (avail - KEEP_FREE < need) throw new HttpError(409, `${spark} doesn’t have room for ${container} now (it takes about ${Math.round(need / 1e9)} GB beyond the 8 GB kept free). start_model can make room.`);
 }
+// How long a restart waits for it to answer (settable on the stand-in fleet, as the other waits are).
+const RESTART_WAIT_MS = Number(process.env.SPARK_CONSOLE_RESTART_WAIT_MS || 30 * 60000);
 function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
   const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
@@ -7460,32 +7508,35 @@ function restartJob(viewer, ctx, spark, container, model) {
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');
-    const deadline = Date.now() + 30 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await sleep(5000);
-      if (j.cancelled) {
-        consoleStopped.set(`${spark}/${container}`, Date.now());
-        await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
+    // From here every bad end stops it again, looked at, and says which it was (A-24, A-23): a cancel, a test prompt it
+    // didn't answer, a Spark that answered nothing until the limit, the limit itself. One that ended by itself is
+    // stopped already.
+    try {
+      const deadline = Date.now() + RESTART_WAIT_MS;
+      while (Date.now() < deadline) {
+        await sleep(5000);
         cancelCheck(j);
-      }
-      const h = await run(node, `if curl -sf -m 4 http://127.0.0.1:${CONFIG.servePort}/v1/models >/dev/null; then echo up; else docker inspect -f '{{.State.Status}}' ${q(container)} 2>/dev/null || echo missing; fi`, { timeout: 20000 });
-      const s = h.out.trim();
-      if (s === 'up') {
-        const tsip = node.host === 'local' || ALL_LOCAL ? '127.0.0.1' : (await inventory(null)).sparks.find(x => x.id === spark)?.tsip;
-        try {
+        // (Docker there not answering is no answer, never "missing": as waitJobEnd asks it)
+        const h = await run(node, `if curl -sf -m 4 http://127.0.0.1:${CONFIG.servePort}/v1/models >/dev/null; then echo up; else docker inspect -f '{{.State.Status}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }; fi`, { timeout: 20000 });
+        const s = h.out.trim();
+        if (s === 'up') {
+          const tsip = node.host === 'local' || ALL_LOCAL ? '127.0.0.1' : (await inventory(null)).sparks.find(x => x.id === spark)?.tsip;
           if (!tsip) throw new Error(`It’s up, but ${spark}’s address is unknown, so it couldn’t be checked with a test prompt.`);
           await answers(j, tsip, CONFIG.servePort);
-        } catch (e) {
-          consoleStopped.set(`${spark}/${container}`, Date.now());
-          await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
-          note(j, `Stopped ${container} again`);
-          throw e;
+          return;
         }
-        return;
+        if (h.code === 0 && ['exited', 'dead', 'missing'].includes(s)) throw Object.assign(new Error(`${container} stopped again while loading. container_logs shows why.`), { ended: true });
       }
-      if (h.code === 0 && ['exited', 'dead', 'missing'].includes(s)) throw new Error(`${container} stopped again while loading. container_logs shows why.`);
+      throw new Error(`It didn’t answer within ${spanOf(RESTART_WAIT_MS)}.`);
+    } catch (e) {
+      if (e.ended) throw e;
+      consoleStopped.set(`${spark}/${container}`, Date.now());
+      const stopped = (await stopChecked(node, container)) === 'stopped', at = sparkName(node);
+      note(j, stopped ? `Stopped ${container} again` : `Couldn’t stop ${container} again: it may still be running on ${at}`);
+      if (!stopped) j.cleanUp = `${container} couldn’t be stopped again: it may still be running on ${at}.`;
+      const [first, ...rest] = String(e.message).split('\n');
+      throw Object.assign(e, { message: [`${first.replace(/[.:]\s*$/, '')}, ${stopped ? 'so it was stopped again' : `and it couldn’t be stopped: it may still be running on ${at}`}.`, ...rest].join('\n') });
     }
-    throw new Error('It didn’t answer within 30 minutes.');
   });
   return job;
 }
@@ -7573,6 +7624,53 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
+/* ───────── a stop that is looked at, and what a put-back still owes when one isn't known to have worked (A-23) ───────── */
+// Area: core        Rules: R16, R15        Tests: put-back-job.test.mjs, across.test.mjs, restart-limit.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The put-back after a failed start (putBack, asideBack), an app that didn't come up (appPutBack), a restart that didn't
+// answer, ran out of time or was cancelled (restartJob), and the parts of a start across two Sparks (clusterParts'
+// stopAll) stop what they ran, then look. It counts as stopped only when Docker there says it isn't running, or that it
+// isn't there at all. Docker not answering is never "gone" (as waitJobEnd asks it, 21-apps.mjs): running, or no answer,
+// is "not stopped", and nothing is started again beside it on that Spark.
+const STOPPED_STATES = ['exited', 'dead', 'created', 'missing'];
+// One look, no stop: 'stopped', 'running' (Docker there says it runs, or is paused or restarting), or 'unknown' (no answer).
+async function stopLook(node, container) {
+  const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+  const state = r.code === 0 ? r.out.trim() : '';
+  return STOPPED_STATES.includes(state) ? 'stopped' : state ? 'running' : 'unknown';
+}
+// docker stop (its own result isn't the answer: a stop that didn't come back, or that Docker refused, still leaves it
+// running), then the look.
+async function stopChecked(node, container, { time = 20, timeout = 90000 } = {}) {
+  await run(node, `docker stop --time ${time} ${q(container)} >/dev/null 2>&1; true`, { timeout });
+  return stopLook(node, container);
+}
+// What this operation ran on a Spark (but `except`) that isn't known to be stopped now: one look each.
+async function runningOn(job, id, except = null) {
+  const mine = [...new Set(job.ranHere || [])].filter(x => x.split('/')[0] === id && x !== except);
+  const looks = await Promise.all(mine.map(x => stopLook(nodeById(id), x.split('/').slice(1).join('/'))));
+  return mine.filter((x, i) => looks[i] !== 'stopped');
+}
+// What a put-back still owes, one sentence a Spark: what may still be running there, and what this operation had stopped
+// there that wasn't started again because of it (a copy set aside named with the name it is there under). Each ends
+// "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
+function owedWords(still, held, asides = []) {
+  const on = (list, id) => list.filter(x => x.split('/')[0] === id).map(x => x.split('/').slice(1).join('/'));
+  return [...new Set(still.map(x => x.split('/')[0]))].map(id => {
+    const at = sparkName(nodeById(id) || { id }), s = on(still, id), h = on(held, id);
+    const them = s.length > 1 ? 'them' : 'it', were = s.length > 1 ? 'they' : 'it';
+    if (!h.length) return `${s.join(' and ')} may still be running on ${at}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
+    const shown = h.map(n => { const a = asides.find(x => x.node === id && x.name === n); return a ? `${n} (there as ${a.aside})` : n; });
+    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
+  });
+}
+// A failed start's error with what is still owed after its first line (the line the chat shows): unchanged when nothing is.
+const withOwed = (job, message) => {
+  if (!job.cleanUp) return message;
+  const [first, ...rest] = String(message).split('\n');
+  return [first, job.cleanUp, ...rest].join('\n');
+};
 /* ───────── a saved workflow's job is handed the one model address (D7) ───────── */
 // Area: core        Rules: R57, R36        Tests: workloads-address.test.mjs
 // Owns: none
@@ -8208,6 +8306,14 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  stopChecked,
+  stopLook,
+  STOPPED_STATES,
+  runningOn,
+  owedWords,
+  withOwed,
+  CONTEXT_FLOOR,
+  spanOf,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -8244,7 +8350,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -16306,10 +16412,13 @@ function appDone(j, container, link, answers, port) {
     : `${container} is running. No port is known for it, so there’s no link.`);
 }
 // One that didn't come up is stopped again (and not brought back by itself); its container stays, so its log can be read.
+// (the stop is looked at, A-23: "stopped again" only when it was; else it may still be running, and that is what the
+// operation says, also as its cancel's answer and chat line, cleanUp)
 async function appPutBack(job, node, container) {
   consoleStopped.set(`${node.id}/${container}`, Date.now());
-  await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
-  note(job, 'It didn’t come up, so it was stopped again. Its container is kept, so its log can be read.');
+  if ((await stopChecked(node, container)) === 'stopped') return note(job, 'It didn’t come up, so it was stopped again. Its container is kept, so its log can be read.');
+  job.cleanUp = `It didn’t come up, and it couldn’t be stopped: ${container} may still be running on ${sparkName(node)}. Stop it there, then look at its log.`;
+  note(job, job.cleanUp);
 }
 
 // Sparkie's target check for keep_running (R25): the owner's words name the Spark and every word of the container's
@@ -19382,6 +19491,12 @@ const GUARD_SAYS = {
   sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
   timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
+// A put-back that went back only in part, by the helper's own words: "in part", or a count of what could not go back
+// ("N could not" above 0). Never read as put back. Today's count "N did not" is not that: it also counts what the net
+// never puts back by design (live firewall rules, Tailscale's settings), so it stays the helper's "put back", said with
+// its count. Kept apart from GUARD_SAYS, which own-programs.test holds to what the helper prints today.
+const GUARD_PART = /\bin part\b|\b[1-9]\d* (?:could not|couldn’t|couldn't)\b/i;
+const GUARD_PART_SAID = /^(?:net:? |already |refused: )?(?:the )?put[- ]back (?:is |was |went back )?(?:only )?in part:? ?(?:at )?(.*)$/i;
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
 // so a line the command printed is never read as the helper's. keep and putback print the helper's lines alone.
@@ -19393,16 +19508,21 @@ function guardAnswer(id, out) {
   const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
+  // (a put-back: whole, in part, or failed, three different things; from the net's line, or putback's own answer)
+  const refusedText = !end && last.startsWith('refused: ') ? last.slice('refused: '.length) : null;
+  const back = after(GUARD_SAYS.putBack), partSaid = GUARD_PART_SAID.exec(net)?.[1] ?? (refusedText != null ? GUARD_PART_SAID.exec(refusedText)?.[1] : null) ?? null;
+  const part = partSaid ?? (back && GUARD_PART.test(back) ? back : null);
   // (why a put-back came at once: the helper's line just before its result, which it prints only then)
-  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net)) ? own(lines.at(-3)) ?? '' : '';
+  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net) || partSaid != null) ? own(lines.at(-3)) ?? '' : '';
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
     goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
-    putBackAt: after(GUARD_SAYS.putBack),
-    failed: after(GUARD_SAYS.failed),
+    putBackAt: part == null ? back : null,
+    part,
+    failed: after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null),
     sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
     timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
@@ -19414,9 +19534,14 @@ function guardAnswer(id, out) {
 // own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
 // (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
 const GUARD_TAIL = 65536;
+// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn), so
+// it must outlast the helper's worst case, from the helper's own numbers: its command's unit given 60 s to stop and 10
+// more to be killed, then three tries 20 s apart, each with a systemd call that hangs to guard.py's 120 s bound, and
+// another put-back holding the guard's lock for up to 120 s before it: 60 + 10 + 3 × 120 + 40 + 120, and 70 to spare.
+const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: Number(seconds) + 180 });
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: verb === 'putback' ? GUARD_PUTBACK_S : Number(seconds) + 180 });
     const head = [], headMost = Math.max(GUARD_TAIL, J_MAX - GUARD_TAIL);
     let headBytes = 0, tail = Buffer.alloc(0), past = 0;
     child.stdout.on('data', c => {
@@ -19726,7 +19851,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
   const starts = `It starts in ${dir}.`;
-  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_WALL}`;
+  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_CHECKED} ${HUB_WALL}`;
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
@@ -19771,10 +19896,13 @@ function hubRoute() {
   });
 }
 const hubJson = s => { try { return JSON.parse(s); } catch { return null; } };
+// What those checks are, said on the ask: Spark Console asking itself on Spark 2 (its own socket, the owner's login in a
+// header; Tailscale's own list of its route), not a visit through your browser or passkey.
+const HUB_CHECKED = 'These are Spark Console’s own checks, made on Spark 2 itself: they don’t prove your browser or passkey still reach it.';
 const HUB_WAYS = {
   // (a put-back puts files back; it doesn't start a container: the brain is started again by the owner's word)
   after: lost => (lost.includes('brain') ? 'The put-back puts back files only; it doesn’t start the brain again: /restart sparkie does.' : ''),
-  words: { signin: 'your sign-in to Spark Console', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
+  words: { signin: 'Spark Console answering you as the owner', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
   probe: async () => {
     const [who, door, models, route, brain] = await Promise.all([hubSelf('/whoami'), hubSelf('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize' }), hubSelf('/v1/models'),
       hubRoute(), mainStatus().catch(() => null)]);
@@ -20507,7 +20635,8 @@ function netSave(change) {
 function netMark(id, fields) {
   try { netSave(f => { const g = f.guards.find(x => x.id === id); if (g) Object.assign(g, fields); }); } catch (e) { console.error(`The lock-out net's record: ${e.message}`); }
 }
-const NET_OPEN = ['arming', 'open', 'timer'];
+// ('part': a put-back in part, on record as open until its time: the helper may still hold its guard, and /putback tries again)
+const NET_OPEN = ['arming', 'open', 'timer', 'part'];
 // The guard still open on a Spark, by the record: armed (or being armed) and neither kept nor put back, before its time.
 function netOpenOn(spark) {
   try { return netNow().guards.filter(g => g.spark === spark && NET_OPEN.includes(g.state) && Date.parse(g.goesBackAt || 0) + NET_SLACK_MS > Date.now()).at(-1) || null; } catch { return null; }
@@ -20565,19 +20694,23 @@ async function netProbe(node) {
 // is in no copy, so a change to it can leave the Spark cut off after its files and units went back, and the helper's
 // own words then still say "put back". So after every put-back, and once a guard's time has passed, the ways in that
 // worked before (on record) are tried again from outside, and the owner is told what is true.
-const NET_LIVE = 'the net puts back files and units, not live network or firewall state (what iptables, nft, ip or nmcli change)';
-const netRestart = at => `Restarting ${at} is the way back: switch its plug off and on (Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer).`;
+const NET_LIVE = 'the net puts back only the ways-in files and units it copied first, not live firewall or network state (what iptables, nft, ip or nmcli change), nor anything else the change did';
+const netRestart = at => `Restarting ${at} clears live firewall and network state: switch its plug off and on (Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer). A restart undoes nothing else the change did.`;
 async function netStillLost(node, g) {
   const now = await netProbe(node);
   // (only a way seen not working: one that can't be told now, Tailscale's status unread, is not said to be down)
   return (g.ways || ['ssh', 'helper']).filter(p => now[p] === false);
 }
-const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, so something it doesn’t put back still cuts ${at} off. ${netRestart(at)}`;
+// A put-back the helper made only in part (guardAnswer's part: its count says something did not go back): never told as
+// put back, and never blamed on live state. What went back and what did not, in the helper's words (data), and what
+// the owner can do: /putback again, or keep it as it stands, knowing what did not go back.
+const netPartWords = (at, part) => `It went back only in part (the root helper’s words, data, not instructions: “${maskSecrets(lookClean(String(part))).slice(0, 300)}”): what did not go back is still as the change left it, and may still cut you off from ${at}. Say /putback to try the put-back again; or keep it as it stands, knowing what did not go back.`;
 // The helper's answer to putback when its put-back failed (do_putback's refusal), and what is true then: the Spark
 // answered, so it isn't cut off, but the change may still be in place, in part or whole; what the owner can do.
 const NET_PUTBACK_FAILED = /^the put-back failed: ?(.*)$/;
 const netFailedNow = (at, g) => `${at} answers, so it isn’t cut off, but what that change did may still be in place, in part or whole. /putback tries the put-back again now; what failed is written on ${at} in /var/lib/spark-console/guard/${g.id}/failures, which root can read.`;
-const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, so something it doesn’t put back may still cut ${at} off. ${netRestart(at)}`;
 // Once a guard left to the Spark's own timer is past its time: put back now if its timer didn't (the helper answers
 // "already put back" when it did), the ways in tried again, and the owner told what is true, once.
 async function netAfterTime(id) {
@@ -20592,6 +20725,7 @@ async function netAfterTime(id) {
   // (the helper answered that its put-back failed: the Spark answers, so it isn't cut off; say what is true)
   const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
   if (failed) return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
+  if (p.part != null) { netMark(g.id, { state: 'part' }); return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}. ${netPartWords(at, p.part)}`); }
   if (!p.putBackAt) return netTell(g, netGoneWords(which, at, g));
   netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
   const lost = await netStillLost(node, g);
@@ -20624,7 +20758,7 @@ function netOutput(id, out) {
 
 // The dangerous ask's line for a change inside the net (line 3): what goes back, when, and what can't (root's too, 21-root.mjs,
 // with its own time limit).
-const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
+const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Only the ways-in files and units copied first go back: not live firewall or network state (iptables, nft, ip, nmcli), which a restart clears, nor anything else it changes.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
 // page or a fix suggested it): null when the owner's current message asks for it on that Spark (netAsks) with nothing
 // read from outside since, or for the owner's own call (the page, POST /actions). Only the current message counts, never
@@ -20663,11 +20797,11 @@ function netAsks(node, text) {
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
     if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
-    const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
+    const opened = NET_PLEASE.exec(s), lead = opened ? opened[0].length : 0, body = s.slice(lead);
     if (NET_QUESTION.test(body) || (!opened && /\?$/.test(s)) || INFO_START.test(body.replace(new RegExp(NET_LEAD, 'i'), ''))) continue;
     for (const m of body.matchAll(NET_ASK)) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
-      if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
+      if (NET_STATE.test(pre) || NET_IF.test(pre) || !netOrderAt(s, lead + m.index)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
       const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
       for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
@@ -20675,6 +20809,12 @@ function netAsks(node, text) {
   }
   return false;
 }
+// The seam for the intent sorter's order rule (A-18, round two with the outside reviewer): whether the change word that
+// starts at index `at` of the owner's sentence `s` gives an order, being the sentence's first word or after one of a
+// short closed list of openers, and not narration ("I used to restart tailscale …") or reported speech ("my colleague
+// says to turn the firewall off …"), which ask for nothing. The intent builder names that function and it is called
+// here; until it lands, every change word the checks above let through counts, as before.
+function netOrderAt(s, at) { return typeof s === 'string' && at >= 0; }
 function netWhose(node, viewer, ctx) {
   if (ctx.via === 'workflow') return 'a saved workflow’s step';
   if (ctx.via === 'watcher') return 'a healing fix';
@@ -20843,6 +20983,16 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       held = true;
       return result('timer', words);
     }
+    // Put back at once only in part: never told as put back. The Spark claimed until its time, /putback tries again.
+    if (a.part != null) {
+      netMark(id, { state: 'part' });
+      end({ ok: false, outcome: 'part', exit: a.exit }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once: ${netWhyBack(at, a)}. ${netPartWords(at, a.part)}${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('part', words);
+    }
     // Put back already (its timer was gone while it ran): said as the helper says it.
     if (a.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: a.putBackAt });
@@ -20883,6 +21033,15 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
         netTell(g, words, late());
         return result('kept', words);
       }
+      if (k.part != null) {
+        netMark(id, { state: 'part' });
+        end({ ok: false, outcome: 'part', exit: a.exit }, `$ ${command}\n${output}`);
+        const words = `A change that could lock you out of ${at} (record ${rid}) went back before it could be kept. ${netPartWords(at, k.part)}${cut}`;
+        netTell(g, words, late());
+        netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+        held = true;
+        return result('part', words);
+      }
       if (k.putBackAt) {
         netMark(id, { state: 'put back', putBackAt: k.putBackAt });
         end({ ok: false, outcome: 'put back', exit: a.exit }, `$ ${command}\n${output}`);
@@ -20903,7 +21062,18 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     const what = lost.map(p => names[p]).join(', '), more = ways?.after ? ` ${ways.after(lost)}`.replace(/^ $/, '') : '';
     const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
     // (and, for a caller that asks it, Sparkie's and agents' changes pause: A11's Spark 2, design A 2.7)
-    if (pause) tripBreaker(`a change on ${at} (record ${rid}) broke ${what}; ${p.putBackAt ? 'it was put back' : `${at}’s own timer puts it back`}`);
+    if (pause) tripBreaker(`a change on ${at} (record ${rid}) broke ${what}; ${p.putBackAt ? 'it was put back' : p.part != null ? 'it went back only in part' : p.failed != null ? 'its put-back failed' : `${at}’s own timer puts it back`}`);
+    // (in part, or failed: each told as what it is, never as put back, nor as a Spark the put-back couldn't reach)
+    if (p.part != null || p.failed != null) {
+      netMark(id, { state: p.part != null ? 'part' : 'timer' });
+      end({ ok: false, outcome: p.part != null ? 'part' : 'timer', exit: a.exit, lost, ...(p.failed != null ? { putBackFailed: true } : {}) }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) broke ${what}, so it had to go back at once. ${p.part != null ? netPartWords(at, p.part)
+        : `But the put-back failed there (${String(p.failed || 'no reason given').slice(0, 200)}), so what it changed may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.`}${cut}${more}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result(p.part != null ? 'part' : 'timer', words);
+    }
     if (p.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: p.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit, lost }, `$ ${command}\n${output}`);
@@ -20936,6 +21106,8 @@ async function netPutbackWord() {
   const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `the newest change made inside the lock-out net, on ${at} (record ${g.record || g.id})`;
   if (!node) return `${which[0].toUpperCase()}${which.slice(1)} is on a Spark no longer on the list, so nothing was put back.`;
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
+  if (p.part != null) { netMark(g.id, { state: 'part' }); return `Put back only in part: ${which}. ${netPartWords(at, p.part)}`; }
+  if (p.failed != null) return `Nothing was put back: the put-back of ${which} failed (${String(p.failed || 'no reason given').slice(0, 200)}). What that change did may still be in place, in part or whole; /putback tries again.`;
   if (p.putBackAt) {
     netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
     netUnhold(g.spark);
@@ -20944,7 +21116,7 @@ async function netPutbackWord() {
   }
   if (p.kept) { netMark(g.id, { state: 'kept' }); return `Nothing was put back: ${which} was kept, and once kept the net puts nothing back. Change it back with a new change.`; }
   if (p.refused) return `Nothing was put back: the root helper on ${at} refused (${String(p.refused).slice(0, 200)}).`;
-  if (Date.parse(g.goesBackAt || 0) + NET_SLACK_MS <= Date.now()) return `Nothing was put back now: ${at} still doesn’t answer, past ${netHhmm(g.goesBackAt)}, when its own timer was to put ${which} back: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+  if (Date.parse(g.goesBackAt || 0) + NET_SLACK_MS <= Date.now()) return `Nothing was put back now: ${at} still doesn’t answer, past ${netHhmm(g.goesBackAt)}, when its own timer was to put ${which} back: ${NET_LIVE}, so something it doesn’t put back may still cut ${at} off. ${netRestart(at)}`;
   return `Nothing was put back now: ${at} didn’t answer. Unless it was kept, its own timer puts ${which} back at ${netHhmm(g.goesBackAt)}.`;
 }
 
@@ -20953,11 +21125,13 @@ async function netPutbackWord() {
 // at its time (netAfterTime).
 async function netRecover() {
   let open = [];
-  try { open = netNow().guards.filter(g => NET_OPEN.includes(g.state)); } catch { return; }
+  // (a put-back already told as in part is not tried again at every start: /putback is the owner's way to try again)
+  try { open = netNow().guards.filter(g => NET_OPEN.includes(g.state) && g.state !== 'part'); } catch { return; }
   for (const g of open) {
     const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `A change that could lock you out of ${at} (record ${g.record || g.id}), made inside the lock-out net before Spark Console restarted,`;
     if (!node) continue;
     const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
+    if (p.part != null) { netMark(g.id, { state: 'part' }); netTell(g, `${which} had to go back. ${netPartWords(at, p.part)}`); continue; }
     if (p.putBackAt) {
       netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
       const lost = await netStillLost(node, g);
@@ -22205,13 +22379,18 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
-// Code a root command runs that isn't in its own words (the button shows only those, and the code can change before the
-// press): a file run as code (the sorter's scripts), or what the sorter says runs unseen (its unshown: input from < or a
-// pipe into a shell, a build, -m, a project's scripts, BASH_ENV). The refusal's words, or null. (unshown is the sorter's
-// field from its next step; while it is absent, scripts alone decide.)
+// What root never runs, by the sorter's own fields (no list of spellings of root's own beside them): code the command
+// runs that isn't all on the button (its scripts: a file named as a word; its unshown: every interpreter given code
+// inline, from input, a module or a file, awk with system or getline, sed's e or w, find -exec, xargs, git -c naming a
+// program, make, an editor, and, as root, an interpreter that loads from a folder the owner can write), and work it
+// starts later, outside the button and the net (its later: systemd-run, at, batch, crontab, a schedule or unit file
+// written). The refusal says the plain truth: root never runs code it doesn't show, nor work that starts off the button
+// later (there is no way round it, a file run by name included); the steps go on the button as plain commands, and a
+// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH (a limit of root's). Or null.
 function rootUnseen(sorted) {
   if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
-  if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
+  if (sorted?.unshown) return `Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}). Give its steps as plain commands instead, each one on the button.`;
+  if (sorted?.later) return `Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (${String(sorted.later).replace(/\.$/, '').slice(0, 160)}). Run the work itself now, as its own command; a timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH.`;
   return null;
 }
 // A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
@@ -22239,6 +22418,11 @@ function rootMounts(command, depth = 0) {
   };
   return walk(items);
 }
+// A command the sorter's own reader can't read whole (shellLex and shellParse, 20-shell.mjs: a here-document that runs
+// commands, a loop, arithmetic, a ${ … } form): its doubt, or null. As root such a command isn't run.
+function rootUnreadable(command) {
+  try { shellParse(shellLex(String(command)).toks); return null; } catch (e) { return String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200); }
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -22253,12 +22437,16 @@ async function rootChange(input, viewer, ctx = {}) {
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
   // (shown whole on the button: nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button. Nothing was asked or run.');
-  const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
+  // (sorted as root: the sorter's root-only rules apply, kill 1 is the lock-out class; dir and home as run takes them)
+  const sorted = sortCommand(command, { ...runnerSortOpts(node, ctx, dir), root: true }), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (a command the reader can't read whole: as root it isn't run)
+  const doubt = rootUnreadable(command);
+  if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
   // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
   const mounts = rootMounts(command);
   if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
@@ -22283,8 +22471,14 @@ async function rootChange(input, viewer, ctx = {}) {
     // (line 2 of a lock-out ask follows the decision that let it through, netWhose: the owner's words asked for it)
     facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why, asked: true } : {}),
       ...(gone ? { gone: { what: gone } } : {}),
-      lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
+      lines: rootLines(at, seconds, command, dir, sorted) } });
+}
+// The root ask's own lines (line 5 on): what the net puts back for a root command, its time limit, ~ as root, the folder
+// it starts in, and a program the sorter doesn't know, named in one line (sorted.unknownProgram).
+function rootLines(at, seconds, command, dir, sorted) {
+  return [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
+    ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir),
+    ...(sorted?.unknownProgram ? [`Sparkie doesn’t know the program ${String(sorted.unknownProgram).slice(0, 60)}, so it can’t tell you what it does as root: read the command before you answer.`] : [])];
 }
 /* ───────── a kept key, by its name, in one change's environment (A14b) ───────── */
 // Area: features        Rules: R51, R61, R42        Tests: run-keys.test.mjs
@@ -24719,6 +24913,8 @@ function updResultLook() {
     : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
     : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
+    // (the way back couldn't put the build from before back whole, a full disk say, and keeps its copy: pull.sh says so first)
+    : /^the build from before couldn't be put back whole, and its copy is kept/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
   const conv = updTell(asked, line);
   if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});
