@@ -1013,8 +1013,11 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
       assert.equal((await health(home))?.build, buildOf(g.files), 'the new build goes on running, whole');
       assert.equal(read(home, 'spark-console-service', 'server.mjs'), g.files['service/server.mjs'].text);
-    } finally { rmSync(join(home, 'door-down'), { force: true }); if (existsSync(copy)) chmodSync(copy, 0o644); }
-    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    } finally {
+      // (put back by hand once it can be, whatever happened above: nothing is left armed for the cases after)
+      rmSync(join(home, 'door-down'), { force: true }); if (existsSync(copy)) chmodSync(copy, 0o644);
+      r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    }
     assert.equal(r.status, 0, r.stdout + r.stderr);
     await fromBefore({ out: r.stdout }, mk);
   });
@@ -1032,8 +1035,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.match(r2.out, /That update's way back is still armed: its build from before couldn't be put back whole .*This install changed nothing\./);
       assert.equal((await health(home))?.build, buildOf(base.files));
       assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
-    } finally { if (existsSync(copy)) chmodSync(copy, 0o644); }
-    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    } finally {
+      if (existsSync(copy)) chmodSync(copy, 0o644);
+      if (existsSync(share('update-guard', 'update-guard.sh'))) r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    }
     assert.equal(r.status, 0, r.stdout + r.stderr);
     await fromBefore({ out: r.stdout }, mk);
   });
