@@ -106,7 +106,8 @@ test('the first use fetches the pinned image and opens nothing; then the box ope
   assert.deepEqual(readdirSync(folder(API_BOX)), ['x'], 'what it wrote is in its folder');
   for (const spark of ['spark2', 'spark4']) assert.deepEqual([boxLines(spark), boxRuns(spark)], [[], []], spark);
   const rec = journal().filter(j => j.act === 'run' && j.where === 'box').map(j => [j.outcome, j.unit, j.args?.spark, j.ok]);
-  assert.deepEqual(rec, [['pulling', API_BOX, 'spark3', true], ['opened', API_BOX, 'spark3', true], ['ran', API_BOX, 'spark3', true]]);
+  // (the command is written down first, as the runner's change is: its start line, then its end line)
+  assert.deepEqual(rec, [['pulling', API_BOX, 'spark3', true], ['opened', API_BOX, 'spark3', true], [undefined, API_BOX, 'spark3', undefined], ['ran', API_BOX, 'spark3', true]]);
 });
 
 test('a second call finds it open and opens nothing new; other arguments are refused before anything, and on must be exactly "box"', { timeout: 60000 * SLOW }, async () => {
