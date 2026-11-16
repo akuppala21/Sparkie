@@ -332,7 +332,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     Object.assign(turn, turnRequest(turn));
     Object.assign(turn, brainContext(turn));
     Object.assign(turn, howAsked(turn));
-    Object.assign(turn, turnBudgets(turn));
+    // (the limits of the brain's profile: its own once checked, else the careful ones, turnLimits in 21-brain-rail.mjs)
+    Object.assign(turn, turnBudgets({ ...turn, limits: await turnLimits(turn) }));
     // What the rounds add to as they go (each was one of the turn’s own variables).
     Object.assign(turn, { answer: '', thinking: false, finishReason: null, changes: 0, used: [], pastes: [] });
     Object.assign(turn, turnGroups(turn));
@@ -343,6 +344,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
+      taskStepsKept(turn);
       journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }

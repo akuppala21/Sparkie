@@ -19,16 +19,24 @@
 // keeps nothing. The eval's runner refuses to ask the brain as another setup than the one serving.
 // The mark of what the brain reads holds a turn in the paired Telegram chat too: only its prompt or tools changed is
 // another mark, and a Telegram turn there is a button until an eval for that mark is kept.
+// E5b: what runs is the snapshot the container loaded (its arguments, or its overlay's links), never one downloaded
+// since. The loop's limits are the profile's: the careful ones (8 rounds) while not checked, its own once checked, held
+// to 40 rounds and 12 changes a message. A carry-on turn with no eval kept asks with a button. The mark covers the fixed
+// words the brain is sent outside its prompt and tools. A 429 or 404 on the check keeps nothing; a record that doesn't
+// name every memory addition on never counts; the press of a waiting result says what the rail says; a seal's key that
+// can't be read is named. A Docker that doesn't answer the look within 3 seconds delays no reply: the reply is careful
+// and its change a button, and sparkie_setup says why. A lesson card's words are under the mark too.
 // T136 (part): a switch to a brain with no eval on record makes every change a button; once the eval has passed for this
 // brain and build, a clear change runs at once.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, mkdtempSync, cpSync, appendFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, mkdtempSync, cpSync, appendFileSync, readdirSync, readlinkSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, auditLines, waitFor, sleep, SLOW } from './lib.mjs';
+import { pathToFileURL } from 'node:url';
+import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, auditLines, waitFor, sleep, SLOW } from './lib.mjs';
 import { serviceConfig, startMock } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 import { brainSent, brainReadsOf } from './lock.mjs';
@@ -50,7 +58,9 @@ useFleet({ watchMs: 60000, knowledge: true, telegram: true, evalOnRecord: false,
     writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', approve: true } }), { mode: 0o600 });
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8')), base = m.presets[m.current];
     Object.assign(m.presets, { 'rail-flag': { ...base, args: [...base.args, '--enable-cache-report'] }, 'rail-image': { ...base, imageId: OTHER_IMAGE },
-      'rail-rounds': { ...base, toolRounds: 7 }, 'rail-changes': { ...base, maxChanges: 3 }, 'rail-cap': { ...base, toolCap: 20 } });
+      'rail-rounds': { ...base, toolRounds: 7 }, 'rail-changes': { ...base, maxChanges: 3 }, 'rail-cap': { ...base, toolCap: 20 },
+      // (E5b: a setup that asks for more rounds and changes than any may have)
+      'rail-huge': { ...base, toolRounds: 1e9, maxChanges: 1e9 } });
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
     appendFileSync(join(root, 'spark2', '.mock', 'images'), `\n${OTHER_IMAGE}\n`);
   } }, async () => { act = await createActKey('rail-act'); });
@@ -62,6 +72,8 @@ const profiles = () => { try { return JSON.parse(readFileSync(PROFILES(), 'utf8'
 const mock = (spark, f) => join(T.fleet.root, spark, '.mock', f);
 const stateOf = (spark, name) => readFileSync(mock(spark, 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
+// What the stand-in brain was asked for these words: each request's round and the tools it was offered.
+const requests = words => { const f = join(T.fleet.dir, 'model-requests.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(x => x.words === words) : []; };
 const shown = async () => { const r = await api('/actions/sparkie_setup', { method: 'POST', body: {} }); assert.equal(r.status, 200, r.text); return r.json; };
 
 // A record as test/eval.mjs writes one, for the brain serving now and this build's lock; each run passes unless told.
@@ -295,7 +307,7 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.equal((await keep(await oneCase(pass.at))).status, 201, 'the one-case record');
     const w = await waiting(), p = await press(w, w.keep);
     assert.equal(p.status, 200, p.text);
-    assert.doesNotMatch(p.json.note || '', /Already kept/, p.text);
+    assert.doesNotMatch(p.json.message?.content || '', /Already kept/, p.text);
     const slot = profiles()[(await shown()).brainCheck.inUse.key].evals[`${pass.reads}:${pass.set}`];
     assert.ok(slot.some(x => x.at === pass.at && x.keptWith === 'passkey' && x.score.full), 'the pass is on record');
     await atOnce('the pass decides');
@@ -412,15 +424,53 @@ describe('the rail', { concurrency: 1 }, () => {
     await atOnce('a passing full run again');
   });
 
+  test('a record that doesn’t name every memory addition on never counts: kept at once, and Sparkie still asks', { timeout: 120000 * SLOW }, async () => {
+    await kept(await record({}, { passed: i => i >= 3 }));
+    await aButton('missed the bar');
+    for (const on of [['names'], [...SWITCHES, 'more'], []]) {
+      const r = await kept(await record({ memorySwitches: { on, off: [] } }));
+      assert.equal(r.stored, true, JSON.stringify(on));
+      await aButton(`on: ${on.join(', ') || 'none'}`, /didn’t meet the bar/);
+    }
+    await yes(await record());
+    await atOnce('a passing full run with every addition on');
+  });
+
+  test('the press of a waiting result says what the rail says now: kept beside a newer run that missed the bar, Sparkie still asks', { timeout: 120000 * SLOW }, async () => {
+    const pass = await record();
+    assert.equal((await keep(pass)).status, 202);
+    assert.equal((await kept(await record({}, { passed: i => i >= 3 }))).stored, true, 'a newer full run that missed the bar');
+    const w = await waiting(), p = await press(w, w.keep);
+    assert.equal(p.status, 200, p.text);
+    assert.equal(p.json.outcome, 'kept', p.text);
+    assert.match(p.json.message?.content || '', /^Kept\. Sparkie asks before every change, one button each: the newest full run of the eval on record for this build \(\d{4}-\d\d-\d\d\) didn’t meet the bar\./, p.text);
+    await aButton('the newer failing run decides');
+    await yes(await record());
+    await atOnce('a newer pass');
+  });
+
   test('another brain is another key: the image it runs, its weights, and a changed flag, image, toolRounds, maxChanges or toolCap; the narrow key of before', { timeout: 600000 * SLOW }, async () => {
     writeFileSync(mock('spark2', 'imageid-sparkie-main'), `sha256:${'c'.repeat(64)}`);
     await aButton('another image actually run', /no brain check is on record for this exact setup/);
     rmSync(mock('spark2', 'imageid-sparkie-main'));
     await atOnce('the image it ran before');
+    // (E5b: the weights it loaded, never the snapshot a start would serve now)
     const hub = join(T.fleet.root, 'spark2', '.cache', 'huggingface', 'hub', 'models--RadixArk--Qwen3.8-27B-NVFP4');
     cpSync(join(hub, 'snapshots', 'r1'), join(hub, 'snapshots', 'r2'), { recursive: true, verbatimSymlinks: true });
     writeFileSync(join(hub, 'refs', 'main'), 'r2');
-    await aButton('another snapshot of its weights');
+    await atOnce('a newer snapshot downloaded while it runs: not what it loaded, so the same brain');
+    // (a start that loaded it, served from the overlay its rope settings need: the overlay's links name r2)
+    const overlay = join(T.fleet.root, 'spark2', '.cache', 'spark-console', 'overlay', 'qwen-aphex', 'model');
+    const relink = (from, to) => { for (const f of readdirSync(overlay)) { const at = join(overlay, f); let l; try { l = readlinkSync(at); } catch { continue; } rmSync(at); symlinkSync(l.replace(`/snapshots/${from}/`, `/snapshots/${to}/`), at); } };
+    relink('r1', 'r2');
+    await aButton('the snapshot it loaded, from the overlay', /no brain check is on record for this exact setup/);
+    relink('r2', 'r1');
+    await atOnce('the overlay as it was');
+    // (one served straight from the cache: the snapshot in the container's own arguments)
+    const args = mock('spark2', 'args-sparkie-main'), argsWere = readFileSync(args, 'utf8');
+    writeFileSync(args, JSON.stringify(['-m', 'sglang.launch_server', '--model-path', '/hf/models--RadixArk--Qwen3.8-27B-NVFP4/snapshots/r2', '--speculative-draft-model-path', '/hf/models--z-lab--Qwen3.8-27B-DFlash2/snapshots/z1']));
+    await aButton('the snapshot it loaded, from its arguments', /no brain check is on record for this exact setup/);
+    writeFileSync(args, argsWere);
     writeFileSync(join(hub, 'refs', 'main'), 'r1');
     await atOnce('the weights it ran before');
     for (const id of ['rail-flag', 'rail-image', 'rail-rounds', 'rail-changes', 'rail-cap']) {
@@ -441,6 +491,29 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.ok(seal && keptWith);
     writeFileSync(PROFILES(), was, { mode: 0o600 });
     await atOnce('the profile back');
+  });
+
+  // E5b: the loop's limits from the brain's profile.
+  test('the loop’s limits come from the brain’s profile: the careful ones (8 rounds) while not checked; once checked its own, held to 40 rounds and 12 changes a message', { timeout: 300000 * SLOW }, async () => {
+    await useSetup('rail-huge');
+    const GUIDE = { name: 'guide', arguments: { tools: 'past' } };
+    const offered = async words => {
+      script([{ match: `^${words}$`, rounds: Array(45).fill([GUIDE]) }]);
+      await say(await newChat(), words);
+      return requests(words).map(x => x.tools.length > 0);
+    };
+    const upTo = n => [...Array(n).fill(true), false];
+    assert.deepEqual(await offered('huge rounds while not checked'), upTo(8), 'the careful limits');
+    await yes(await record());
+    await atOnce('checked');
+    assert.deepEqual(await offered('huge rounds once checked'), upTo(40), 'its own, held to 40');
+    const words = 'remember that the huge facts hold', fact = i => ({ name: 'remember', arguments: { text: `Huge fact ${i} holds`, kind: 'fact' } });
+    script([{ match: `^${words}$`, rounds: [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12]].map(r => r.map(fact)) }]);
+    const { message } = await say(await newChat(), words);
+    assert.deepEqual(message.tools.map(t => [t.name, t.ok, t.outcome || null]), [...Array(12).fill(['remember', true, 'remembered']), ['remember', false, null]]);
+    assert.ok(requests(words).at(-1).results.some(x => x.content === '[error] At most 12 changes per message. Say what’s done and what’s left.'), JSON.stringify(requests(words).at(-1).results));
+    await useSetup('aphex');
+    await atOnce('back on the setup the eval ran on');
   });
 
   test('the chat routed to another model; a missing or unreadable profile; a server error on the check keeps nothing', { timeout: 180000 * SLOW }, async t => {
@@ -470,6 +543,69 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.equal(readFileSync(PROFILES(), 'utf8'), was, 'nothing kept');
     rmSync(mock('spark2', 'brain-kind'));
     await atOnce('the profile on record stands');
+  });
+
+  test('a 429 or a 404 to the brain check’s tool requests is no answer either: nothing is kept, never “never calls a tool”', { timeout: 180000 * SLOW }, async t => {
+    const was = readFileSync(PROFILES(), 'utf8');
+    t.after(() => rmSync(mock('spark2', 'brain-kind'), { force: true }));
+    for (const code of [429, 404]) {
+      writeFileSync(mock('spark2', 'brain-kind'), `status-${code}`);
+      const since = new Date().toISOString();
+      assert.equal((await api('/main/check', { method: 'POST', body: {} })).status, 202);
+      const seen = await waitFor(async () => { const s = (await shown()).brainCheck; return s.lastTry?.at > since && s; }, { timeout: 60000, what: `the try with ${code}` });
+      assert.match(seen.lastTry.problem, new RegExp(`answered ${code}, so the check couldn’t be made`), String(code));
+      assert.equal(readFileSync(PROFILES(), 'utf8'), was, `nothing kept on a ${code}`);
+    }
+    rmSync(mock('spark2', 'brain-kind'));
+    await atOnce('the profile on record stands');
+  });
+
+  // Review of E5b, item 3: the look at Docker a reply and a change wait for is bounded.
+  test('a Docker that doesn’t answer delays no reply: within a few seconds the reply comes, its change is a button, and sparkie_setup says why', { timeout: 240000 * SLOW }, async t => {
+    await atOnce('checked to begin with');
+    // (each docker inspect on Spark 2 takes 8 seconds, so a look at what the brain runs takes 16)
+    writeFileSync(mock('spark2', 'slow-inspect'), '8');
+    t.after(() => rmSync(mock('spark2', 'slow-inspect'), { force: true }));
+    await sleep(5500);
+    const started = Date.now();
+    await aButton('Docker slow: not checked for this reply');
+    const took = Date.now() - started;
+    assert.ok(took < 10000 * SLOW, `the reply took ${took} ms`);
+    // (sparkie_setup's own look at the brain's state waits for Docker as before; its line about changes waits 3 seconds)
+    const changes = (await shown()).changes;
+    assert.match(changes, /^Sparkie asks before every change, one button each: Docker didn’t say within 3 seconds what Sparkie’s model runs \(its Spark may be busy or stuck\), so it counts as not checked\.$/);
+    rmSync(mock('spark2', 'slow-inspect'));
+    await waitFor(async () => /^Sparkie makes a change/.test((await shown()).changes), { timeout: 60000 * SLOW, what: 'Docker answering again' });
+    await atOnce('Docker answering again');
+  });
+
+  // E5b, item 3: a carry-on turn meets the rail as any turn of the chat does.
+  test('a carry-on turn with no eval kept: the change it asks for is one button, and nothing runs', { timeout: 240000 * SLOW }, async t => {
+    await yes(await record());
+    await atOnce('checked for the request itself');
+    const words = `stop ${TESTORG} on spark 3, then start it again`;
+    script([{ match: `^${words}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: TESTORG } }] },
+      { match: '^\\[Spark Console\\] What you started', calls: [{ name: 'restart_model', arguments: { spark: 'spark3', container: TESTORG } }] }]);
+    // (the stop takes a few seconds, so the eval can be taken away before its result wakes the carry-on turn)
+    writeFileSync(mock('spark3', 'slow-stop'), String(Math.round(4 * SLOW)));
+    t.after(() => rmSync(mock('spark3', 'slow-stop'), { force: true }));
+    const chat = await newChat(), first = (await say(chat, words)).message;
+    assert.deepEqual(first.tools.map(x => [x.name, x.outcome]), [['stop_model', 'started']]);
+    const was = readFileSync(PROFILES(), 'utf8'), file = JSON.parse(was), key = (await shown()).brainCheck.inUse.key;
+    file.profiles[key].evals = {};
+    writeFileSync(PROFILES(), JSON.stringify(file), { mode: 0o600 });
+    const carried = await waitFor(async () => (await chatMessages(chat)).find(m => m.role === 'assistant' && !m.notice && (m.tools || []).some(x => x.name === 'restart_model')), { timeout: 120000 * SLOW, what: 'the carry-on turn' });
+    assert.deepEqual(carried.tools.map(x => [x.name, x.outcome]), [['restart_model', 'needs-ok']]);
+    assert.equal(carried.choices?.length, 1, JSON.stringify(carried));
+    assert.match((await shown()).changes, /the eval has not been run for this build/);
+    await sleep(2000);
+    assert.equal(stateOf('spark3', TESTORG), 'exited', 'the stop ran, and nothing started it again');
+    // (as it was: the eval back, and the model running for the tests after)
+    writeFileSync(PROFILES(), was, { mode: 0o600 });
+    const own = await api('/actions/restart_model', { method: 'POST', body: { spark: 'spark3', container: TESTORG } });
+    assert.equal(own.status, 200, own.text);
+    await waitFor(() => stateOf('spark3', TESTORG) === 'running', { timeout: 120000, what: `${TESTORG} running again` });
+    await atOnce('the eval back');
   });
 
   test('with the eval passed, a clear change through the agent door runs at once', { timeout: 120000 * SLOW }, async () => {
@@ -524,7 +660,12 @@ test('the mark holds what a Telegram turn is sent: only its prompt or its tools 
   // (on a fresh stand-in fleet, as test/lock.mjs measures it: the lock's own mark for this tree, before and now)
   const fresh = await startMock({ evalOnRecord: false });
   let sent;
-  try { sent = await brainSent(fresh); } finally { await fresh.stop(); }
+  try {
+    sent = await brainSent(fresh);
+    // (said beside the mark, for a builder's report: this tree's five workflow versions, as the lock names them)
+    const workflows = (await (await fetch(`${fresh.base}/workflows`)).json()).workflows;
+    t.diagnostic(`the versions: ${JSON.stringify(Object.fromEntries(workflows.map(w => [w.id, w.version])))}`);
+  } finally { await fresh.stop(); }
   const reads = brainReadsOf(sent), tg = sent.catalog.telegram;
   assert.match(tg.system, /writing from Telegram/);
   assert.notEqual(tg.system, sent.system);
@@ -647,4 +788,56 @@ test('a result waiting for the owner’s yes is forgotten at a restart: its old 
     await one.stop();
     rmSync(one.dir, { recursive: true, force: true });
   }
+});
+
+// E5b, item 2: what the brain is sent outside its prompt and tools is in the mark too.
+test('the mark covers the fixed words the brain is sent outside its prompt and tools: a build whose carry-on line, or a lesson card’s words, differ has another', { timeout: 300000 * SLOW }, async () => {
+  const words = (await (await fetch(`${T.base}/actions`)).json()).brain.words;
+  assert.deepEqual(Object.keys(words), ['carryOn', 'notRun', 'notShown', 'report', 'digest', 'cards', 'seenBefore']);
+  assert.ok(Object.values(words).every(v => /^[0-9a-f]{16}$/.test(v)), JSON.stringify(words));
+  // (a copy of this tree whose carry-on line says one word otherwise, its server made again)
+  const copy = join(TMP, 'words-tree');
+  for (const d of ['service', 'test', 'tools', 'deploy', 'public']) cpSync(join(REPO, d), join(copy, d), { recursive: true, verbatimSymlinks: true });
+  const chats = join(copy, 'service', 'src', '14-chats.mjs'), text = readFileSync(chats, 'utf8');
+  assert.ok(text.includes('Carry on with that request:'));
+  writeFileSync(chats, text.replace('Carry on with that request:', 'Carry on with the request:'));
+  // (and two of a lesson card's words, which "Seen before" says too: what was tried, and how an app failed)
+  const lessons = join(copy, 'service', 'src', '20-lessons.mjs'), said = readFileSync(lessons, 'utf8');
+  assert.ok(said.includes("'a run that worked here before'") && said.includes("'its image didn’t download'"));
+  writeFileSync(lessons, said.replace("'a run that worked here before'", "'a run that worked here earlier'").replace("'its image didn’t download'", "'its image did not download'"));
+  const made = spawnSync(process.execPath, [join(copy, 'tools', 'build-server.mjs')], { cwd: copy, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  const { startMock: startCopy } = await import(pathToFileURL(join(copy, 'test', 'start-mock.mjs')).href);
+  const other = await startCopy({ evalOnRecord: false });
+  let theirs;
+  try { theirs = (await (await fetch(`${other.base}/actions`)).json()).brain; } finally { await other.stop(); }
+  for (const k of ['carryOn', 'cards', 'seenBefore']) assert.notEqual(theirs.words[k], words[k], k);
+  assert.deepEqual({ ...theirs.words, carryOn: null, cards: null, seenBefore: null }, { ...words, carryOn: null, cards: null, seenBefore: null }, 'the other words are the same');
+  // (the catalog is in the mark: test/lock.mjs, brainReadsOf)
+  const ours = (await (await fetch(`${T.base}/actions`)).json()).brain;
+  assert.notEqual(brainReadsOf({ system: '', tools: [], catalog: { brain: ours } }), brainReadsOf({ system: '', tools: [], catalog: { brain: { ...ours, words: theirs.words } } }));
+});
+
+// Review of the rail, Later 2: a seal's key that can't be read is named, not taken for a bad run.
+test('a seal’s key that can’t be read: a passing record kept is said to be unsealed, and Sparkie says the seal is why it asks', { timeout: 240000 * SLOW }, async () => {
+  const fleet = await startMock({ watchMs: 60000, evalOnRecord: false, prepare: ({ dir }) => {
+    mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'secrets', 'eval-seal.json'), 'not a key\n', { mode: 0o600 });
+  } });
+  try {
+    const head = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin }, post = async (p, b) => { const r = await fetch(`${fleet.base}${p}`, { method: 'POST', headers: head, body: JSON.stringify(b) }); return { status: r.status, json: await r.json() }; };
+    const since = new Date().toISOString();
+    assert.equal((await post('/main/check', {})).status, 202);
+    const p = await waitFor(() => { try { return Object.values(JSON.parse(readFileSync(join(fleet.stateDir, 'brain-profiles.json'), 'utf8')).profiles).find(x => x.at > since); } catch { return null; } }, { timeout: 60000, what: 'the check' });
+    const lock = JSON.parse(readFileSync(join(fleet.dir, 'workflows.lock.json'), 'utf8'));
+    const rec = { kind: 'spark-console-eval', at: new Date(tick += 1000).toISOString(), build: lock.build, reads: lock.brainReads, set: lock.evalSet.version, setFile: 'test/eval/cases.json', setCases: lock.evalSet.cases.length,
+      cap: null, memorySwitches: { on: SWITCHES, off: [] }, runs: 3, brain: { standIn: true, key: p.key, setup: p.setup.id, model: p.model, engine: p.engine, image: p.image, flags: p.flags },
+      cases: lock.evalSet.cases.map(([id, expect]) => ({ id, expect, runs: [1, 2, 3].map(() => ({ passed: true, asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] })) })) };
+    const r = await post('/main/eval', rec);
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    assert.match(r.json.says, /It isn’t sealed \(the eval seal’s key, eval-seal\.json beside the secrets file, can’t be read or made\), so it counts for nothing\.$/);
+    assert.equal(readFileSync(join(fleet.dir, 'secrets', 'eval-seal.json'), 'utf8'), 'not a key\n', 'never written over');
+    const changes = (await post('/actions/sparkie_setup', {})).json.changes;
+    assert.equal(changes, 'Sparkie asks before every change, one button each: no eval result on record counts for this brain and build: the eval seal’s key (eval-seal.json, beside the secrets file) can’t be read, so no record on file is sealed.');
+  } finally { await fleet.stop(); }
 });
