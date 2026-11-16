@@ -4046,8 +4046,10 @@ function turnRequest({ conv, text, agent, task, channel, open, said, turnId }) {
   // (written at once: a restart before this reply ends must not bring the last request back)
   if (!task && !agent && conv.task) { const was = conv.task; conv.task = null; taskEnded(conv, was, 'replaced'); saveChats(); }
   if (!task && !agent) aheadNewRequest(conv);
+  // ("no", "wait", "cancel" puts the open buttons away; an agent's only its own plain ones: an owner-only ask, a dangerous
+  // one among them, is the owner's alone to answer, R54, C-14)
   if (open.length && REFUSE.test(said)) {
-    for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
+    for (const c of open) { const p = pendingChoices.get(c.id); if (agent && (p?.ownerOnly || p?.danger)) continue; c.state = 'gone'; pendingChoices.delete(c.id); }
   }
   // A carrying-on turn acts only on the owner's own stored words, never on the notices above it.
   const intent = changeIntent(task ? task.request : text);
