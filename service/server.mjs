@@ -19326,6 +19326,10 @@ async function netStillLost(node, g) {
   return (g.ways || ['ssh', 'helper']).filter(p => now[p] === false);
 }
 const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+// The helper's answer to putback when its put-back failed (do_putback's refusal), and what is true then: the Spark
+// answered, so it isn't cut off, but the change may still be in place, in part or whole; what the owner can do.
+const NET_PUTBACK_FAILED = /^the put-back failed: ?(.*)$/;
+const netFailedNow = (at, g) => `${at} answers, so it isn’t cut off, but what that change did may still be in place, in part or whole. /putback tries the put-back again now; what failed is written on ${at} in /var/lib/spark-console/guard/${g.id}/failures, which root can read.`;
 const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
 // Once a guard left to the Spark's own timer is past its time: put back now if its timer didn't (the helper answers
 // "already put back" when it did), the ways in tried again, and the owner told what is true, once.
@@ -19338,6 +19342,9 @@ async function netAfterTime(id) {
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
   if (p.kept) return netMark(g.id, { state: 'kept' });
   if (/^there is no guard /.test(p.refused || '')) return netMark(g.id, { state: 'never' });
+  // (the helper answered that its put-back failed: the Spark answers, so it isn't cut off; say what is true)
+  const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+  if (failed) return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
   if (!p.putBackAt) return netTell(g, netGoneWords(which, at, g));
   netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
   const lost = await netStillLost(node, g);
@@ -19693,10 +19700,14 @@ async function netRecover() {
     if (p.kept) { netMark(g.id, { state: 'kept' }); netTell(g, `${which} had been kept before the restart, so it stays.`); continue; }
     if (/^there is no guard /.test(p.refused || '')) { netMark(g.id, { state: 'never' }); netTell(g, `${which} never ran there: there was nothing to put back.`); continue; }
     netMark(g.id, { state: 'timer' });
+    // (the helper answered that its put-back failed: said as that, never as a Spark that doesn't answer; still held until
+    // its time, when its own timer may try again)
+    const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+    if (failed) netTell(g, `${which} couldn’t be put back now: the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
     // (past its time and still no answer: what the timer can't put back most likely cut it off; else looked at again then)
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
-    if (!(wait > 0)) { netTell(g, netGoneWords(which, at, g)); continue; }
-    netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
+    if (!(wait > 0)) { if (!failed) netTell(g, netGoneWords(which, at, g)); continue; }
+    if (!failed) netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
     // (claimed until its time, as before the restart: nothing else changes there while its own timer may still put it
     // back; then looked at again, netAfterTime, and let go)
     let release = null;

@@ -596,3 +596,28 @@ test('a change sshd refuses, put back at once, is said as that, with sshd’s ow
   await t.go();
   assert.match(t.seen.told[0], /was put back at once: its timer wasn’t waiting after it \(put back at /);
 });
+
+// From the helper's reviewer, net-left (the console's half): after its time, and at start, a helper that answered
+// "refused: the put-back failed" was told as a Spark that doesn't answer, "switch its plug off and on".
+test('a put-back the helper says failed is told as that, after its time and at start: the Spark answers, the change may still be in place, and what to do', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+  const grab = re => re.exec(src)?.[0] || '';
+  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
+    grab(/^const netGoneWords = .*;$/m), grab(/^async function netAfterTime\([\s\S]*?\n\}$/m), grab(/^async function netRecover\([\s\S]*?\n\}$/m)].join('\n');
+  const told = [], marks = [], soon = new Date(Date.now() + 600000).toISOString(), past = new Date(Date.now() - 600000).toISOString();
+  let guards = [];
+  const stubs = { netNow: () => ({ guards }), NET_OPEN: ['arming', 'open', 'timer'], nodeById: id => ({ id }), sparkName: n => `Spark ${n.id.slice(5)}`, netMark: (id, f) => marks.push(f.state),
+    guardCall: async (node, verb, { id }) => ({ out: `${id} refused: the put-back failed: no space left on the guard's disk\n` }), netTell: (g, text) => told.push(text), netHhmm: () => '22:10 UTC',
+    NET_LIVE: 'LIVE', netRestart: () => 'RESTART', NET_SLACK_MS: 60000, netStillLost: async () => [], netStillWords: () => '', netAfterTime: async () => {}, claimSparks: () => () => {}, netHold: () => {} };
+  const { netAfterTime, netRecover } = new Function('scope', `with (scope) { ${parts}\nreturn { netAfterTime, netRecover }; }`)(new Proxy(stubs, { has: (t, k) => k in t }));
+  stubs.netAfterTime = () => Promise.resolve();
+  guards = [{ id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: past }];
+  await netAfterTime('g3');
+  assert.equal(told.at(-1), 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but the put-back failed there (no space left on the guard\'s disk). Spark 3 answers, so it isn’t cut off, but what that change did may still be in place, in part or whole. /putback tries the put-back again now; what failed is written on Spark 3 in /var/lib/spark-console/guard/g3/failures, which root can read.');
+  for (const at of [soon, past]) {
+    guards = [{ id: 'g3', spark: 'spark3', state: 'open', record: 'j_3', goesBackAt: at }];
+    await netRecover();
+    assert.match(told.at(-1), /^A change that could lock you out of Spark 3 \(record j_3\), made inside the lock-out net before Spark Console restarted, couldn’t be put back now: the put-back failed there \(no space left on the guard's disk\)\. Spark 3 answers, so it isn’t cut off/);
+  }
+  assert.ok(!told.some(t => /RESTART|LIVE|doesn’t answer|didn’t answer/.test(t)), told.join('\n'));
+});
