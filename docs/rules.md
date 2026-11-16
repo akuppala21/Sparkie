@@ -62,7 +62,7 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R58](rules/R58.md): Updates from chat (design C 2.3, step 5; contract 6.24): `check_update` (a lookup in the group `updates`, the owner's and any read key's) runs `pull.sh check --json` on Spark 2, …
 - [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).
 - [R60](rules/R60.md): The lock-out net: confirm, or it goes back.
-- [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and its walls).
+- [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and walls).
 - [R62](rules/R62.md): The box (design A 2.4; steps A2 and A4): `run {on: "box"}` and `write_file {on: "box"}` act in the caller's box, a throw-away container on a compute Spark that reaches nothing of …
 - [R63](rules/R63.md): What bounds a plain change.
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
@@ -73,3 +73,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R69](rules/R69.md): Sparkie's own code (design C 2.5, step 8): `propose_update {do: start, send, drop}` (in `updates`; its word kinds `code` and `cancel`) proposes a change to Spark Console's own …
 - [R70](rules/R70.md): Root, only where the owner turned it on, and only inside the net.
 - [R71](rules/R71.md): The lock-out net, the console's half (A13b, `21-net.mjs`; on: `NET_ON`).
+- [R72](rules/R72.md): What the runner asks for itself, and what the press checks (moved from R61 on 2026-11-15; R61 is `run` with a change and the runner, R54 the dangerous ask).
