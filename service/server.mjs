@@ -12506,7 +12506,10 @@ function sortScan(text, ctx, r, progs, touched = false) {
   for (const s of text.replace(/\$\{HOME\}|\$HOME\b/g, '~').split(/[\s;&|()<>`'"=,{}]+/)) {
     if (!s || (s.length > SORT_PATH && !touched)) continue;
     for (const p of sortCands(s)) {
-      if (/^[~/.]/.test(p) || (p.includes('/') && !p.includes('://'))) for (const q of sortPaths(p, ctx, r)) sortPlace(q, /[*?[]/.test(p), ctx, r, false, touched);
+      // (in text a program reads, .* .+ .? and a backslash are a regular expression, not a pattern bash expands: s/.*// and
+      // r'/.*' name no dot file; a home's pattern, ~/.*, still counts)
+      const re = touched === 'seen' && /\.[*+?]|\\/.test(p) && !/^~/.test(p);
+      if (/^[~/.]/.test(p) || (p.includes('/') && !p.includes('://'))) for (const q of sortPaths(p, ctx, r)) sortPlace(q, !re && /[*?[]/.test(p), ctx, r, false, touched);
       else sortNames(p, ctx, r);
     }
     if (LOCK_NAMES.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)}, one of the ways in.`);

@@ -214,3 +214,12 @@ test('set -k, set -o keyword and a shell started with -k are a doubt: a later NA
     'bash -k -c "git pull GIT_CONFIG_COUNT=0"', 'sh -ek -c "git pull"', 'bash -o keyword -c "git pull"', 'bash -c "set -k; git pull X=1"'].map(c => [c, null, { dir: '~/work' }]), r => is('risky', r)), []);
   assert.deepEqual(check(['set -e; git pull', 'set -eu; make', 'set -o pipefail; make'].map(c => [c, null, { dir: '~/work' }]), r => is('change', r)), []);
 });
+
+// The sorter's final read, "smaller": one-liners holding /.* were sorted lock-out ("It names /.*, one of the ways in").
+test('a regular expression in a program\'s text is no pattern of dot files: an in-place rewrite is sorted as one; a home\'s pattern still counts', () => {
+  assert.deepEqual(check(["perl -pi -e 's/.*//' f", "sed -i 's/.*//' f", "python3 -c \"import re; re.sub(r'/.*', '', x)\"", "python3 -c \"import glob; glob.glob('src/.*')\"",
+    "awk '{ sub(/.*/, \"\"); print > \"out\" }' f", "perl -pi -e 's/^.+$//' notes.txt"].map(c => [c, null, { dir: '~/work' }]), r => is('change', r)), []);
+  assert.equal(sort("perl -pi -e 's/.*//' f", { dir: '~/work' }).deletes, true);
+  assert.deepEqual(check(["python3 -c \"import glob,os; [os.remove(f) for f in glob.glob(os.path.expanduser('~/.*'))]\"", 'rm -rf ~/.*',
+    "python3 -c \"open('/home/owner/.bashrc','w')\""].map(c => [c, null, { dir: '~/work', home: '/home/owner' }]), r => is('lockout', r)), []);
+});
