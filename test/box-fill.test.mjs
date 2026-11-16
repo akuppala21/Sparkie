@@ -234,7 +234,7 @@ test('with agents paused, an agent’s fill and read back are refused; with no e
     for (const command of [`/fill ${T_.good}`, '/read-back']) {
       const r = await call(T_.agent.token, 'run', { on: 'box', command });
       assert.equal(r.isError, true, `${command}: ${r.text}`);
-      assert.match(r.text, /Agents’ changes are paused/);
+      assert.match(r.text, /Agents’ changes are paused .*filling or reading back a box is a change/);
     }
   } finally { await agentSettings({ halted: false }); }
   assert.ok(!readFileSync(join(mock('spark3'), 'containers'), 'utf8').includes(boxName(`agent ${T_.agent.id}`)), 'the agent’s box never opened');
@@ -246,4 +246,8 @@ test('with agents paused, an agent’s fill and read back are refused; with no e
   const done = (await res.text()).split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done');
   assert.ok(done?.message?.choices?.length >= 1, JSON.stringify(done?.message));
   assert.ok(!readFileSync(join(F.root, 'spark3', '.mock', 'containers'), 'utf8').includes('spark-console-box-'), 'no box opened');
+  // The owner's press is the owner's own: the box opens and is filled.
+  const press = await fetch(`${F.base}/chats/${chat.id}/choose`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify({ choice: done.message.choices[0].id }) });
+  assert.equal(press.status, 200, await press.text());
+  assert.equal(readFileSync(join(folder(boxName(`chat ${chat.id}`), 'spark3', F), 'spark-console', 'README.md'), 'utf8'), 'hello\n', 'filled by the press');
 });
