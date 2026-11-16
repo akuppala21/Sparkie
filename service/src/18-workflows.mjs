@@ -134,8 +134,9 @@ function workflowStatus(id) {
     runs: v.runs || 0, succeeded: v.succeeded || 0, lastRunAt: v.lastRunAt || null };
 }
 // A finished operation counts for its workflow: every run in the totals, and a passing one as that version's validation.
+// A clean-up's stop that left its model running (left, A-22) stopped nothing, so it counts for nothing.
 function recordWorkflowRun(job) {
-  if (!job.workflow || job.status === 'cancelled') return;
+  if (!job.workflow || job.status === 'cancelled' || job.left) return;
   // Read strictly (R20, F12): when the record can't be read just now this run isn't counted, so the save below never goes
   // over the other workflows' records. (validations() stays for lookups.)
   let all;

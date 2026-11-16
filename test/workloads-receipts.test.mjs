@@ -5,15 +5,17 @@
 // end (well, failed or cancelled) the model keeps running, stays on the list, and the result says it was left. A job the
 // owner ran again by hand after the run's job step is left when a later step fails. A run nobody touched still stops
 // what it started, and a model self-healing brought back during the run is still the run's and is stopped.
+// From a chat, the clean-up's stop that left the model running says so there and never "finished", and isn't counted
+// as a run of stop_model (its validation).
 //
 // The stand-in fleet as in the round-two check (a2-cleanup): Spark 3 with none of Spark Console's models running and a
 // new id for each container made there; on Spark 4 a job (rc-long) that runs until the test ends it, and start times
 // stamped as they happen. Self-healing looks every 2 s.
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, waitFor, eventLines, SLOW } from './lib.mjs';
+import { T, useFleet, api, waitFor, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT20 = 'sc-gpt-oss-20b';
 const SINCE = '2026-11-12T08:00:00.000Z';
@@ -43,6 +45,7 @@ const listed = async () => (await api('/desired')).json.running.map(x => `${x.sp
 const done = async r => { assert.equal(r.json?.outcome, 'started', r.text); return opEnd(r.json.operation, 'an operation'); };
 const ownerStop = async () => { const s = await api('/stop', { method: 'POST', body: { node: 'spark3', container: GPT20 } }); assert.equal(s.status, 202, s.text); assert.equal((await opEnd(s.json.id, 'the owner’s stop')).status, 'completed'); };
 const LEFT = 'Left running: sc-gpt-oss-20b on Spark 3 was started again since, not by this run.';
+const stopRecord = () => { try { return JSON.parse(readFileSync(join(T.fleet.stateDir, 'validations.json'), 'utf8')).stop_model || null; } catch { return null; } };
 
 // Before each run: the job runs, and gpt-oss-20b is stopped and off the list, so the run's step 1 starts it.
 async function ready() {
@@ -54,7 +57,9 @@ async function ready() {
 async function toStep2() {
   const r = await act('run_workflow', { name: 'rc eval' });
   assert.equal(r.json?.outcome, 'started', r.text);
-  const id = r.json.operation;
+  return atStep2(r.json.operation);
+}
+async function atStep2(id) {
   await waitFor(async () => /^Step 2: rc-long runs on Spark 4; waiting for it to end/.test((await opNow(id)).step), { timeout: 240000 * SLOW, what: 'step 2 waiting for rc-long', every: 250 });
   assert.equal(stateOf('spark3', GPT20), 'running');
   return id;
@@ -124,6 +129,25 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
       assert.ok((await listed()).includes(`spark3/${GPT20}`), 'and stays on the list');
     });
   }
+
+  test('from a chat: the clean-up\'s stop that left the model running says so there, never "finished", and isn\'t counted as a run of stop_model', { timeout: 600000 * SLOW }, async () => {
+    await ready();
+    writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: '^run rc eval from this chat$', calls: [{ name: 'run_workflow', arguments: { name: 'rc eval' } }] }]));
+    let chat;
+    try { chat = await newChat(); await say(chat, 'run rc eval from this chat'); } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+    const run = await waitFor(async () => (await act('recent_operations', { limit: 50 })).json.operations.find(o => o.type === 'workflow-run' && o.status === 'running'), { timeout: 30000 * SLOW, what: 'the run' });
+    const id = await atStep2(run.id);
+    await TOUCH['asks to start it, and is told it already runs']();
+    const before = stopRecord();
+    const o = await finish(id, 'well');
+    assert.ok(String(o.cleanUp).includes(LEFT), `${o.cleanUp}`);
+    await waitFor(async () => (await chatMessages(chat)).some(m => m.notice && m.operation === id), { timeout: 30000 * SLOW, what: 'the run’s result in the chat' });
+    const said = (await chatMessages(chat)).filter(m => m.notice).map(m => m.content);
+    assert.ok(!said.some(l => /^Done: stopping sc-gpt-oss-20b/.test(l)), said.join('\n'));
+    assert.ok(said.includes(LEFT), said.join('\n'));
+    assert.deepEqual(stopRecord(), before, 'the left stop isn’t a run of stop_model');
+    assert.equal(stateOf('spark3', GPT20), 'running');
+  });
 
   test('a model self-healing brought back during the run is still the run\'s: it is stopped at the end', { timeout: 600000 * SLOW }, async () => {
     await ready();

@@ -3860,6 +3860,8 @@ function postResult(job) {
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
+    // (a saved workflow's clean-up stop that found it started again since left it running, and says so: A-22)
+    : job.status === 'completed' && job.left ? `Left running: ${job.left}.`
     : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
@@ -8396,8 +8398,9 @@ function workflowStatus(id) {
     runs: v.runs || 0, succeeded: v.succeeded || 0, lastRunAt: v.lastRunAt || null };
 }
 // A finished operation counts for its workflow: every run in the totals, and a passing one as that version's validation.
+// A clean-up's stop that left its model running (left, A-22) stopped nothing, so it counts for nothing.
 function recordWorkflowRun(job) {
-  if (!job.workflow || job.status === 'cancelled') return;
+  if (!job.workflow || job.status === 'cancelled' || job.left) return;
   // Read strictly (R20, F12): when the record can't be read just now this run isn't counted, so the save below never goes
   // over the other workflows' records. (validations() stays for lookups.)
   let all;
@@ -15001,6 +15004,8 @@ function tellWhat(job) {
 }
 function tellResultLine(job) {
   const what = tellWhat(job);
+  // (a saved workflow's clean-up stop that left it running: never "finished", A-22)
+  if (job.status === 'completed' && job.left) return `${what}: left running, as it was started again since, not by this run.`;
   // (a long command's exit code, a number: an exit other than 0 is a result, told as one, 21-long.mjs)
   if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished${job.type === 'run' && Number.isInteger(job.exit) ? ` with exit code ${job.exit}` : ''}.`;
   if (job.status === 'cancelled') return `${what} was cancelled.`;
