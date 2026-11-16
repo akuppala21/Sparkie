@@ -152,8 +152,8 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
-// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
+// protect, the folders under the home given read-only (helperProtect); bare, those the owner's yes let it run without.
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -174,14 +174,24 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
-    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    // (the protect folders, a link followed to the folder it leads to: helperProtect)
+    ...(pr.length ? [helperProtect(pr, bare)] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
       : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
         : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
+}
+// The shell line that gives a change its protect folders (each ~/… and plain; R61), for the helper's --protect: a real
+// folder as ~/…; one that is a link, or has a link above it (the model store on a second disk), as the folder it leads
+// to (~/… when that is in the home, else its whole path), never left out; one whose link leads to no folder there stops
+// the call before the helper ("console protect <folder>", which the runner turns into an ask), unless bare names it
+// (the owner's yes said it runs without it). One that isn't there is left out: nothing is there to keep. Its script
+// defines said, as helperScript's and the net's guardScript (21-guard.mjs) do; both call this.
+function helperProtect(dirs, bare = []) {
+  const under = d => `"$HOME"${q(d.slice(1))}`;
+  return `p=(); ${dirs.map(d => `if [ -L ${under(d)} ] || { [ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" != ${under(d)} ]; }; then r=$(realpath -e -- ${under(d)} 2>/dev/null); if [ -n "$r" ] && [ -d "$r" ]; then case $r in "$HOME"/*) p+=(--protect "~/\${r#"$HOME"/}") ;; *) p+=(--protect "$r") ;; esac; else ${bare.includes(d) ? 'true' : `said ${q(`protect ${d}`)}`}; fi; elif [ -d ${under(d)} ]; then p+=(--protect ${q(d)}); fi`).join('; ')}`;
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
 // folders), check (with form: an exact form run after it), or prove. A fresh id each call. Never rejects: { id, code, out
@@ -217,8 +227,11 @@ function helperCall(node, verb, opts = {}) {
     child.on('close', code => finish(code));
   });
 }
-// What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
-// and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
+// What a call's output says. The helper's own lines begin with the call's id, but a command can learn that id (its own
+// file, /run/spark-console/<id>/command, is its $0; its unit's name and control group hold it too), so a line that
+// begins with it proves nothing by itself. A run's or a look's last line is "<id> end <code>" or "<id> end time", which
+// the helper prints once the command and all it started have ended; before it, only a line that is whole one of the
+// helper's fixed sentences is its note (helperAnswer). Anything else the command printed, a line shaped like the
 // helper's own included, is only ever output.
 // Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer
 // and the runner (21-runner.mjs) read through these (the net's, 21-guard.mjs, through GUARD_SAYS there), and
@@ -241,9 +254,12 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time)\\n$`).exec(out);
   if (end) {
     // (a change's own last lines, after a line break of the helper's and before its end: the disk floor stopped it, the
-    // home's mode or owner put back, R63. What the command printed comes before them.)
+    // home's mode or owner put back, R63, each one of the helper's fixed sentences, whole: the floor in bytes_said's
+    // sizes, the modes in stat's octal. What the command printed comes before them, a line it began with the id too.)
+    const note = l => (HELPER_SAYS.diskStopped.test(l) && /under \d{1,15}(?:\.\d)? [GM]B$/.test(l))
+      || /^(?:the home's mode and owner were put back \([0-7]{3,4}, not [0-7]{3,4}\)(?:; the home's added access rules were taken away)?|the home's added access rules were taken away)$/.test(l);
     const lines = out.slice(0, end.index).split('\n'), notes = [];
-    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
+    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && note(lines.at(-1).slice(id.length + 1)) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
     return { kind: 'ran', output: lines.join('\n'), exit: end[1] === 'time' ? null : Number(end[1]), ended: end[1] === 'time', ...(notes.length ? { notes } : {}) };
   }
   if (timedOut) return { kind: 'ended', output: out };
@@ -321,10 +337,12 @@ function forBrain(t) {
 
 // run's own work (A7c): the sorter sorts each command; a look runs in the look wall, as before; anything else goes to
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
-// command word, a key's name), with the look's own words.
+// command word, a key's name), with the look's own words: a key's name is refused so only for a look, or for what the
+// sorter calls a key shown back (not done). A change that names one (mv .env.example .env) goes to the ladder, which
+// asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
-  if (input.root === true) return rootChange(input, viewer, ctx);
+  if (input.root === true) { workHeld(viewer, ctx); return rootChange(input, viewer, ctx); }
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: its own place, before the sorter)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
@@ -334,13 +352,11 @@ async function runCommand(input, viewer, ctx = {}) {
   if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
-    const { words, sudo } = lookWords(command);
-    if (!words.some(keyWord)) {
-      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
-      // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
-      // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
-    }
+    const { words, sudo } = lookWords(command), keyed = words.some(keyWord);
+    const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
+    // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
+    // ladder's to refuse, design A 2.8)
+    if (sorted.class !== 'look' && !(keyed && sorted.class === 'notdone') && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
   }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {
