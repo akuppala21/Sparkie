@@ -1,10 +1,11 @@
-// Covers: text written by someone else is never an inside read (A-17, round two
+// Covers: text written by someone else is never an inside read, nor rides ahead of the owner's words (A-17, round two
 // with the outside reviewer; R26, R53). Inside is the exception, said by each action itself (`inside`, readInside in
 // 14-rounds.mjs): fleet_status, linked_sparks, guide and sparkie_setup with about "abilities"; every other lookup, a new
 // one too, is outside text, so a change after it is asked. A sentence planted at each source the stand-in fleet can vary
 // (a model's spark.json title and config.json architecture, type and dtype; a model container's spark.model label,
 // which its server answers as its id; a GPU process's name; a failed start's log line; a saved workflow's "when")
-// reaches the outside reads and none of the inside ones, in any form their arguments allow.
+// reaches the outside reads and none of the inside ones, in any form their arguments allow, nor the record ahead of the
+// owner's words (fleetNotes: the console's own words and bare names).
 // The stand-in fleet, with the real root helper rehearsed for Spark 3 (test/rehearsal.mjs, run: true), the stand-in
 // brain told by a script which tools to call. Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test } from 'node:test';
@@ -129,4 +130,16 @@ test('after models_on_disk, the change that follows is asked (“Sparkie read te
   assert.ok(r.choices.some(c => c.label === 'Run it'), JSON.stringify({ choices: r.choices, tools: r.tools }));
   assert.equal(text('notes/victim.txt'), 'the owner’s own lines\n', 'nothing ran');
   assert.match(JSON.stringify(sentFor(words)), /Sparkie read text from outside first/);
+});
+
+// The record ahead of the owner's words: the console's words and bare names only.
+test('the record ahead of the owner’s words holds no planted sentence: the failed start is said by code, the rest by name', { timeout: 180000 * SLOW }, async () => {
+  assert.ok(started, 'set-up: the failed start above');
+  const words = 'good morning';
+  await say(await newChat(), words);
+  const sent = sentFor(words).at(-1);
+  assert.ok(sent, 'the brain was asked');
+  const record = `${sent.system}\n${sent.lastUser}`;
+  assert.deepEqual(planted(record), [], record.slice(0, 3000));
+  assert.match(String(sent.lastUser), new RegExp(`UTC: [a-z-]+ \\S*${esc(MODEL)}\\S* failed \\(operation_log has why\\)`), String(sent.lastUser).slice(0, 3000));
 });
