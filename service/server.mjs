@@ -11378,7 +11378,7 @@ async function mcpDoor(req, res, viewer) {
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');
   let msg;
-  // (256 KB is far more than any tool call needs; a megabyte of text was a way to stall the console)
+  // (262,144 characters is far more than any tool call needs; a megabyte of text was a way to stall the console)
   try { msg = await readBody(req, 262144); } catch (e) { return fail(e.status || 400, null, -32700, e.message); }
   // Removed while the request was on its way: refused.
   if (!(agent = agentFor(req, viewer))) return noKey();
