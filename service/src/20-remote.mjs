@@ -28,7 +28,9 @@ function sortToHub(h, ctx, r, via, unknown = false) {
   if (place === 'compute') return;
   if (unknown || !String(h ?? '').includes('.') || sortNear(String(h), ctx)) {
     ctx.kinds.add('brain');
-    raise(r, 'risky', `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`);
+    // (the dangerous ask's reason says why, before any other risky one)
+    raise(r, 'risky', '');
+    if (r.class === 'risky') r.why = `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`;
   }
 }
 // The names Spark 2 goes by that its callers may leave out: the console's own address and its first label, and the

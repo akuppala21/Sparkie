@@ -13115,7 +13115,9 @@ function sortToHub(h, ctx, r, via, unknown = false) {
   if (place === 'compute') return;
   if (unknown || !String(h ?? '').includes('.') || sortNear(String(h), ctx)) {
     ctx.kinds.add('brain');
-    raise(r, 'risky', `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`);
+    // (the dangerous ask's reason says why, before any other risky one)
+    raise(r, 'risky', '');
+    if (r.class === 'risky') r.why = `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`;
   }
 }
 // The names Spark 2 goes by that its callers may leave out: the console's own address and its first label, and the
@@ -13528,7 +13530,7 @@ function sortSedSafe(s) {
 // Area: safety        Rules: R55        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// sortCommand(command, {at, root, dir, home, hosts, brain, written}) says what one command for run is before anything runs, from its
+// sortCommand(command, {at, root, dir, home, hosts, brain, written, protect}) says what one command for run is before anything runs, from its
 // text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything
 // JSON can carry (a getter or a toString that throws is caught too). Five classes, in
 // their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's
@@ -13548,6 +13550,7 @@ function sortSedSafe(s) {
 // one-liner, more than one program, or a write outside the root folders is risky). dir: where it starts (~). hosts: the
 // fleet's names → 'compute' or the hub. brain: the brain's container and model names (naming one is risky, kind brain).
 // home: the owner's home there. written: what the task's earlier commands wrote (as placed lists it), counted as written here.
+// protect: the protected containers' name patterns (CONFIG.protect when not given): stopping one is not done.
 // The result: class; why (the sorter's own words; a piece of the command in it is one quoted line, cut short); kinds
 // (design A 2.14's dangerous asks: root, lockout, delete, brain); form (run's exact form); simple (one program, no
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
@@ -13852,6 +13855,8 @@ function sortCommand(command, opts) {
     for (const [k, v] of Object.entries(o.hosts && typeof o.hosts === 'object' ? o.hosts : {})) ctx.hosts[k] = v === 'compute' ? 'compute' : 'hub';
     sortHubNames(ctx);
     Object.assign(ctx, { at: o.at ?? 'compute', root: !!o.root, brain: (Array.isArray(o.brain) ? o.brain : []).filter(b => typeof b === 'string' && b.length > 2) });
+    // (the protected containers' name patterns, * for anything: given, or the console's own list, CONFIG.protect)
+    ctx.protect = (Array.isArray(o.protect) ? o.protect : typeof CONFIG === 'object' && Array.isArray(CONFIG?.protect) ? CONFIG.protect : []).filter(g => typeof g === 'string' && g && g.length <= 200).slice(0, 64);
     // (the owner's home on that Spark: given, or the configured user's; a path is placed against it alone)
     const home = o.home != null ? String(o.home).replace(/\/+$/, '') : typeof CONFIG === 'object' && /^[a-z_][a-z0-9_-]*$/i.test(String(CONFIG?.user)) ? `/home/${CONFIG.user}` : null;
     if (home != null && (!/^(?:\/[\w.@+-]+)+$/.test(home) || /\/\.\.?(?:\/|$)/.test(home))) unsure('The owner’s home is not one the sorter can place.');
@@ -14594,8 +14599,17 @@ function sortBuild(a, ctx, r, x, name) {
 // the sorter can't see into). A mount or a namespace it can't read counts as reaching the host.
 const DOCKER_NS = /^--(?:net|network|pid|ipc|uts|userns|cgroupns)(?:=|$)/;
 const DOCKER_SYS = /^\/(?:$|etc|root|home|run|var\/run|proc|sys|dev|boot|var\/spool|var\/lib\/(?:docker|containerd|tailscale|systemd))(?:\/|$)|(?:^|\/)docker\.sock$/;
-function sortDockerHost(a, ctx, r, name) {
-  const t = a.map(w => w.text), why = s => raise(r, 'lockout', `${sortQ(name)} ${s}: a container that reaches the host can change SSH, the firewall or users on the Spark itself, a way in.`);
+// (only what starts a container or runs in one: run, create, exec, a build; their words, from the sub-command on)
+const sortDockerVerb = a => {
+  let k = 0;
+  while (k < a.length && a[k].text.startsWith('-') && !a[k].unknown) k += /^(?:-H|--host|-c|--context|--config|-l|--log-level|--tlscacert|--tlscert|--tlskey)$/.test(a[k].text) ? 2 : 1;
+  const v = a[k]?.text ?? '', sub = /^(?:container|compose|image|buildx)$/.test(v) ? a.slice(k + 1).find(w => !w.text.startsWith('-'))?.text ?? '' : v;
+  return { k, v, sub, unknown: !!a[k]?.unknown };
+};
+function sortDockerHost(a0, ctx, r, name) {
+  const d = sortDockerVerb(a0);
+  if (!d.unknown && !(/^(?:run|create|exec|build|buildx)$/.test(d.sub) || (d.v === 'compose' && /^(?:up|run|create|exec)$/.test(d.sub)))) return;
+  const a = a0.slice(d.k), t = a.map(w => w.text), why = s => raise(r, 'lockout', `${sortQ(name)} ${s}: a container that reaches the host can change SSH, the firewall or users on the Spark itself, a way in.`);
   for (let k = 0; k < a.length; k++) {
     const w = a[k], s = t[k], val = () => (s.includes('=') ? { ...w, text: s.slice(s.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] });
     if (w.unknown && (sortSplits(w) || /^-/.test(w.lit ?? ''))) return why('is given words through a $ or a command, which may be options that reach the host');
@@ -14615,6 +14629,30 @@ function sortDockerHost(a, ctx, r, name) {
   // (a lock-out program among its words: what it reaches depends on a container the sorter can't see into)
   const named = t.flatMap(s => s.split(/[\s;&|()<>`'"=,{}]+/)).map(s => s.split('/').pop()).find(s => SORT_PROGS[s]?.cls === 'lockout' || SORT_LOCK_HANDLERS.has(s));
   if (named) why(`runs ${sortQ(named)} in a container the sorter can't see into`);
+}
+// The protected containers (the brain's, and those CONFIG.protect names, which the console never stops on its own:
+// the guide, R41): a command that stops, kills, removes, restarts, pauses, updates, renames or execs into one is not
+// done, on any Spark. Which container a word names can't be told for a $, a pattern, an id (hex, maybe a protected one's
+// prefix) or a compose project: the dangerous ask (kind brain), saying so.
+const DOCKER_STOPS = /^(?:stop|kill|rm|restart|pause|update|rename|exec|attach)$/;
+const DOCKER_TAKES = /^-(?:t|s|e|u|w|-time|-signal|-env|-env-file|-user|-workdir|-detach-keys|-cpus|-cpu-shares|-cpu-period|-cpu-quota|-cpuset-cpus|-cpuset-mems|-memory|-memory-reservation|-memory-swap|-kernel-memory|-pids-limit|-restart|-blkio-weight|-cpu-rt-period|-cpu-rt-runtime)$/;
+function sortDockerProtect(a, ctx, r, name) {
+  const { k, v, sub: sub0 } = sortDockerVerb(a), sub = v === 'compose' ? a.slice(k + 1).find(w => /^(?:down|stop|kill|rm|restart|pause)$/.test(w.text))?.text ?? sub0 : sub0;
+  // (the dangerous ask's reason says why: it stands before the socket's)
+  const ask = why => { ctx.kinds.add('brain'); raise(r, 'risky', ''); if (r.class === 'risky') r.why = `${sortQ(name)} ${sortQ(sub)} ${why}: a protected container (the brain’s, or one the owner keeps) may be among them, so it is asked the dangerous way.`; };
+  if (v === 'compose' && /^(?:down|stop|kill|rm|restart|pause)$/.test(sub)) return ask('works on a compose project’s containers, which the sorter can’t name');
+  if (!DOCKER_STOPS.test(sub)) return;
+  const at = a.findIndex((w, i) => i >= k && w.text === sub), names = [];
+  for (let i = at + 1; i < a.length; i++) {
+    if (a[i].text.startsWith('-') && !a[i].unknown) { if (DOCKER_TAKES.test(a[i].text)) i++; continue; }
+    names.push(a[i]);
+    if (/^(?:exec|attach|rename)$/.test(sub)) break;
+  }
+  const protectedName = n => ctx.brain.includes(n) || ctx.protect.some(g => sortGlob(g.replace(/\//g, '')).test(n));
+  const hit = names.find(w => !w.unknown && !w.glob && protectedName(w.text));
+  if (hit) return raise(r, 'notdone', `${sortQ(name)} ${sortQ(sub)} ${sortQ(hit.text)}: it is a protected container (the brain’s, or one the owner keeps), which a command never stops or changes.`);
+  const odd = names.find(w => w.unknown || w.glob || w.brace || /^[0-9a-f]{1,64}$/.test(w.text));
+  if (odd) ask(`names ${odd.unknown ? 'containers through a $ or a command' : odd.glob || odd.brace ? 'containers by a pattern' : `${sortQ(odd.text)}, which may be the start of a protected container’s id`}`);
 }
 Object.assign(SORT_HANDLERS, {
   ...Object.fromEntries('make gmake cmake ninja meson cargo go rustc gcc g++ cc c++ clang clang++ nvcc javac mvn gradle bazel'.split(' ').map(n => [n, sortBuild])),
@@ -14781,7 +14819,9 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
     // (what an image, a container, a Dockerfile or a compose file runs is in none of its words)
     if (v.some(t => /^(?:run|create|start|exec|build|buildx|compose|up|restart)$/.test(t))) sortUnshown(r, `the code the image, the container or the file ${name} is given runs`);
-    sortDockerHost(a, ctx, r, name);
+    const all = name === 'docker-compose' ? [{ text: 'compose', subs: [] }, ...a] : a;
+    sortDockerHost(all, ctx, r, name);
+    sortDockerProtect(all, ctx, r, name);
   },
   // (containerd's and the kubelet's own tools, and machinectl's shells: a container or a shell they start may reach the host)
   ...Object.fromEntries(['ctr', 'crictl', 'machinectl'].map(n => [n, (a, ctx, r) => {
@@ -14833,7 +14873,7 @@ Object.assign(SORT_HANDLERS, {
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);
       if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager|systemd-user-sessions$|user-runtime-dir|wg-quick|rfkill|systemd-timesyncd$|chrony|ntp)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
-      else if (['docker', 'containerd'].some(is)) raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`);
+      else if (['docker', 'containerd'].some(is)) { raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`); if (/^(?:stop|restart|kill|try-restart|reload-or-restart|disable|mask|freeze|isolate)$/.test(v)) ctx.kinds.add('brain'); }
       else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);
       if (at && (pat || !/^[A-Za-z0-9_-]+(?:\.service)?$/.test(u.text))) raise(r, 'risky', `As root, systemctl changes at once only a service named plainly, not ${sortQ(u.text)} (a pattern, a target, a slice, an instance, a path or another kind of unit).`);
     }

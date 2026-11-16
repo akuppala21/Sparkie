@@ -133,7 +133,7 @@ const ROWS = [
   ['git clean -fdx', 'risky', APP], ['git reset --hard', 'risky', APP], ['rsync -a --delete src/ dst/', 'risky'], ['find . -name -delete', 'lockout'], ['find /tmp -name -delete', 'risky'], ['find * -maxdepth 0', 'risky'],
   ['touch /tmp/x', 'risky', HUB], ['pip install vllm', 'risky', HUB], ['bash fix.sh', 'risky', ROOT], ["python3 -c 'print(1)'", 'risky', ROOT],
   ['apt install -y htop', 'change', ROOT], ['apt update && apt install -y htop', 'risky', ROOT], ['sed -i s/a/b/ /etc/x.conf', 'change', ROOT],
-  ['rm -rf ~/models/RadixArk--Qwen3.8-27B-NVFP4', 'risky'], ['docker stop sparkie-main', 'risky'], ['systemctl restart docker', 'risky', ROOT],
+  ['rm -rf ~/models/RadixArk--Qwen3.8-27B-NVFP4', 'risky'], ['docker stop sparkie-main', 'notdone'], ['systemctl restart docker', 'risky', ROOT],
   ['echo x > /etc/docker/daemon.json', 'risky'], ['chroot /mnt', 'lockout'], ['journalctl --vacuum-time=1d', 'risky'], ['echo b > /proc/sysrq-trigger', 'risky'],
   ['systemctl restart nginx', 'change', ROOT], ['systemctl restart nginx', 'risky'], ['scp x example.com:/tmp/', 'risky'], ['scp x spark3:/tmp/', 'risky'], ['scp spark3:/tmp/x /tmp/', 'risky'],
   ['scp x spark2:/tmp/', 'notdone'], ['ssh -L 8000:localhost:8000 spark3', 'risky'], ['nc -l 9000', 'risky'],

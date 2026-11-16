@@ -152,3 +152,25 @@ test('the lock-out class\'s misses: a way-in process killed by name, radios, lin
   assert.deepEqual(check(['rfkill', 'rfkill list', 'networkctl status', 'wg show', 'ipset list', 'conntrack -L', 'brctl show'].map(c => [c]), r => is('change', r)), []);
   assert.deepEqual(check(['date', 'date +%s', 'systemctl status ssh'].map(c => [c]), r => is('look', r)), []);
 });
+
+// Item 6 (net, seen outside): docker stop qwen-recipe-<x> on a compute Spark was an ordinary risky button.
+test('a protected container is never stopped or changed by a command, by any spelling; one that can\'t be told is the dangerous ask, saying so', () => {
+  const P = { protect: ['qwen-recipe-*'] };
+  const NEVER = ['docker stop qwen-recipe-chisel', 'docker kill qwen-recipe-x', 'docker rm -f qwen-recipe-x', 'docker restart qwen-recipe-x', 'docker pause qwen-recipe-x',
+    'docker update --restart=no qwen-recipe-x', 'docker stop sparkie-main',
+    // (and spellings of our own: the long form, other engines, options first, an exec or a rename, the pattern itself, on Spark 2, as root, inside a shell)
+    'docker container stop qwen-recipe-x', 'podman stop qwen-recipe-x', 'nerdctl kill qwen-recipe-x', 'docker stop -t 5 sparkie-main', 'docker exec qwen-recipe-x pkill python',
+    'docker rename qwen-recipe-x y', "docker stop 'qwen-recipe-*'", 'docker -H unix:///run/docker.sock stop qwen-recipe-x', "bash -c 'docker stop qwen-recipe-x'"];
+  assert.deepEqual(check(NEVER.map(c => [c, null, P]), r => is('notdone', r)), []);
+  assert.deepEqual(check(NEVER.map(c => [c, null, { ...P, at: 'hub' }]), r => is('notdone', r)), []);
+  assert.deepEqual(check(NEVER.map(c => [c, null, { ...P, root: true }]), r => is('notdone', r)), []);
+  // (an id that may be a protected one's prefix, a $, a compose project, every container through the Docker service)
+  const MAYBE = ['docker stop 3f2a', 'docker rm -f 0123abcd', 'docker stop $(docker ps -q)', 'docker stop "qwen-recipe-$X"', 'docker compose down', 'docker compose -p x stop',
+    'docker-compose down'];
+  assert.deepEqual(check(MAYBE.map(c => [c, null, P]), r => (r.class === 'risky' && r.kinds.includes('brain') && /protected container/.test(r.why) ? null : 'not the dangerous ask saying a protected container may be among them')), []);
+  assert.deepEqual(check(['systemctl stop docker', 'systemctl restart containerd'].map(c => [c, null, { ...P, root: true }]), r => (r.kinds.includes('brain') ? null : 'no brain kind')), []);
+  // (a container of the owner's own that matches nothing: one plain button, as before)
+  assert.deepEqual(check(['docker stop my-app', 'docker rm old-job', 'docker restart web'].map(c => [c, null, P]), r => (r.class === 'risky' && !r.kinds.includes('brain') ? null : 'changed')), []);
+  // (the console's own list, when the caller gives none)
+  assert.equal(sortCommand('docker stop x', {}).class, 'risky');
+});
