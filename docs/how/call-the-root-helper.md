@@ -11,9 +11,9 @@ through the root helper (`deploy/spark-console-root`, R42) and its one caller, `
   the Spark, then `sudo -n` of the helper with a fresh id. The brain's text is only ever one word made with `q()`.
 - `helperCall` runs it and gives back `{ id, code, out, cut, timedOut }`; it never rejects. It ends the call at its
   seconds and `LOOK_SLACK` more, or past `J_MAX` of output.
-- `helperAnswer` reads the answer from the lines that begin with the id; a look's (or run's) answer is its last line,
-  `<id> end <code>` or `<id> end time`, so what a command prints can never stand for one; a change's own lines before
-  it come back as `notes`. Map a new kind of answer there, never by searching the output.
+- `helperAnswer` reads the answer from the lines that begin with the id (a command can learn it); a look's or run's
+  answer is its last line, `<id> end <code>` or `<id> end time`; before it only the helper's fixed sentences, whole,
+  are `notes`. Map a new kind of answer there, never by searching the output.
 - A change (`runChange`, R61): `--dir`, `--protect '~/…'`, `--memory`; after a yes only `--open`, `--fleet`, `--gpu`.
   `state --id` (`runnerRunState`): what became of a call.
 - With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:

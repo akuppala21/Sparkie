@@ -23686,8 +23686,11 @@ function helperCall(node, verb, opts = {}) {
     child.on('close', code => finish(code));
   });
 }
-// What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
-// and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
+// What a call's output says. The helper's own lines begin with the call's id, but a command can learn that id (its own
+// file, /run/spark-console/<id>/command, is its $0; its unit's name and control group hold it too), so a line that
+// begins with it proves nothing by itself. A run's or a look's last line is "<id> end <code>" or "<id> end time", which
+// the helper prints once the command and all it started have ended; before it, only a line that is whole one of the
+// helper's fixed sentences is its note (helperAnswer). Anything else the command printed, a line shaped like the
 // helper's own included, is only ever output.
 // Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer
 // and the runner (21-runner.mjs) read through these (the net's, 21-guard.mjs, through GUARD_SAYS there), and
@@ -23710,9 +23713,12 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time)\\n$`).exec(out);
   if (end) {
     // (a change's own last lines, after a line break of the helper's and before its end: the disk floor stopped it, the
-    // home's mode or owner put back, R63. What the command printed comes before them.)
+    // home's mode or owner put back, R63, each one of the helper's fixed sentences, whole: the floor in bytes_said's
+    // sizes, the modes in stat's octal. What the command printed comes before them, a line it began with the id too.)
+    const note = l => (HELPER_SAYS.diskStopped.test(l) && /under \d{1,15}(?:\.\d)? [GM]B$/.test(l))
+      || /^(?:the home's mode and owner were put back \([0-7]{3,4}, not [0-7]{3,4}\)(?:; the home's added access rules were taken away)?|the home's added access rules were taken away)$/.test(l);
     const lines = out.slice(0, end.index).split('\n'), notes = [];
-    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
+    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && note(lines.at(-1).slice(id.length + 1)) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
     return { kind: 'ran', output: lines.join('\n'), exit: end[1] === 'time' ? null : Number(end[1]), ended: end[1] === 'time', ...(notes.length ? { notes } : {}) };
   }
   if (timedOut) return { kind: 'ended', output: out };
