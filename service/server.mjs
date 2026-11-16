@@ -20799,6 +20799,15 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
+// Code a root command runs that isn't in its own words (the button shows only those, and the code can change before the
+// press): a file run as code (the sorter's scripts), or what the sorter says runs unseen (its unshown: input from < or a
+// pipe into a shell, a build, -m, a project's scripts, BASH_ENV). The refusal's words, or null. (unshown is the sorter's
+// field from its next step; while it is absent, scripts alone decide.)
+function rootUnseen(sorted) {
+  if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
+  if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
+  return null;
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -20816,8 +20825,9 @@ async function rootChange(input, viewer, ctx = {}) {
   const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
-  // (a file run as code: its text isn't on the button and can change before the press, so as root it is never run)
-  if (sorted.scripts?.length) throw new HttpError(403, `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`);
+  // (code it runs that isn't on the button: never as root)
+  const unseen = rootUnseen(sorted);
+  if (unseen) throw new HttpError(403, unseen);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });

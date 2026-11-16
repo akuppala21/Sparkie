@@ -207,3 +207,16 @@ test('off: run has no root in its schema, so what the brain reads is as before; 
   assert.ok(off && !('root' in off.input.properties), JSON.stringify(off?.input.properties));
   assert.deepEqual(Object.keys(off.input.properties), Object.keys(on.input.properties).filter(k => k !== 'root'));
 });
+
+// The final read's root-script: "as root, never a script" held only for a file named as a word. The sorter's next step
+// names what runs unseen in its field `unshown`; root refuses on it, and on scripts as before (stand-in sorted objects).
+test('as root, code the command doesn’t show is never run: a script it names, or what the sorter says runs unseen', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8'), fn = /^function rootUnseen\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'rootUnseen');
+  const rootUnseen = new Function(`${fn}\nreturn rootUnseen;`)();
+  assert.equal(rootUnseen({ class: 'change', scripts: [] }), null);
+  assert.equal(rootUnseen({ class: 'change', scripts: [], unshown: null }), null);
+  assert.match(rootUnseen({ class: 'risky', scripts: ['~/work/fix.sh'] }), /^Nothing was asked or run: as root, give the command itself, not a script \(~\/work\/fix\.sh\)/);
+  assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: 'bash runs what comes in through < or a pipe.' }),
+    'Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (bash runs what comes in through < or a pipe), so that code isn’t on the button and can change before your press.');
+});
