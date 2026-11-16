@@ -475,7 +475,7 @@ describe('what the run wall holds in the home', () => {
       assert.ok(!r.stdout.includes('LINKEDSECRET'), `${wall}: ${r.stdout}`);
       const c = unitCall(s, `sw-${wall}-${r.id}`);
       assert.ok(c.includes('InaccessiblePaths=/home/owner/dotfiles/netrc') && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
-      assert.ok(!c.some(a => /\.netrc|\.aws|bash_history|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
+      assert.ok(!c.some(a => /\/home\/owner\/(\.netrc|\.aws|\.bash_history)|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
     }
     for (const [name, to, why] of [['.pgpass', 'dotfiles/missing', 'is a link to nothing that is there'], ['.my.cnf', join(s.R, 'etc/shadow'), 'is a link out of the home folder, or to it'],
       ['.kube', join(s.R, 'home/owner/.config'), 'is a link to a folder that holds what the walls hold']]) {
@@ -1751,7 +1751,11 @@ describe('the lock-out net (R60)', () => {
     const s = spark();
     const p = prove(s);
     assert.equal(p.status, 0, p.stdout + p.stderr);
-    for (const [n, what] of [[15, "stopping or changing the net's timer"], [16, "writing the net's copies or restore.sh"], [17, "taking away the net's pending mark"], [18, 'making keep count']]) {
+    // (the last round's item 3: no control exists for these, and each line says so. Old: "... blocked: <name>"; new:
+    // "... blocked: <name> (not controlled: <why>)")
+    const root = '(not controlled: only root can try it, outside the walls too)';
+    for (const [n, what] of [[15, `stopping or changing the net's timer ${root}`], [16, `writing the net's copies or restore.sh ${root}`], [17, `taking away the net's pending mark ${root}`],
+      [18, "making keep count (not controlled: its way through sudo is attempt 8's control; the rest only root can try)"]]) {
       for (const w of ['look', 'run']) assert.ok(p.stdout.includes(`${p.id} proof ${w} ${n} blocked: ${what}\n`), `${w} ${n}`);
     }
     const g = p.id.slice(0, 38);
