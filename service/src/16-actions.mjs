@@ -426,7 +426,8 @@ async function sparkieCheck(name, input, ctx) {
   // cancel. Everything else about it is code's (21-selfchange.mjs).
   if (name === 'propose_update') {
     const want = out.do === 'drop' ? ['code', 'cancel'] : ['code'];
-    return { clear: want.some(k => intent.asked.includes(k)) && !want.some(k => intent.negated.includes(k) || intent.mixed.includes(k)), input: out };
+    // (a send in a request that read outside text is a button, as a saved workflow is)
+    return { clear: want.some(k => intent.asked.includes(k)) && !want.some(k => intent.negated.includes(k) || intent.mixed.includes(k)) && !(out.do === 'send' && ctx.readOutside), input: out };
   }
   // A workflow's steps are Sparkie's own writing. They are saved at once only when this turn read nothing from outside,
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose

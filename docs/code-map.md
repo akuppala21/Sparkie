@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22015 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22042 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -314,7 +314,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the page's buttons move onto the same list, with the same checks. Each action says: kind 'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify, put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions. scope which agent keys may use it: 'fleet:read' today; …
 
 - **Area:** core. **Rules:** R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46. **Tests:** change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
-- **Lines:** 668
+- **Lines:** 669
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1052,7 +1052,7 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
-- **Lines:** 449
+- **Lines:** 475
 - **Actions:** `propose_update`
 - **Owns:** tmp (writers: selfTree; a folder: each send's work, removed on every exit)
 - **Timers:** none

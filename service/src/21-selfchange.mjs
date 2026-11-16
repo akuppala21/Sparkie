@@ -25,9 +25,13 @@ const SELF_REFUSED = /^\.github\//i;
 // three documents. selfchange.test.mjs checks this list against tools/affected.mjs.
 const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/i, /^service\/worker\.py$/i, /^service\/config\.json$/i, /^deploy\//i,
   /^test\/lib\.mjs$/i, /^test\/start-mock\.mjs$/i, /^test\/mock\//i, /^test\/lock\.mjs$/i, /^tools\//i,
-  /^AGENTS\.md$/i, /^docs\/architecture\.md$/i, /^docs\/contract\.md$/i];
+  /^AGENTS\.md$/i, /^docs\/architecture\.md$/i, /^docs\/contract\.md$/i,
+  // (and the page, and the test helpers every test leans on)
+  /^public\//i, /^test\/authenticator\.mjs$/i, /^test\/eval\.mjs$/i, /^test\/eval\/cases\.json$/i];
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
-  '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `service/src/${p}.mjs`);
+  '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start',
+  // (the parts that hold the gates: this one, the dangerous ask, the brain's rail, the install, the guard, the runner)
+  '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner'].map(p => `service/src/${p}.mjs`);
 // (where a send unpacks the proposal for the generator: an empty folder of its own for each, 0700)
 const SELF_TMP = `${STATE_DIR}/tmp`;
 const SELF_ID = /^[0-9a-f]{8}$/, SELF_CHAT = /^sc_[0-9a-f]{16}$/, SELF_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/+@-]{1,400}$/;
@@ -306,14 +310,17 @@ async function selfTree(base, entries) {
     // (the installed generator, as a process of its own: a clean environment with no secret, no token and no state
     // folder; a time limit; its output bounded; it needs no network)
     const made = await new Promise(resolve => {
-      let out = '';
-      const p = spawn(process.execPath, [`${work}/tools/make.mjs`], { cwd: work, env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: work, LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      let out = '', err = '';
+      const p = spawn(process.execPath, [`${work}/tools/make.mjs`], { cwd: work, env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: work, LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
       const t = setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL'); } catch {} }, SELF_MAKE_MS);
       p.stdout.on('data', d => { if (out.length < 200000) out += d; });
-      p.on('error', () => { clearTimeout(t); resolve(''); });
-      p.on('close', () => { clearTimeout(t); resolve(out); });
+      p.stderr.on('data', d => { if (err.length < 200000) err += d; });
+      p.on('error', () => { clearTimeout(t); resolve({ out: '', finished: false }); });
+      // (finished: it ended by itself, 0 or 1, after its last word, "The documents match" or "have drifted")
+      p.on('close', (code, signal) => { clearTimeout(t); resolve({ out, finished: !signal && (code === 0 || code === 1) && /^The documents (?:match the code\.|have drifted from the code)/m.test(`${out}\n${err}`) }); });
     });
-    const generated = [...made.matchAll(/^(?:Wrote (\S+)\.|(\S+) is current\.)$/gm)].map(m => m[1] || m[2]).filter(p => SELF_PATH.test(p));
+    if (!made.finished) throw new HttpError(500, 'The installed build’s own generator didn’t finish on the proposal’s sources, so nothing was sent.');
+    const generated = [...made.out.matchAll(/^(?:Wrote (\S+)\.|(\S+) is current\.)$/gm)].map(m => m[1] || m[2]).filter(p => SELF_PATH.test(p));
     if (!generated.length) throw new HttpError(500, 'The installed build’s own generator didn’t run on the proposal’s sources, so nothing was sent.');
     const refused = [], rebuilt = [];
     for (const g of generated) {
@@ -333,19 +340,31 @@ async function selfTree(base, entries) {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 // Every removed or edited line of a test file (test/**/*.test.mjs) the noted commit holds: [{ file, line, was }].
+// Each existing test file the proposal changes, with its added lines and what they would change in how it runs (a skip,
+// todo or only, process.exit, a top-level return, a timeout): [{ file, added, flags }].
+const SELF_TEST_FLAGS = [['skip', /\.skip\b|\bskip\s*:/], ['todo', /\.todo\b|\btodo\s*:/], ['only', /\.only\b|\bonly\s*:/], ['process.exit', /\bprocess\.exit\b/],
+  ['a top-level return', /^return\b/], ['timeout', /\btimeout\b/]];
 async function selfTestLines(base, tree) {
   // (--text: a zero byte in a test's new text must not hide its removed lines as "Binary files differ")
   const diff = await selfGit(['diff-tree', '-r', '--no-renames', '--text', '--no-ext-diff', '--no-textconv', '-U0', '-p', base, tree, '--', 'test']);
-  const out = [];
+  const out = [], files = new Map();
   let file = null, line = 0;
   for (const l of diff.split('\n')) {
     let m;
-    if ((m = /^--- a\/(.+)$/.exec(l))) { file = /^test\/.+\.test\.mjs$/.test(m[1]) ? m[1] : null; continue; }
+    if ((m = /^--- a\/(.+)$/.exec(l))) { file = /^test\/.+\.test\.mjs$/i.test(m[1]) ? m[1] : null; continue; }
     if (/^--- \/dev\/null$/.test(l)) { file = null; continue; }
     if ((m = /^@@ -(\d+)/.exec(l))) { line = Number(m[1]); continue; }
-    if (file && l.startsWith('-') && !l.startsWith('---')) { out.push({ file, line, was: clean(l.slice(1), 200) }); line++; }
+    if (!file || l.startsWith('---') || l.startsWith('+++')) continue;
+    if (l.startsWith('-')) { out.push({ file, line, was: clean(l.slice(1), 200) }); line++; }
+    if (l.startsWith('+')) {
+      const f = files.get(file) || { file, added: 0, flags: [] };
+      f.added++;
+      for (const [name, re] of SELF_TEST_FLAGS) if (re.test(l.slice(1)) && !f.flags.includes(name)) f.flags.push(name);
+      files.set(file, f);
+    }
   }
-  return out;
+  for (const o of out) if (!files.has(o.file)) files.set(o.file, { file: o.file, added: 0, flags: [] });
+  return Object.assign(out, { files: [...files.values()] });
 }
 async function selfSend(viewer, ctx, input) {
   const open = await selfOpen();
@@ -370,40 +389,47 @@ async function selfSend(viewer, ctx, input) {
   if (t.refused.length) throw new HttpError(409, `These generated files in the box aren’t what the installed build’s own generator makes from the proposal’s sources: ${t.refused.join(', ')}. Leave them to the generator (rebuild them, or take them out of the box). Nothing was sent.`);
   if (t.tree === baseTree) throw new HttpError(409, 'The box holds no change to main’s tree, so nothing was sent.');
   const headTree = await selfGit(['rev-parse', `${open.head}^{tree}`]);
-  if (pushes && t.tree === headTree) throw new HttpError(409, 'Nothing changed in the box since the last send, so nothing was sent.');
+  // (nothing changed since the last send: that commit is pushed again as it is, and the pull request opened if it isn't,
+  // so a send cut off after its commit, or before its pull request, can be tried again)
+  const again = pushes > 0 && t.tree === headTree;
   const paths = (await selfGit(['diff-tree', '-r', '--no-renames', '--name-only', baseTree, t.tree])).split('\n').filter(Boolean);
   const protectedPaths = paths.filter(selfProtected), testLines = await selfTestLines(baseTree, t.tree);
   const message = `${title}\n\n${why}\n\nProposed by Sparkie in the owner’s chat (Spark Console). The title and the reason above are Sparkie’s words.\n`;
-  const commit = await selfGit(['commit-tree', t.tree, '-p', open.head, '-F', '-'], { input: Buffer.from(message) });
+  const commit = again ? open.head : await selfGit(['commit-tree', t.tree, '-p', open.head, '-F', '-'], { input: Buffer.from(message) });
   // (the branch moves here first, then that one ref is pushed; a refused push puts it back)
-  await selfGit(['update-ref', `refs/sparkie/${open.id}`, commit, open.head]);
+  if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, commit, open.head]);
   await selfPush(open.id).catch(async e => {
-    await selfGit(['update-ref', `refs/sparkie/${open.id}`, open.head, commit]).catch(() => {});
+    if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, open.head, commit]).catch(() => {});
     throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent: ${maskSecrets(e.message).slice(0, 300)}`);
   });
+  const sent = again ? pushes : pushes + 1;
   const repo = selfGithub().repo, owner = repo.split('/')[0];
   let pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr) {
     const body = [`Sparkie’s words (its reason, as it wrote it):`, '', ...why.split('\n').map(l => `> ${l}`), '',
       protectedPaths.length ? `Protected paths (the owner’s passkey, on the page): ${protectedPaths.join(', ')}` : 'No protected path.',
-      testLines.length ? `Removed or edited lines in existing tests: ${testLines.length}` : 'No line of an existing test removed or edited.', '',
+      testLines.length ? `Removed or edited lines in existing tests: ${testLines.length}` : 'No line of an existing test removed or edited.',
+      testLines.files.length ? `Existing test files changed: ${testLines.files.map(f => `${f.file} (${f.added} lines added${f.flags.length ? `; ${f.flags.join(', ')}` : ''})`).join(', ')}` : '', '',
       'Built by Spark Console’s code from the box: the diff, the generated files and these lists. Proposed from the owner’s own chat.'].join('\n');
     pr = await selfApi('POST', `/repos/${repo}/pulls`, { title: `Sparkie: ${title}`, head: open.branch, base: 'main', body, maintainer_can_modify: false });
   }
-  audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-send', args: { id: open.id, commit: commit.slice(0, 12), pr: pr?.number ?? null }, ok: true });
-  return { ok: true, outcome: 'sent', proposal: open.id, branch: open.branch, commit: commit.slice(0, 12), pushes: pushes + 1, pullRequest: pr?.number ?? null,
-    files: paths.slice(0, 200), generated: t.generated, protected: protectedPaths, testLines: testLines.slice(0, 100),
+  audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-send', args: { id: open.id, commit: commit.slice(0, 12), pr: pr?.number ?? null, again }, ok: true });
+  return { ok: true, outcome: 'sent', proposal: open.id, branch: open.branch, commit: commit.slice(0, 12), pushes: sent, pullRequest: pr?.number ?? null,
+    files: paths.slice(0, 200), generated: t.generated, protected: protectedPaths, testLines: testLines.slice(0, 100), testFiles: testLines.files.slice(0, 50),
     title: { note: 'Sparkie’s words.', text: title },
-    note: [`Sent: ${open.branch} (commit ${commit.slice(0, 12)}, push ${pushes + 1} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}: ${paths.length} file${paths.length === 1 ? '' : 's'} changed.`,
+    note: [`${again ? 'Nothing changed in the box since the last send, so that commit was sent again as it was' : 'Sent'}: ${open.branch} (commit ${commit.slice(0, 12)}, push ${sent} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}: ${paths.length} file${paths.length === 1 ? '' : 's'} changed.`,
       t.generated.length ? `Rebuilt by the installed build’s own generator: ${t.generated.join(', ')}.` : '',
       protectedPaths.length ? `Protected paths (your passkey, on the page): ${protectedPaths.slice(0, 20).join(', ')}${protectedPaths.length > 20 ? ` and ${protectedPaths.length - 20} more` : ''}.` : 'No protected path.',
       testLines.length ? `Removed or edited lines in existing tests: ${testLines.slice(0, 5).map(l => `${l.file}:${l.line} “${l.was.slice(0, 80)}”`).join('; ')}${testLines.length > 5 ? ` and ${testLines.length - 5} more` : ''}.` : 'No line of an existing test removed or edited.',
+      testLines.files.length ? `This existing test file changed: ${testLines.files.slice(0, 5).map(f => `${f.file} (${f.added} line${f.added === 1 ? '' : 's'} added${f.flags.length ? `; ${f.flags.join(', ')}` : ''})`).join('; ')}.` : '',
       'GitHub runs its tests; check_update says how it is doing.'].filter(Boolean).join(' ') };
 }
 async function selfDrop(viewer, ctx) {
   const open = await selfOpen();
   if (!open) throw new HttpError(409, 'No proposal is open, so nothing was dropped.');
-  if (!selfMine(open, ctx)) throw new HttpError(409, `The open proposal (${open.branch}) is another chat’s: drop it from there. Nothing was dropped.`);
+  // (from the chat that started it; or from any of the owner's own chats once that chat is gone)
+  const gone = !open.conv || !chatData().conversations.some(c => c.id === open.conv);
+  if (!selfMine(open, ctx) && !gone) throw new HttpError(409, `The open proposal (${open.branch}) is another chat’s: drop it from there. Nothing was dropped.`);
   const repo = selfGithub().repo, owner = repo.split('/')[0];
   const said = [];
   if (open.head !== open.base) {

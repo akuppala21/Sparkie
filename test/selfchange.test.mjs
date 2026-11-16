@@ -73,6 +73,9 @@ const SCRIPT = ([
   { match: '^please open a proposal', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
   { match: '^send your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
   { match: '^drop your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'drop' } }] },
+  // (the owner's own words ask for a change to the code: at once, unless the request read outside text first)
+  { match: '^please change your own code: send it after a look at the events', rounds: [[{ name: 'fleet_events', arguments: {} }], [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }]] },
+  { match: '^please change your own code: send it now', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
 ]);
 const LONG = { timeout: 600000 * SLOW };
 let selfChat = null, selfId = null, selfHead = null;
@@ -367,6 +370,89 @@ describe('propose_update', { concurrency: 1 }, () => {
       await pressed(chat, 'drop your code proposal');
       assert.equal(refs(), '');
     } finally { rmSync(attrs, { force: true }); }
+  });
+
+  // (the C8c read's list for before it is turned on)
+  test('a send in a request that read outside text is a button, though the owner’s words ask for it; without that read it runs at once', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// outside\n` });
+    await say(chat, 'please change your own code: send it after a look at the events');
+    const q = (await chatMessages(chat)).findLast(m => (m.choices || []).length);
+    assert.match(q?.choices?.[0]?.label || '', /^Send the proposal “A calmer page”/);
+    assert.deepEqual(ghBranches(), [], 'nothing sent at once');
+    const r = await say(chat, 'please change your own code: send it now');
+    assert.match(r.text, /propose_update said: .*Sent: sparkie\//);
+    assert.equal(ghBranches().length, 1);
+    await pressed(chat, 'drop your code proposal');
+    assert.equal(refs(), '');
+  });
+
+  test('the generator must finish: one that died part-way (a folder named like a rule file) stops the send, and a hand-written docs/rules.md isn’t taken', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    // (a folder named like a rule file, its name put together so it isn't read as a rule's id)
+    box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// x\n`, [`docs/rules/${'R'}${98}.md/x.md`]: 'x\n', 'docs/rules.md': 'written by hand\n' });
+    const r = await pressed(chat, 'send your code proposal');
+    assert.match(r.says, /The installed build’s own generator didn’t finish on the proposal’s sources, so nothing was sent\./);
+    assert.deepEqual(ghBranches(), []);
+    await pressed(chat, 'drop your code proposal');
+  });
+
+  test('an existing test file that only gains lines is listed, with what they change (skip, timeout)', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// y\n`, 'test/abilities.test.mjs': `${atMain('test/abilities.test.mjs')}test.skip('later', () => {});\n// a longer timeout\n` });
+    const r = await pressed(chat, 'send your code proposal');
+    assert.equal(r.p.json.outcome, 'sent', r.says);
+    assert.match(r.says, /No line of an existing test removed or edited\./);
+    assert.match(r.says, /This existing test file changed: test\/abilities\.test\.mjs \(2 lines added; skip, timeout\)\./);
+    await pressed(chat, 'drop your code proposal');
+  });
+
+  test('a send cut off before its pull request opened can be tried again with the box as it is; a proposal whose chat is gone is dropped from another of the owner’s chats', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// z\n` });
+    GHAPI.state.failPosts = 1;
+    const cut = await pressed(chat, 'send your code proposal');
+    assert.match(cut.says, /GitHub answered 500/);
+    const id = openId(), head = git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]);
+    const again = await pressed(chat, 'send your code proposal');
+    assert.match(again.says, new RegExp(`Nothing changed in the box since the last send, so that commit was sent again as it was: sparkie/${id} \\(commit ${head.slice(0, 12)}, push 1 of 6\\), pull request #\\d+`));
+    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]), head, 'the same commit');
+    assert.equal(GHAPI.state.pulls.filter(p => p.head.ref === `sparkie/${id}` && p.state === 'open').length, 1);
+    // (the chat that started it goes: any of the owner's own chats can drop it)
+    assert.equal((await api(`/chats/${chat}`, { method: 'DELETE' })).status, 200);
+    const d = await pressed(await newChat(), 'drop your code proposal');
+    assert.match(d.says, new RegExp(`Dropped sparkie/${id}`));
+    assert.equal(refs(), '');
+  });
+
+  test('pinned: the installed generator’s tools load only Node’s own modules and each other, nothing from the tree they are given', () => {
+    const tools = join(REPO, 'tools'), seen = new Set(), todo = ['make.mjs'];
+    while (todo.length) {
+      const f = todo.pop();
+      if (seen.has(f)) continue;
+      seen.add(f);
+      const text = readFileSync(join(tools, f), 'utf8');
+      for (const m of text.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)) {
+        if (m[1].startsWith('node:')) continue;
+        assert.match(m[1], /^\.\/[a-z-]+\.mjs$/, `${f} imports ${m[1]}`);
+        todo.push(m[1].slice(2));
+      }
+      for (const m of text.matchAll(/\bimport\s*\(([^)]*)\)/g)) assert.equal(m[1], "'./meaning.mjs'", `${f}: import(${m[1]})`);
+      assert.doesNotMatch(text, /child_process|\beval\s*\(|new Function|\bFunction\s*\(|node:vm|createRequire|\brequire\s*\(/, `${f} could run something`);
+    }
+    assert.deepEqual([...seen].sort(), ['build-server.mjs', 'check-docs.mjs', 'code-map.mjs', 'make.mjs', 'parts.mjs', 'status.mjs']);
+    // (check-docs's one import(), of meaning.mjs, is for its own --meaning command only, run as the main script: never
+    // when make.mjs imports it)
+    assert.match(readFileSync(join(tools, 'check-docs.mjs'), 'utf8'), /if \(process\.argv\[1\] === fileURLToPath\(import\.meta\.url\) && meaning > 0\) \{\n\s*import\('\.\/meaning\.mjs'\)/);
+    assert.doesNotMatch(readFileSync(join(tools, 'make.mjs'), 'utf8'), /--meaning/);
   });
 
   test('the protected paths are tools/affected.mjs’s that always run everything (all of tools/), and the three documents', () => {

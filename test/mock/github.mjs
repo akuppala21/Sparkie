@@ -8,11 +8,12 @@
 //   GET   /repos/:owner/:repo/pulls/:n/reviews
 //   GET   /repos/:owner/:repo/commits/:sha/check-runs
 // Every request is kept in `calls` (method, path, whether it carried the expected token, its body); a test sets
-// `checkRuns[sha]` and `reviews[n]` to what GitHub would say.
+// `checkRuns[sha]` and `reviews[n]` to what GitHub would say, and `failPosts` to the number of pull requests to refuse
+// (500) before one opens.
 import http from 'node:http';
 
 export async function startGitHub({ token }) {
-  const state = { pulls: [], checkRuns: {}, reviews: {}, calls: [] };
+  const state = { pulls: [], checkRuns: {}, reviews: {}, calls: [], failPosts: 0 };
   const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -32,6 +33,7 @@ export async function startGitHub({ token }) {
           return send(res, 200, state.pulls.filter(p => (st === 'all' || p.state === st) && (!head || `${m[1]}:${p.head.ref}` === head)));
         }
         if (req.method === 'POST') {
+          if (state.failPosts > 0) { state.failPosts--; return send(res, 500, { message: 'Server Error' }); }
           if (!body?.title || !body?.head || body?.base !== 'main') return send(res, 422, { message: 'Validation Failed' });
           if (state.pulls.some(p => p.state === 'open' && p.head.ref === body.head)) return send(res, 422, { message: 'A pull request already exists' });
           const pr = { number: state.pulls.length + 1, state: 'open', title: body.title, body: body.body, head: { ref: body.head }, base: { ref: body.base }, merged_at: null };
