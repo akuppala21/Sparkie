@@ -1,6 +1,6 @@
 # Add a page route
 
-A route under `/console/api` that the page calls. From the map's "Where new things go", row "A page route".
+A route under `/console/api` that the page calls.
 
 ## Touch
 

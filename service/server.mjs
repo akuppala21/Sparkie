@@ -154,8 +154,9 @@ class HttpError extends Error {
 // Timers: none        Wakes: none
 // Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command.
 // `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there
-// after this side gave up.
-function spawnOn(node, { script, command, limit }) {
+// after this side gave up. `fresh`: a new connection, never one shared with another ssh (the lock-out net's check that a
+// new SSH connection still works, 21-net.mjs netProbe: a shared one would ride an old connection a firewall lets through).
+function spawnOn(node, { script, command, limit, fresh = false }) {
   if (ALL_LOCAL && offlineNow(node.id)) {
     return spawn('bash', ['-c', `sleep 1; echo "ssh: connect to host ${node.host} port 22: Operation timed out" >&2; exit 255`]);
   }
@@ -166,6 +167,7 @@ function spawnOn(node, { script, command, limit }) {
   const child = local
     ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
+      ...(fresh ? ['-o', 'ControlMaster=no', '-o', 'ControlPath=none'] : []),
       `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
   // (a program that isn't there fails this command, never the service: its callers see the close, R53)
   child.on('error', () => {});
@@ -188,11 +190,11 @@ function noteReach(node, code) {
   } else if (code === 0) { reachMisses.delete(node.id); unreachableUntil.delete(node.id); }
 }
 
-function run(node, script, { timeout = 60000, onLine, signal } = {}) {
+function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = {}) {
   if (knownOffline(node)) return Promise.resolve({ code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
-    const child = spawnOn(node, { script, limit: timeout / 1000 + 5 });
+    const child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -1275,7 +1277,7 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
-const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Open Deploy again to see the new plan.`);
+const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
   const extra = unapprovedStops(p.steps, nodeId, keep, approved);
@@ -4122,8 +4124,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
   // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
   // after this, so this turn's are no count of keepTask's)
-  // (the steps, the output or the rounds a message may take, alike: R50)
-  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output', 'rounds'].includes(spent) ? taskOver(task) : null;
+  // (the steps, the output, the rounds or the brain's tokens a message may take, alike: R50)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output', 'rounds', 'tokens'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
@@ -4272,8 +4274,8 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
     works: 0, ran: 0, waitsYes: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
     // (the operations its calls started, and a call that may change something still going past its 50 seconds: roundCalls)
     ops: [], going: null,
-    // (the calls the brain made after its tools were put away, none of them run: roundDropped)
-    dropped: [] };
+    // (the calls the brain made after its tools were put away, and past the 4 a round runs, none of them run)
+    dropped: [], pastFour: [] };
 }
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
@@ -4289,13 +4291,13 @@ function budgetContext(setup) {
   const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
-// Whether a turn the steps, the output or the rounds ended carries on by itself, in a fresh turn under the carry-on's
-// own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are
-// paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never after
-// three refusals: the brain was spinning.
+// Whether a turn the steps, the output, the rounds or the tokens ended carries on by itself, in a fresh turn under the
+// carry-on's own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents
+// are paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never
+// after three refusals: the brain was spinning.
 function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
-  if (!['steps', 'output', 'rounds'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
+  if (!['steps', 'output', 'rounds', 'tokens'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
   // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
   return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
@@ -4344,10 +4346,10 @@ function budgetCut(turn, out, jid) {
 }
 // A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
 // results weren't read and where they are kept, or which calls were refused and why, or that the rounds were all taken;
-// the calls made after the tools were put away, none run; then that the task carries on in a fresh turn
-// (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+// the calls made past the 4 a round runs or after the tools were put away, none run; then, when a budget ended it,
+// that the task carries on in a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
 function budgetReport(turn) {
-  if (!turn.spent && !turn.dropped.length) return;
+  if (!turn.spent && !turn.dropped.length && !turn.pastFour.length) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
   const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
@@ -4359,9 +4361,11 @@ function budgetReport(turn) {
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
-  const late = turn.dropped.length;
+  if (turn.spent === 'tokens') lines.push(`Stopped here: one message may use ${n(Number(askOf(turn.tuned).tokenBudget))} of the brain’s tokens (what it reads and writes), and this one has.`);
+  const past = turn.pastFour.length, late = turn.dropped.length;
+  if (past) lines.push(`${past === 1 ? '1 more call was' : `${past} more calls were`} asked for past the ${ROUND_CALLS} calls one round runs, and not run (${[...new Set(turn.pastFour)].join(', ')}).`);
   if (late) lines.push(`${late === 1 ? '1 more call was' : `${late} more calls were`} asked for after the tools were put away, and not run (${[...new Set(turn.dropped)].join(', ')}).`);
-  lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
+  if (turn.spent) lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
   const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
   turn.answer += text;
   turn.emit({ type: 'delta', text });
@@ -4440,16 +4444,18 @@ function modelStep(turn, sent) {
 // What the brain is told in the last round, once its tools are put away (by the rounds a message may take, its token
 // budget or one of the loop's budgets): a call now is not run, so it answers with what the tools said. (Final read
 // C-5: past the rounds it was told nothing, and its system prompt still said it had tools.)
-const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
+const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)`
+  : turn.spent === 'tokens' ? ` (one message may use ${Number(askOf(turn.tuned).tokenBudget).toLocaleString('en-US')} of your tokens)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
 // Up to ROUNDS rounds of looking things up (and at most CHANGES changes), then it has to answer.
 async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS, messages } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, a budget of its own, or past its brain's
-    // token budget, 13-ask.mjs, or at one of the loop's budgets, turnBudgets; and the brain is told so)
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
+    // each a budget of its own, or at one of the loop's budgets, turnBudgets; and the brain is told so)
     if (round >= ROUNDS) turn.spent ||= 'rounds';
-    const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
+    else if (overBudget(turn)) turn.spent ||= 'tokens';
+    const last = Boolean(turn.spent);
     if (last && tools.length) messages[0].content = `${messages[0].content}\n\n${toolsAway(turn)}`;
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
@@ -4470,6 +4476,7 @@ async function turnRounds(turn) {
 // in one round met "already changing" on that Spark; final read C-4, 2026-11-15: so did two commands for one Spark,
 // one refused and in no fixed order, and four in a round put the tools away.)
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
+const ROUND_CALLS = 4;              // limit: calls run in one round (each past them is answered "not run")
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
 // Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
 // (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
@@ -4484,26 +4491,29 @@ function readOutsideBy(c, a, { handed, ok, value, status }) {
   if (!ok) return !(status >= 400 && status < 500);
   return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
 }
-// One round’s tool calls (at most 4): on the record first; lookups together, then the rest one by one; then whether the
+// One round’s tool calls: on the record first; lookups together, then the rest one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
 async function roundCalls(turn, round, r) {
   const { ctx, messages, used, groups, link } = turn;
-  // (at most 4 calls a round, and only those are on the record, each with its result)
-  const calls = r.calls.slice(0, 4);
+  // (every call is on the record, each with its result; at most 4 a round are run, and each past them says so, as a
+  // call made after the tools were put away does: never dropped unseen, final read C-5's follow-up)
+  const calls = r.calls;
   messages.push({ role: 'assistant', content: r.content || '', tool_calls: calls.map((c, i) => ({ id: c.id || `call_${round}_${i}`, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })) });
   const steps = [], outside = [], at = { round, calls, steps, outside };
   const results = [];
-  await Promise.all(calls.map((c, i) => (roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
+  await Promise.all(calls.map((c, i) => (i < ROUND_CALLS && roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
   // From here on this turn has read text from outside (a log, an operation, a recipe, a web result, a command's
   // output: readOutsideBy): what Sparkie may keep in memory without a button gets stricter (20-memory.mjs
   // memoryClear), and a change is asked (21-ladder.mjs).
   if (outside.some(Boolean)) ctx.readOutside = true;
   for (const [i, c] of calls.entries()) {
     if (results[i]) continue;
+    if (i >= ROUND_CALLS) { results[i] = await runOne(turn, { ...at, past: true }, c, i); continue; }
     // (one before it that is still going past its 50 seconds is waited for, a while, so two never run side by side)
     for (const until = Date.now() + ROUND_WAIT_MS; turn.going && !link.gone && Date.now() < until;) await Promise.race([turn.going, sleep(1000)]);
     results[i] = await runOne(turn, at, c, i);
   }
+  turn.pastFour.push(...calls.slice(ROUND_CALLS).map(roundCallName));
   // (what a command printed counts from the next round: the brain asked for this round’s calls before any came back)
   if (outside.some(Boolean)) ctx.readOutside = true;
   used.push(...steps.filter(Boolean));
@@ -4515,17 +4525,19 @@ async function roundCalls(turn, round, r) {
   }
   messages.push(...results);
 }
-// The calls of a last round, made after the tools were put away (at most 4, as a round's): none is run; each is on the
+// The calls of a last round, made after the tools were put away (each of them): none is run; each is on the
 // page and in the journal as not run, and the reply's last lines name them (budgetReport).
+// (a call's name as the reply's last lines say it: a tool's name, or "a tool")
+const roundCallName = c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool');
 async function roundDropped(turn, round, r) {
-  const calls = r.calls.slice(0, 4), steps = [];
+  const calls = r.calls, steps = [];
   for (const [i, c] of calls.entries()) await runOne(turn, { round, calls, steps, away: true }, c, i);
   turn.used.push(...steps.filter(Boolean));
-  turn.dropped.push(...calls.map(c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool')));
+  turn.dropped.push(...calls.map(roundCallName));
 }
 // One tool call: the checks of this turn (a stop, the agent’s web searches, the changes a message may make), then
 // runAction with 50 seconds, the paste card set aside, the result masked, journalled (tool), cut and told.
-async function runOne(turn, { round, calls, steps, outside = [], away = false }, c, i) {
+async function runOne(turn, { round, calls, steps, outside = [], away = false, past = false }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null, value = null, handed = false, status = null;
@@ -4536,6 +4548,8 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false },
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
     // (a call made after the tools were put away, roundDropped: never handed over, and no refusal of its own)
     if (away) throw Object.assign(new HttpError(409, 'Not run: it was asked for after the tools were put away for this message.'), { waited: true });
+    // (one past the 4 a round runs, roundCalls: never handed over, and no refusal of its own)
+    if (past) throw Object.assign(new HttpError(429, `Not run: one round runs at most ${ROUND_CALLS} calls. Ask for it again in the next one.`), { waited: true });
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     // (the one before it is still going after the wait, roundCalls: one at a time, so this one isn't started)
     if (turn.going && !roundTogether(a)) throw Object.assign(new HttpError(409, `Not run: the call before it in this message is still going, and calls that may change something run one at a time, in the order asked. Ask for it again once that one has ended (check recent_operations or fleet_events).`), { waited: true });
@@ -6434,8 +6448,9 @@ action({
 // “What can you do?” (A3): what Sparkie can look up and change, read from the action list when asked (a new action
 // shows up by itself), and its limits. Only action titles and lines written here: nothing from a Spark, a file, memory
 // or a saved workflow, so sparkie_setup stays an inside read (R26) and masking leaves the text as written.
+// (run and write_file are reads to runAction but change things, `changes: true`: they are listed with the changes, TR-4)
 function abilities() {
-  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read') === read).map(a => a.title);
+  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read' && !a.changes) === read).map(a => a.title);
   const pageOnly = [...PAGE_ONLY].map(n => ACTIONS.get(n)?.title).filter(Boolean).join(', ');
   return {
     observedAt: new Date().toISOString(), canLookUp: titles(true), canChange: titles(false),
@@ -6445,6 +6460,7 @@ function abilities() {
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
       `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
       CHANGES_ASKED,
+      'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.',
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
@@ -6746,16 +6762,16 @@ const inRecipes = m => recipeCatalog().models.some(r => r.variants.some(v => onD
 function agentSafeSetup(m) {
   const args = Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [];
   const own = args.filter(a => a.startsWith('-') && dig.OWN.has(dig.flagKey(a.split('=')[0])));
-  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it from Deploy`;
-  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, from Spark Console’s Deploy`;
+  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
+  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const flags = dig.cleanFlags(args, m.repo || m.name);
-  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it from Deploy`;
+  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const env = { ...(m.manifest?.env || {}), ...(m.manifest?.cluster?.env || {}) }, cleaned = dig.cleanEnv(env);
   const dropped = Object.keys(env).filter(k => !(k in cleaned)), named = dropped.filter(k => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k));
-  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it from Deploy`;
+  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const image = m.manifest?.image;
   if (image && !(String(image).includes('@sha256:') && (CONFIG.imageSources || []).some(p => String(image).startsWith(p)))) {
-    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
+    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   }
   return null;
 }
@@ -7170,7 +7186,7 @@ async function startModel(args, viewer, ctx) {
     const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
     if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
-    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
+    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
     for (const line of passedOver) note(job, line);
@@ -9337,12 +9353,13 @@ function dangerCodeOf(shown) {
 }
 // Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
 function dangerBack(f) {
-  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs)
-  if (f.net) return [dangerPlain(f.net, 400)];
+  const gone = f.gone ? [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`] : [];
+  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs;
+  // a root command that also deletes says that too: the net puts back the ways in, never what it deletes, 21-root.mjs)
+  if (f.net) return [dangerPlain(f.net, 400), ...gone];
   if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
   if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
-  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
-  return [];
+  return gone;
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
 // that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built
@@ -16341,7 +16358,7 @@ action({
   },
 });
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
-// Area: features        Rules: R62, R52, R43, R23        Tests: box-fill.test.mjs, box-more.test.mjs
+// Area: features        Rules: R62, R52, R43, R23, R47        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -16364,6 +16381,9 @@ const FILL_BOUNDS = '5,000 files and folders, 8 MiB a file, 64 MiB in all, 255 b
 // The links the repository itself keeps for the stand-in fleet (its model cache): left out of a fill, so the box never
 // holds them and a read back never says they went. A link anywhere else refuses the fill; a read back takes none.
 const FILL_LINKS_LEFT = 'test/mock/root/';
+// The brain eval's held-out set (R47): it tests a brain, so the brain never reads it. A fill leaves it out of the box (git's
+// list and stream alike), a read back never says it went, and a box that holds a file of its name refuses the read.
+const FILL_HELD_OUT = 'test/eval/memory-held-out.json';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
@@ -16390,8 +16410,8 @@ const fillBlobId = data => createHash('sha1').update(`blob ${data.length}\0`).up
 // gives it, strict UTF-8; nothing else is ever written anywhere. A link, a hard link, a device, a fifo, a type it
 // doesn't know, a pax key it doesn't know, a damaged header, a path that leaves the folder, a name that differs from
 // another only by case or Unicode form, or one past a bound refuses the whole stream, with the entry's name. Only a
-// link whose path is in `skip` (a fill's FILL_LINKS_LEFT, never a read back's) is passed over, and its bytes (with its
-// extended header) are given back in `drop`, for the fill to leave out of the stream.
+// link or a file whose path is in `skip` (a fill's FILL_LINKS_LEFT and FILL_HELD_OUT, never a read back's) is passed
+// over, and its bytes (with its extended header) are given back in `drop`, for the fill to leave out of the stream.
 const TAR_UTF8 = new TextDecoder('utf-8', { fatal: true });
 const TAR_TYPES = { 1: 'a hard link', 2: 'a link', 3: 'a device', 4: 'a device', 6: 'a fifo', 7: 'an entry type the reader doesn’t know' };
 function tarRead(buf, folder, skip = new Set()) {
@@ -16439,7 +16459,7 @@ function tarRead(buf, folder, skip = new Set()) {
     }
     let name = pax?.has('path') ? pax.get('path') : utf8(raw, shown);
     pax = null;
-    if (type === '2' && skip.has(relOf(name))) { drop.push([from, off]); continue; }
+    if ((type === '2' || type === '0' || type === '\0') && skip.has(relOf(name))) { drop.push([from, off]); continue; }
     if (type !== '0' && type !== '\0' && type !== '5') throw fillRefuse(`an entry is ${TAR_TYPES[type] || 'of a type the reader doesn’t know'}`, name);
     const dir = type === '5';
     if (dir && name.endsWith('/')) name = name.slice(0, -1);
@@ -16488,7 +16508,7 @@ async function fillTreeList(tree) {
   if (r.code === 3) throw new HttpError(409, `${tree} isn’t a tree in Spark Console’s copy of the repository. Nothing was changed.`);
   if (r.over) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
   if (r.code !== 0) throw new HttpError(502, `git couldn’t list the tree on Spark 2: ${fillShow(r.err.split('\n')[0] || `exit ${r.code}`)}. Nothing was changed.`);
-  const blobs = new Map(), trees = new Set(), links = new Set(), seen = new Map();
+  const blobs = new Map(), trees = new Set(), links = new Set(), left = new Set(), seen = new Map();
   let bytes = 0;
   for (const rec of r.out.toString('latin1').split('\0').filter(Boolean)) {
     const m = /^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t([\s\S]+)$/.exec(rec);
@@ -16508,11 +16528,12 @@ async function fillTreeList(tree) {
     seen.set(key, path);
     if (link) { links.add(path); continue; }
     if (type === 'tree') { trees.add(path); continue; }
+    if (path === FILL_HELD_OUT) { left.add(path); continue; }
     if (Number(size) > FILL_MAX_FILE) throw fillRefuse(`a file is over ${FILL_MAX_FILE / 2 ** 20} MiB`, path);
     if ((bytes += Number(size)) > FILL_MAX_BYTES) throw fillRefuse(`the tree’s files are over ${FILL_MAX_BYTES / 2 ** 20} MiB in all`, null);
     blobs.set(path, { mode, oid, size: Number(size) });
   }
-  return { blobs, trees, links, bytes };
+  return { blobs, trees, links, left, bytes };
 }
 // Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
 // Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
@@ -16563,7 +16584,7 @@ async function boxFill(viewer, ctx, tree) {
     const list = await fillTreeList(tree);
     const a = await fillStream(fillHub(), `${FILL_GIT} archive --format=tar --prefix=${FILL_FOLDER}/ ${tree}`, { max: FILL_MAX_BYTES + FILL_MAX_ENTRIES * 1024 + 65536 });
     if (a.over || a.code !== 0) throw new HttpError(502, `git couldn’t make the tree’s archive on Spark 2${a.over ? ' within the bounds' : `: ${fillShow(a.err.split('\n')[0] || `exit ${a.code}`)}`}. Nothing was changed.`);
-    const got = tarRead(a.out, FILL_FOLDER, list.links), dirs = [...new Set(got.files.flatMap(f => f.path.split('/').slice(0, -1).map((_, i, p) => p.slice(0, i + 1).join('/'))))];
+    const got = tarRead(a.out, FILL_FOLDER, new Set([...list.links, ...list.left])), dirs = [...new Set(got.files.flatMap(f => f.path.split('/').slice(0, -1).map((_, i, p) => p.slice(0, i + 1).join('/'))))];
     const same = got.files.length === list.blobs.size && got.files.every(f => { const b = list.blobs.get(f.path); return b && b.mode === f.mode && fillBlobId(f.data) === b.oid; })
       && dirs.every(d => list.trees.has(d));
     if (!same) throw new HttpError(409, 'git’s archive of the tree doesn’t hold exactly the tree (an attribute of the repository’s may drop or change a file), so the box wasn’t filled. Nothing was changed.');
@@ -16623,6 +16644,7 @@ async function boxReadBack(viewer, ctx) {
     if (r.code !== 0) throw new HttpError(502, `The box’s folder on ${at} couldn’t be read out whole${r.code === 255 ? ` (${at} didn’t answer)` : ''}: ${fillShow(r.err.split('\n').filter(Boolean).pop() || `exit ${r.code}`)}. Nothing was taken.`);
     const got = tarRead(r.out, FILL_FOLDER), list = await fillTreeList(fill.tree), changes = [];
     for (const f of got.files) {
+      if (f.path === FILL_HELD_OUT) throw fillRefuse('the eval’s held-out set is never taken from a box', `${FILL_FOLDER}/${f.path}`);
       const blob = fillBlobId(f.data), was = list.blobs.get(f.path);
       if (was && was.oid === blob && was.mode === f.mode) continue;
       // (bytes only: hash-object, no filter, no path given; the id it answers must be the console's own)
@@ -18942,7 +18964,7 @@ async function doorUpgrade(req, socket, head) {
   }
 }
 /* ───────── the lock-out net: its calls to the root helper (the console's half is 21-net.mjs) ───────── */
-// Area: features        Rules: R60, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
+// Area: features        Rules: R60, R71, R42, R70        Tests: root-helper.test.mjs, root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes
@@ -18951,6 +18973,16 @@ async function doorUpgrade(req, socket, head) {
 // at once with `putback`. Only the console's half calls these (21-net.mjs, A13b): guardScript
 // builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
 // ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
+// The folders given read-only to a change (--protect), as one shell line that fills p: a real folder there now as ~/…; one
+// that is a link, or has a link in its path (a model store on another disk), as the folder it leads to, which the helper
+// takes as a whole path; one not there, left out; one that is there and leads nowhere that can be read, never left out
+// quietly: said "protect ~/…" (said(), the call's own line), and nothing runs. helperScript (21-work.mjs) can share it.
+function protectShell(folders) {
+  return `p=(); ${folders.map(d => {
+    const x = `"$HOME"${q(d.slice(1))}`;
+    return `if [ -e ${x} ] || [ -L ${x} ]; then r=$(realpath -e -- ${x} 2>/dev/null) || r=''; if [ "$r" = "$HOME"${q(d.slice(1))} ] && [ -d "$r" ]; then p+=(--protect ${q(d)}); elif [ -n "$r" ] && [ -d "$r" ]; then p+=(--protect "$r"); else said ${q(`protect ${d}`)}; fi; fi`;
+  }).join('; ')}`;
+}
 function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false }) {
   // (the id goes into a shell line: only the shape every helper call has)
   if (!/^[a-z0-9]{8,40}$/.test(String(id))) throw new Error('A guard id is 8 to 40 of a-z and 0-9.');
@@ -18958,7 +18990,7 @@ function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', me
   if (!/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new Error('A guard’s folder is ~ or a folder under it.');
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   // (a folder given read-only, as helperScript gives a change's: each only when it is a real folder there now, A11)
-  const under = d => `"$HOME"${q(d.slice(1))}`, pr = verb === 'run' ? (protect || []).filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
+  const pr = verb === 'run' ? (protect || []).filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   const call = verb === 'run'
     ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`}${pr.length ? ' "${p[@]}"' : ''}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''} -- ${q(command)}`
     // (root, R70: as root, only inside the net armed in the same call; --lockout holds a lock-out change to 10 minutes)
@@ -18970,7 +19002,7 @@ function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', me
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    ...(pr.length ? [protectShell(pr)] : []),
     `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
@@ -18982,6 +19014,11 @@ const GUARD_SAYS = {
   netOpen: /^net open: (.*)$/,
   kept: /^kept: |^kept already: /,
   putBack: /^(?:net |already )?put back at (.*)$/,
+  // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
+  failed: /^net: the put-back failed: ?(.*)$/,
+  // (the line just before a put-back at once, saying why: sshd's own words, or the timer's state)
+  sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
+  timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
@@ -18994,6 +19031,8 @@ function guardAnswer(id, out) {
   const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
+  // (why a put-back came at once: the helper's line just before its result, which it prints only then)
+  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net)) ? own(lines.at(-3)) ?? '' : '';
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
@@ -19001,20 +19040,38 @@ function guardAnswer(id, out) {
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: after(GUARD_SAYS.putBack),
+    failed: after(GUARD_SAYS.failed),
+    sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
+    timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
-// One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
+// One call of the net on a Spark (never rejects): { id, code, out, cut }. run: the command in the run wall, the net armed
 // first, starting in dir (~ or a folder under it); root: the same as root (R70, 21-root.mjs); keep: id is the guard's
-// own.
+// own. What it printed is kept as its first part and its last GUARD_TAIL bytes, never only the first part: the helper's
+// own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
+// (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
+const GUARD_TAIL = 65536;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
     const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: Number(seconds) + 180 });
-    const chunks = [];
-    let bytes = 0;
-    child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
+    const head = [], headMost = Math.max(GUARD_TAIL, J_MAX - GUARD_TAIL);
+    let headBytes = 0, tail = Buffer.alloc(0), past = 0;
+    child.stdout.on('data', c => {
+      if (headBytes < headMost) { const take = c.subarray(0, headMost - headBytes); head.push(take); headBytes += take.length; c = c.subarray(take.length); }
+      if (!c.length) return;
+      const both = Buffer.concat([tail, c]);
+      past += Math.max(0, both.length - GUARD_TAIL);
+      tail = both.subarray(-GUARD_TAIL);
+    });
     child.on('error', () => {});
-    child.on('close', code => resolve({ id, code, out: Buffer.concat(chunks).toString('utf8').slice(0, J_MAX) }));
+    child.on('close', code => {
+      const first = Buffer.concat(head).toString('utf8');
+      if (!past) return resolve({ id, code, out: Buffer.concat([...head, tail]).toString('utf8'), cut: false });
+      // (cut in the middle: each side ends where a line does, so no half line is read as the helper's)
+      const last = tail.toString('utf8');
+      resolve({ id, code, out: `${first.slice(0, first.lastIndexOf('\n') + 1)}…(the middle of what it printed was left out)…\n${last.slice(last.indexOf('\n') + 1)}`, cut: true });
+    });
   });
 }
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
@@ -19110,15 +19167,16 @@ function brainCatalog() {
     words: brainWords() };
 }
 // The fixed words the brain is sent outside the system prompt and the tools, by the code that writes them: the carry-on
-// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines (budgetReport),
-// the digest's words (digestOut), the cards' heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
+// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines and the last
+// round's note that the tools are put away (budgetReport, toolsAway), the digest's words (digestOut), the cards'
+// heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
 // (lessonSeenBefore); a card and "Seen before" say what was tried and how it failed with lessonTried and lessonFailWords,
 // from the failures' titles (START_FAILURES', 17-changes.mjs, and LESSON_APP_FAILS). Each is a hash of that code with its
 // whole-line comments left out, and of those titles as JSON, so a change to any of them is another mark and owes an eval
 // (R52); a change to the code around them does too.
 const BRAIN_WORDS = () => {
   const lesson = [lessonTried, lessonFailWords, START_FAILURES.map(f => [f.id, f.title]), LESSON_APP_FAILS];
-  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
+  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport, toolsAway], digest: [digestOut],
     cards: [memoryPickBlock, lessonCard, ...lesson], seenBefore: [lessonSeenBefore, ...lesson] };
 };
 const brainWordsOf = parts => createHash('sha256').update(parts.map(f => (typeof f === 'function' ? String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n') : JSON.stringify(f))).join('\n\n')).digest('hex').slice(0, 16);
@@ -19143,7 +19201,7 @@ action({
   },
 });
 /* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
-// Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
+// Area: features        Rules: R1, R60, R71, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
@@ -19180,7 +19238,7 @@ const HUB_OWN_PLACES = /^~\/(?:\.local\/state\/spark-console|\.local\/share\/spa
 // helper hides /run, Docker's socket among it, and /var/lib/docker, and leaves Docker's group out; --protect).
 const HUB_WALL = 'In its wall it can’t reach Docker (so not the brain’s container), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only.';
 // Programs that set the next one going (their options skipped): what that one is counts.
-const HUB_WRAPPERS = new Set(['env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
+const HUB_WRAPPERS = new Set(['busybox', 'env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
 const HUB_CONTAINERS = new Set(['docker', 'podman', 'nerdctl', 'ctr', 'crictl', 'docker-compose', 'kubectl', 'k3s', 'microk8s', 'containerd', 'dockerd']);
 const HUB_STARTS = new Set(['run', 'create', 'start', 'up', 'service', 'stack', 'swarm', 'build', 'buildx', 'pull', 'load', 'import']);
 // A container program's sub-command (past its options; compose, container and image name one more): whether it starts one.
@@ -19197,7 +19255,8 @@ const HUB_KILL = new Set(['kill', 'pkill', 'killall', 'fuser']);
 const HUB_UNIT_VERBS = /^(?:start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|enable|disable|reenable|mask|unmask|kill|edit|set-property|daemon-reload|daemon-reexec|link|revert|preset|preset-all|isolate|set-environment|unset-environment|import-environment|reset-failed|freeze|thaw|clean|reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec|default|rescue|emergency|exit|switch-root|add-wants|add-requires)$/;
 
 // Each program a command runs, roughly as a shell splits it (shellWords, 21-work.mjs), through the wrappers above and
-// into a word that holds a whole command (sh -c '…'), twice deep: [{prog, args}].
+// into a word that holds a whole command (sh -c '…', and the word after -c even with no space in it: bash -c reboot),
+// twice deep: [{prog, args}].
 function hubPrograms(command, depth = 0) {
   const progs = [];
   let seg = [];
@@ -19210,7 +19269,7 @@ function hubPrograms(command, depth = 0) {
       k++;
       while (k < seg.length && /^(?:-|\d)/.test(seg[k])) k++;
     }
-    if (depth < 2) for (const w of seg) if (/\s/.test(w)) progs.push(...hubPrograms(w, depth + 1));
+    if (depth < 2) for (const [i, w] of seg.entries()) if (/\s/.test(w) || (i > 0 && /^-\w*c$/.test(seg[i - 1]))) progs.push(...hubPrograms(w, depth + 1));
     seg = [];
   };
   for (const t of shellWords(String(command))) {
@@ -19233,8 +19292,8 @@ function hubBrainNames() {
 function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
   const text = String(command), progs = hubPrograms(text), has = set => progs.find(p => set.has(p.prog));
   const unit = progs.find(p => ['systemctl', 'service'].includes(p.prog) && p.args.some(a => HUB_UNIT_VERBS.test(a)));
-  // Its plug, and its power
-  if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b/i.test(text) || has(HUB_POWER)
+  // Its plug, and its power (its words anywhere, as the plug's: awk 'BEGIN{system("reboot")}', x=reboot; $x)
+  if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b|\b(?:reboot|poweroff|shutdown|halt|kexec)\b/i.test(text) || has(HUB_POWER)
     || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return 'it touches Spark 2’s power or its plug, which are never changed from here';
   // Spark Console's own unit, state, secrets and repository copy (the installer's, and only through its own actions)
   const own = [STATE_DIR, SECRETS_FILE, `${homedir()}/spark-console-src`].filter(Boolean).map(hubEsc).join('|');
@@ -19290,6 +19349,14 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
 
 // The ask, built by code: the exact command, why it is asked, how it runs and what is checked after, what put-back
 // covers, what Sparkie read before proposing it, each script's hash. A delete it cannot see is the dangerous ask.
+// The command on Spark 2's button, framed so none of its own lines can read as the button's (S-4): one line as
+// "$ command"; with a line break, how many lines it has, and each after │, so "Asked because …" in a command stays
+// the command's. (The ladder's builder frames its own button; one shared function can take this one's place.)
+function hubCommandLines(command) {
+  const parts = String(command).split(/\r\n|[\r\n\u2028\u2029]/);
+  if (parts.length === 1) return ['Run this on Spark 2?', `$ ${command}`];
+  return [`Run this on Spark 2? Its command has ${parts.length} lines, each shown after │:`, ...parts.map(l => `│ ${l}`)];
+}
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
@@ -19301,7 +19368,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: workScriptLines(scripts) } })
-    : question(viewer, ctx, [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
+    : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
       'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
       ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n'),
     [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
@@ -19475,15 +19542,20 @@ function workTailnetSsh() {
   return { on, unknown };
 }
 
-// Where a command reads each script it runs, only where that is plain (the A7c review, fix 1): a script named as
-// written (no $, quote, pattern or ..), from the folder the change starts in (dir), or from the one folder a first
-// `cd <plain folder> &&` names; a ~ or whole path as it is. Anything else (a second cd, a cd anywhere else or with an
-// option, a script's name that isn't plain) pins nothing: the button says the script's text isn't pinned by a hash.
+// Where a command reads each script it runs, only where that can be told (the A7c review, fix 1; S-6), from the
+// command's words as bash splits them (shellWords, 21-work.mjs: quotes and backslashes taken off, so c\d and c''d are
+// cd): a script named as written (no $, quote, pattern or ..) is read from the folder the change starts in (dir) when
+// no word is cd, pushd or popd, none holds one (sh -c '…'), and no program is told another folder (-C, --directory,
+// --chdir, --cwd, --prefix, --git-dir, --work-tree, -execdir: git -C proj, make -C proj); with one cd that is the very
+// first words, `cd <plain folder> &&`, from that folder; a ~ or whole path as it is. Anything else pins nothing: the
+// button says the script's text isn't pinned by a hash.
 const WORK_PLAIN = /^[^\s$`'"\\*?[\]{}]+$/, workPlainName = t => WORK_PLAIN.test(t) && !t.startsWith('-') && !/(?:^|\/)\.\.?(?:\/|$)/.test(t);
+const WORK_MOVES = /^(?:cd|pushd|popd)$/, WORK_TOLD = /^(?:-C|--(?:directory|chdir|cwd|prefix|git-dir|work-tree)(?:=|$)|-(?:exec|ok)dir$)/;
 function workScriptPaths(scripts, dir, command) {
-  const c = String(command), cds = [...c.matchAll(/(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])/g)].length;
-  const first = /^\s*cd\s+(\S+)\s*&&/.exec(c), ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
-  const base = cds === 0 ? dir : cds === 1 && first && workPlainName(first[1]) ? (ok(first[1]) ? first[1] : `${dir}/${first[1]}`).replace(/\/+$/, '') : null;
+  const toks = shellWords(String(command)), words = toks.filter(t => t.w !== undefined).map(t => t.w), ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
+  const moves = words.filter(w => WORK_MOVES.test(w)).length, inside = words.some(w => !WORK_MOVES.test(w) && /(?:^|[^\w./-])(?:cd|pushd|popd)(?:[^\w./-]|$)/.test(w));
+  const first = moves === 1 && toks[0]?.w === 'cd' && typeof toks[1]?.w === 'string' && toks[2]?.op === '&&' ? toks[1].w : null;
+  const base = inside || words.some(w => WORK_TOLD.test(w)) ? null : moves === 0 ? dir : first !== null && workPlainName(first) ? (ok(first) ? first : `${dir}/${first}`).replace(/\/+$/, '') : null;
   const paths = [], unpinned = [];
   for (const s of scripts) {
     if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null)) { unpinned.push(s); continue; }
@@ -19510,6 +19582,10 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), unpinned };
 }
+// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
+// 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
+// (runnerPins, 21-runner.mjs), and run by its path.
+const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again.'] : []);
 // Why the scripts couldn't be read, by the look's answer, for the button.
 const WORK_UNREAD = { none: 'the root helper isn’t set up there yet', unknown: 'its root helper is one this build doesn’t know', nosudo: 'the root helper’s sudo line isn’t there',
   proof: 'the root helper’s walls aren’t proven there', failed: 'the root helper’s walls aren’t proven there', proving: 'its walls are being proven right now',
@@ -19550,17 +19626,46 @@ const workStartsIn = dir => `It starts in ${dir}.`;
 // script's hash.
 // (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script;
 // its path is whole, so no folder line)
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null) {
+// more: code's own lines after these (a command given keys, 21-run-keys.mjs), kept above a framed command.
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '') {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
   // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
-  return [...(spec ? spec.lines(at) : [`Run this on ${at}?`, `$ ${command}`]), `Asked because ${why}.`,
+  const lines = [`Asked because ${why}.`,
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
+  return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = []) {
+// The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
+// Sparks' buttons: Spark 2's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
+// command is on its own "$ " line; one with a line break, or a sign that doesn't show (a control, format, unassigned
+// or private sign, a line or paragraph break, a space but the plain one), is said in how many lines it has, each after
+// "│ ", so no line of it can pass for one of the button's own. more: text of code's after its lines.
+const WORK_UNPLAIN = /(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u;
+function workCommandText(head, command, lines, more = '') {
+  const c = String(command), parts = c.split(/\r\n|[\r\n\v\f\x85\u2028\u2029]/);
+  const shown = parts.length === 1 && !WORK_UNPLAIN.test(c) ? [head, `$ ${c}`]
+    : [`${head} ${parts.length === 1 ? 'Its command holds a sign that doesn’t show; it is shown after │:' : `Its command has ${parts.length} lines, each shown after │:`}`, ...parts.map(l => `│ ${l}`)];
+  return `${[...shown, ...lines].join('\n')}${more}`;
+}
+// What it runs that the command doesn't show, by the sorter's own words (unshown: a script fed by a redirect or a pipe,
+// -m module, a build tool's or a package's own scripts, start-file variables): one line on either ask, nothing when the
+// sorter says nothing. Never a reason to ask by itself.
+function workUnshownLines(sorted) {
+  const u = sorted?.unshown;
+  if (!u) return [];
+  const w = typeof u === 'string' ? u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '').slice(0, 200) : '';
+  return [`What runs is in a file this button doesn’t show${w ? ` (${w})` : ''}.`];
+}
+// A change that names a key file (S-8): asked, the button saying so, and what it prints never shown back (21-runner.mjs).
+const workKeyed = command => lookWords(String(command)).words.find(keyWord) || null;
+const workKeyLines = (command, spec = null) => { const k = spec ? null : workKeyed(command); return k ? [`It names a key file (${k.slice(0, 120)}): what it prints isn’t shown back or kept, and the file’s content never is.`] : []; };
+// more: what the runner found it can't do unasked (workAfter): bare, the protect folders whose link leads to no folder,
+// which the press then runs without; gone, the files it removes or overwrites that couldn't be copied first ({path,
+// why}): the dangerous ask's delete, which names each.
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = [], more = {}) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
@@ -19570,30 +19675,45 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
       ...(ctx.long ? { minutes: ctx.long.minutes } : {}), ...(keys.length ? { keys } : {}) } };
-  const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const dangerous = [...new Set([...(sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k)), ...(more.gone?.length ? ['delete'] : [])])];
   // (and, when it may be, "Run it, and don't ask again for this task: …", 21-ahead.mjs: its button shares the call, so it
   // keeps the ask's record too)
   // (never for a write_file, nor for a command given a key: those are always asked)
   const offer = dangerous.length || spec || keys.length ? null : aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen);
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
+  // (the sorter's reason is on the ask for each kind: a delete's on line 3, one outside the wall on its own line, the
+  // brain's (it may be Spark 2, a protected container's id) on a line of its own when neither already says it)
+  const sorterWhy = String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, ''), whyShown = (dangerous.includes('delete') && !more.gone?.length) || String(shown.outside || '').includes(sorterWhy.replace(/\.$/, ''));
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
-    facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
+    facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : sorterWhy } } : {}),
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...(dangerous.includes('brain') && sorterWhy && !whyShown ? [`Why it is asked: ${sorterWhy}`] : []), ...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...workPinLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [],
+    gone: more.gone?.length ? more.gone.map(x => String(x.path)) : dangerous.includes('delete') ? true : null, at: Date.now() });
   return out;
 }
 
+// Whether a press may run what the sorter says now: a delete it can't see, or the brain's names (the dangerous kinds),
+// only from the dangerous ask's own press, which carries its two digits (ctx.danger, runChoice, 14-chats.mjs).
+const workPressCovers = (sorted, ctx) => !(sorted?.kinds || []).some(k => ['delete', 'brain'].includes(k)) || Boolean(ctx?.danger);
+// An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
+// refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
+// (S-12). run is a lookup to runAction, so the ladder asks this itself; root does too (runCommand). A look is not a
+// change and still runs.
+function workHeld(viewer, ctx) {
+  if ((ctx.agentId || ctx.agent || viewer?.agentKey) && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
+}
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
 // spec (write_file, 21-write.mjs): its own call, key and lines for the button, and what the runner runs in its place
 // (as); command is then the plain write the sorter was handed. keys (run's, 21-run-keys.mjs): the names it is given.
 async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null, keys = []) {
   whoMayLook(viewer, ctx);
+  workHeld(viewer, ctx);
   // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
@@ -19624,16 +19744,27 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     if (!was || was.spark !== node.id || was.command !== (spec?.key ?? command) || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
-    if (!was.unread && Object.keys(was.sums).length) {
-      // (write_file's: the file as it is read again for this press, 21-write.mjs)
-      const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
-      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
-        if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
-        return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+    // (a press that wasn't the dangerous ask's, of a command the sorter now calls a dangerous kind (the brain's names
+    // changed since its plain ask): asked again, as the dangerous ask, as Spark 2's press is, 21-hub.mjs)
+    if (!workPressCovers(sorted, ctx)) return again('it now deletes for good or names the brain, which only the dangerous ask, with its two digits, can run');
+    // (the Spark's claim first, so nothing else of this console changes it between the scripts' read below and the run;
+    // let go just before runChange, which takes it again in this same tick, with nothing awaited between, R72)
+    const held = claimSparks([node.id], 'a command Sparkie is running there');
+    try {
+      if (!was.unread && Object.keys(was.sums).length) {
+        // (write_file's: the file as it is read again for this press, 21-write.mjs)
+        const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
+        if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
+        if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
+          if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
+          held();
+          return await again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+        }
       }
-    }
-    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
+    } finally { held(); }
+    // (each script's hash, checked once more by the unit's own first lines: runnerPins, 21-runner.mjs)
+    const pins = spec ? null : Object.fromEntries(Object.entries(was.sums || {}).filter(([, h]) => typeof h === 'string'));
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [], gone: was.gone ?? null, pins }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
@@ -19648,16 +19779,34 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys });
+  if (!why) return workAfter(await runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, spec ? '' : command, widen, sorted);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec, keys);
 }
+// What the runner found it can't do unasked (runChange's asks, 21-runner.mjs), asked in the chat (R61): a protect
+// folder whose link leads to no folder there, which after the yes it runs without (bare); files it removes or
+// overwrites that couldn't be copied first, the dangerous ask's delete naming each (gone). With no chat to ask in (the
+// API, or write_file's own call), the runner's own answer: nothing ran, and why.
+async function workAfter(r, node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys) {
+  if (!r?.asks) return r;
+  const { asks, protect, lost, ...said } = r;
+  if (spec || (!ctx.conv && !ctx.onQuestion)) return said;
+  const c = { ...ctx, button: false, ownerConfirmed: false };
+  if (asks === 'protect') return workAsk(node, command, sorted, viewer, c, `${protect} on ${sparkName(node)} is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it`, dir, widen, topDirs, spec, keys, { bare: [protect] });
+  // (a script that changed between the press and the unit's start: that yes was void, as at the press)
+  if (asks === 'pinned') return workAsk(node, command, sorted, viewer, c, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs, spec, keys);
+  if (asks === 'uncopied' && Array.isArray(lost) && lost.length) return workAsk(node, command, sorted, viewer, c, 'what it removes or overwrites couldn’t be copied first', dir, widen, topDirs, spec, keys, { gone: lost });
+  return said;
+}
+// The files the dangerous ask names that can't be put back, each with why it wasn't copied, a line each (the paths
+// masked by the ask, as all its lines are).
+const workGoneLines = gone => (Array.isArray(gone) && gone.length ? [...gone.slice(0, 6).map(x => `Not copied first, so gone for good: ${x.path} (${x.why}).`), ...(gone.length > 6 ? [`And ${gone.length - 6} more not copied first.`] : [])] : []);
 /* ───────── a long command: run with minutes, as an operation (A6) ───────── */
 // Area: features        Rules: R23, R13, R61        Tests: long.test.mjs
 // Owns: none
@@ -19705,8 +19854,9 @@ function longStart(node, ctx, kind, fn) {
   if (was && jobs.get(was)?.status === 'running') throw new HttpError(409, `A long command runs on ${at} already (operation ${was}): one at a time on each Spark. Wait for its result, or cancel it (cancel_operation).`);
   // (a change: the runner takes the Spark's claim as the operation begins, in this same tick; taken now, it says so here)
   if (kind !== 'look' && busySparks.has(node.id)) claimSparks([node.id], '');
-  const job = newJob('run', { node: node.id, via: ctx.via || null, actor: ctx.actor || null, minutes: L.minutes, ...(ctx.conv ? { conv: ctx.conv } : {}) });
-  // (run is a read to runAction, which so attaches nothing to what it starts: the owner's own, and Telegram's line)
+  // (run is a read to runAction, which so attaches nothing to what it starts: the chat, the request's task (job.task, so
+  // its report counts it and lists it as still open, 14-tasks.mjs, S-13), the owner's own, and Telegram's line)
+  const job = newJob('run', { node: node.id, via: ctx.via || null, actor: ctx.actor || null, minutes: L.minutes, ...(ctx.conv ? { conv: ctx.conv } : {}), ...(ctx.task ? { task: ctx.task } : {}) });
   if (ctx.via === 'sparkie' && !ctx.agent) job.ownersOwn = true;
   if (ctx.channel && ctx.conv) { job.channel = ctx.channel; tellAwait(job); }
   Object.assign(ctx.long, { job, kind, minutes: L.minutes, seconds: L.seconds });
@@ -19787,28 +19937,30 @@ function longCutOff(r, conv) {
   return true;
 }
 /* ───────── the lock-out net, the console's half: asked, armed first, checked from outside, kept or put back (A13b) ───────── */
-// Area: features        Rules: R60, R54, R61, R13, R43        Tests: net.test.mjs
+// Area: features        Rules: R71, R60, R54, R61, R13, R43        Tests: net.test.mjs
 // Owns: net.json (writers: netSave)
 // Timers: none        Wakes: none
 // A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the
-// helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8). run's ladder (21-ladder.mjs) hands
-// it here. It is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out,
-// the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a deleted user's
-// home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's claim (R13) is taken; the ways
-// in that work now are tried (a new SSH connection, the root helper through its sudo line, its Tailscale connection as
-// Spark 2 sees it); the guard goes on record here before the call and the journal's start line is written (R43); then
-// the helper's `run --net` arms the Spark's own timer (the command's time limit plus 600 s) in the same call, before the
-// change, and runs it (21-guard.mjs). After it, the same ways in are tried again from outside, by code: each that
-// worked before must still work. All do: `keep` (code keeps it on a compute Spark). One doesn't: `putback` at once. No
-// answer (the Spark or the call cut off): the Spark's own timer puts it back, and the Spark stays claimed until then.
-// After every put-back, and once that time has passed, the ways in are tried again: live network or firewall state is in
-// no copy, so what still doesn't work is said, with the restart that is the way back. The owner is told each outcome once. Nothing of the brain's or an agent's ever reaches keep or putback: the ladder
-// sends a lock-out change here only from the dangerous ask's press, and /putback is the owner's word (20-words.mjs,
-// 21-telegram.mjs). /stop never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open
-// on record, a second lock-out change there is refused before it is asked, and its claim refuses it after. At start,
-// each guard still open on record is put back (or found back already, or kept) and the owner told (netRecover). Off
-// (NET_ON), a lock-out change is answered as before: it waits for the net. Spark 2 (A11) and root (A12) are their
-// steps', through the same seam (netGuarded).
+// helper's own line) on a compute Spark runs only inside the net (R60, R71; design A 2.8), and only as root (21-root.mjs,
+// R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange:
+// set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when,
+// why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as
+// another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's
+// claim (R13) is taken; the ways in that work now are tried (a new SSH connection, the root helper through its sudo line,
+// its Tailscale connection as Spark 2 sees it); the guard goes on record here before the call and the journal's start
+// line is written (R43); then the helper's `root --net` arms the Spark's own timer (the command's time limit plus 600 s)
+// in the same call, before the change, and runs it (21-guard.mjs). After it, the same ways in are tried again from
+// outside, by code: each that worked before must still work. All do: `keep` (code keeps it on a compute Spark). One
+// doesn't: `putback` at once. No answer (the Spark or the call cut off): the Spark's own timer puts it back, and the
+// Spark stays claimed until then. After every put-back, and once that time has passed, the ways in are tried again:
+// live network or firewall state is in no copy, so what still doesn't work is said, with the restart that is the way
+// back. The owner is told each outcome once. Nothing of the brain's or an agent's ever reaches keep or putback: only
+// a dangerous ask's press runs a change here, and /putback is the owner's word (20-words.mjs, 21-telegram.mjs). /stop
+// never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open on record, a second
+// lock-out change there is refused before it is asked, and its claim refuses it after. At start, each guard still open
+// on record is put back (or found back already, or kept) and the owner told (netRecover). Off (NET_ON), a lock-out
+// change is answered as before: it waits for the net. Spark 2 (A11, 21-hub.mjs) and root (A12) call the same seam
+// (netGuarded).
 
 // The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_NET=0); nothing else can.
 const NET_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '0');
@@ -19878,7 +20030,8 @@ function netTailnet(node) {
 }
 async function netProbe(node) {
   const [ssh, helper, tailnet] = await Promise.all([
-    run(node, 'echo net-ok', { timeout: 20000 }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
+    // (a new connection, never one shared with another ssh: 02-ssh.mjs spawnOn's fresh)
+    run(node, 'echo net-ok', { timeout: 20000, fresh: true }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
     helperCall(node, 'check', { limitMs: 30000 }).then(c => c.out.includes(`${c.id} helper `)).catch(() => false),
     netTailnet(node).catch(() => null),
   ]);
@@ -19896,6 +20049,10 @@ async function netStillLost(node, g) {
   return (g.ways || ['ssh', 'helper']).filter(p => now[p] === false);
 }
 const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+// The helper's answer to putback when its put-back failed (do_putback's refusal), and what is true then: the Spark
+// answered, so it isn't cut off, but the change may still be in place, in part or whole; what the owner can do.
+const NET_PUTBACK_FAILED = /^the put-back failed: ?(.*)$/;
+const netFailedNow = (at, g) => `${at} answers, so it isn’t cut off, but what that change did may still be in place, in part or whole. /putback tries the put-back again now; what failed is written on ${at} in /var/lib/spark-console/guard/${g.id}/failures, which root can read.`;
 const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
 // Once a guard left to the Spark's own timer is past its time: put back now if its timer didn't (the helper answers
 // "already put back" when it did), the ways in tried again, and the owner told what is true, once.
@@ -19908,19 +20065,35 @@ async function netAfterTime(id) {
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
   if (p.kept) return netMark(g.id, { state: 'kept' });
   if (/^there is no guard /.test(p.refused || '')) return netMark(g.id, { state: 'never' });
+  // (the helper answered that its put-back failed: the Spark answers, so it isn't cut off; say what is true)
+  const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+  if (failed) return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
   if (!p.putBackAt) return netTell(g, netGoneWords(which, at, g));
   netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
   const lost = await netStillLost(node, g);
   netTell(g, `${which} went back by ${at}’s own timer (put back at ${p.putBackAt})${lost.length ? `. ${netStillWords(at, lost)}` : `, and ${at} answers every way it did before.`}`);
 }
 
-// What the command printed: between the net's "armed" line and its own lines at the end.
+// What the command printed: between the helper's own lines, exactly as it writes them (deploy/spark-console-root:
+// do_unit's "as root", net_arm's "armed", net_after's result and the line before a put-back, the run's end), so a line
+// the command printed that begins with the call's id stays in what it printed (it can read its id from its own path).
+// With no end line (the answer was cut off) nothing at the end is taken for the helper's.
+const NET_OWN_END = /^end (?:\d{1,3}|time)$/, NET_OWN_RESULT = /^net (?:open: |put back at )|^net: (?:already put back$|the put-back failed: )/;
 function netOutput(id, out) {
   const lines = String(out).split('\n');
   if (lines.at(-1) === '') lines.pop();
-  // (the net's "armed" line, and root's "as root" line after it, R70)
-  while (lines.length && String(lines[0]).startsWith(`${id} `)) lines.shift();
-  while (lines.length && String(lines.at(-1)).startsWith(`${id} `)) lines.pop();
+  const own = (l, re) => typeof l === 'string' && l.startsWith(`${id} `) && re.test(l.slice(id.length + 1));
+  // (before the command: the net's "armed" line and root's "as root" line, R70)
+  for (let k = 0; k < 2; k++) if (own(lines[0], /^(?:net armed|as root): /)) lines.shift();
+  // (after it: its end, the net's result, and before a put-back the line that says why)
+  if (own(lines.at(-1), NET_OWN_END)) {
+    lines.pop();
+    const result = lines.at(-1);
+    if (own(result, NET_OWN_RESULT)) {
+      lines.pop();
+      if (own(result, /^net put back at |^net: the put-back failed: /) && own(lines.at(-1), /^net: (?:sshd -t refuses |its timer is not waiting )/)) lines.pop();
+    }
+  }
   if (lines.length && lines.at(-1) === '') lines.pop();
   return lines.join('\n');
 }
@@ -19929,8 +20102,9 @@ function netOutput(id, out) {
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
-// page or a fix suggested it): null when the owner's own words (this message and the one before, R25) ask for it on that
-// Spark (netAsks) with nothing read from outside since, or for the owner's own call (the page, POST /actions);
+// page or a fix suggested it): null when the owner's current message asks for it on that Spark (netAsks) with nothing
+// read from outside since, or for the owner's own call (the page, POST /actions). Only the current message counts, never
+// the one before, and only in the turn it began: a carry-on turn's newest message is its own, marked auto (netNowSaid);
 // otherwise where it came from. netAsks: one sentence of theirs does all three. 1, it names that Spark. 2, it names what
 // is to change, in the lock-out class (NET_WHAT), in the words right after a change verb (NET_BREAK). 3, it asks for that
 // change as an instruction: the verb in its plain form (NET_ASK; not "port 22 is open", not inside "how to …" or
@@ -19953,11 +20127,16 @@ const NET_QUESTION = new RegExp(String.raw`${NET_LEAD}(?:why|what|which|who|whom
 // open", "whether to add", "should I open")
 const NET_STATE = /(?:\b(?:am|is|are|was|were|be|been|being|still|already|left|kept|stays?|remains?|not|never)|n't|(?<!\blet)'s|'m|'re)\s+$/i;
 const NET_IF = /\b(?:how|why|what|when|where|which|who|whether|if|should|would|could|can|might|may)\b(?!')[^,;:]*$/i;
-// (what the verb changes: its own words and the six after it, up to a comma or a joining word, so "start a model on
-// Spark 3 with port 8000" names no lock-out thing to change)
-const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if)\s/i;
+// (what the verb changes: its own words and the six after it, up to a comma, a joining word or a place word (on, in, of,
+// from, at), so "start the app on port 8080 on Spark 3" names no lock-out thing to change. Not "to" or "into": "add bob
+// to the sudo group" is a true ask)
+const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if|on|in|of|from|at)\s/i;
+// (a way-in word that only names another thing, "the shell script", "the users table", "a password generator", is not
+// what changes: the word after it names the thing)
+const NET_NAMED = /^(?:scripts?|tables?|apps?|applications?|generators?|extensions?|drivers?|pictures?|photos?|chats?|folders?|director(?:y|ies)|projects?|repos?|repositor(?:y|ies)|pages?|tests?|tools?|programs?|code|class(?:es)?|functions?|columns?|fields?|bots?|plugins?|themes?|games?|dashboards?|demos?|tutorials?|docs?|notebooks?|models?|datasets?)\b/i;
 function netAsks(node, text) {
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  // (the owner's own sentences only: a pasted log, a code block or a > quote holds no ask of theirs, ownSentences)
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
     if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
     const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
@@ -19966,7 +20145,8 @@ function netAsks(node, text) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
       if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
-      if (NET_WHAT.test(`${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`)) return true;
+      const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
+      for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
     }
   }
   return false;
@@ -19977,35 +20157,49 @@ function netWhose(node, viewer, ctx) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey || ctx.via === 'agent') return 'an agent';
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
-  if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
-  if (!netAsks(node, String(ctx.said || ctx.request || ''))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  // (what was read, by its record: a read that returned, workRead in 14-rounds.mjs. A call that was refused and ran
+  // nothing, "set root" or "leave out sudo", read nothing, whatever the turn's readOutside says of it)
+  if (Array.isArray(ctx.reads) && ctx.reads.length) return NET_READ_FIRST;
+  if (!netAsks(node, netNowSaid(ctx))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
+// The owner's message this turn began with, as the chat keeps it: '' for a carry-on turn (its newest message is marked
+// auto), an agent's, or a turn with no chat.
+function netNowSaid(ctx) {
+  const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  const m = conv ? conv.messages.filter(x => x.role === 'user').at(-1) : null;
+  return m && !m.auto && !m.from ? String(m.content || '') : '';
+}
+const NET_READ_FIRST = 'text Sparkie read first (a log, a page or a command’s output)';
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
-// how to ask for one.
-const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`);
+// how to ask for one: after a read, ask again before Sparkie reads anything; else, say it in one sentence.
+const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. ${from === NET_READ_FIRST
+  ? 'To ask, say it again in a new message: it counts only before Sparkie reads anything for it.'
+  : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
 
-// From the ladder (workChange), for every change the sorter calls lock-out: off, as before; else not done, refused while
-// a guard is open there, refused when it isn't the owner's own (netWhose), asked, or (the dangerous ask's press) run
-// inside the net.
-async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
+// From the ladder (workChange), for every change the sorter calls lock-out on a compute Spark, as the owner. As the
+// owner it can change nothing: the run wall keeps ~/.ssh and the shell's start files read-only, and ufw, usermod and
+// tailscale need root. So a lock-out change on a compute Spark is done only as root (21-root.mjs, R70: always the
+// dangerous ask, inside the net), and here nothing is asked or run: off, it waits for the net, as before; what the net
+// can't put back is not done; one that isn't the owner's own is refused (netWhose); else the answer says how: set root,
+// or the owner's one command where the helper isn't set up or root is off there.
+async function netChange(node, command, sorted, viewer, ctx) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. ${sorted.why} Nothing was asked or run.`);
-  const open = netOpenOn(node.id);
-  if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
-  if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netRun(node, command, sorted, viewer, ctx, dir);
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);
   if (from) throw netNotYours(from, node);
+  // (minutes: a lock-out change is root's, inside the net, held to 10 minutes, and takes none: said, never left unread)
+  if (ctx.long) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} runs only as root, inside the lock-out net, held to 10 minutes, so it takes no minutes. Leave out minutes and set root.`);
+  if (!ROOT_ON) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} is done only as root, and root isn’t on in this build.`);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
-  return dangerAsk(viewer, ctx, { kinds: ['lockout'], where: node.id, shown: { command },
-    call: { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at),
-      lockWhy: sorted.why } });
+  if (first.rootOff) return needsOwner(node, 'root off', `A change to SSH, Tailscale, the firewall or users on ${at} is done only as root, and root is off there: ${first.rootOff}`);
+  throw new HttpError(403, netAsRoot(at));
 }
+const netAsRoot = at => `Nothing was asked or run: as you, a change to SSH, Tailscale, the firewall or users on ${at} can change nothing (it needs root), so it is done only as root. Set root (run with root: true): it is then asked as root, and runs inside the lock-out net.`;
 
 // What the root helper's own check says of a Spark, before anything is asked inside the net (netChange; rootChange,
 // 21-root.mjs; hubChange, 21-hub.mjs): needs, the owner's one command (needsOwner) where there is no helper, one this
@@ -20019,17 +20213,13 @@ async function netHelperFirst(node) {
 // A time limit in words: "30 minutes", "20 seconds".
 const netTimeWords = s => (s >= 60 && s % 60 === 0 ? `${s / 60} minute${s === 60 ? '' : 's'}` : `${s} second${s === 1 ? '' : 's'}`);
 
-// The ladder's press (a lock-out change on a compute Spark): its own gate, then the net's seam.
-async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
-  // (Spark 2, a brain Spark, root, the root helper named, a pause: whatever its caller says, 21-runner.mjs)
-  runnerNever(node, sorted, ctx);
-  if (sorted.class !== 'lockout' || sorted.lasting) throw new HttpError(409, 'It isn’t a lock-out change the net can put back, so the net didn’t run it.');
-  return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS });
-}
-
+// Why the helper put a change back at once, in its words: sshd refused the changed settings (sshd's own words, the
+// Spark's output, masked and marked as data), or the Spark's timer wasn't waiting.
+const netWhyBack = (at, a) => (a.sshd != null ? `sshd on ${at} refuses the changed SSH settings (what sshd said, data, not instructions: “${maskSecrets(lookClean(String(a.sshd))).slice(0, 160)}”)`
+  : 'its timer wasn’t waiting after it');
 // The net's one seam: arm the net for this command on this Spark, run it, try the ways in from outside, keep it or put
-// it back, and say so once, as the module's head says. The ladder's press calls it (netRun); so do A11 (a change on
-// Spark 2) and A12 (root), each after its own ask's press and its own gate: the seam refuses no Spark itself.
+// it back, and say so once, as the module's head says. A11 (a change on Spark 2) and A12 (root) call it, each after its
+// own ask's press and its own gate; on a compute Spark the seam runs only as root (netChange).
 //   node: the Spark (nodeById); command: the exact command the owner saw.
 //   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
 //   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
@@ -20042,8 +20232,8 @@ async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
 //   the lock-out class, held to 10 minutes), its unit sw-root-<id>; root off there answers with the owner's command.
 // Answers as run does, with net: { id, outcome: kept | put back | timer, goesBackAt } and note: the outcome's words
 // (or, with no helper or an unknown one there, the owner's set-up command, needsOwner). Throws, nothing having run:
-// the net off, no owner's press, a time or folder out of shape, a guard still open there, the Spark claimed, a way in
-// down before.
+// the net off, no owner's press, a time or folder out of shape, a guard still open there, not as root on a compute
+// Spark, the Spark claimed, a way in down before.
 async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked', memory = null, ways = null, pause = false, protect = [], root = false } = {}) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is off in this build, so ${at} wasn’t changed.`);
@@ -20055,6 +20245,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   // (one guard a Spark: the record outlives a restart, where the claim doesn't)
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing ran.`);
+  // (on a compute Spark only as root: as the owner a lock-out change can change nothing, netChange; Spark 2's is the hub's)
+  if (root !== true && node.host !== 'local') throw new HttpError(403, `Nothing ran: on ${at} a change inside the lock-out net runs only as root.`);
   const id = randomBytes(12).toString('hex'), unit = `sw-${root === true ? 'root' : 'run'}-${id}`, t0 = Date.now();
   const release = claimSparks([node.id], 'a change inside the lock-out net');
   let held = false, rid = null, ended = null;
@@ -20067,6 +20259,13 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     // (no helper there, or one this build doesn't know: the owner's one command, as before the ask)
     if (before.ssh && !before.helper) { const first = await netHelperFirst(node); if (first.needs) return first.needs; }
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
+    // (then the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
+    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
+    // squeezes a model or, on Spark 2, the brain)
+    const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
+    if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
+    const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
+    if (room < cap) throw new HttpError(409, `${at} doesn’t have room for this change now: it may use up to ${cap} GB, and ${Math.max(0, room)} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
     // (the ways that work now, on record: after any put-back they are tried again, netStillLost)
     g.ways = Object.keys(NET_PROBES).filter(p => before[p] === true);
     // (on record before the call: a restart from here on puts it back at start)
@@ -20087,6 +20286,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
+      if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
     }
     const back = a.goesBackAt || new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString(), output = lookClean(netOutput(id, called.out));
@@ -20114,9 +20315,30 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     if (a.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: a.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit }, `$ ${command}\n${output}`);
-      const words = `A change that could lock you out of ${at} (record ${rid}) was put back: its timer wasn’t waiting after it (put back at ${a.putBackAt}).${cut}${await still()}`;
+      const words = `A change that could lock you out of ${at} (record ${rid}) was put back at once: ${netWhyBack(at, a)} (put back at ${a.putBackAt}).${cut}${await still()}`;
       netTell(g, words, late());
       return result('put back', words);
+    }
+    // The helper had to put it back at once and that put-back failed: never kept (keep would stop its timer, the one
+    // thing left that tries again). Left to its timer, the Spark claimed until then, and said plainly.
+    if (a.failed != null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit, putBackFailed: true }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once: ${netWhyBack(at, a)}. But the put-back failed${a.failed ? ` (${String(a.failed).slice(0, 200)})` : ''}, so it was not kept and may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
+    }
+    // (an answer of the helper's this build doesn't know is never kept: left to its timer, said)
+    if (a.open == null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) ran, but the root helper’s answer after it wasn’t one Spark Console knows, so it was not kept: ${at}’s own timer puts it back at ${netHhmm(back)}. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
     }
     const after = await probe();
     lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
@@ -20172,11 +20394,12 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   }
 }
 
-// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net (open,
-// or kept) put back now, by code, with no brain. One kept already stays: the helper puts nothing back once it is kept.
+// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net that is
+// still open put back now, by code, with no brain; with none open, the newest kept one is named, and stays: the helper
+// puts nothing back once it is kept. (A kept one never hides an older one still open, on another Spark say.)
 async function netPutbackWord() {
   let g;
-  try { g = netNow().guards.filter(x => [...NET_OPEN, 'kept'].includes(x.state)).at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
+  try { const gs = netNow().guards; g = gs.filter(x => NET_OPEN.includes(x.state)).at(-1) || gs.filter(x => x.state === 'kept').at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
   if (!g) return 'No change made inside the lock-out net is on record, so nothing was put back.';
   const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `the newest change made inside the lock-out net, on ${at} (record ${g.record || g.id})`;
   if (!node) return `${which[0].toUpperCase()}${which.slice(1)} is on a Spark no longer on the list, so nothing was put back.`;
@@ -20212,11 +20435,20 @@ async function netRecover() {
     if (p.kept) { netMark(g.id, { state: 'kept' }); netTell(g, `${which} had been kept before the restart, so it stays.`); continue; }
     if (/^there is no guard /.test(p.refused || '')) { netMark(g.id, { state: 'never' }); netTell(g, `${which} never ran there: there was nothing to put back.`); continue; }
     netMark(g.id, { state: 'timer' });
+    // (the helper answered that its put-back failed: said as that, never as a Spark that doesn't answer; still held until
+    // its time, when its own timer may try again)
+    const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+    if (failed) netTell(g, `${which} couldn’t be put back now: the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
     // (past its time and still no answer: what the timer can't put back most likely cut it off; else looked at again then)
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
-    if (!(wait > 0)) { netTell(g, netGoneWords(which, at, g)); continue; }
-    netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart.`);
-    setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
+    if (!(wait > 0)) { if (!failed) netTell(g, netGoneWords(which, at, g)); continue; }
+    if (!failed) netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
+    // (claimed until its time, as before the restart: nothing else changes there while its own timer may still put it
+    // back; then looked at again, netAfterTime, and let go)
+    let release = null;
+    try { release = claimSparks([g.spark], 'a change inside the lock-out net'); } catch {}
+    if (release) netHold(g.spark, Date.parse(g.goesBackAt) || Date.now(), release, () => netAfterTime(g.id));
+    else setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
   }
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
@@ -21325,7 +21557,7 @@ function wallWhNow(id) {
 }
 const power = Object.freeze({ state: sparkPowerState, wake: wakeSpark, wallW: wallWattsNow, wallWh: wallWhNow });
 /* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
-// Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
+// Area: features        Rules: R70, R60, R71, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark
@@ -21348,6 +21580,40 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
+// Code a root command runs that isn't in its own words (the button shows only those, and the code can change before the
+// press): a file run as code (the sorter's scripts), or what the sorter says runs unseen (its unshown: input from < or a
+// pipe into a shell, a build, -m, a project's scripts, BASH_ENV). The refusal's words, or null. (unshown is the sorter's
+// field from its next step; while it is absent, scripts alone decide.)
+function rootUnseen(sorted) {
+  if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
+  if (sorted?.unshown) return `Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}), so that code isn’t on the button and can change before your press.`;
+  return null;
+}
+// A program that mounts or swaps, by the sorter's own reading of the command (shellLex and shellParse, 20-shell.mjs: each
+// command's first word past wrappers, into $( … ) and sh -c '…'): root's unit has its own mount table, so what it mounts,
+// unmounts or swaps never reaches the Spark (systemd.exec). Its name, or null; a command the reader can't read is left to
+// the sorter, which asks it.
+const ROOT_MOUNTS = new Set(['mount', 'umount', 'swapon', 'swapoff', 'zpool']);
+const ROOT_WRAPS = new Set(['env', 'nice', 'ionice', 'nohup', 'timeout', 'stdbuf', 'setsid', 'command', 'exec', 'chrt', 'taskset', 'flock', 'xargs', 'busybox']);
+function rootMounts(command, depth = 0) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return null; }
+  const walk = list => {
+    for (const pipe of list) for (const cmd of pipe) {
+      if (cmd.group) { const g = walk(cmd.group); if (g) return g; continue; }
+      const words = cmd.words.map(w => w.text);
+      for (const w of cmd.words) for (const sub of w.subs || []) { const g = walk(sub); if (g) return g; }
+      let k = 0;
+      while (k < words.length && ROOT_WRAPS.has(words[k].split('/').pop())) { k++; while (k < words.length && /^-|^\d|^[A-Za-z_]\w*=/.test(words[k])) k++; }
+      const prog = (words[k] || '').split('/').pop(), rest = words.slice(k + 1);
+      if (ROOT_MOUNTS.has(prog) || (prog === 'zfs' && /^(?:mount|unmount|umount)$/.test(rest[0] || ''))) return prog === 'zfs' ? `zfs ${rest[0]}` : prog;
+      // (a shell given its command as a word: read that word too, twice deep)
+      if (depth < 2 && /^(?:ba|da|z|k|a)?sh$/.test(prog)) { const c = rest.findIndex(x => /^-\w*c$/.test(x)); if (c >= 0 && rest[c + 1] != null) { const g = rootMounts(rest[c + 1], depth + 1); if (g) return g; } }
+    }
+    return null;
+  };
+  return walk(items);
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -21365,8 +21631,12 @@ async function rootChange(input, viewer, ctx = {}) {
   const sorted = sortCommand(command, runnerSortOpts(node, ctx, dir)), lockout = sorted.class === 'lockout';
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. Nothing was asked or run.`);
-  // (a file run as code: its text isn't on the button and can change before the press, so as root it is never run)
-  if (sorted.scripts?.length) throw new HttpError(403, `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`);
+  // (code it runs that isn't on the button: never as root)
+  const unseen = rootUnseen(sorted);
+  if (unseen) throw new HttpError(403, unseen);
+  // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
+  const mounts = rootMounts(command);
+  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });
@@ -21379,11 +21649,17 @@ async function rootChange(input, viewer, ctx = {}) {
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
-  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : [])], where: node.id, shown: { command },
+  // (as the ladder's and Spark 2's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
+  // folder it starts in, workStartsIn. rootLine already says the net puts back nothing but the ways in)
+  const also = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;
+  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : []), ...also], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+    // (line 2 of a lock-out ask follows the decision that let it through, netWhose: the owner's words asked for it)
+    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why, asked: true } : {}),
+      ...(gone ? { gone: { what: gone } } : {}),
       lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : [])] } });
+        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
 }
 /* ───────── a kept key, by its name, in one change's environment (A14b) ───────── */
 // Area: features        Rules: R51, R61, R42        Tests: run-keys.test.mjs
@@ -21630,7 +21906,7 @@ const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Ob
 
 // The helper's answers that mean the command never started there (its set goes, and undo passes over it), each only
 // with the exit code that comes with it: a line the command itself printed, then a dropped connection, is not one.
-const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, nosudo: 1, proof: 125, refused: 125 };
+const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, protect: 0, nosudo: 1, proof: 125, refused: 125 };
 // The minute after a change's time limit that a cut-off set still counts as its (the stand-in fleet may shorten it).
 const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK) || 60;
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
@@ -21644,6 +21920,47 @@ const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program 
 // is the sorter's to ask.
 const RUNNER_GIT = ['c=3; for k in name email; do v=$(git config --global --get "user.$k" 2>/dev/null) && [ -n "$v" ] && export "GIT_CONFIG_KEY_$c=user.$k" "GIT_CONFIG_VALUE_$c=$v" && c=$((c + 1)); done; unset k v',
   'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=$c GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2=/dev/null; unset c', ''].join('\n');
+// A pressed change's scripts, pinned by their SHA-256 on its ask (R72; R1-03): the unit's own first lines, after git's
+// and before the command, check each again from the folder the change starts in. One that differs, or isn't a file
+// there, stops it before anything of the command runs. The first line the unit prints says which: "<RUNNER_PIN> ok",
+// or "<RUNNER_PIN> changed <path>" and exit 97; what the command prints only ever comes after that first line, so it
+// can't be forged by the command. pins: {path as the ask showed it (~/… or whole): SHA-256}; dir: where it starts.
+const RUNNER_PIN = 'spark-console: the scripts it runs';
+function runnerPins(pins, dir) {
+  const d = dir === '~' ? [] : String(dir).slice(2).split('/');
+  const rel = p => {
+    if (!p.startsWith('~/')) return p;
+    const f = p.slice(2).split('/');
+    let i = 0;
+    while (i < d.length && i < f.length - 1 && d[i] === f[i]) i++;
+    return [...Array(d.length - i).fill('..'), ...f.slice(i)].join('/');
+  };
+  return [...Object.entries(pins).map(([p, h]) => `[ -f ${q(rel(p))} ] && s=$(sha256sum < ${q(rel(p))} 2>/dev/null) && [ "\${s%% *}" = ${/^[0-9a-f]{64}$/.test(h) ? h : 'x'} ] || { printf '%s\\n' ${q(`${RUNNER_PIN} changed ${p}`)}; exit 97; }`),
+    `unset s; printf '%s\\n' ${q(`${RUNNER_PIN} ok`)}`, ''].join('\n');
+}
+// Whether a file the copies couldn't keep is one the command writes over or removes (S-1): with the sorter's overwrites
+// (R55: what it places less what it only reads, and the folders it reaches whole), one of them as written, under one,
+// or matched by one as bash matches a pattern (one that can't be read: any file under where it begins); with none from
+// the sorter, every
+// file it names counts, as before.
+function runnerOverwritten(path, overwrites) {
+  if (!Array.isArray(overwrites)) return true;
+  const p = String(path);
+  return overwrites.some(o => {
+    if (typeof o !== 'string') return false;
+    if (p === o || p.startsWith(`${o.replace(/\/+$/, '')}/`)) return true;
+    if (!/[*?[]/.test(o)) return false;
+    try { return new RegExp(`^${o.replace(/\[!/g, '[^').replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}$`).test(p); } catch { return p.startsWith(o.slice(0, o.search(/[*?[]/))); }
+  });
+}
+// What the unit's first line says of its pins: { output } without that line when they held; { changed: path } when one
+// didn't (exit 97, nothing of the command ran); null when the first line is neither (systemd refused the unit: as before).
+function runnerPinRead(output, exit) {
+  const out = String(output), first = out.split('\n')[0];
+  if (first === `${RUNNER_PIN} ok`) return { output: out.slice(first.length + 1) };
+  if (exit === 97 && first.startsWith(`${RUNNER_PIN} changed `)) return { changed: first.slice(`${RUNNER_PIN} changed `.length) };
+  return null;
+}
 // After its time limit systemd gives a unit 5 seconds to stop (TimeoutStopSec=5, the helper's), and a second more here.
 const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
@@ -21653,7 +21970,8 @@ const RUNNER_STOP_S = 6;
 const RUNNER_DIR = '~/work';
 // The folders a change gets read-only (the helper's --protect, as ~/…): the model store, the Hugging Face cache and
 // the jobs' shared folder. A change the sorter places in one is asked (21-ladder.mjs), and after the yes runs without
-// that one. Each goes only when it is a real folder there now (helperScript). (The wall makes the rest of ~/.local
+// that one. Each goes when it is there, a link followed to the folder it leads to; one whose link leads to no folder is
+// asked (helperProtect, 21-work.mjs). (The wall makes the rest of ~/.local
 // read-only by itself, R63: the shared folder's entry costs nothing and stays, should that ever change.)
 const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
 // What an asked change may widen (R63), from the sorter's own fields (R64) and the caller's words: the fleet's ranges
@@ -21753,8 +22071,12 @@ async function runnerTopDirs(node, sorted) {
 }
 // as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
-// keys (run's, 21-run-keys.mjs): the names of the keys it is given.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [] } = {}) {
+// keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
+// folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
+// gone: the owner pressed an ask that said what it removes can't be put back (R54): true (the sorter's own delete, of
+// files it can't see), or the paths that ask named as not copied first; those may then go with no copy. pins: a
+// pressed change's scripts and their hashes, checked again by the unit's own first lines (runnerPins).
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null, pins = null } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -21774,7 +22096,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone, pins }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -21800,13 +22122,15 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
     const notCovered = { notCovered: sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : RUNNER_ONLY_COPIED };
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
-    // deletes): otherwise nothing runs, and the set goes.
-    const lost = copied.notKept.filter(x => !x.way);
-    if (sorted.deletes && lost.length) {
+    // deletes), whoever asked and whatever was pressed: otherwise nothing runs, the set goes, and the ladder asks it as
+    // one that can't be put back, naming each file and why (asks, lost: 21-ladder.mjs; R61, R54).
+    // (the files whose copy must be there: what the sorter says it writes over or removes, runnerOverwritten)
+    const lost = copied.notKept.filter(x => !x.way && runnerOverwritten(x.path, sorted.overwrites)), yes = asked && (gone === true || (Array.isArray(gone) && lost.every(x => gone.includes(String(x.path)))));
+    if (sorted.deletes && lost.length && !yes) {
       await copiesOn(node, 'drop', { set }).catch(() => null);
       return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(),
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
-        notKept: lost.slice(0, 50).map(said) };
+        notKept: lost.slice(0, 50).map(said), asks: 'uncopied', lost: lost.slice(0, 50).map(x => ({ path: String(x.path), why: String(x.why) })) };
     }
     // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
     if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
@@ -21814,7 +22138,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha, ...(given ? { keys } : {}),
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
-      copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
+      copied: mine, notKept: copied.notKept.length, ...(sorted.deletes && lost.length ? { gone: lost.length } : {}), sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
     // The plain ways-in check after it (and the after-look undo compares with): what differs puts the set back, pauses
@@ -21835,11 +22159,22 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    // (its pins, by the unit's first line: held, that line goes; one changed, nothing of the command ran, and it is
+    // asked again, 21-ladder.mjs)
+    const pin = pinned && ['ran', 'ended'].includes(a.kind) ? runnerPinRead(a.output, a.exit) : null;
+    if (pin?.output !== undefined) a = { ...a, output: pin.output };
+    if (pin?.changed) {
+      await copiesOn(node, 'drop', { set }).catch(() => null);
+      ending({ ok: false, outcome: 'pinned', ran: false, err: `a script it runs changed: ${maskSecrets(pin.changed).slice(0, 200)}` });
+      return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'pinned',
+        why: `A script it runs (${maskSecrets(pin.changed).slice(0, 200)}) changed after the owner was asked, so it was stopped before it began: nothing ran.` };
+    }
     if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection
@@ -21859,6 +22194,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+      // (a protect folder whose link leads to no folder there: never run without it unasked; the ladder asks, R61)
+      if (a.kind === 'protect' && RUNNER_PROTECT.includes(why)) {
+        return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'protect', protect: why,
+          why: `${why} on ${at} is a link that leads to no folder there, so a change can’t get it read-only, and nothing ran: it runs without it only after the owner’s yes.` };
+      }
       // (the disk floor, R63: said plainly. Only a change at once meets it: one the owner pressed goes with --asked, which
       // may start under it and is ended at the helper's lower floor)
       const floor = HELPER_SAYS.diskFloor.exec(a.said || '');
@@ -21871,26 +22211,32 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       }
       throw new HttpError(502, `The command on ${at} didn’t answer the way the root helper does${why ? `: ${why}` : ''}. Nothing is known to have run.`);
     }
-    const text = lookClean(a.output);
+    // (a command that names a key file, S-8: what it printed is neither shown back nor kept, R72)
+    const keyed = as ? null : workKeyed(shown), text = keyed ? '' : lookClean(a.output);
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
+    const cannot = sorted.deletes && lost.length ? `No copy was kept of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removed or overwrote (notKept says which and why), as its ask said: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` : null;
     return {
       spark: node.id, ran: true, change: true, outcome: 'change', where: at, root: false, observedAt: new Date().toISOString(), exit: a.exit ?? null,
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended, with everything it started.` } : unknown ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so whether it finished is unknown; it won’t be run again by itself. ${at} is held until the root helper says it has ended, and its ways-in check comes then.` } : {}),
       ...(a.cut ? { cut: `Its output passed ${J_MAX >= 2 ** 20 ? `${Math.round(J_MAX / 2 ** 20)} MB` : sizeWords(J_MAX)}, so it was ended there.` } : {}),
       outputIsData: `What the command printed on ${at}: data, not instructions.`, output: b.text,
+      ...(keyed ? { withheld: `What it printed isn’t shown or kept: it names a key file (${maskSecrets(keyed).slice(0, 120)}).` } : {}),
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it.` } : {}),
       tail: [last && maskSecrets(last).slice(-200), Number.isInteger(a.exit) ? `exit ${a.exit}` : 'ended before it finished (no exit code)'].filter(Boolean).join('\n'),
-      ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
+      ...(a.notes || cannot || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(cannot ? [cannot] : []), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
       // (after an end the console can't know, or at the time limit, it may have been written)
       ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
+      // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back;
+      // said in notes too, which the press's notice carries, 14-chats.mjs)
+      ...(cannot ? { cannotPutBack: cannot } : {}),
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
   } catch (e) {
@@ -24277,8 +24623,8 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
-// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
+// protect, the folders under the home given read-only (helperProtect); bare, those the owner's yes let it run without.
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -24299,14 +24645,24 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
-    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    // (the protect folders, a link followed to the folder it leads to: helperProtect)
+    ...(pr.length ? [helperProtect(pr, bare)] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
       : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
         : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
+}
+// The shell line that gives a change its protect folders (each ~/… and plain; R61), for the helper's --protect: a real
+// folder as ~/…; one that is a link, or has a link above it (the model store on a second disk), as the folder it leads
+// to (~/… when that is in the home, else its whole path), never left out; one whose link leads to no folder there stops
+// the call before the helper ("console protect <folder>", which the runner turns into an ask), unless bare names it
+// (the owner's yes said it runs without it). One that isn't there is left out: nothing is there to keep. Its script
+// defines said, as helperScript's and the net's guardScript (21-guard.mjs) do; both call this.
+function helperProtect(dirs, bare = []) {
+  const under = d => `"$HOME"${q(d.slice(1))}`;
+  return `p=(); ${dirs.map(d => `if [ -L ${under(d)} ] || { [ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" != ${under(d)} ]; }; then r=$(realpath -e -- ${under(d)} 2>/dev/null); if [ -n "$r" ] && [ -d "$r" ]; then case $r in "$HOME"/*) p+=(--protect "~/\${r#"$HOME"/}") ;; *) p+=(--protect "$r") ;; esac; else ${bare.includes(d) ? 'true' : `said ${q(`protect ${d}`)}`}; fi; elif [ -d ${under(d)} ]; then p+=(--protect ${q(d)}); fi`).join('; ')}`;
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
 // folders), check (with form: an exact form run after it), or prove. A fresh id each call. Never rejects: { id, code, out
@@ -24342,8 +24698,11 @@ function helperCall(node, verb, opts = {}) {
     child.on('close', code => finish(code));
   });
 }
-// What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
-// and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
+// What a call's output says. The helper's own lines begin with the call's id, but a command can learn that id (its own
+// file, /run/spark-console/<id>/command, is its $0; its unit's name and control group hold it too), so a line that
+// begins with it proves nothing by itself. A run's or a look's last line is "<id> end <code>" or "<id> end time", which
+// the helper prints once the command and all it started have ended; before it, only a line that is whole one of the
+// helper's fixed sentences is its note (helperAnswer). Anything else the command printed, a line shaped like the
 // helper's own included, is only ever output.
 // Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer
 // and the runner (21-runner.mjs) read through these (the net's, 21-guard.mjs, through GUARD_SAYS there), and
@@ -24366,9 +24725,12 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time)\\n$`).exec(out);
   if (end) {
     // (a change's own last lines, after a line break of the helper's and before its end: the disk floor stopped it, the
-    // home's mode or owner put back, R63. What the command printed comes before them.)
+    // home's mode or owner put back, R63, each one of the helper's fixed sentences, whole: the floor in bytes_said's
+    // sizes, the modes in stat's octal. What the command printed comes before them, a line it began with the id too.)
+    const note = l => (HELPER_SAYS.diskStopped.test(l) && /under \d{1,15}(?:\.\d)? [GM]B$/.test(l))
+      || /^(?:the home's mode and owner were put back \([0-7]{3,4}, not [0-7]{3,4}\)(?:; the home's added access rules were taken away)?|the home's added access rules were taken away)$/.test(l);
     const lines = out.slice(0, end.index).split('\n'), notes = [];
-    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
+    while (lines.length > 1 && lines.at(-1).startsWith(`${id} `) && note(lines.at(-1).slice(id.length + 1)) && notes.length < 4) notes.unshift(lines.pop().slice(id.length + 1));
     return { kind: 'ran', output: lines.join('\n'), exit: end[1] === 'time' ? null : Number(end[1]), ended: end[1] === 'time', ...(notes.length ? { notes } : {}) };
   }
   if (timedOut) return { kind: 'ended', output: out };
@@ -24446,10 +24808,12 @@ function forBrain(t) {
 
 // run's own work (A7c): the sorter sorts each command; a look runs in the look wall, as before; anything else goes to
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
-// command word, a key's name), with the look's own words.
+// command word, a key's name), with the look's own words: a key's name is refused so only for a look, or for what the
+// sorter calls a key shown back (not done). A change that names one (mv .env.example .env) goes to the ladder, which
+// asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
-  if (input.root === true) return rootChange(input, viewer, ctx);
+  if (input.root === true) { workHeld(viewer, ctx); return rootChange(input, viewer, ctx); }
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: its own place, before the sorter)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
@@ -24459,13 +24823,11 @@ async function runCommand(input, viewer, ctx = {}) {
   if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
-    const { words, sudo } = lookWords(command);
-    if (!words.some(keyWord)) {
-      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
-      // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
-      // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
-    }
+    const { words, sudo } = lookWords(command), keyed = words.some(keyWord);
+    const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
+    // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
+    // ladder's to refuse, design A 2.8)
+    if (sorted.class !== 'look' && !(keyed && sorted.class === 'notdone') && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
   }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {

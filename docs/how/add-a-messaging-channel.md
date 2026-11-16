@@ -1,7 +1,6 @@
 # Add a messaging channel
 
-A way for the owner to talk to Sparkie from another app, like Telegram. From the map's "Where new things go", row "A
-messaging channel".
+A way for the owner to talk to Sparkie from another app, like Telegram.
 
 ## Touch
 

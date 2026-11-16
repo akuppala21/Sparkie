@@ -1,26 +1,28 @@
 /* ───────── the lock-out net, the console's half: asked, armed first, checked from outside, kept or put back (A13b) ───────── */
-// Area: features        Rules: R60, R54, R61, R13, R43        Tests: net.test.mjs
+// Area: features        Rules: R71, R60, R54, R61, R13, R43        Tests: net.test.mjs
 // Owns: net.json (writers: netSave)
 // Timers: none        Wakes: none
 // A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the
-// helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8). run's ladder (21-ladder.mjs) hands
-// it here. It is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out,
-// the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a deleted user's
-// home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's claim (R13) is taken; the ways
-// in that work now are tried (a new SSH connection, the root helper through its sudo line, its Tailscale connection as
-// Spark 2 sees it); the guard goes on record here before the call and the journal's start line is written (R43); then
-// the helper's `run --net` arms the Spark's own timer (the command's time limit plus 600 s) in the same call, before the
-// change, and runs it (21-guard.mjs). After it, the same ways in are tried again from outside, by code: each that
-// worked before must still work. All do: `keep` (code keeps it on a compute Spark). One doesn't: `putback` at once. No
-// answer (the Spark or the call cut off): the Spark's own timer puts it back, and the Spark stays claimed until then.
-// After every put-back, and once that time has passed, the ways in are tried again: live network or firewall state is in
-// no copy, so what still doesn't work is said, with the restart that is the way back. The owner is told each outcome once. Nothing of the brain's or an agent's ever reaches keep or putback: the ladder
-// sends a lock-out change here only from the dangerous ask's press, and /putback is the owner's word (20-words.mjs,
-// 21-telegram.mjs). /stop never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open
-// on record, a second lock-out change there is refused before it is asked, and its claim refuses it after. At start,
-// each guard still open on record is put back (or found back already, or kept) and the owner told (netRecover). Off
-// (NET_ON), a lock-out change is answered as before: it waits for the net. Spark 2 (A11) and root (A12) are their
-// steps', through the same seam (netGuarded).
+// helper's own line) on a compute Spark runs only inside the net (R60, R71; design A 2.8), and only as root (21-root.mjs,
+// R70): as the owner it can change nothing, so run's ladder (21-ladder.mjs) hands it here only to be answered (netChange:
+// set root; nothing asked or run). As root it is always the dangerous ask (20-danger.mjs, R54: what goes back and when,
+// why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as
+// another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's
+// claim (R13) is taken; the ways in that work now are tried (a new SSH connection, the root helper through its sudo line,
+// its Tailscale connection as Spark 2 sees it); the guard goes on record here before the call and the journal's start
+// line is written (R43); then the helper's `root --net` arms the Spark's own timer (the command's time limit plus 600 s)
+// in the same call, before the change, and runs it (21-guard.mjs). After it, the same ways in are tried again from
+// outside, by code: each that worked before must still work. All do: `keep` (code keeps it on a compute Spark). One
+// doesn't: `putback` at once. No answer (the Spark or the call cut off): the Spark's own timer puts it back, and the
+// Spark stays claimed until then. After every put-back, and once that time has passed, the ways in are tried again:
+// live network or firewall state is in no copy, so what still doesn't work is said, with the restart that is the way
+// back. The owner is told each outcome once. Nothing of the brain's or an agent's ever reaches keep or putback: only
+// a dangerous ask's press runs a change here, and /putback is the owner's word (20-words.mjs, 21-telegram.mjs). /stop
+// never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open on record, a second
+// lock-out change there is refused before it is asked, and its claim refuses it after. At start, each guard still open
+// on record is put back (or found back already, or kept) and the owner told (netRecover). Off (NET_ON), a lock-out
+// change is answered as before: it waits for the net. Spark 2 (A11, 21-hub.mjs) and root (A12) call the same seam
+// (netGuarded).
 
 // The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_NET=0); nothing else can.
 const NET_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '0');
@@ -90,7 +92,8 @@ function netTailnet(node) {
 }
 async function netProbe(node) {
   const [ssh, helper, tailnet] = await Promise.all([
-    run(node, 'echo net-ok', { timeout: 20000 }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
+    // (a new connection, never one shared with another ssh: 02-ssh.mjs spawnOn's fresh)
+    run(node, 'echo net-ok', { timeout: 20000, fresh: true }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
     helperCall(node, 'check', { limitMs: 30000 }).then(c => c.out.includes(`${c.id} helper `)).catch(() => false),
     netTailnet(node).catch(() => null),
   ]);
@@ -108,6 +111,10 @@ async function netStillLost(node, g) {
   return (g.ways || ['ssh', 'helper']).filter(p => now[p] === false);
 }
 const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
+// The helper's answer to putback when its put-back failed (do_putback's refusal), and what is true then: the Spark
+// answered, so it isn't cut off, but the change may still be in place, in part or whole; what the owner can do.
+const NET_PUTBACK_FAILED = /^the put-back failed: ?(.*)$/;
+const netFailedNow = (at, g) => `${at} answers, so it isn’t cut off, but what that change did may still be in place, in part or whole. /putback tries the put-back again now; what failed is written on ${at} in /var/lib/spark-console/guard/${g.id}/failures, which root can read.`;
 const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
 // Once a guard left to the Spark's own timer is past its time: put back now if its timer didn't (the helper answers
 // "already put back" when it did), the ways in tried again, and the owner told what is true, once.
@@ -120,19 +127,35 @@ async function netAfterTime(id) {
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
   if (p.kept) return netMark(g.id, { state: 'kept' });
   if (/^there is no guard /.test(p.refused || '')) return netMark(g.id, { state: 'never' });
+  // (the helper answered that its put-back failed: the Spark answers, so it isn't cut off; say what is true)
+  const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+  if (failed) return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
   if (!p.putBackAt) return netTell(g, netGoneWords(which, at, g));
   netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
   const lost = await netStillLost(node, g);
   netTell(g, `${which} went back by ${at}’s own timer (put back at ${p.putBackAt})${lost.length ? `. ${netStillWords(at, lost)}` : `, and ${at} answers every way it did before.`}`);
 }
 
-// What the command printed: between the net's "armed" line and its own lines at the end.
+// What the command printed: between the helper's own lines, exactly as it writes them (deploy/spark-console-root:
+// do_unit's "as root", net_arm's "armed", net_after's result and the line before a put-back, the run's end), so a line
+// the command printed that begins with the call's id stays in what it printed (it can read its id from its own path).
+// With no end line (the answer was cut off) nothing at the end is taken for the helper's.
+const NET_OWN_END = /^end (?:\d{1,3}|time)$/, NET_OWN_RESULT = /^net (?:open: |put back at )|^net: (?:already put back$|the put-back failed: )/;
 function netOutput(id, out) {
   const lines = String(out).split('\n');
   if (lines.at(-1) === '') lines.pop();
-  // (the net's "armed" line, and root's "as root" line after it, R70)
-  while (lines.length && String(lines[0]).startsWith(`${id} `)) lines.shift();
-  while (lines.length && String(lines.at(-1)).startsWith(`${id} `)) lines.pop();
+  const own = (l, re) => typeof l === 'string' && l.startsWith(`${id} `) && re.test(l.slice(id.length + 1));
+  // (before the command: the net's "armed" line and root's "as root" line, R70)
+  for (let k = 0; k < 2; k++) if (own(lines[0], /^(?:net armed|as root): /)) lines.shift();
+  // (after it: its end, the net's result, and before a put-back the line that says why)
+  if (own(lines.at(-1), NET_OWN_END)) {
+    lines.pop();
+    const result = lines.at(-1);
+    if (own(result, NET_OWN_RESULT)) {
+      lines.pop();
+      if (own(result, /^net put back at |^net: the put-back failed: /) && own(lines.at(-1), /^net: (?:sshd -t refuses |its timer is not waiting )/)) lines.pop();
+    }
+  }
   if (lines.length && lines.at(-1) === '') lines.pop();
   return lines.join('\n');
 }
@@ -141,8 +164,9 @@ function netOutput(id, out) {
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
-// page or a fix suggested it): null when the owner's own words (this message and the one before, R25) ask for it on that
-// Spark (netAsks) with nothing read from outside since, or for the owner's own call (the page, POST /actions);
+// page or a fix suggested it): null when the owner's current message asks for it on that Spark (netAsks) with nothing
+// read from outside since, or for the owner's own call (the page, POST /actions). Only the current message counts, never
+// the one before, and only in the turn it began: a carry-on turn's newest message is its own, marked auto (netNowSaid);
 // otherwise where it came from. netAsks: one sentence of theirs does all three. 1, it names that Spark. 2, it names what
 // is to change, in the lock-out class (NET_WHAT), in the words right after a change verb (NET_BREAK). 3, it asks for that
 // change as an instruction: the verb in its plain form (NET_ASK; not "port 22 is open", not inside "how to …" or
@@ -165,11 +189,16 @@ const NET_QUESTION = new RegExp(String.raw`${NET_LEAD}(?:why|what|which|who|whom
 // open", "whether to add", "should I open")
 const NET_STATE = /(?:\b(?:am|is|are|was|were|be|been|being|still|already|left|kept|stays?|remains?|not|never)|n't|(?<!\blet)'s|'m|'re)\s+$/i;
 const NET_IF = /\b(?:how|why|what|when|where|which|who|whether|if|should|would|could|can|might|may)\b(?!')[^,;:]*$/i;
-// (what the verb changes: its own words and the six after it, up to a comma or a joining word, so "start a model on
-// Spark 3 with port 8000" names no lock-out thing to change)
-const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if)\s/i;
+// (what the verb changes: its own words and the six after it, up to a comma, a joining word or a place word (on, in, of,
+// from, at), so "start the app on port 8080 on Spark 3" names no lock-out thing to change. Not "to" or "into": "add bob
+// to the sudo group" is a true ask)
+const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if|on|in|of|from|at)\s/i;
+// (a way-in word that only names another thing, "the shell script", "the users table", "a password generator", is not
+// what changes: the word after it names the thing)
+const NET_NAMED = /^(?:scripts?|tables?|apps?|applications?|generators?|extensions?|drivers?|pictures?|photos?|chats?|folders?|director(?:y|ies)|projects?|repos?|repositor(?:y|ies)|pages?|tests?|tools?|programs?|code|class(?:es)?|functions?|columns?|fields?|bots?|plugins?|themes?|games?|dashboards?|demos?|tutorials?|docs?|notebooks?|models?|datasets?)\b/i;
 function netAsks(node, text) {
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  // (the owner's own sentences only: a pasted log, a code block or a > quote holds no ask of theirs, ownSentences)
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
     if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
     const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
@@ -178,7 +207,8 @@ function netAsks(node, text) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
       if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
-      if (NET_WHAT.test(`${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`)) return true;
+      const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
+      for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
     }
   }
   return false;
@@ -189,35 +219,49 @@ function netWhose(node, viewer, ctx) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey || ctx.via === 'agent') return 'an agent';
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
-  if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
-  if (!netAsks(node, String(ctx.said || ctx.request || ''))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  // (what was read, by its record: a read that returned, workRead in 14-rounds.mjs. A call that was refused and ran
+  // nothing, "set root" or "leave out sudo", read nothing, whatever the turn's readOutside says of it)
+  if (Array.isArray(ctx.reads) && ctx.reads.length) return NET_READ_FIRST;
+  if (!netAsks(node, netNowSaid(ctx))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
+// The owner's message this turn began with, as the chat keeps it: '' for a carry-on turn (its newest message is marked
+// auto), an agent's, or a turn with no chat.
+function netNowSaid(ctx) {
+  const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  const m = conv ? conv.messages.filter(x => x.role === 'user').at(-1) : null;
+  return m && !m.auto && !m.from ? String(m.content || '') : '';
+}
+const NET_READ_FIRST = 'text Sparkie read first (a log, a page or a command’s output)';
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
-// how to ask for one.
-const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`);
+// how to ask for one: after a read, ask again before Sparkie reads anything; else, say it in one sentence.
+const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. ${from === NET_READ_FIRST
+  ? 'To ask, say it again in a new message: it counts only before Sparkie reads anything for it.'
+  : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
 
-// From the ladder (workChange), for every change the sorter calls lock-out: off, as before; else not done, refused while
-// a guard is open there, refused when it isn't the owner's own (netWhose), asked, or (the dangerous ask's press) run
-// inside the net.
-async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
+// From the ladder (workChange), for every change the sorter calls lock-out on a compute Spark, as the owner. As the
+// owner it can change nothing: the run wall keeps ~/.ssh and the shell's start files read-only, and ufw, usermod and
+// tailscale need root. So a lock-out change on a compute Spark is done only as root (21-root.mjs, R70: always the
+// dangerous ask, inside the net), and here nothing is asked or run: off, it waits for the net, as before; what the net
+// can't put back is not done; one that isn't the owner's own is refused (netWhose); else the answer says how: set root,
+// or the owner's one command where the helper isn't set up or root is off there.
+async function netChange(node, command, sorted, viewer, ctx) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. ${sorted.why} Nothing was asked or run.`);
-  const open = netOpenOn(node.id);
-  if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
-  if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netRun(node, command, sorted, viewer, ctx, dir);
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);
   if (from) throw netNotYours(from, node);
+  // (minutes: a lock-out change is root's, inside the net, held to 10 minutes, and takes none: said, never left unread)
+  if (ctx.long) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} runs only as root, inside the lock-out net, held to 10 minutes, so it takes no minutes. Leave out minutes and set root.`);
+  if (!ROOT_ON) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} is done only as root, and root isn’t on in this build.`);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
-  return dangerAsk(viewer, ctx, { kinds: ['lockout'], where: node.id, shown: { command },
-    call: { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at),
-      lockWhy: sorted.why } });
+  if (first.rootOff) return needsOwner(node, 'root off', `A change to SSH, Tailscale, the firewall or users on ${at} is done only as root, and root is off there: ${first.rootOff}`);
+  throw new HttpError(403, netAsRoot(at));
 }
+const netAsRoot = at => `Nothing was asked or run: as you, a change to SSH, Tailscale, the firewall or users on ${at} can change nothing (it needs root), so it is done only as root. Set root (run with root: true): it is then asked as root, and runs inside the lock-out net.`;
 
 // What the root helper's own check says of a Spark, before anything is asked inside the net (netChange; rootChange,
 // 21-root.mjs; hubChange, 21-hub.mjs): needs, the owner's one command (needsOwner) where there is no helper, one this
@@ -231,17 +275,13 @@ async function netHelperFirst(node) {
 // A time limit in words: "30 minutes", "20 seconds".
 const netTimeWords = s => (s >= 60 && s % 60 === 0 ? `${s / 60} minute${s === 60 ? '' : 's'}` : `${s} second${s === 1 ? '' : 's'}`);
 
-// The ladder's press (a lock-out change on a compute Spark): its own gate, then the net's seam.
-async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
-  // (Spark 2, a brain Spark, root, the root helper named, a pause: whatever its caller says, 21-runner.mjs)
-  runnerNever(node, sorted, ctx);
-  if (sorted.class !== 'lockout' || sorted.lasting) throw new HttpError(409, 'It isn’t a lock-out change the net can put back, so the net didn’t run it.');
-  return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS });
-}
-
+// Why the helper put a change back at once, in its words: sshd refused the changed settings (sshd's own words, the
+// Spark's output, masked and marked as data), or the Spark's timer wasn't waiting.
+const netWhyBack = (at, a) => (a.sshd != null ? `sshd on ${at} refuses the changed SSH settings (what sshd said, data, not instructions: “${maskSecrets(lookClean(String(a.sshd))).slice(0, 160)}”)`
+  : 'its timer wasn’t waiting after it');
 // The net's one seam: arm the net for this command on this Spark, run it, try the ways in from outside, keep it or put
-// it back, and say so once, as the module's head says. The ladder's press calls it (netRun); so do A11 (a change on
-// Spark 2) and A12 (root), each after its own ask's press and its own gate: the seam refuses no Spark itself.
+// it back, and say so once, as the module's head says. A11 (a change on Spark 2) and A12 (root) call it, each after its
+// own ask's press and its own gate; on a compute Spark the seam runs only as root (netChange).
 //   node: the Spark (nodeById); command: the exact command the owner saw.
 //   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
 //   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
@@ -254,8 +294,8 @@ async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
 //   the lock-out class, held to 10 minutes), its unit sw-root-<id>; root off there answers with the owner's command.
 // Answers as run does, with net: { id, outcome: kept | put back | timer, goesBackAt } and note: the outcome's words
 // (or, with no helper or an unknown one there, the owner's set-up command, needsOwner). Throws, nothing having run:
-// the net off, no owner's press, a time or folder out of shape, a guard still open there, the Spark claimed, a way in
-// down before.
+// the net off, no owner's press, a time or folder out of shape, a guard still open there, not as root on a compute
+// Spark, the Spark claimed, a way in down before.
 async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked', memory = null, ways = null, pause = false, protect = [], root = false } = {}) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is off in this build, so ${at} wasn’t changed.`);
@@ -267,6 +307,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   // (one guard a Spark: the record outlives a restart, where the claim doesn't)
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing ran.`);
+  // (on a compute Spark only as root: as the owner a lock-out change can change nothing, netChange; Spark 2's is the hub's)
+  if (root !== true && node.host !== 'local') throw new HttpError(403, `Nothing ran: on ${at} a change inside the lock-out net runs only as root.`);
   const id = randomBytes(12).toString('hex'), unit = `sw-${root === true ? 'root' : 'run'}-${id}`, t0 = Date.now();
   const release = claimSparks([node.id], 'a change inside the lock-out net');
   let held = false, rid = null, ended = null;
@@ -279,6 +321,13 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     // (no helper there, or one this build doesn't know: the owner's one command, as before the ask)
     if (before.ssh && !before.helper) { const first = await netHelperFirst(node); if (first.needs) return first.needs; }
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
+    // (then the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
+    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
+    // squeezes a model or, on Spark 2, the brain)
+    const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
+    if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
+    const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
+    if (room < cap) throw new HttpError(409, `${at} doesn’t have room for this change now: it may use up to ${cap} GB, and ${Math.max(0, room)} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
     // (the ways that work now, on record: after any put-back they are tried again, netStillLost)
     g.ways = Object.keys(NET_PROBES).filter(p => before[p] === true);
     // (on record before the call: a restart from here on puts it back at start)
@@ -299,6 +348,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
+      if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
     }
     const back = a.goesBackAt || new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString(), output = lookClean(netOutput(id, called.out));
@@ -326,9 +377,30 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     if (a.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: a.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit }, `$ ${command}\n${output}`);
-      const words = `A change that could lock you out of ${at} (record ${rid}) was put back: its timer wasn’t waiting after it (put back at ${a.putBackAt}).${cut}${await still()}`;
+      const words = `A change that could lock you out of ${at} (record ${rid}) was put back at once: ${netWhyBack(at, a)} (put back at ${a.putBackAt}).${cut}${await still()}`;
       netTell(g, words, late());
       return result('put back', words);
+    }
+    // The helper had to put it back at once and that put-back failed: never kept (keep would stop its timer, the one
+    // thing left that tries again). Left to its timer, the Spark claimed until then, and said plainly.
+    if (a.failed != null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit, putBackFailed: true }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once: ${netWhyBack(at, a)}. But the put-back failed${a.failed ? ` (${String(a.failed).slice(0, 200)})` : ''}, so it was not kept and may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
+    }
+    // (an answer of the helper's this build doesn't know is never kept: left to its timer, said)
+    if (a.open == null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) ran, but the root helper’s answer after it wasn’t one Spark Console knows, so it was not kept: ${at}’s own timer puts it back at ${netHhmm(back)}. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
     }
     const after = await probe();
     lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
@@ -384,11 +456,12 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   }
 }
 
-// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net (open,
-// or kept) put back now, by code, with no brain. One kept already stays: the helper puts nothing back once it is kept.
+// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net that is
+// still open put back now, by code, with no brain; with none open, the newest kept one is named, and stays: the helper
+// puts nothing back once it is kept. (A kept one never hides an older one still open, on another Spark say.)
 async function netPutbackWord() {
   let g;
-  try { g = netNow().guards.filter(x => [...NET_OPEN, 'kept'].includes(x.state)).at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
+  try { const gs = netNow().guards; g = gs.filter(x => NET_OPEN.includes(x.state)).at(-1) || gs.filter(x => x.state === 'kept').at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
   if (!g) return 'No change made inside the lock-out net is on record, so nothing was put back.';
   const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `the newest change made inside the lock-out net, on ${at} (record ${g.record || g.id})`;
   if (!node) return `${which[0].toUpperCase()}${which.slice(1)} is on a Spark no longer on the list, so nothing was put back.`;
@@ -424,10 +497,19 @@ async function netRecover() {
     if (p.kept) { netMark(g.id, { state: 'kept' }); netTell(g, `${which} had been kept before the restart, so it stays.`); continue; }
     if (/^there is no guard /.test(p.refused || '')) { netMark(g.id, { state: 'never' }); netTell(g, `${which} never ran there: there was nothing to put back.`); continue; }
     netMark(g.id, { state: 'timer' });
+    // (the helper answered that its put-back failed: said as that, never as a Spark that doesn't answer; still held until
+    // its time, when its own timer may try again)
+    const failed = NET_PUTBACK_FAILED.exec(p.refused || '');
+    if (failed) netTell(g, `${which} couldn’t be put back now: the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
     // (past its time and still no answer: what the timer can't put back most likely cut it off; else looked at again then)
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
-    if (!(wait > 0)) { netTell(g, netGoneWords(which, at, g)); continue; }
-    netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart.`);
-    setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
+    if (!(wait > 0)) { if (!failed) netTell(g, netGoneWords(which, at, g)); continue; }
+    if (!failed) netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
+    // (claimed until its time, as before the restart: nothing else changes there while its own timer may still put it
+    // back; then looked at again, netAfterTime, and let go)
+    let release = null;
+    try { release = claimSparks([g.spark], 'a change inside the lock-out net'); } catch {}
+    if (release) netHold(g.spark, Date.parse(g.goesBackAt) || Date.now(), release, () => netAfterTime(g.id));
+    else setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
   }
 }

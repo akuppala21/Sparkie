@@ -8,7 +8,8 @@
 // said; the run unit's git reads none of the owner's settings but name and mail; the claim is held past a change whose
 // end is unknown, "unknown" too; the protect folders stay read-only with the top of the home writable; /undo works
 // while changes are paused; the memory cap's working-out; what the page's line for a command shows; with no eval on
-// record (the rail, R52), Sparkie's plain change is a button too, and the owner's press runs it.
+// record (the rail, R52), Sparkie's plain change is a button too, and the owner's press runs it. A change's start line
+// carries its request's id.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true), the
 // stand-ins in test/mock/bin, and the stand-in brain told by a script which tools to call. Linux only: run it on a
 // Spark with tools/test-on-spark.sh.
@@ -92,6 +93,17 @@ test('everyday: a plain change the owner asks for runs at once with no button, i
   const u = await turn(chat, 'undo that', [[{ name: 'undo_last_change', arguments: {} }]]);
   assert.equal(u.tools[0].ok, true, JSON.stringify(u.tools));
   assert.equal(text('notes/e.txt'), 'e before\n');
+});
+
+// (final read TE-09: what a task's report counts is fed by this line: the change's start line carries its request's id)
+test('a change made at once carries its request’s id on its start line, as a task’s report reads it', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), command = 'echo again > notes/fed.txt';
+  const r = await turn(chat, 'fix the notes once more on spark 3', [[RUN(command)]]);
+  assert.deepEqual(r.choices, [], 'no button');
+  assert.equal(text('notes/fed.txt'), 'again\n');
+  const said = journalLines().find(x => x.k === 'said' && x.chat === chat), start = startOf(command);
+  assert.ok(said?.id, 'the request’s own line');
+  assert.deepEqual([start?.task, start?.class, start?.chat], [said.id, 'change', chat], JSON.stringify(start ?? null));
 });
 
 test('everyday: a risky change is a button with the exact command and why; nothing runs until the owner presses it', { timeout: 120000 * SLOW }, async () => {

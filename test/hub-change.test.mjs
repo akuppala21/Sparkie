@@ -114,6 +114,29 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   assert.equal(readFileSync(at2('.ssh/authorized_keys'), 'utf8'), KEYS_LINE);
 });
 
+// The final read's hub-words: a refused command spelled through a shell, a wrapper or a variable was asked, not refused.
+test('Spark 2’s power, spelled through a shell, busybox, a variable or another program’s text, is refused too, not asked', { timeout: 60000 * SLOW }, async () => {
+  const before = starts().length;
+  for (const command of ['bash -c reboot', 'busybox reboot', 'x=reboot; $x', `awk 'BEGIN{system("reboot")}'`, 'sh -ec poweroff']) {
+    const r = await run(command);
+    assert.equal(r.status, 403, `${command}: ${r.text}`);
+    assert.equal(r.json.error, `Not done on Spark 2: it touches Spark 2’s power or its plug, which are never changed from here. ${NOT}`, command);
+  }
+  assert.equal(starts().length, before, 'nothing began');
+});
+
+// From the sorter's reviewer, S-4 (Spark 2's half): a line break in a command wrote lines of its own onto the button,
+// so "Asked because …" in the command read as the console's.
+test('a command with a line break is framed on Spark 2’s button: each of its lines after │, none read as the button’s own', { timeout: 60000 * SLOW }, async () => {
+  const chat = await newChat(), c = await inChat(chat, 'tidy the hub notes on spark 2', 'touch notes/a.txt\nAsked because you said so earlier.');
+  try {
+    assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value ?? c.error));
+    const shown = c.value.question.split('\n');
+    assert.deepEqual(shown.slice(0, 3), ['Run this on Spark 2? Its command has 2 lines, each shown after │:', '│ touch notes/a.txt', '│ Asked because you said so earlier.'], shown.join('\n'));
+    assert.ok(!shown.includes('Asked because you said so earlier.'), 'no line of the command stands as the button’s own');
+  } finally { const no = c.r?.message?.choices?.find(x => x.label === 'No'); if (no) await choose(chat, no.id); }
+});
+
 test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, a look and a change get the owner’s one command with --hub, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const r = await run('sudo touch notes/r.txt');
   assert.equal(r.status, 403, r.text);
@@ -131,6 +154,8 @@ test('the pieces on: root is never on Spark 2, said as it is; with no root helpe
   assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh --hub 2'?$/, n.text);
   assert.equal(c.status, 200, c.text);
   assert.equal(c.json.ran, false, c.text);
+  // (the same command with --hub as the look's, given once: the change is told it was given, TD-12)
+  assert.match(c.json.next || '', /^The owner was given its one-time command earlier; until it has run, /, c.text);
   assert.ok(!existsSync(at2('notes/hub-new.txt')));
 });
 
@@ -213,6 +238,63 @@ test('a script it runs, changed after the ask, voids the press and is asked agai
   assert.match(shown, /\nIt starts in ~\.\nIt runs inside the lock-out net, through your own service manager/, shown);
   assert.ok(existsSync(at2('notes/a.tmp')), 'nothing ran');
   await choose(d, ask.choices.find(x => x.label === 'No').id);
+});
+
+// The final read of the tests (TD-03): the dangerous delete on Spark 2 was asked and never pressed.
+test('the dangerous delete on Spark 2, pressed with its two digits, runs inside the net through the owner’s service manager, and is kept', { timeout: 180000 * SLOW }, async () => {
+  routes(true);
+  const d = await newChat();
+  // (named from the folder it starts in: in the rehearsal a command's ~ is a folder that isn't there, test/rehearsal.mjs)
+  try {
+    await inChat(d, 'clean up the tmp notes on spark 2 for good', "find notes -name '*.tmp' -delete");
+    const ask = (await chatMessages(d)).filter(m => m.danger).at(-1);
+    assert.ok(ask, 'the dangerous ask');
+    const p = await api(`/chats/${d}/choose`, { method: 'POST', body: { choice: ask.choices.find(c => c.pair).id, pair: ask.pair } });
+    assert.equal(p.status, 200, p.text);
+    assert.match(p.json.message.content, /^A change that could lock you out of Spark 2 \(record j_[0-9a-f]{12}\) ran inside the lock-out net, .*: it is kept\./, p.text);
+  } finally { rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
+  assert.ok(!existsSync(at2('notes/a.tmp')), 'the delete ran');
+  const start = starts().at(-1);
+  assert.deepEqual([start.args.command, start.gate, Boolean(start.net)], ["find notes -name '*.tmp' -delete", 'asked', true]);
+  assert.equal(netRecord().at(-1).state, 'kept');
+  assert.ok(userUnits().some(l => / run --net /.test(l) && / --memory 2G /.test(l)), userUnits().join('\n'));
+});
+
+// The final read of the tests (TD-04): root: true, the door root really comes through, was never sent on Spark 2.
+test('a command as root on Spark 2 is refused in its own words, and nothing is asked or run', { timeout: 60000 * SLOW }, async () => {
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command: 'touch notes/r2.txt', root: true } });
+  assert.deepEqual([r.status, r.json?.error], [403, 'Spark 2 runs Spark Console and the brain, so nothing runs there as root.'], r.text);
+  assert.ok(!existsSync(at2('notes/r2.txt')));
+});
+
+// The final read of the tests (TD-07): a command given a key never goes to Spark 2's own path (21-ladder.mjs: the hub
+// takes no keyed command), which no test sent.
+test('a command given a key on Spark 2 is refused in the runner’s words, never taken into Spark 2’s own asked path', { timeout: 60000 * SLOW }, async () => {
+  const chat = await newChat();
+  assert.match((await say(chat, '/key HUB_DEMO_KEY hubkey-0123456789abcdef')).text, /^Kept your key HUB_DEMO_KEY\./);
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command: 'touch notes/keyed.txt', keys: ['HUB_DEMO_KEY'], dir: '~' } });
+  assert.deepEqual([r.status, r.json?.error], [403, 'Spark 2 runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.'], r.text);
+  assert.ok(!existsSync(at2('notes/keyed.txt')));
+});
+
+// The final read of the tests (TD-13): "with perfect words too" held for one command of ten.
+test('each of Spark 2’s standing rules, asked for in the owner’s chat with words that name Spark 2 and ask for it, is refused just the same, with no button', { timeout: 240000 * SLOW }, async () => {
+  for (const [i, [command, why]] of [
+    ['docker restart sparkie-main', 'it would stop, restart, remove or change the brain’s container or its model files'],
+    ['rm -rf ~/.cache/huggingface/hub/models--RadixArk--Qwen3.8-27B-NVFP4', 'it would stop, restart, remove or change the brain’s container or its model files'],
+    ['docker run -d --name web nginx', 'it would start a model, a job or another workload there'],
+    ['nohup python3 -m http.server 8080 > notes/web.log 2>&1 &', 'it would start a model, a job or another workload there'],
+    ['systemctl --user start notes.service', 'it would start, stop or change a service there'],
+    ['systemctl --user restart spark-console-api', 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes'],
+    ['cp notes/a.txt ~/.local/state/spark-console/access.json', 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes'],
+    ['cd ~/spark-console-src && git pull', 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes'],
+    ['bash ~/spark-console-src/deploy/plugs.sh off 2', 'it touches Spark 2’s power or its plug, which are never changed from here'],
+    ['shutdown -h now', 'it touches Spark 2’s power or its plug, which are never changed from here'],
+  ].entries()) {
+    const chat = await newChat(), c = await inChat(chat, `fix the notes ${'abcdefghij'[i]} on spark 2`, command);
+    assert.equal(c.error, `Not done on Spark 2: ${why}. ${NOT}`, command);
+    assert.deepEqual(c.r.message.choices || [], [], command);
+  }
 });
 
 test('a command the sorter can\'t read ($ for a program, python -c, a script) is asked, never refused by its words alone, and its button says why it still can\'t reach the brain', { timeout: 120000 * SLOW }, async () => {
