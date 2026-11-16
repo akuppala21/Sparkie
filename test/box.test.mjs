@@ -78,6 +78,11 @@ async function inChat(chat, words, args) {
 }
 const later = [];
 after(async () => { for (const F of later) await F.stop().catch(() => {}); });
+// After a Spark was set off and on again: its look while it was off may land late, so wait until it is seen on again.
+async function onAgain(spark) {
+  await sleep(2500);
+  await waitFor(async () => (await api('/status')).json?.nodes?.find(n => n.id === spark)?.state === 'online', { timeout: 60000 * SLOW, what: `${spark} seen on again` });
+}
 
 test('the first use fetches the pinned image and opens nothing; then the box opens on Spark 3 with exactly the one line, passes its check, and the command runs there', { timeout: 120000 * SLOW }, async () => {
   assert.match(IMAGE, /^python:3\.12-slim@sha256:[0-9a-f]{64}$/);
@@ -185,6 +190,7 @@ test('in a chat: a command full of quotes and flags changes nothing in the line;
     assert.match(s.text, new RegExp(`^/stop\\n.* This chat’s box on Spark 3 couldn’t be removed just now \\(Spark 3 isn’t answering\\); it ends by itself at ${value.until.replace(/\./g, '\\.')}, and /stop here tries again\\.`));
     assert.ok(hasBox('spark3', name) && existsSync(folder(name)), 'still there');
   } finally { writeFileSync(T.fleet.offlineFile, 'spark1\n'); }
+  await onAgain('spark3');
   await waitFor(async () => { s = await say(chat, '/stop'); return /was removed/.test(s.text); }, { timeout: 60000 * SLOW, every: 2000, what: 'the second /stop' });
   assert.match(s.text, /^\/stop\n.* This chat’s box on Spark 3 was removed, with its folder\. /);
   assert.ok(!hasBox('spark3', name) && !existsSync(folder(name)), 'the chat’s box and its folder went');
@@ -289,6 +295,8 @@ test('never on Spark 2: with no compute Spark on, nothing opens anywhere', { tim
     assert.equal(r.json.error, 'No compute Spark is on to hold a box: Spark 1, Spark 3 and Spark 4 are off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.');
     assert.deepEqual([boxLines('spark2'), boxRuns('spark2')], [[], []]);
   } finally { writeFileSync(T.fleet.offlineFile, 'spark1\n'); }
+  await onAgain('spark3');
+  await onAgain('spark4');
   await waitFor(async () => (await act('run', { on: 'box', command: 'true' })).json?.box === 'opened', { timeout: 60000 * SLOW, every: 2000, what: 'the box open again' });
 });
 

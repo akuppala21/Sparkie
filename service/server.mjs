@@ -16211,8 +16211,9 @@ function boxPlaces(prefer) {
   const up = all.filter(n => !knownOffline(n) && (state(n.id) ?? 'online') === 'online');
   return { all, up: [...up.filter(n => n.id === prefer), ...up.filter(n => n.id !== prefer)] };
 }
-// The boxes this console knows on one Spark (the watcher leaves out only these: 19-watcher.mjs).
-const boxesOn = spark => [...boxes.values()].filter(b => b.spark === spark).map(b => b.name);
+// The boxes this console knows on one Spark, and those opening now (not yet on record: their check hasn't answered):
+// the watcher leaves out only these (19-watcher.mjs).
+const boxesOn = spark => [...new Set([...[...boxes.values()].filter(b => b.spark === spark).map(b => b.name), ...[...boxOpening.keys()].map(boxName)])];
 // Typed starts (keep_running, and so a saved workflow's step and a compare) never take a box's name.
 function notBoxName(name) {
   if (String(name).startsWith(BOX_PREFIX)) throw new HttpError(400, `Names beginning ${BOX_PREFIX} are the box’s (R62): choose another name. Nothing was started.`);
