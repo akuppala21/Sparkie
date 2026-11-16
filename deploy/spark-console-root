@@ -91,7 +91,7 @@ WORDS='chats.json memory.json memory-past.json audit.jsonl saved-workflows.json'
 # The look refuses while one of these is a link in the owner's home: a look would then see what it points at. (Both
 # walls refuse, too, while a name on the hidden list that is there lies under a link: UNDER, below.)
 LOOK_REAL='.ssh .docker .local/share/spark-console .config/spark-console .local/state/spark-console'
-# --- the lock-out net (docs/rules/R60.md; design A 2.8; step A13a: dark, only tests call it) ---------------------------
+# --- the lock-out net (docs/rules/R60.md; design A 2.8; step A13a; the console's half calls it: R71) -------------------
 # run --net copies the ways in to /var/lib/spark-console/guard/<id>/, writes restore.sh beside them and arms a timer in
 # the Spark's own systemd before the command runs; what is not kept goes back when it fires.
 GUARD=/var/lib/spark-console/guard
