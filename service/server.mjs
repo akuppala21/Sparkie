@@ -3772,16 +3772,17 @@ function pressSaid(x, c, conv, ctx, by) {
     return { out: { outcome: 'error', error: e.message }, content: `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}` };
   }
 }
-// A press's notice in its chat. (An ask with lines its button shows whole, write_file's: the chat file keeps them
-// masked, R7, and the owner's page gets them whole, from memory, chatWholeShown.) The message as the page gets it.
+// A press's notice in its chat, keys hidden whatever it says (an ask again holds a script's lines, final read R-1). (An
+// ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page gets
+// them whole, the rest masked as the asks are, from memory, chatWholeShown.) The message as the page gets it.
 function pressPost(conv, content, asked) {
-  const whole = asked?.whole?.length ? content : null;
-  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  const kept = maskSecrets(content), whole = asked?.whole?.length ? askShown(content, asked.whole) : kept;
+  const message = { role: 'assistant', content: kept, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
-  if (whole) chatWhole.set(message, whole);
+  if (whole !== kept) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  return whole ? { ...message, content: whole } : message;
+  return whole !== kept ? { ...message, content: whole } : message;
 }
 // A press still running at the press's time, ended: its result posted in its chat from its own fields (pressRan), and
 // told in the paired chat for a press made there (tgRanLine); the parked task it answered woken. (The net says its own
@@ -3805,10 +3806,12 @@ const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.g
 const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
 // A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
 // shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+// (the page's copy of an ask: the lines its button shows whole as they are, every other line masked)
+const askShown = (text, whole) => String(text).split('\n').map(l => ((whole || []).includes(l) ? l : maskSecrets(l))).join('\n');
 function chatAsks(asked, message) {
   const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
   if (!list.length) return message;
-  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  const whole = list.map(q => ({ group: q.group, text: askShown(q.question.slice(0, 8000), q.whole) }));
   message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
   if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
   return message;
