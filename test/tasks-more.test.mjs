@@ -197,10 +197,10 @@ test('with no eval on record, a request with a next step whose first change is a
   } finally { await F.stop(); }
 });
 
-// (final read TE-12: the carry-on turn after the press asks for a change the owner's words name; with no eval on record it
-// is a button too, and nothing more runs)
-test('with no eval on record, a carry-on turn’s own change is a button too: after the pressed stop, the second stop the words name waits for its own press', { timeout: 300000 * SLOW }, async () => {
-  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', words = `stop ${RADIX} on spark 4, then stop ${GGUF} on spark 3`;
+// (final read TE-12: the carry-on turn after the press asks for a change the owner's words make clear, "everything on spark
+// 3", which a checked brain would run at once; with no eval on record it is a button too, and nothing more runs)
+test('with no eval on record, a carry-on turn’s own change is a button too: after the pressed stop, the second stop the words make clear waits for its own press', { timeout: 300000 * SLOW }, async () => {
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', words = `stop ${RADIX} on spark 4, then stop everything on spark 3`;
   const F = await startMock({ watchMs: 60000, evalOnRecord: false, env: { SPARK_CONSOLE_CONTINUE_MS: '1500' }, prepare: ({ root }) => writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60)) });
   try {
     writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }] },

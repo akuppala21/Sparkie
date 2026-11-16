@@ -331,7 +331,11 @@ describe('propose_update', { concurrency: 1 }, () => {
       assert.match(s.says, new RegExp(`The push to sparkie/${selfId} was refused, so nothing was sent`), s.says);
       assert.equal(git(GH, ['rev-parse', branch]), elsewhere, 'GitHub’s branch was not moved');
       assert.equal(git(COPY, ['rev-parse', `refs/sparkie/${selfId}`]), selfHead, 'the copy’s ref is back where it was');
-    } finally { git(GH, ['update-ref', branch, selfHead, elsewhere]); }
+    } finally {
+      // (both refs where the next tests expect them, whatever happened above)
+      git(GH, ['update-ref', branch, selfHead]);
+      git(COPY, ['update-ref', `refs/sparkie/${selfId}`, selfHead]);
+    }
   });
 
   test('refused with nothing pushed: a path under .github/, and a generated file the installed generator doesn’t make', LONG, async () => {
