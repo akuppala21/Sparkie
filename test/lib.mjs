@@ -71,6 +71,7 @@ export const TOOLS = [
   'where_it_fits',
   'workflows',
   'workloads',
+  'write_file',
 ];
 export const CHANGE_TOOLS = [
   'cancel_operation',
