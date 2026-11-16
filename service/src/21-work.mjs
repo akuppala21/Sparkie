@@ -337,7 +337,9 @@ function forBrain(t) {
 
 // run's own work (A7c): the sorter sorts each command; a look runs in the look wall, as before; anything else goes to
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
-// command word, a key's name), with the look's own words.
+// command word, a key's name), with the look's own words: a key's name is refused so only for a look, or for what the
+// sorter calls a key shown back (not done). A change that names one (mv .env.example .env) goes to the ladder, which
+// asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
   if (input.root === true) return rootChange(input, viewer, ctx);
@@ -350,13 +352,11 @@ async function runCommand(input, viewer, ctx = {}) {
   if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
-    const { words, sudo } = lookWords(command);
-    if (!words.some(keyWord)) {
-      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
-      // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
-      // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
-    }
+    const { words, sudo } = lookWords(command), keyed = words.some(keyWord);
+    const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
+    // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
+    // ladder's to refuse, design A 2.8)
+    if (sorted.class !== 'look' && !(keyed && sorted.class === 'notdone') && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
   }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {

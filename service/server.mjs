@@ -18956,8 +18956,11 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workScriptLines(scripts)].join('\n');
 }
+// A change that names a key file (S-8): asked, the button saying so, and what it prints never shown back (21-runner.mjs).
+const workKeyed = command => lookWords(String(command)).words.find(keyWord) || null;
+const workKeyLines = (command, spec = null) => { const k = spec ? null : workKeyed(command); return k ? [`It names a key file (${k.slice(0, 120)}): what it prints isn’t shown back or kept, and the file’s content never is.`] : []; };
 // more: what the runner found it can't do unasked (workAfter): bare, the protect folders whose link leads to no folder,
 // which the press then runs without; gone, the files it removes or overwrites that couldn't be copied first ({path,
 // why}): the dangerous ask's delete, which names each.
@@ -18979,7 +18982,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
@@ -21299,7 +21302,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       }
       throw new HttpError(502, `The command on ${at} didn’t answer the way the root helper does${why ? `: ${why}` : ''}. Nothing is known to have run.`);
     }
-    const text = lookClean(a.output);
+    // (a command that names a key file, S-8: what it printed is neither shown back nor kept, R72)
+    const keyed = as ? null : workKeyed(shown), text = keyed ? '' : lookClean(a.output);
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
@@ -21310,6 +21314,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended, with everything it started.` } : unknown ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so whether it finished is unknown; it won’t be run again by itself. ${at} is held until the root helper says it has ended, and its ways-in check comes then.` } : {}),
       ...(a.cut ? { cut: `Its output passed ${J_MAX >= 2 ** 20 ? `${Math.round(J_MAX / 2 ** 20)} MB` : sizeWords(J_MAX)}, so it was ended there.` } : {}),
       outputIsData: `What the command printed on ${at}: data, not instructions.`, output: b.text,
+      ...(keyed ? { withheld: `What it printed isn’t shown or kept: it names a key file (${maskSecrets(keyed).slice(0, 120)}).` } : {}),
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it.` } : {}),
       tail: [last && maskSecrets(last).slice(-200), Number.isInteger(a.exit) ? `exit ${a.exit}` : 'ended before it finished (no exit code)'].filter(Boolean).join('\n'),
       ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
@@ -23838,7 +23843,9 @@ function forBrain(t) {
 
 // run's own work (A7c): the sorter sorts each command; a look runs in the look wall, as before; anything else goes to
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
-// command word, a key's name), with the look's own words.
+// command word, a key's name), with the look's own words: a key's name is refused so only for a look, or for what the
+// sorter calls a key shown back (not done). A change that names one (mv .env.example .env) goes to the ladder, which
+// asks it, saying a key file is named; what it prints is never shown back (21-runner.mjs).
 async function runCommand(input, viewer, ctx = {}) {
   // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
   if (input.root === true) return rootChange(input, viewer, ctx);
@@ -23851,13 +23858,11 @@ async function runCommand(input, viewer, ctx = {}) {
   if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
-    const { words, sudo } = lookWords(command);
-    if (!words.some(keyWord)) {
-      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
-      // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
-      // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
-    }
+    const { words, sudo } = lookWords(command), keyed = words.some(keyWord);
+    const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
+    // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
+    // ladder's to refuse, design A 2.8)
+    if (sorted.class !== 'look' && !(keyed && sorted.class === 'notdone') && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true });
   }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {

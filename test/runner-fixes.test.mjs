@@ -254,3 +254,33 @@ test('S-7: the dangerous ask\'s press runs a delete it couldn\'t copy first, its
   assert.ok(!existsSync(at3('notes/big8/huge.bin')), `the press ran it: ${p2.text}`);
   assert.equal(startOf('rm notes/big8/*.bin')?.gone, 1);
 });
+
+// S-8 (the final sorter read): any command that named a key-shaped file was refused as a look, though the sorter's
+// answer for a change is "asked" (mv .env.example .env, rm app/.env). It reaches the ask now; the file's content is
+// still never shown.
+const recordText = r => { const b = readFileSync(join(T.fleet.journalDir, `journal-${r.at.slice(0, 7)}.out`)); return b.subarray(r.o[0], r.o[0] + r.o[1]).toString(); };
+test('S-8: a change that names a key file is asked, its button saying a key file is named; the press runs it and what it printed is neither shown nor kept', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('proj8'), { recursive: true });
+  writeFileSync(at3('proj8/.env.example'), 'PORT=8080\n');
+  const chat = await newChat(), cmd = 'cp -v .env.example .env', t = await turn(chat, 'set up the env file on spark 3', [[RUN(cmd, '~/proj8')]]);
+  const [asked] = sentBack('set up the env file on spark 3');
+  assert.equal(asked?.outcome, 'needs-ok', JSON.stringify(asked));
+  assert.match(asked.question, /\nIt names a key file \(\.env\.example\): what it prints isn’t shown back or kept, and the file’s content never is\.\n/, asked.question);
+  assert.ok(!existsSync(at3('proj8/.env')), 'nothing ran before the press');
+  const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('proj8/.env'), 'PORT=8080\n');
+  const end = endOf(startOf(cmd));
+  assert.equal(end?.exit, 0, JSON.stringify(end));
+  assert.equal(recordText(end), `$ ${cmd}\n`, 'what it printed is not kept');
+  // The owner's own call: the runner's own words for a change it runs only after a yes, never the look's key refusal.
+  writeFileSync(at3('proj8/app.env'), 'X=1\n');
+  const r = await run('rm app.env', '~/proj8');
+  assert.equal(r.status, 409, r.text);
+  assert.doesNotMatch(r.json.error, /a look never reads keys back/);
+  assert.ok(existsSync(at3('proj8/app.env')));
+  // A key read back stays the look's refusal.
+  const look = await run('cat .env', '~');
+  assert.equal(look.status, 403, look.text);
+  assert.match(look.json.error, /^Not run: \.env is a key file or holds keys/);
+});
