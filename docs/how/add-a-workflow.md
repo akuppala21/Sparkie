@@ -1,7 +1,7 @@
 # Add a workflow
 
 A workflow is a tested, versioned change in code: it runs only when the lock names this build and its version, and
-its first real run on the Sparks validates it. From the map's "Where new things go", row "A workflow".
+its first real run on the Sparks validates it.
 
 ## Touch
 

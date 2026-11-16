@@ -1,6 +1,6 @@
 # Run a new kind of workload
 
-Something that runs on a Spark and is not a model. From the map's "Where new things go", row "A new kind of workload".
+Something that runs on a Spark and is not a model.
 
 ## Touch
 
@@ -10,8 +10,8 @@ Something that runs on a Spark and is not a model. From the map's "Where new thi
 - `appStates` (`21-apps.mjs`) reads every container's state on the Sparks where apps are kept (not in `inventory`,
   which runs inside every start); an app without a GPU is never a stop candidate and never stops anything.
 - Anything else: its kind in `learnedFrom` (`19-watcher.mjs`); a job through `claimed`, `newJob`, `runJob`; its own
-  name and labels; its own stop and restart path (`inventory`, `stop_model`, `restart_model`, `should_be_running`
-  see only `spark.console=1`); `spark.protect=true` if it must not be stopped to make room (every unprotected GPU
+  name and labels; its own stop and restart path (`inventory`, `stop_model` and `restart_model` see only
+  `spark.console=1`; `should_be_running` those and `keep_running`'s apps); `spark.protect=true` if it must not be stopped to make room (every unprotected GPU
   user is a stop candidate in every plan, `plan` in `05-library.mjs`).
 
 ## Also update
@@ -30,7 +30,8 @@ Something that runs on a Spark and is not a model. From the map's "Where new thi
 
 ## Rules
 
-- R38: `keep_running` is the only way a container that is not a model is started, kept, restarted or stopped.
+- R38: `keep_running` is the only way an app (a container that is not a model) is started, kept, restarted or stopped.
+  The box is not one: `boxOpen` (`21-box.mjs`, R62) starts it with its own `docker run`, with no claim and no job.
 - R1: nothing new starts on the brain's Spark. R2: 8 GB stays free; one GPU thing per Spark.
 - R13: one change per Spark. R17: the console's container names and labels.
 

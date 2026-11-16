@@ -230,6 +230,14 @@ test('a change that would fail in the plain wall but runs with the top of the ho
   assert.deepEqual(holding(VALUE), []);
 });
 
+// The final read of the tests (TD-07): "a lock-out command given a key" had no test (21-ladder.mjs: the net runs a
+// command bare, so a key never goes with one).
+test('never into a change that can lock you out: a lock-out command given a key is refused in plain words, nothing run', { timeout: 60000 * SLOW }, async () => {
+  const r = await run('chmod 600 ~/.ssh/authorized_keys', ['DEMO_KEY']);
+  assert.equal(r.status, 403, r.text);
+  assert.match(r.json.error, /^Nothing ran: a change that can lock you out of Spark 3 runs only as a plain command inside the lock-out net, never with a key\./, r.text);
+});
+
 test('never into a delete that can\'t be put back (the dangerous ask)', { timeout: 60000 * SLOW }, async () => {
   const r = await run('rm ~/notes/*.tmp', ['DEMO_KEY']);
   assert.equal(r.status, 403, r.text);

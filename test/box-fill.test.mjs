@@ -19,7 +19,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, agentSettings, newChat, say, REPO, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
@@ -131,6 +131,22 @@ test('refused before the box is touched: a link, a submodule, a control characte
   await refused(`/fill ${T_.commit}`, new RegExp(`^${T_.commit} isn’t a tree in Spark Console’s copy of the repository\\.`));
   await refused(`/fill ${T_.attr}`, /^git’s archive of the tree doesn’t hold exactly the tree/);
   assert.deepEqual(readdirSync(filled()), before, 'the box is as it was');
+});
+
+// The final read of the tests (TD-09): the test above sends its bad trees from a caller whose box is already open and
+// full, so "before the box is touched" held there for another reason; a fill that opened the box first would pass it.
+test('a bad tree from a caller with no box opens none: no container and no folder for it on any Spark', { timeout: 120000 * SLOW }, async () => {
+  const k = await createActKey('fill-agent-none'), name = boxName(`agent ${k.id}`);
+  for (const [tree, re] of [[T_.link, /the tree holds a link: link-to-readme\./], [T_.dotgit, /a path holds a \.git: \.git\./]]) {
+    const r = await call(k.token, 'run', { on: 'box', command: `/fill ${tree}` });
+    assert.ok(r.isError, r.text);
+    assert.match(r.text, re);
+  }
+  for (const spark of ['spark2', 'spark3', 'spark4']) {
+    const f = join(mock(spark), 'containers');
+    assert.ok(!existsSync(f) || !readFileSync(f, 'utf8').includes(name), `${spark}: no container`);
+    assert.ok(!existsSync(folder(name, spark)), `${spark}: no folder`);
+  }
 });
 
 test('read back: nothing differs right after a fill; changed, added, mode-changed and removed paths come back with their new blob ids, each blob in the bare copy', { timeout: 120000 * SLOW }, async () => {

@@ -1,7 +1,6 @@
 # Open something through the app door
 
 The app door is port 10000 of the console's own name: it shows the owner's kept apps, and nothing of the console.
-From the map's "Where new things go", row "Something through the app door".
 
 ## Touch
 
