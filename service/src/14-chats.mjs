@@ -158,12 +158,18 @@ async function runChoice(viewer, conv, id, by) {
     // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false, ...(conv.task?.id ? { task: conv.task.id } : {}),
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
+      // (the button pressed: run's ladder keeps what its ask showed under it, 21-ladder.mjs)
+      pressed: String(id),
+      // (what a pressed change writes joins its request's task, so a later command of that request that runs it is
+      // asked, A7c: the task's list in, kept after)
+      written: conv.task && !conv.task.ended ? workTask(conv.task).written : [],
       ...(c.covers ? { covers: c.covers } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
       content = outcomeText(c.label, out);
+      if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
     } catch (e) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
@@ -224,7 +230,8 @@ function postResult(job) {
 // with its operation's result, as before (no extra turn on the brain).
 const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|it\s+is)|when\s+(?:it'?s|that'?s)\s+(?:done|up|running|finished)|and\s+(?:then\s+)?(?:start|run|test|benchmark|measure|tell|let\s+me\s+know|report|check|wire|set\s+up|switch))\b/i;
 // ("shut down Spark 4" is one request: its words also read as a stop, 21-power.mjs)
-const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
+// (work, a command on a Spark, is not a step of its own: "install gemma" is one start, A7c)
+const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.filter(k => k !== 'work').map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
 const chatRunning = id => [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
@@ -469,6 +476,8 @@ function turnRequest({ conv, text, agent, task, channel, open, said, turnId }) {
     // keeps it, and that its request's replies read outside text, from the task (keepTask).
     noStops: Boolean(task?.noStops) || intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
     ...(task?.readOutside ? { readOutside: true } : {}),
+    // What the request read from outside and what its changes wrote, kept with its task (A7c, 21-ladder.mjs workTask).
+    ...workTask(task),
     onQuestion: q => { asked.push(q); } };
   return { asked, ctx, ...(again ? { task } : {}) };
 }
@@ -494,6 +503,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
   if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { id: ctx?.task || null, since: now, request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  // (what it read and wrote goes on with it, A7c)
+  if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)

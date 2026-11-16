@@ -276,6 +276,9 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
   const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started, task: ctx?.task || null }, out);
+  // What this request read from outside, by its record (A7c; the dangerous ask's "came from", 20-danger.mjs): a label
+  // built by code, the tool and its Spark, never its source's words.
+  if (ok && jid && a?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')))) workRead(ctx, jid, a.title, c.args);
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));

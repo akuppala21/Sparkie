@@ -10,7 +10,9 @@
 # helper runs it, through sudo -n only and only while the rehearsal has its sudo line, as sudo would run it for root
 # (SUDO_UID and SUDO_USER set; the rehearsal's folder named, so the helper reads every system path under it).
 # ~/.mock/sudo-drops: the helper runs, but the connection drops at once, as ssh's does (255, nothing said); with
-# "first-line" in it, the first line the helper prints is passed on before the drop.
+# "first-line" in it, the first line the helper prints is passed on before the drop. The helper runs as this stand-in's
+# child, never in its place: a caller that ends this call (the console's own time-out) ends the connection, not the
+# helper, as on a Spark, where ssh's end doesn't end the call there.
 M="$HOME/.mock"; spark=$(basename "$HOME")
 [ "$1" = -n ] || { echo "sudo: the stand-in only answers sudo -n" >&2; exit 1; }
 shift
@@ -27,7 +29,7 @@ if [ "$1" = "$R/usr/local/sbin/spark-console-root" ]; then
     fi
     exit 255
   fi
-  exec "$@"
+  "$@"; exit $?
 fi
 list=0
 [ "$1" = -l ] && { list=1; shift; }

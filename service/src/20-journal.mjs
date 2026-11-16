@@ -350,6 +350,8 @@ function journalAfterRestart() {
     if (!open.size) return;
     for (const r of open.values()) {
       journal(r.k, { id: r.id, end: true, ok: false, outcome: 'cut-off', act: r.act || null, chat: r.chat || null });
+      // (a change on a Spark may still run there: that Spark is held until its time limit has passed, 21-runner.mjs)
+      if (r.k === 'cmd' && r.act === 'run' && r.class === 'change') runnerHold(r);
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
       if (!conv) continue;
       const at = new Date().toISOString();

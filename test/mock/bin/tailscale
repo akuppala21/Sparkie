@@ -6,12 +6,12 @@
 # `tailscale serve status --json` (Spark Console's own route check) answers with $MOCK_DIR/serve.json, or with nothing
 # loaded ({}), as tailscaled does right after a boot.
 # `tailscale status --json` (Spark Console's look at the tailnet) answers with $MOCK_DIR/status.json, or with Spark 2
-# as Self, running, its key never expiring. With $MOCK_DIR/tailscale-hangs, every call hangs (tailscaled stuck). Every
+# as Self, running, its key never expiring, and Sparks 1, 3 and 4 as peers online, none with Tailscale SSH. With $MOCK_DIR/tailscale-hangs, every call hangs (tailscaled stuck). Every
 # call is kept, one line each, in $MOCK_DIR/tailscale-calls, so a test can see that only reads were asked.
 [ -n "$MOCK_DIR" ] && printf '%s\n' "$*" >> "$MOCK_DIR/tailscale-calls"
 [ -n "$MOCK_DIR" ] && [ -e "$MOCK_DIR/tailscale-hangs" ] && exec sleep 600
 case "$1" in
   ip) cat "$HOME/.mock/tsip" 2>/dev/null || echo 127.0.0.1 ;;
   serve) cat "$MOCK_DIR/serve.json" 2>/dev/null || echo '{}' ;;
-  status) cat "$MOCK_DIR/status.json" 2>/dev/null || echo '{"BackendState":"Running","Self":{"HostName":"akspark2","TailscaleIPs":["100.64.0.2"]},"Peer":{}}' ;;
+  status) cat "$MOCK_DIR/status.json" 2>/dev/null || echo '{"BackendState":"Running","Self":{"HostName":"akspark2","TailscaleIPs":["100.64.0.2"]},"Peer":{"nodekey:1":{"HostName":"akspark1","TailscaleIPs":["100.64.0.1"],"Online":true},"nodekey:3":{"HostName":"akspark3","TailscaleIPs":["100.64.0.3"],"Online":true},"nodekey:4":{"HostName":"akspark4","TailscaleIPs":["100.64.0.4"],"Online":true}}}' ;;
 esac
