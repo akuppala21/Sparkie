@@ -534,3 +534,29 @@ test('the dangerous ask for the brain\'s names carries the sorter\'s reason on a
   assert.ok(!existsSync(at3('notes/sparkie-main.txt')), 'nothing ran');
   await choose(chat, ask.choices.find(c => c.label === 'No').id);
 });
+
+// S-1, with the sorter's overwrites (its fix step): the files whose copy must be there before a change runs at once are
+// those it writes over or removes; a big source it only reads no longer stops it.
+test('S-1: the copy must be there for what the sorter says a change writes over or removes: as written, under a folder it removes whole, or by a pattern', () => {
+  const f = new Function(`${fnOf(part('21-runner.mjs'), 'runnerOverwritten')}\nreturn runnerOverwritten;`)();
+  const O = ['~/work/copy.bin', '~/work/big', '~/old/*.bin', '~/r[1].txt', '~/bad[x'];
+  const yes = ['~/work/copy.bin', '~/work/big/huge.bin', '~/old/a.bin', '~/r1.txt', '~/r[1].txt', '~/badx'], no = ['~/work/src.bin', '~/work/bigger/x', '~/old/sub/a.bin', '~/old/a.txt', '~/other'];
+  for (const p of yes) assert.equal(f(p, O), true, p);
+  for (const p of no) assert.equal(f(p, O), false, p);
+  // (an older sorter, with no overwrites: every file it names, as before)
+  assert.equal(f('~/work/src.bin', undefined), true);
+});
+
+test('S-1: copying a file over 16 MB runs at once (the source is only read); writing over one is the dangerous ask', { timeout: 120000 * SLOW }, async () => {
+  sparse('notes/bigsrc/src.bin', 16 * 2 ** 20 + 1);
+  const r = await run('cp notes/bigsrc/src.bin notes/bigsrc/copy.bin');
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.ran, true, r.text);
+  assert.ok(existsSync(at3('notes/bigsrc/copy.bin')));
+  const chat = await newChat();
+  await turn(chat, 'fix the big copy on spark 3', [[RUN('cp notes/a.txt notes/bigsrc/src.bin')]]);
+  const ask = await dangerOf(chat);
+  assert.ok(ask?.danger.lines.includes('Not copied first, so gone for good: ~/notes/bigsrc/src.bin (over 16 MB).'), JSON.stringify(ask?.danger));
+  await choose(chat, ask.choices.find(c => c.label === 'No').id);
+  rmSync(at3('notes/bigsrc'), { recursive: true, force: true });
+});

@@ -91,6 +91,21 @@ function runnerPins(pins, dir) {
   return [...Object.entries(pins).map(([p, h]) => `[ -f ${q(rel(p))} ] && s=$(sha256sum < ${q(rel(p))} 2>/dev/null) && [ "\${s%% *}" = ${/^[0-9a-f]{64}$/.test(h) ? h : 'x'} ] || { printf '%s\\n' ${q(`${RUNNER_PIN} changed ${p}`)}; exit 97; }`),
     `unset s; printf '%s\\n' ${q(`${RUNNER_PIN} ok`)}`, ''].join('\n');
 }
+// Whether a file the copies couldn't keep is one the command writes over or removes (S-1): with the sorter's overwrites
+// (R55: what it places less what it only reads, and the folders it reaches whole), one of them as written, under one,
+// or matched by one as bash matches a pattern (one that can't be read: any file under where it begins); with none from
+// the sorter, every
+// file it names counts, as before.
+function runnerOverwritten(path, overwrites) {
+  if (!Array.isArray(overwrites)) return true;
+  const p = String(path);
+  return overwrites.some(o => {
+    if (typeof o !== 'string') return false;
+    if (p === o || p.startsWith(`${o.replace(/\/+$/, '')}/`)) return true;
+    if (!/[*?[]/.test(o)) return false;
+    try { return new RegExp(`^${o.replace(/\[!/g, '[^').replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}$`).test(p); } catch { return p.startsWith(o.slice(0, o.search(/[*?[]/))); }
+  });
+}
 // What the unit's first line says of its pins: { output } without that line when they held; { changed: path } when one
 // didn't (exit 97, nothing of the command ran); null when the first line is neither (systemd refused the unit: as before).
 function runnerPinRead(output, exit) {
@@ -262,7 +277,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
     // deletes), whoever asked and whatever was pressed: otherwise nothing runs, the set goes, and the ladder asks it as
     // one that can't be put back, naming each file and why (asks, lost: 21-ladder.mjs; R61, R54).
-    const lost = copied.notKept.filter(x => !x.way), yes = asked && (gone === true || (Array.isArray(gone) && lost.every(x => gone.includes(String(x.path)))));
+    // (the files whose copy must be there: what the sorter says it writes over or removes, runnerOverwritten)
+    const lost = copied.notKept.filter(x => !x.way && runnerOverwritten(x.path, sorted.overwrites)), yes = asked && (gone === true || (Array.isArray(gone) && lost.every(x => gone.includes(String(x.path)))));
     if (sorted.deletes && lost.length && !yes) {
       await copiesOn(node, 'drop', { set }).catch(() => null);
       return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(),
