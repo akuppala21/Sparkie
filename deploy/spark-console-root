@@ -993,7 +993,6 @@ do_unit() {
   PRE=()
   [ "$VERB" = run ] && run_prefix
   unit="sw-$VERB-$ID"
-  start=$SECONDS
   # (a change: the home's own mode and owner noted, to be put back after it; the disk watched while it runs, R63)
   local home_was='' home_acl=0 watch='' tail=() l
   if [ "$VERB" = run ]; then
@@ -1009,8 +1008,12 @@ do_unit() {
   CALL_MARK=handed
   mark handed "$$ $(started_at $$)"
   trap '' HUP PIPE INT TERM
+  # (a clock with fractions around the unit, for "end time": seconds and microseconds, as digits)
+  start=${EPOCHREALTIME:-$SECONDS.000000}
   systemd-run "--unit=$unit" "--description=Spark Console $VERB $ID sha256 $SHA" --wait --pipe --collect --quiet \
     "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" <&6 || rc=$?
+  local took=${EPOCHREALTIME:-$SECONDS.000000}
+  took=$(( 10#${took//[!0-9]/} - 10#${start//[!0-9]/} ))
   local quiet=0   # (an empty answer is systemd not answering, not the unit gone: asked again, up to a minute)
   while case "$(systemctl show --property=ActiveState --value "$unit.service" 2> /dev/null)" in
           active|activating|deactivating|reloading|refreshing) quiet=0; true ;; '') quiet=$((quiet + 1)); (( quiet < 60 )) ;; *) false ;; esac
@@ -1033,7 +1036,9 @@ do_unit() {
   if [ "$NET" = 1 ]; then net_after; fi
   # (never an exit code for a command that never ran: told as a refusal, and nothing of it ran)
   if [ "$ran" = 0 ]; then printf '%s refused: its unit never started (systemd answered %s), so the command never ran\n' "$ID" "$rc"; exit 125; fi
-  if [ "$rc" -ne 0 ] && (( SECONDS - start >= 10#$SECS )); then printf '%s%s end time\n' "$nl" "$ID"
+  # (systemd ends a unit at its limit, and systemd-run then answers 1: "end time" only then, and only once the limit
+  # has truly passed; a command that ends by itself in its last second keeps its own exit code)
+  if [ "$rc" = 1 ] && (( took >= 10#$SECS * 1000000 )); then printf '%s%s end time\n' "$nl" "$ID"
   else printf '%s%s end %s\n' "$nl" "$ID" "$rc"; fi
   exit "$rc"
 }

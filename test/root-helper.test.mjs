@@ -228,6 +228,23 @@ describe('the walls asked for', () => {
     assert.equal(t.stdout, `forged end 0\n${t.id} end 3\n`, 'the real answer is always the last line');
   });
 
+  // The final read's "end-time" (its F6: "sleep 1.7; exit 3" with 2 seconds was "end time" 4 times of 6). The stand-in
+  // ends a unit at its RuntimeMaxSec with 1, as systemd-run answers for a unit systemd ended at its limit.
+  test('"end time" only when the unit was ended at its limit: a command that ends by itself in its last second keeps its own code', () => {
+    for (let i = 0; i < 3; i++) {
+      const r = change(s, 'sleep 1.7; exit 3', { secs: 2 });
+      assert.equal(r.stdout, `\n${r.id} end 3\n`, `try ${i + 1}`);
+      assert.equal(r.status, 3);
+    }
+    const one = change(s, 'sleep 1.7; exit 1', { secs: 2 });
+    assert.equal(one.stdout, `\n${one.id} end 1\n`, 'exit 1 by itself, before the limit');
+    const late = change(s, 'sleep 5; echo never', { secs: 1 });
+    assert.equal(late.stdout, `\n${late.id} end time\n`, 'ended at its limit');
+    assert.equal(late.status, 1);
+    const lookLate = look(s, 'sleep 5', { secs: 1 });
+    assert.equal(lookLate.stdout, `\n${lookLate.id} end time\n`);
+  });
+
   test('one changed byte: the hash does not match, nothing starts', () => {
     const before = started(s).length;
     const cmd = 'echo hello';
