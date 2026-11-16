@@ -16806,24 +16806,26 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], keys = []) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
-  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}), ...(keys.length ? { keys } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs) + runKeysLabel(node, command, keys), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
-async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, keys = []) {
   whoMayLook(viewer, ctx);
+  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
+  if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
@@ -16831,6 +16833,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
   // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63)
   const topDirs = await runnerTopDirs(node, sorted);
+  if (keys.length) runKeysOutside(runnerOutside(sorted, command, dir, topDirs));
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
   if (ctx.button && ctx.ownerConfirmed) {
     const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
@@ -16838,25 +16841,28 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
       const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) {
         workAsks.delete(key);
+        if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
         return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs);
       }
     }
     workAsks.delete(key);
-    return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
+    return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs, keys });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  // (a key's first use on a Spark or with an address is asked, R51)
+  if (!why && keys.length) why = runKeysWhy(node, command, keys);
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+  if (!why) return runChange(node, command, viewer, ctx, { dir, widen, topDirs, keys });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, command, widen);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs, keys });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
-  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
+  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, keys);
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
 // Area: features        Rules: R41, R56        Tests: power-wake-pair.test.mjs, power-wake.test.mjs
@@ -17960,6 +17966,178 @@ function wallWhNow(id) {
   return { wh: Math.round((e.wallKWh || 0) * 10000) / 10, source: 'estimate', since: e.wallSince };
 }
 const power = Object.freeze({ state: sparkPowerState, wake: wakeSpark, wallW: wallWattsNow, wallWh: wallWhNow });
+/* ───────── a kept key, by its name, in one change's environment (A14b) ───────── */
+// Area: features        Rules: R51, R61, R42        Tests: run-keys.test.mjs
+// Owns: none (a key's places go in the secrets file, outside the state folder, through secretsWrite)
+// Timers: none        Wakes: none
+// run takes keys: the names of keys the owner gave once (/key NAME value, 20-keys.mjs, R51). Code puts each value into
+// the command's environment by that name, for that one run and nothing else. The values go to the root helper on its
+// input (--stdin, after the call's own script on the same connection): the helper holds them in a file of its own, in
+// /run/spark-console/<id>/, root's and on the memory disk, for the unit's life and removes it with the unit. The
+// unit's first line is code's own (RUNKEY_PREFIX): it reads them from there into the environment and then takes its
+// input from nowhere. So no value is ever on a command line (ps), in the unit's name or settings (systemctl show), in
+// the command's text or its SHA-256, in the journal's start or end line, in a button, a script's hash or the copies;
+// what the command prints is masked by each kept value exactly (keptHidden, R51: as is, %-encoded and in base64, also
+// across two pieces of the journal). Never given: to a look's wall (only a change's takes input), to a command the
+// sorter calls open (outside the wall every key and token in the home is open to it), to root, to a command whose own
+// text prints the environment (env, printenv, set, export -p, declare -p, a shell's -x, /proc/…/environ, ps e), to a
+// run outside the plain wall after a yes (run --open: the home's keys are open there), to a delete that cannot be put back or a command naming the brain (the dangerous ask), to a script that changed after its
+// ask, or under a name that decides what programs run or load. A key's places, kept with it by code: the Sparks it has
+// run on and the addresses its commands named (a new value starts with none). A command given a key is never plain at
+// once by that fact alone (a walled plain change may read the project's files and send them out, the wall's analyst
+// found): it runs at once only when the sorter calls it a look or a plain change, the ladder clears it as any change,
+// AND every place it names, its Spark too, is one that key has gone before. Otherwise it is asked, on a button that
+// names each key and each new place; after the owner's yes and the run, those places are kept with the key.
+const RUNKEY_MAX = 8, RUNKEY_PLACES = 50, RUNKEY_HOSTS = 16;
+// Names a key is never handed under: what decides what programs run, load or fetch (the sorter's own list), or what
+// bash itself sets or reads.
+const RUNKEY_BASH = /^(?:BASH\w*|UID|EUID|PPID|PWD|OLDPWD|SHELL|SHLVL|USER|LOGNAME|MAIL\w*|HIST\w*|RANDOM|SRANDOM|SECONDS|LINENO|OPTARG|OPTIND|OPTERR|REPLY|COMP\w*|FUNCNAME|GROUPS|HOSTNAME|HOSTTYPE|MACHTYPE|OSTYPE|PIPESTATUS|PS[0-4]|EPOCH\w*|TERM|SUDO\w*)$/;
+// The unit's own first line when it is given keys: each NAME=value line of its input into the environment, until an
+// empty line; then its input is nothing, as without keys. (sck_k: lower case, so no key's name can be it.)
+const RUNKEY_PREFIX = 'while IFS= read -r sck_k && [ -n "$sck_k" ]; do export -- "$sck_k"; done; unset sck_k; exec </dev/null\n';
+const RUNKEY_SCRIPT_CHANGED = 'Not run: a script it runs changed after you were asked, and a key is never given to a script you weren’t shown. Nothing ran: ask for it again to see the script as it is now.';
+// The addresses a command's text names: a scheme's host (https://host), user@host (ssh, scp, rsync, git), and a bare
+// name with a common top-level part (example.com, api.x.io/v1) or an IPv4 address. Read from the text alone: where a
+// program sends a key by itself (its own settings) isn't seen; that is said on the button.
+const RUNKEY_TLD = 'com|org|net|io|co|ai|dev|app|cloud|edu|gov|info|biz|tv|xyz|us|uk|de|fr|jp|cn|ca|au|eu|ch|nl|se|no|fi|be|it|es|kr|tw|sg|hk|nz';
+function runKeysHosts(command) {
+  const t = String(command), out = new Set();
+  const add = h => { const x = String(h || '').toLowerCase().replace(/\.$/, ''); if (x && out.size < RUNKEY_HOSTS) out.add(x); };
+  for (const m of t.matchAll(/\b[a-z][a-z0-9+.-]{1,15}:\/\/(?:[^\s/@'"]*@)?(\[[0-9a-f:.]+\]|[a-z0-9.-]+)/gi)) add(m[1]);
+  for (const m of t.matchAll(/(?:^|[\s'"=])[a-z0-9._-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?=[:\s'"]|$)/gi)) add(m[1]);
+  const bare = new RegExp(`(?:^|[\\s'"=@])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${RUNKEY_TLD})|\\d{1,3}(?:\\.\\d{1,3}){3})(?=[:/\\s'"]|$)`, 'gi');
+  for (const m of t.matchAll(bare)) add(m[1]);
+  return [...out];
+}
+// Where a key goes with this command: its Spark, then each address it names.
+const runKeysPlaces = (node, command) => [node.id, ...runKeysHosts(command).filter(h => h !== node.id)];
+const runKeysPlaceWords = (node, p) => (p === node.id ? sparkName(node) : p);
+
+// Whether the command's own text prints the environment (where the key would be): a reason, or null. Its words are
+// read with quotes taken off, so a script a shell is handed (bash -c '…') counts too; a program counts where a command
+// starts (first in its part, past names set before it, or after a word that runs what follows); refused, never shown.
+const RUNKEY_SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'ksh', 'ash', 'mksh', 'busybox']);
+const RUNKEY_RUNS = new Set(['nice', 'nohup', 'time', 'timeout', 'exec', 'command', 'builtin', 'eval', 'xargs', 'sudo', 'doas', 'stdbuf', 'ionice', 'chroot', 'watch',
+  'then', 'do', 'else', '!', '-c', 'env']);
+function runKeysPrints(command) {
+  const t = String(command);
+  if (/\/proc\/[^\s;&|]*environ/.test(t)) return 'reads a process’s environment (/proc/…/environ)';
+  for (const part of t.replace(/['"`\\]/g, ' ').split(/\|\||&&|[;&|()\n{}<>]/)) {
+    const w = part.split(/\s+/).filter(Boolean);
+    let start = 0;
+    while (start < w.length && /^[A-Za-z_]\w*=/.test(w[start])) start++;
+    for (let i = start; i < w.length; i++) {
+      const x = w[i].split('/').pop(), before = i > start ? w[i - 1].split('/').pop() : null;
+      if (i > start && !RUNKEY_RUNS.has(before) && !/^\d+(?:\.\d+)?[smhd]?$/.test(before)) continue;
+      const rest = w.slice(i + 1), opts = [];
+      for (const a of rest) { if (!a.startsWith('-') && opts.at(-1) !== '-o') break; opts.push(a); }
+      const xtrace = opts.some((a, j) => /^-[a-zA-Z]*x/.test(a) || a === '--xtrace' || (a === '-o' && opts[j + 1] === 'xtrace'));
+      if (x === 'env' || x === 'printenv') return `runs ${x}, which prints the environment`;
+      if (x === 'set' && (!rest.length || xtrace)) return rest.length ? 'turns on the shell’s trace (set -x), which prints each command with its values' : 'runs set alone, which prints every variable';
+      if (['export', 'declare', 'typeset'].includes(x) && rest.every(a => a.startsWith('-'))) return `runs ${x}${rest.length ? ` ${rest.join(' ')}` : ''}, which prints the environment`;
+      if (x === 'shopt' && rest.includes('xtrace')) return 'turns on the shell’s trace (xtrace), which prints each command with its values';
+      if (RUNKEY_SHELLS.has(x) && xtrace) return `runs ${x} with its trace (-x), which prints each command with its values`;
+      if (x === 'ps' && rest.some(a => /^[a-zA-Z]+$/.test(a) && a.includes('e'))) return 'runs ps with e, which prints each process’s environment';
+    }
+  }
+  return null;
+}
+
+// The keys kept by name (the secrets file's keys), read now; a file that can't be read gives nothing to anyone.
+function runKeysKept() {
+  const s = secretsRead();
+  if (s === null) throw new HttpError(500, 'The secrets file on Spark 2 can’t be read, so no key was given and nothing ran.');
+  return s.keys && typeof s.keys === 'object' && !Array.isArray(s.keys) ? s.keys : {};
+}
+// What is never given a key, whatever is said (the ladder's first check for a command given one, and the runner's again
+// at the run): the names first, then the command. Throws a refusal in plain words; nothing has run.
+function runKeysNever(node, command, sorted, ctx, keys) {
+  if (!Array.isArray(keys) || !keys.length || keys.length > RUNKEY_MAX || keys.some(k => typeof k !== 'string' || !KEY_NAME_RE.test(k))) {
+    throw new HttpError(400, `keys takes the names of up to ${RUNKEY_MAX} kept keys, like ["HF_TOKEN"]: capital letters, digits and _. Nothing ran.`);
+  }
+  const kept = runKeysKept();
+  for (const k of keys) {
+    if (k === 'GITHUB' || k === 'HEARTBEAT') throw new HttpError(403, `Not run: ${k} has a home of its own (${k === 'GITHUB' ? 'the install from GitHub' : 'the heartbeat'}) and is used only there. Nothing ran.`);
+    if (DANGER_ENV.test(k) || RUNKEY_BASH.test(k)) throw new HttpError(403, `Not run: ${k} is a name the shell or a program reads to decide what runs or loads, so no key is given under it. Keep the key under another name (/key OTHER_NAME …). Nothing ran.`);
+    const v = kept[k]?.value;
+    if (typeof v !== 'string' || !v) throw new HttpError(404, `Not run: no key is kept as ${k}. The owner gives it once in their own chat: /key ${k} and then the key. Nothing ran.`);
+    if (/[\s\x00-\x1f\x7f]/.test(v)) throw new HttpError(409, `Not run: the key kept as ${k} holds a space or a sign that doesn’t show, so it can’t be handed over safely. Give it again with /key ${k}. Nothing ran.`);
+  }
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root' || lookWords(command).sudo || /(?:^|[\s;&|(])su(?:\s|$)/.test(command)) {
+    throw new HttpError(403, 'Not run: a key is never given to a command run as root (sudo or su). Nothing ran.');
+  }
+  const prints = runKeysPrints(command);
+  if (prints) throw new HttpError(403, `Not run: its own text ${prints}, where the key would be, so a key is never given to it. Use the key by its name in the command instead. Nothing ran.`);
+  if (sorted?.open) throw new HttpError(403, `Not run: it needs what the plain wall keeps out (${String(sorted.why || '').replace(/\.$/, '').slice(0, 200)}), so it would run outside that wall, where every key and token in your home is open to it; a key is never given to such a command. Nothing ran.`);
+  if ((sorted?.kinds || []).some(x => ['delete', 'brain'].includes(x))) {
+    throw new HttpError(403, `Not run: it ${sorted.kinds.includes('delete') ? 'removes what can’t be put back' : 'names the brain'}, which is asked the dangerous way, and a key is never given to such a command: run that part on its own first. Nothing ran.`);
+  }
+}
+// Each key's places this command would take it to that it hasn't gone to before: [{key, places}].
+function runKeysNew(node, command, keys) {
+  const kept = runKeysKept(), places = runKeysPlaces(node, command);
+  return keys.map(k => ({ key: k, places: places.filter(p => !(Array.isArray(kept[k]?.hosts) && kept[k].hosts.includes(p))) })).filter(x => x.places.length);
+}
+// Why a command given keys is asked though the ladder cleared it, or null: a place a key hasn't gone to before.
+function runKeysWhy(node, command, keys) {
+  const fresh = runKeysNew(node, command, keys);
+  if (!fresh.length) return null;
+  return fresh.map(x => `it gives the key ${x.key} to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' and ')}, where it hasn’t gone before`).join('; ');
+}
+// The button's own lines for a command given keys: which keys, their new places, what a $NAME on a command line shows.
+function runKeysLabel(node, command, keys) {
+  if (!keys?.length) return '';
+  const fresh = runKeysNew(node, command, keys), names = keys.join(', '), one = keys.length === 1;
+  const spelled = keys.filter(k => new RegExp(`\\$(?:${k}\\b|\\{${k}\\})`).test(command));
+  return ['', `It is given the key${one ? '' : 's'} ${names}, in its environment by name for this run only; ${one ? 'its value is' : 'their values are'} never shown.`,
+    ...fresh.map(x => `${x.key} hasn’t gone to ${x.places.map(p => runKeysPlaceWords(node, p)).join(' or ')} before: after your yes and the run, ${x.places.length === 1 ? 'that place is' : 'those places are'} kept with it.`),
+    'Where a program sends a key on its own (its own settings) isn’t read here, only the addresses the command names.',
+    ...(spelled.length ? [`${spelled.map(k => `$${k}`).join(', ')} on a program’s command line shows in ${sparkName(node)}’s process list while that program runs.`] : [])].join('\n');
+}
+// A change that would fail inside the plain wall runs, after the yes, outside it (run --open, 21-runner.mjs), where
+// every key and token in the home is open to it: never given a key there.
+function runKeysOutside(outside) {
+  if (outside?.length) throw new HttpError(403, `Not run: ${String(outside[0]).slice(0, 200)}, so it would run outside the plain wall, where every key and token in your home is open to it; a key is never given to such a command. Nothing ran.`);
+}
+// At the run (21-runner.mjs): the names and the command checked again, and, at once (no yes), every place known. The
+// unit's first line and its input: NAME=value lines and an empty one. { prefix, payload, places, sums }.
+function runKeysGive(node, command, sorted, keys, ctx, asked, outside = []) {
+  runKeysNever(node, command, sorted, ctx, keys);
+  runKeysOutside(outside);
+  if (!asked) { const why = runKeysWhy(node, command, keys); if (why) throw new HttpError(409, `Not run: ${why}, and that is always asked first. Nothing ran.`); }
+  const kept = runKeysKept(), sums = {};
+  for (const k of keys) sums[k] = createHash('sha256').update(kept[k].value).digest('hex');
+  return { prefix: RUNKEY_PREFIX, payload: `${keys.map(k => `${k}=${kept[k].value}\n`).join('')}\n`, places: runKeysPlaces(node, command), sums };
+}
+// After a run that started: each key's places kept with it (by code, the same value only: a key given anew since
+// starts with none). Never throws.
+function runKeysUsed(given, keys) {
+  try {
+    secretsWrite(s => {
+      const all = s.keys && typeof s.keys === 'object' && !Array.isArray(s.keys) ? { ...s.keys } : {};
+      for (const k of keys) {
+        const e = all[k];
+        if (!e || typeof e.value !== 'string' || createHash('sha256').update(e.value).digest('hex') !== given.sums[k]) continue;
+        all[k] = { ...e, hosts: [...new Set([...(Array.isArray(e.hosts) ? e.hosts : []), ...given.places])].slice(0, RUNKEY_PLACES) };
+      }
+      return { ...s, keys: all };
+    });
+  } catch (e) { console.error(`Where a key went couldn’t be kept with it: ${e.message}`); }
+}
+// run with keys (21-work.mjs): never a look (only a change's wall takes input), so a command that only reads runs as a
+// change given its keys; a key file named in it is refused as a look refuses one.
+async function runKeyed(node, command, input, viewer, ctx) {
+  whoMayLook(viewer, ctx);
+  if (!command.trim()) throw new HttpError(400, 'The command is empty: give one command.');
+  const keys = Array.isArray(input.keys) ? [...new Set(input.keys)] : input.keys;
+  // (the names, root and a text that prints the environment first, in their own words; the sorter's answer after)
+  runKeysNever(node, command, null, ctx, keys);
+  const key = lookWords(command).words.find(keyWord);
+  if (key) throw new HttpError(403, `Not run: ${key.slice(0, 200)} is a key file or holds keys, and a command given a key never reads one. Nothing ran.`);
+  const dir = input.dir || RUNNER_DIR, sorted = sortCommand(command, runnerSortOpts(node, ctx, dir));
+  if (sorted.class === 'look') Object.assign(sorted, { class: 'change', why: 'It only reads, and it is given a key, so it runs as a change.' });
+  return workChange(node, command, sorted, viewer, ctx, dir, { fleet: input.fleet === true, gpu: input.gpu === true }, keys);
+}
 /* ───────── the runner: one change on a compute Spark, its copies first (A7b) ───────── */
 // Area: features        Rules: R61, R13, R43        Tests: runner.test.mjs
 // Owns: none
@@ -18100,9 +18278,11 @@ async function runnerTopDirs(node, sorted) {
   const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
   return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
 }
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, keys = [] } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
   const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+  // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
+  if (keys.length && sorted.class === 'look') sorted.class = 'change';
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
@@ -18113,6 +18293,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if ((wide.fleet || wide.gpu) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark or the home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && outside.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
+  // (its keys, checked again now: never outside the plain wall, and at once only where each has gone before)
+  const given = keys.length ? runKeysGive(node, command, sorted, keys, ctx, asked, outside) : null;
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false, afterLook = null;
@@ -18141,7 +18323,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         notKept: lost.slice(0, 50).map(said) };
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha, ...(given ? { keys } : {}),
       ...(open ? { outside: outside.slice(0, 4) } : wide.fleet || wide.gpu ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
@@ -18162,7 +18344,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -18172,6 +18354,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     if (a.kind === 'ended') afterLook = wayCheck;
     // (what it wrote, for the commands after it in this request: a command that runs one is asked, 21-ladder.mjs)
     if (!Object.hasOwn(RUNNER_NEVER, a.kind)) workWrote(ctx, sorted);
+    // (where its keys went, kept with them, once it started)
+    if (given && !Object.hasOwn(RUNNER_NEVER, a.kind)) runKeysUsed(given, keys);
     const why = String(a.detail || '').slice(0, 300);
     if (!['ran', 'ended'].includes(a.kind)) {
       const never = Object.hasOwn(RUNNER_NEVER, a.kind);
@@ -19839,14 +20023,14 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false, input = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input === true ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -19862,7 +20046,7 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
@@ -19872,7 +20056,8 @@ function helperCall(node, verb, opts = {}) {
   const id = /^[a-z0-9]{8,40}$/.test(opts.id || '') ? opts.id : randomBytes(12).toString('hex'), limitMs = opts.limitMs || ((opts.seconds || LOOK_SECONDS) + LOOK_SLACK) * 1000;
   if (knownOffline(node)) return Promise.resolve({ id, code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id }), limit: limitMs / 1000 + 5 });
+    // (a change's keys, 21-run-keys.mjs: after the script on the same input, which the helper's --stdin reads to its end)
+    const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id, input: verb === 'run' && typeof opts.input === 'string' }) + (verb === 'run' && typeof opts.input === 'string' ? `\n${opts.input}` : ''), limit: limitMs / 1000 + 5 });
     const chunks = [];
     let bytes = 0, cut = false, timedOut = false, err = '', done = false;
     const finish = code => {
@@ -19975,6 +20160,7 @@ function forBrain(t) {
 // command word, a key's name), with the look's own words.
 async function runCommand(input, viewer, ctx = {}) {
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
+  if (Array.isArray(input.keys) && input.keys.length) return runKeyed(node, command, input, viewer, ctx);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
@@ -20040,6 +20226,7 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
+    keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only, and never shown. A key’s first use on a Spark or with an address is asked.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });
