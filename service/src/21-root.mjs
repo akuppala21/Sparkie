@@ -53,9 +53,14 @@ async function rootChange(input, viewer, ctx = {}) {
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
-  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : [])], where: node.id, shown: { command },
+  // (as the ladder's and Spark 2's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
+  // folder it starts in, workStartsIn. rootLine already says the net puts back nothing but the ways in)
+  const also = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;
+  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : []), ...also], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
     facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+      ...(gone ? { gone: { what: gone } } : {}),
       lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : [])] } });
+        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
 }

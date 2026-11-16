@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25786 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25792 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -487,7 +487,7 @@ Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its by
 Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes. One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text (the Telegram …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 335
+- **Lines:** 336
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1097,7 +1097,7 @@ run hands every command the sorter does not call a look to workChange (21-work.m
 - **Wakes:** none
 - **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workRecord`, `workWallLines`, `workScriptLines`, `workStartsIn`, `workLabel`, `workAsk`, `workChange`
 - **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`pendingChoices`, `question`), `20-danger` (`DANGER_LATE_MS`, `dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-ahead` (`aheadOffer`, `aheadCover`), `21-brain-rail` (`brainRail`), `21-hub` (`HUB_ON`, `hubChange`), `21-long` (`longHeld`, `LONG_MOST`), `21-net` (`NET_ON`, `netChange`), `21-run-keys` (`RUNKEY_SCRIPT_UNPINNED`, `runKeysLabel`, `runKeysNever`, `runKeysOutside`, `RUNKEY_SCRIPT_CHANGED`, `runKeysWhy`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `runnerHomeLines`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`)
-- **Used by:** `14-chats`, `14-rounds`, `21-hub`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
+- **Used by:** `14-chats`, `14-rounds`, `21-hub`, `21-root`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
 
 ### `21-long.mjs`: a long command: run with minutes, as an operation (A6)
 
@@ -1157,12 +1157,12 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark holding the brain, never with a key, minutes, fleet or gpu, never while changes are paused. It is never run at once, whatever the owner's words, and never covered by a go-ahead or the standing list: it is always the dangerous ask (20-danger.mjs, R54), "ROOT on Spark 3" (and "CAN LOCK YOU OUT" for the lock-out class), and only that ask's press runs it, through the net's seam (netGuarded, 21-net.mjs) and the root helper's `root --net` (--lockout for the lock-out class), armed in …
 
 - **Area:** features. **Rules:** R70, R60, R71, R54. **Tests:** root.test.mjs
-- **Lines:** 61
+- **Lines:** 66
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `rootLine`, `rootSeconds`, `rootChange`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `action`), `17-changes` (`brainSparks`, `agentSettings`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-net` (`netGuarded`, `netOpenOn`, `netHhmm`, `netWhose`, `netNotYours`, `netHelperFirst`, `netFact`, `netTimeWords`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`), `21-work` (`ROOT_ON`, `whoMayLook`, `lookWords`, `needsOwner`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `action`), `17-changes` (`brainSparks`, `agentSettings`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-ladder` (`workStartsIn`), `21-net` (`netGuarded`, `netOpenOn`, `netHhmm`, `netWhose`, `netNotYours`, `netHelperFirst`, `netFact`, `netTimeWords`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`), `21-work` (`ROOT_ON`, `whoMayLook`, `lookWords`, `needsOwner`)
 - **Used by:** `21-runner`, `21-work`
 
 ### `21-run-keys.mjs`: a kept key, by its name, in one change's environment (A14b)

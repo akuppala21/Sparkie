@@ -133,6 +133,22 @@ test('a root command in the lock-out class after the owner’s question, or afte
   assert.ok(!readFileSync(join(T.fleet.root, 'spark3', '.ssh', 'authorized_keys'), 'utf8').includes('asked@net'), 'nothing ran');
 });
 
+// The final read's ask-no-dir: the root ask showed neither the folder the command starts in nor that it deletes.
+test('the root ask shows the folder the command starts in, and says when it deletes for good, as the other asks do', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(join(T.fleet.root, 'spark3', 'notes', 'old'), { recursive: true });
+  const chat = await newChat(), words = 'as root on spark 3, clear the old folder in notes';
+  script([{ match: `^${words}$`, rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'find old -delete', dir: '~/notes', root: true } }]] }]);
+  try { await say(chat, words); } finally { noScript(); }
+  const m = (await chatMessages(chat)).filter(x => x.danger).at(-1), no = m?.choices.find(c => c.label === 'No');
+  try {
+    assert.ok(m, `the root ask (${JSON.stringify(sentBack(words))})`);
+    assert.equal(m.danger.lines[0], 'ROOT on Spark 3 · DELETES FOR GOOD', m.danger.lines.join('\n'));
+    assert.ok(m.danger.lines.includes('It starts in ~/notes.'), m.danger.lines.join('\n'));
+    assert.ok(m.danger.lines.some(l => l.startsWith('This cannot be put back: find -delete removes files')), m.danger.lines.join('\n'));
+  } finally { if (no) await press(chat, no.id); }
+  assert.ok(existsSync(join(T.fleet.root, 'spark3', 'notes', 'old')), 'nothing ran');
+});
+
 test('the lock-out class as root: ROOT on Spark 3 · CAN LOCK YOU OUT, and the helper is called with --lockout', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
   const a = await ask(chat, 'as root on spark 3, add the other key', "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@net' >> .ssh/authorized_keys");

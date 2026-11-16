@@ -9134,12 +9134,13 @@ function dangerCodeOf(shown) {
 }
 // Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
 function dangerBack(f) {
-  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs)
-  if (f.net) return [dangerPlain(f.net, 400)];
+  const gone = f.gone ? [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`] : [];
+  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs;
+  // a root command that also deletes says that too: the net puts back the ways in, never what it deletes, 21-root.mjs)
+  if (f.net) return [dangerPlain(f.net, 400), ...gone];
   if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
   if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
-  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
-  return [];
+  return gone;
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
 // that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built
@@ -20773,11 +20774,16 @@ async function rootChange(input, viewer, ctx = {}) {
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
-  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : [])], where: node.id, shown: { command },
+  // (as the ladder's and Spark 2's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
+  // folder it starts in, workStartsIn. rootLine already says the net puts back nothing but the ways in)
+  const also = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;
+  return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : []), ...also], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
     facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+      ...(gone ? { gone: { what: gone } } : {}),
       lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
-        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : [])] } });
+        ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });
 }
 /* ───────── a kept key, by its name, in one change's environment (A14b) ───────── */
 // Area: features        Rules: R51, R61, R42        Tests: run-keys.test.mjs
