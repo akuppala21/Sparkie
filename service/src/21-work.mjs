@@ -300,7 +300,11 @@ function forBrain(t) {
 async function runCommand(input, viewer, ctx = {}) {
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: opened and checked; A4 runs the command)
-  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
+  // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
+  if (Number.isInteger(input.minutes) && !ctx.long) ctx = { ...ctx, long: { minutes: input.minutes } };
+  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = ctx.long?.job ? ctx.long.seconds : LOOK_SECONDS;
+  // (not on Spark 2 yet: a long command there would run outside the lock-out net its changes run in, A11)
+  if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
@@ -322,10 +326,21 @@ async function runCommand(input, viewer, ctx = {}) {
     if (input.dir !== undefined && input.dir !== '~') throw new HttpError(400, 'A look starts in ~: name its paths from there (dir is where a change starts).');
     if (input.fleet === true || input.gpu === true) throw new HttpError(400, 'A look reaches no network and no device: fleet and gpu are for a change, asked first.');
     if ((looking.get(node.id) || 0) >= LOOK_AT_ONCE) throw new HttpError(429, `Two looks are running on ${at} already. Try again when one has answered.`);
+    // (with minutes: the look itself runs as an operation, and the turn doesn't wait, 21-long.mjs)
+    if (ctx.long && !ctx.long.job) { const started = longStart(node, ctx, 'look', () => runCommand(input, viewer, ctx)); rec.handed = true; return started; }
+    // (a long look's start line first, so after a restart its unit is found by id and stopped, 21-long.mjs)
+    const hid = randomBytes(12).toString('hex');
+    if (ctx.long?.job) {
+      rec.started = journal('cmd', { id: rid, start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+        unit: form ? null : `sw-look-${hid}`, form: form || null, seconds, minutes: ctx.long.minutes, op: ctx.long.job.id, args: { spark: node.id, command: command.slice(0, 600) }, sub: jSub(node.id) });
+      if (!rec.started) throw new HttpError(507, JOURNAL_REFUSED);
+      Object.assign(ctx.long, { id: form ? null : hid, record: rid });
+    }
     looking.set(node.id, (looking.get(node.id) || 0) + 1);
     let r;
-    try { r = await helperCall(node, form ? 'check' : 'look', form ? { seconds, form } : { command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
+    try { r = await helperCall(node, form ? 'check' : 'look', form ? { id: hid, seconds, form } : { id: hid, command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
     const a = helperAnswer(r), why = String(a.detail || '').slice(0, 300);
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     Object.assign(rec, { outcome: a.kind, unit: form ? null : `sw-look-${r.id}`, form });
     if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
     if (a.kind === 'nosudo') return needsOwner(node, a.kind, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
@@ -351,7 +366,7 @@ async function runCommand(input, viewer, ctx = {}) {
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it, and recall {"id":"${rid}","find":"<words>"} its lines that hold those words, numbered.` } : {}), record: rid,
     };
   } catch (e) { rec.err = e; throw e; } finally {
-    journal('cmd', { id: rid, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+    if (!rec.handed) journal('cmd', { id: rid, ...(rec.started ? { end: true } : {}), chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
       unit: rec.unit || null, form: rec.form || null, args: { spark: node.id, command: command.slice(0, 600) }, ok: !rec.err, outcome: rec.outcome, exit: rec.exit ?? null,
       err: jErr(rec.err), ms: Date.now() - t0, bytes: rec.bytes ?? null, cut: rec.cut || null, sub: jSub(node.id) }, `$ ${command}\n${rec.text ?? ''}`);
   }
@@ -366,6 +381,7 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
+    minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });

@@ -258,10 +258,13 @@ function updResultLook() {
   const res = readJson(UPD_RESULT_FILE), at = Date.parse(asked.at || '');
   // (pull.sh writes its time to the second: a result in the second the yes was pressed is this install's)
   const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= Math.floor(at / 1000) * 1000;
-  if (!done && Date.now() - at < UPD_WAIT_MS) return;
+  // (a time ahead of the clock counts as old: else it would refuse every yes until that time and an hour and a half)
+  const ahead = at > Date.now();
+  if (!done && !ahead && Date.now() - at < UPD_WAIT_MS) return;
   try { unlinkSync(UPD_ASKED_FILE); } catch {}
   const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 800)) : '';
-  const line = !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
+  const line = !done && ahead ? `The install of tree ${asked.tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
+    : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
     : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;

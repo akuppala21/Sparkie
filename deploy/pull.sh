@@ -41,7 +41,7 @@ RESULT="$STATE/update-result.json"
 LOCK_PATH=service/workflows.lock.json
 ME="bash $SHARE/pull.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WANT='' W='' DOOR='' ARMED=''
+WANT='' W='' DOOR='' ARMED='' ARMING=''
 CONFIRM_S=600
 # On the stand-in fleet the incoming installer is told so by an argument (--stand-in), not by what it inherits.
 STAND_IN=''; [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || STAND_IN=--stand-in
@@ -74,10 +74,18 @@ ask() {
   echo "$a"
 }
 # Stopped before the way back is armed: by the time limit of the unit an install from chat runs in, or by hand. Nothing
-# of the install has changed yet (once the way back is armed, interrupted puts back and says what answers).
+# of the install has changed yet (once the way back is armed, interrupted puts back and says what answers). A stop that
+# lands while the way back is being armed takes this install's own back (half made, or whole with its timer), so it
+# isn't left armed for its 30 minutes; another update's is never touched.
 stopped() {
   set +e; trap '' PIPE
   trap - INT TERM HUP
+  if [ -n "$ARMING" ] && [ -e "$SHARE/update-guard" ]; then
+    local gf="$SHARE/update-guard/guard"
+    if [ ! -s "$gf" ] || { [ "$(sed -n 's/^tree=//p' "$gf" | head -n 1)" = "$WANT" ] && [ "$(sed -n 's/^pgid=//p' "$gf" | head -n 1)" = "$ARMING" ]; }; then
+      bash "$HERE/update-guard.sh" disarm 9>&- >/dev/null 2>&1
+    fi
+  fi
   echo "  The install was stopped before it changed anything." >&2
   result refused "the install was stopped before it changed anything"
   exit 130
@@ -587,7 +595,9 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
       case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
     fi
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
-    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" 9>&- \
+    # (ARMING: this process group, as the guard file names it, while the way back is being armed)
+    ARMING=$(ps -o pgid= -p $$ | tr -d ' ')
+    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$ARMING" 9>&- \
       || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
     ARMED=yes
     trap interrupted INT TERM HUP

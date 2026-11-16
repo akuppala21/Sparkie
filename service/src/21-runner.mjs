@@ -189,6 +189,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
+  // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
+  // writes counts for the request's later commands now, 21-long.mjs)
+  if (ctx.long && !ctx.long.job) {
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs }));
+    workWrote(ctx, sorted);
+    return started;
+  }
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false, afterLook = null;
@@ -216,8 +223,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
         notKept: lost.slice(0, 50).map(said) };
     }
+    // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
+    if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
@@ -239,10 +248,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
+    // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
+    if (ctx.long) Object.assign(ctx.long, { id, record: rid });
     const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection
     // dropped, or whose answer couldn't be read, gets none: undo's cut-off rule reads its files by their times)
