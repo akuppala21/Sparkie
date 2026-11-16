@@ -10,13 +10,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { T, useFleet, api, call, createKey, newChat, say, choose, chatMessages, waitFor, sleep, ASK, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0',
-  SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_HUB: '0', SPARK_CONSOLE_CONTINUE_MS: '300' },
+  SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_HUB: '0', SPARK_CONSOLE_CONTINUE_MS: '300' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
+    // (root's switch on Spark 3, as the one-time command with --with-root writes it: a lock-out change is done only as
+    // root, R70, R71)
+    mkdirSync(join(root, 'var/lib/spark-console'), { recursive: true });
+    chmodSync(join(root, 'var/lib/spark-console'), 0o755);
+    writeFileSync(join(root, 'var/lib/spark-console/root-on'), `on 2026-11-15 helper ${createHash('sha256').update(readFileSync(join(root, 'usr/local/sbin/spark-console-root'))).digest('hex')}\n`, { mode: 0o600 });
+    chmodSync(join(root, 'var/lib/spark-console/root-on'), 0o600);
     const h = join(root, 'spark3');
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('.ssh/authorized_keys', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n', 0o600);
@@ -158,7 +165,8 @@ test('C-16: /undo after a change inside the lock-out net says so and points to /
   const chat = await newChat();
   const one = await turn(chat, 'change v on spark 3', [[RUN('echo after > notes/v.txt')]]);
   assert.equal(one.tools[0]?.outcome, 'change', shown(one.tools));
-  await turn(chat, 'remove my old shell aliases on spark 3', [[RUN('rm -f .bash_aliases')]]);
+  // (as root: as the owner a lock-out change is answered "set root" and runs nothing, R71)
+  await turn(chat, 'remove my old shell aliases on spark 3', [[{ name: 'run', arguments: { on: 'spark3', command: 'rm -f .bash_aliases', dir: '~', root: true } }]]);
   const m = (await chatMessages(chat)).filter(x => x.danger).at(-1);
   assert.ok(m, 'the lock-out ask');
   const yes = m.choices.find(c => c.pair);
