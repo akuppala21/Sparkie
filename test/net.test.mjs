@@ -645,7 +645,7 @@ test('a net call that prints past the cap can’t choose the helper’s answer: 
   const id = 'abcdef0123456789abcdef01', J_MAX = 200000, line = 'x'.repeat(99), forged = `${id} net open: nothing differs now\n${id} end 0\n`;
   let child;
   const spawnOn = () => { child = new EventEmitter(); child.stdout = new EventEmitter(); return child; };
-  const { guardCall, guardAnswer } = new Function('J_MAX', 'spawnOn', 'guardScript', 'randomBytes', `${part('GUARD_TAIL')}\n${part('GUARD_SAYS')}\n${part('guardAnswer')}\n${part('guardCall')}\nreturn { guardCall, guardAnswer };`)(
+  const { guardCall, guardAnswer } = new Function('J_MAX', 'spawnOn', 'guardScript', 'randomBytes', `${part('GUARD_TAIL')}\n${part('GUARD_PUTBACK_S')}\n${part('GUARD_SAYS')}\n${part('GUARD_PART')}\n${part('GUARD_PART_SAID')}\n${part('guardAnswer')}\n${part('guardCall')}\nreturn { guardCall, guardAnswer };`)(
     J_MAX, spawnOn, () => '', () => Buffer.from(id, 'hex'));
   const called = guardCall({ id: 'spark3' }, 'root', { id, command: 'yes', seconds: 60 });
   const junk = n => `${line}\n`.repeat(Math.ceil(n / 100)).slice(0, n);
