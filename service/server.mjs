@@ -18873,15 +18873,20 @@ function workTailnetSsh() {
   return { on, unknown };
 }
 
-// Where a command reads each script it runs, only where that is plain (the A7c review, fix 1): a script named as
-// written (no $, quote, pattern or ..), from the folder the change starts in (dir), or from the one folder a first
-// `cd <plain folder> &&` names; a ~ or whole path as it is. Anything else (a second cd, a cd anywhere else or with an
-// option, a script's name that isn't plain) pins nothing: the button says the script's text isn't pinned by a hash.
+// Where a command reads each script it runs, only where that can be told (the A7c review, fix 1; S-6), from the
+// command's words as bash splits them (shellWords, 21-work.mjs: quotes and backslashes taken off, so c\d and c''d are
+// cd): a script named as written (no $, quote, pattern or ..) is read from the folder the change starts in (dir) when
+// no word is cd, pushd or popd, none holds one (sh -c '…'), and no program is told another folder (-C, --directory,
+// --chdir, --cwd, --prefix, --git-dir, --work-tree, -execdir: git -C proj, make -C proj); with one cd that is the very
+// first words, `cd <plain folder> &&`, from that folder; a ~ or whole path as it is. Anything else pins nothing: the
+// button says the script's text isn't pinned by a hash.
 const WORK_PLAIN = /^[^\s$`'"\\*?[\]{}]+$/, workPlainName = t => WORK_PLAIN.test(t) && !t.startsWith('-') && !/(?:^|\/)\.\.?(?:\/|$)/.test(t);
+const WORK_MOVES = /^(?:cd|pushd|popd)$/, WORK_TOLD = /^(?:-C|--(?:directory|chdir|cwd|prefix|git-dir|work-tree)(?:=|$)|-(?:exec|ok)dir$)/;
 function workScriptPaths(scripts, dir, command) {
-  const c = String(command), cds = [...c.matchAll(/(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])/g)].length;
-  const first = /^\s*cd\s+(\S+)\s*&&/.exec(c), ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
-  const base = cds === 0 ? dir : cds === 1 && first && workPlainName(first[1]) ? (ok(first[1]) ? first[1] : `${dir}/${first[1]}`).replace(/\/+$/, '') : null;
+  const toks = shellWords(String(command)), words = toks.filter(t => t.w !== undefined).map(t => t.w), ok = t => t.startsWith('/') || t === '~' || t.startsWith('~/');
+  const moves = words.filter(w => WORK_MOVES.test(w)).length, inside = words.some(w => !WORK_MOVES.test(w) && /(?:^|[^\w./-])(?:cd|pushd|popd)(?:[^\w./-]|$)/.test(w));
+  const first = moves === 1 && toks[0]?.w === 'cd' && typeof toks[1]?.w === 'string' && toks[2]?.op === '&&' ? toks[1].w : null;
+  const base = inside || words.some(w => WORK_TOLD.test(w)) ? null : moves === 0 ? dir : first !== null && workPlainName(first) ? (ok(first) ? first : `${dir}/${first}`).replace(/\/+$/, '') : null;
   const paths = [], unpinned = [];
   for (const s of scripts) {
     if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null)) { unpinned.push(s); continue; }
@@ -18908,6 +18913,10 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   return { sums: Object.fromEntries(paths.map((s, i) => [s, got.get(i) === '-' ? null : got.get(i)])), unpinned };
 }
+// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
+// 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
+// (runnerPins, 21-runner.mjs), and run by its path.
+const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again.'] : []);
 // Why the scripts couldn't be read, by the look's answer, for the button.
 const WORK_UNREAD = { none: 'the root helper isn’t set up there yet', unknown: 'its root helper is one this build doesn’t know', nosudo: 'the root helper’s sudo line isn’t there',
   proof: 'the root helper’s walls aren’t proven there', failed: 'the root helper’s walls aren’t proven there', proving: 'its walls are being proven right now',
@@ -18957,7 +18966,7 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts)];
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
   return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
 // The text of a command's button, built by code (Spark 2's too: 21-hub.mjs calls this): its first line, then the
@@ -19003,7 +19012,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workScriptLines(scripts), workStartsIn(dir)])],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workUnshownLines(sorted), ...workScriptLines(scripts), ...workPinLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
@@ -19050,16 +19059,24 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     if (!was || was.spark !== node.id || was.command !== (spec?.key ?? command) || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
-    if (!was.unread && Object.keys(was.sums).length) {
-      // (write_file's: the file as it is read again for this press, 21-write.mjs)
-      const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
-      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
-        if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
-        return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+    // (the Spark's claim first, so nothing else of this console changes it between the scripts' read below and the run;
+    // let go just before runChange, which takes it again in this same tick, with nothing awaited between, R72)
+    const held = claimSparks([node.id], 'a command Sparkie is running there');
+    try {
+      if (!was.unread && Object.keys(was.sums).length) {
+        // (write_file's: the file as it is read again for this press, 21-write.mjs)
+        const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
+        if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
+        if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
+          if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
+          held();
+          return await again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
+        }
       }
-    }
-    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [], gone: was.gone ?? null }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
+    } finally { held(); }
+    // (each script's hash, checked once more by the unit's own first lines: runnerPins, 21-runner.mjs)
+    const pins = spec ? null : Object.fromEntries(Object.entries(was.sums || {}).filter(([, h]) => typeof h === 'string'));
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [], gone: was.gone ?? null, pins }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
@@ -19094,6 +19111,8 @@ async function workAfter(r, node, command, sorted, viewer, ctx, dir, widen, topD
   if (spec || (!ctx.conv && !ctx.onQuestion)) return said;
   const c = { ...ctx, button: false, ownerConfirmed: false };
   if (asks === 'protect') return workAsk(node, command, sorted, viewer, c, `${protect} on ${sparkName(node)} is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it`, dir, widen, topDirs, spec, keys, { bare: [protect] });
+  // (a script that changed between the press and the unit's start: that yes was void, as at the press)
+  if (asks === 'pinned') return workAsk(node, command, sorted, viewer, c, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs, spec, keys);
   if (asks === 'uncopied' && Array.isArray(lost) && lost.length) return workAsk(node, command, sorted, viewer, c, 'what it removes or overwrites couldn’t be copied first', dir, widen, topDirs, spec, keys, { gone: lost });
   return said;
 }
@@ -21086,6 +21105,32 @@ const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program 
 // is the sorter's to ask.
 const RUNNER_GIT = ['c=3; for k in name email; do v=$(git config --global --get "user.$k" 2>/dev/null) && [ -n "$v" ] && export "GIT_CONFIG_KEY_$c=user.$k" "GIT_CONFIG_VALUE_$c=$v" && c=$((c + 1)); done; unset k v',
   'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=$c GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2=/dev/null; unset c', ''].join('\n');
+// A pressed change's scripts, pinned by their SHA-256 on its ask (R72; R1-03): the unit's own first lines, after git's
+// and before the command, check each again from the folder the change starts in. One that differs, or isn't a file
+// there, stops it before anything of the command runs. The first line the unit prints says which: "<RUNNER_PIN> ok",
+// or "<RUNNER_PIN> changed <path>" and exit 97; what the command prints only ever comes after that first line, so it
+// can't be forged by the command. pins: {path as the ask showed it (~/… or whole): SHA-256}; dir: where it starts.
+const RUNNER_PIN = 'spark-console: the scripts it runs';
+function runnerPins(pins, dir) {
+  const d = dir === '~' ? [] : String(dir).slice(2).split('/');
+  const rel = p => {
+    if (!p.startsWith('~/')) return p;
+    const f = p.slice(2).split('/');
+    let i = 0;
+    while (i < d.length && i < f.length - 1 && d[i] === f[i]) i++;
+    return [...Array(d.length - i).fill('..'), ...f.slice(i)].join('/');
+  };
+  return [...Object.entries(pins).map(([p, h]) => `[ -f ${q(rel(p))} ] && s=$(sha256sum < ${q(rel(p))} 2>/dev/null) && [ "\${s%% *}" = ${/^[0-9a-f]{64}$/.test(h) ? h : 'x'} ] || { printf '%s\\n' ${q(`${RUNNER_PIN} changed ${p}`)}; exit 97; }`),
+    `unset s; printf '%s\\n' ${q(`${RUNNER_PIN} ok`)}`, ''].join('\n');
+}
+// What the unit's first line says of its pins: { output } without that line when they held; { changed: path } when one
+// didn't (exit 97, nothing of the command ran); null when the first line is neither (systemd refused the unit: as before).
+function runnerPinRead(output, exit) {
+  const out = String(output), first = out.split('\n')[0];
+  if (first === `${RUNNER_PIN} ok`) return { output: out.slice(first.length + 1) };
+  if (exit === 97 && first.startsWith(`${RUNNER_PIN} changed `)) return { changed: first.slice(`${RUNNER_PIN} changed `.length) };
+  return null;
+}
 // After its time limit systemd gives a unit 5 seconds to stop (TimeoutStopSec=5, the helper's), and a second more here.
 const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
@@ -21199,8 +21244,9 @@ async function runnerTopDirs(node, sorted) {
 // keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
 // folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
 // gone: the owner pressed an ask that said what it removes can't be put back (R54): true (the sorter's own delete, of
-// files it can't see), or the paths that ask named as not copied first; those may then go with no copy.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null } = {}) {
+// files it can't see), or the paths that ask named as not copied first; those may then go with no copy. pins: a
+// pressed change's scripts and their hashes, checked again by the unit's own first lines (runnerPins).
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null, pins = null } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -21220,7 +21266,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone, pins }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -21282,11 +21328,22 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    // (its pins, by the unit's first line: held, that line goes; one changed, nothing of the command ran, and it is
+    // asked again, 21-ladder.mjs)
+    const pin = pinned && ['ran', 'ended'].includes(a.kind) ? runnerPinRead(a.output, a.exit) : null;
+    if (pin?.output !== undefined) a = { ...a, output: pin.output };
+    if (pin?.changed) {
+      await copiesOn(node, 'drop', { set }).catch(() => null);
+      ending({ ok: false, outcome: 'pinned', ran: false, err: `a script it runs changed: ${maskSecrets(pin.changed).slice(0, 200)}` });
+      return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'pinned',
+        why: `A script it runs (${maskSecrets(pin.changed).slice(0, 200)}) changed after the owner was asked, so it was stopped before it began: nothing ran.` };
+    }
     if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection

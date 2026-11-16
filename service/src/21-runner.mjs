@@ -73,6 +73,32 @@ const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program 
 // is the sorter's to ask.
 const RUNNER_GIT = ['c=3; for k in name email; do v=$(git config --global --get "user.$k" 2>/dev/null) && [ -n "$v" ] && export "GIT_CONFIG_KEY_$c=user.$k" "GIT_CONFIG_VALUE_$c=$v" && c=$((c + 1)); done; unset k v',
   'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=$c GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2=/dev/null; unset c', ''].join('\n');
+// A pressed change's scripts, pinned by their SHA-256 on its ask (R72; R1-03): the unit's own first lines, after git's
+// and before the command, check each again from the folder the change starts in. One that differs, or isn't a file
+// there, stops it before anything of the command runs. The first line the unit prints says which: "<RUNNER_PIN> ok",
+// or "<RUNNER_PIN> changed <path>" and exit 97; what the command prints only ever comes after that first line, so it
+// can't be forged by the command. pins: {path as the ask showed it (~/… or whole): SHA-256}; dir: where it starts.
+const RUNNER_PIN = 'spark-console: the scripts it runs';
+function runnerPins(pins, dir) {
+  const d = dir === '~' ? [] : String(dir).slice(2).split('/');
+  const rel = p => {
+    if (!p.startsWith('~/')) return p;
+    const f = p.slice(2).split('/');
+    let i = 0;
+    while (i < d.length && i < f.length - 1 && d[i] === f[i]) i++;
+    return [...Array(d.length - i).fill('..'), ...f.slice(i)].join('/');
+  };
+  return [...Object.entries(pins).map(([p, h]) => `[ -f ${q(rel(p))} ] && s=$(sha256sum < ${q(rel(p))} 2>/dev/null) && [ "\${s%% *}" = ${/^[0-9a-f]{64}$/.test(h) ? h : 'x'} ] || { printf '%s\\n' ${q(`${RUNNER_PIN} changed ${p}`)}; exit 97; }`),
+    `unset s; printf '%s\\n' ${q(`${RUNNER_PIN} ok`)}`, ''].join('\n');
+}
+// What the unit's first line says of its pins: { output } without that line when they held; { changed: path } when one
+// didn't (exit 97, nothing of the command ran); null when the first line is neither (systemd refused the unit: as before).
+function runnerPinRead(output, exit) {
+  const out = String(output), first = out.split('\n')[0];
+  if (first === `${RUNNER_PIN} ok`) return { output: out.slice(first.length + 1) };
+  if (exit === 97 && first.startsWith(`${RUNNER_PIN} changed `)) return { changed: first.slice(`${RUNNER_PIN} changed `.length) };
+  return null;
+}
 // After its time limit systemd gives a unit 5 seconds to stop (TimeoutStopSec=5, the helper's), and a second more here.
 const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
@@ -186,8 +212,9 @@ async function runnerTopDirs(node, sorted) {
 // keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
 // folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
 // gone: the owner pressed an ask that said what it removes can't be put back (R54): true (the sorter's own delete, of
-// files it can't see), or the paths that ask named as not copied first; those may then go with no copy.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null } = {}) {
+// files it can't see), or the paths that ask named as not copied first; those may then go with no copy. pins: a
+// pressed change's scripts and their hashes, checked again by the unit's own first lines (runnerPins).
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null, pins = null } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -207,7 +234,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone, pins }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -269,11 +296,22 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    // (its pins, by the unit's first line: held, that line goes; one changed, nothing of the command ran, and it is
+    // asked again, 21-ladder.mjs)
+    const pin = pinned && ['ran', 'ended'].includes(a.kind) ? runnerPinRead(a.output, a.exit) : null;
+    if (pin?.output !== undefined) a = { ...a, output: pin.output };
+    if (pin?.changed) {
+      await copiesOn(node, 'drop', { set }).catch(() => null);
+      ending({ ok: false, outcome: 'pinned', ran: false, err: `a script it runs changed: ${maskSecrets(pin.changed).slice(0, 200)}` });
+      return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'pinned',
+        why: `A script it runs (${maskSecrets(pin.changed).slice(0, 200)}) changed after the owner was asked, so it was stopped before it began: nothing ran.` };
+    }
     if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection

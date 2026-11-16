@@ -19,6 +19,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, 
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, ASK, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { TEST_DIR } from './start-mock.mjs';
@@ -291,6 +292,7 @@ const ladderAlone = () => {
   const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
   return new Function('sparkName', 'longHeld', 'RUNNER_NOT_COVERED', 'workKeyLines', 'RUNNER_DIR',
     [one('workStartsIn'), one('WORK_UNPLAIN'), fnOf(src, 'workCommandText'), fnOf(src, 'workScriptLines'), fnOf(src, 'workUnshownLines') || 'const workUnshownLines = () => [];',
+      one('workPinLines') || 'const workPinLines = () => [];',
       fnOf(src, 'workLabel'), 'return { workLabel, workCommandText };'].join('\n'))(
     () => 'Spark 3', () => ({ minutes: 0 }), 'Not covered.', () => [], '~/work');
 };
@@ -332,4 +334,72 @@ test('unshown: a button for a command whose code runs unseen says what runs is i
   assert.ok(label({ unshown: 'a\nline‮break' }).split('\n').includes('What runs is in a file this button doesn’t show (a line break).'));
   for (const sorted of [{}, { unshown: null }, { unshown: '' }]) assert.ok(!label(sorted).includes('doesn’t show'), JSON.stringify(sorted));
   assert.match(part('21-ladder.mjs'), /lines: \[[^\n]*\.\.\.workUnshownLines\(sorted\)/, 'the dangerous ask says it too');
+});
+
+// S-6 with R1-03 (the final sorter read; round 1): the script a button pins was read against the wrong folder when bash
+// read a cd the pattern missed, or a program was told another folder; and the press checked the hashes, then ran the
+// command by its path seconds later, the Spark's claim taken only after the check.
+test('S-6: a script is pinned where it is really read from (c\\d and c\'\'d are cd), and not at all when a program is told another folder (git -C, make -C)', () => {
+  const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
+  const paths = new Function([fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES') || '', 'const WORK_SCRIPTS = 8;', fnOf(src, 'workScriptPaths'), 'return workScriptPaths;'].join('\n'))();
+  const at = (command, scripts) => paths(scripts, '~/work', command);
+  assert.deepEqual(at("c\\d proj && bash fix.sh", ['fix.sh']), { paths: ['~/work/proj/fix.sh'], unpinned: [] });
+  assert.deepEqual(at("c''d proj && bash fix.sh", ['fix.sh']), { paths: ['~/work/proj/fix.sh'], unpinned: [] });
+  for (const [command, s] of [['git -C proj bisect run ./fix.sh', './fix.sh'], ['make -C proj -f build.mk', 'build.mk'], ['make --directory=proj -f build.mk', 'build.mk'],
+    ['pushd proj && bash fix.sh', 'fix.sh'], ["sh -c 'cd proj && bash fix.sh'", 'fix.sh']]) assert.deepEqual(at(command, [s]), { paths: [], unpinned: [s] }, command);
+  // (the plain forms pin as before; a whole or ~ path is itself wherever the command stands)
+  assert.deepEqual(at('cd a && bash x.sh', ['x.sh']), { paths: ['~/work/a/x.sh'], unpinned: [] });
+  assert.deepEqual(at('bash run.sh', ['run.sh']), { paths: ['~/work/run.sh'], unpinned: [] });
+  assert.deepEqual(at('make -C proj -f ~/build.mk', ['~/build.mk']), { paths: ['~/build.mk'], unpinned: [] });
+});
+
+test('R1-03: the unit\'s own first lines check each pinned script again: as asked, the command runs after one line of code\'s, which is taken off; changed, it stops before the command', () => {
+  const src = part('21-runner.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0], q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  const R = new Function('q', [one('RUNNER_PIN'), fnOf(src, 'runnerPins'), fnOf(src, 'runnerPinRead'), 'return { runnerPins, runnerPinRead };'].join('\n'))(q);
+  const D = realpathSync(mkdtempSync(join(tmpdir(), 'sct-pins-')));
+  try {
+    mkdirSync(join(D, 'work/a'), { recursive: true });
+    writeFileSync(join(D, 'work/a/fix.sh'), 'echo fix\n');
+    writeFileSync(join(D, 'top.sh'), 'echo top\n');
+    const h = p => createHash('sha256').update(readFileSync(join(D, p))).digest('hex');
+    const go = pins => spawnSync('bash', ['-c', `${R.runnerPins(pins, '~/work')}echo the command ran`], { cwd: join(D, 'work'), encoding: 'utf8', timeout: 20000 });
+    const good = go({ '~/work/a/fix.sh': h('work/a/fix.sh'), '~/top.sh': h('top.sh') });
+    assert.deepEqual([good.status, good.stdout], [0, 'spark-console: the scripts it runs ok\nthe command ran\n']);
+    assert.deepEqual(R.runnerPinRead(good.stdout, 0), { output: 'the command ran\n' });
+    for (const pins of [{ '~/work/a/fix.sh': h('work/a/fix.sh'), '~/top.sh': h('work/a/fix.sh') }, { '~/work/a/gone.sh': h('top.sh') }]) {
+      const bad = go(pins), which = Object.keys(pins).at(-1);
+      assert.deepEqual([bad.status, bad.stdout], [97, `spark-console: the scripts it runs changed ${which}\n`], JSON.stringify(pins));
+      assert.deepEqual(R.runnerPinRead(bad.stdout, 97), { changed: which });
+    }
+    // (a command can print the same words only after the first line: they are its output)
+    assert.equal(R.runnerPinRead('Failed to start transient service unit\nspark-console: the scripts it runs changed ~/x\n', 97), null);
+    assert.equal(R.runnerPinRead('spark-console: the scripts it runs changed ~/x\n', 0), null);
+  } finally { rmSync(D, { recursive: true, force: true }); }
+});
+
+test('R1-03: the press takes the Spark\'s claim before it reads the scripts again; the unit checks them once more, and that line is not in what it printed', { timeout: 180000 * SLOW }, async () => {
+  writeFileSync(at3('notes/s6a.sh'), 'echo s6a ran\n');
+  writeFileSync(at3('notes/slow6.sh'), 'sleep 12\n');
+  const looks = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length;
+  const live = () => { const d = join(H3(), '.rehearsal', 'standin', 'live'); return existsSync(d) ? readdirSync(d).filter(u => u.startsWith('sw-run-')) : []; };
+  const chat = await newChat(), t = await turn(chat, 'run the s6a script', [[RUN('bash notes/s6a.sh')]]);
+  assert.match(sentBack('run the s6a script')[0]?.question || '', /\nEach script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again\./);
+  // Another change holds Spark 3: the press is refused before it reads anything there.
+  const slow = await run('bash notes/slow6.sh', '~', { minutes: 1 });
+  assert.equal(slow.json?.outcome, 'started', slow.text);
+  await waitFor(() => live().length > 0, { every: 100, what: 'the slow change to run' });
+  const n = looks(), p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+  assert.match(p.json?.message?.content || '', /Something is already changing on Spark 3/, p.text);
+  assert.equal(looks(), n, 'no look read the script while another change held the Spark');
+  await ended(slow.json.operation);
+  // Pressed with Spark 3 free: it runs, the unit's first lines hold the script's hash, and what it printed is only its own.
+  const c2 = await newChat(), t2 = await turn(c2, 'run the s6a script again', [[RUN('bash notes/s6a.sh')]]);
+  const p2 = await choose(c2, t2.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p2.status, 200, p2.text);
+  const start = startOf('bash notes/s6a.sh'), end = endOf(start);
+  assert.equal(end?.exit, 0, JSON.stringify(end));
+  const held = readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', start.unit, 'command'), 'utf8');
+  assert.ok(held.includes(`s=$(sha256sum < 'notes/s6a.sh' 2>/dev/null) && [ "\${s%% *}" = ${createHash('sha256').update('echo s6a ran\n').digest('hex')} ]`), held);
+  assert.ok(held.endsWith('\nbash notes/s6a.sh'), held);
+  assert.equal(recordText(end), '$ bash notes/s6a.sh\ns6a ran\n');
 });
