@@ -6448,8 +6448,9 @@ action({
 // “What can you do?” (A3): what Sparkie can look up and change, read from the action list when asked (a new action
 // shows up by itself), and its limits. Only action titles and lines written here: nothing from a Spark, a file, memory
 // or a saved workflow, so sparkie_setup stays an inside read (R26) and masking leaves the text as written.
+// (run and write_file are reads to runAction but change things, `changes: true`: they are listed with the changes, TR-4)
 function abilities() {
-  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read') === read).map(a => a.title);
+  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read' && !a.changes) === read).map(a => a.title);
   const pageOnly = [...PAGE_ONLY].map(n => ACTIONS.get(n)?.title).filter(Boolean).join(', ');
   return {
     observedAt: new Date().toISOString(), canLookUp: titles(true), canChange: titles(false),
@@ -6459,6 +6460,7 @@ function abilities() {
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
       `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
       CHANGES_ASKED,
+      'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.',
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
