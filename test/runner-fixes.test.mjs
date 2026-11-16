@@ -454,3 +454,34 @@ test('S-13: a long command\'s operation carries its request\'s task, so its end 
     assert.equal(op.task, start.task, JSON.stringify(op));
   } finally { noScript(); }
 });
+
+// T123 (part): with the journal unwritable, a changing run, an undo and a long look run nothing and the owner is told why.
+// R1-10 (round 1; P-2): with the journal unwritable a changing run must run nothing. Three refusals held that and could
+// be taken out with no test failing: the runner's start line (21-runner.mjs), undo's start line (the same part), and a
+// long look's start line (21-work.mjs).
+test('R1-10: with the journal\'s disk full, a changing run, an undo and a long look run nothing, each saying the record couldn\'t be written', { timeout: 180000 * SLOW }, async () => {
+  writeFileSync(at3('notes/u10.txt'), 'u10 before\n');
+  const chat = await newChat();
+  await turn(chat, 'change u10 on spark 3', [[RUN('echo after > notes/u10.txt')]]);
+  assert.equal(text('notes/u10.txt'), 'after\n');
+  const flag = join(T.fleet.dir, 'disk-full'), units = runUnits().length, before = sets();
+  const lookUnits = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length;
+  writeFileSync(flag, '');
+  try {
+    const r = await run('echo full > notes/full.txt');
+    assert.equal(r.status, 507, r.text);
+    assert.match(r.json.error, /^Couldn’t write the record of this change on Spark 2/);
+    assert.ok(!existsSync(at3('notes/full.txt')), 'nothing written');
+    assert.equal(runUnits().length, units, 'no unit');
+    assert.deepEqual(sets(), before, 'its copies went');
+    const u = await say(chat, '/undo');
+    assert.match(u.text, /Couldn’t write the record of this change on Spark 2/, u.text);
+    assert.equal(text('notes/u10.txt'), 'after\n', 'nothing put back');
+    const looks = lookUnits(), l = await run('cat notes/a.txt', '~', { minutes: 1 });
+    assert.equal(l.json?.outcome, 'started', l.text);
+    const j = await ended(l.json.operation);
+    assert.equal(j.status, 'failed', JSON.stringify(j));
+    assert.match(JSON.stringify(j), /Couldn’t write the record of this change on Spark 2/);
+    assert.equal(lookUnits(), looks, 'no look ran');
+  } finally { rmSync(flag, { force: true }); }
+});
