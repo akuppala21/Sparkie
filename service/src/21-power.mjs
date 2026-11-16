@@ -204,23 +204,28 @@ function answersNow(node, timeout = 15000) {
 // One look at what runs on a Spark now (read only): what would stop Spark Console from powering it off. Never stopped
 // by this: anything not started by Spark Console, anything protected, a job (keep_running once) that hasn't ended, an app
 // that isn't kept. Spark Console's own models and kept apps are what gets parked.
-const POWER_LOOK = `docker ps --format 'power\\t{{.Names}}\\t{{.Label "spark.protect"}}\\t{{.Label "spark.console"}}\\t{{.Label "spark.app"}}\\t{{.Label "spark.job"}}\\t{{.Label "spark.role"}}' 2>/dev/null && printf 'docker\\tok\\n'`;
+const POWER_LOOK = `docker ps --format 'power\\t{{.Names}}\\t{{.Label "spark.protect"}}\\t{{.Label "spark.console"}}\\t{{.Label "spark.app"}}\\t{{.Label "spark.job"}}\\t{{.Label "spark.role"}}' 2>/dev/null && printf 'docker\\tok\\n'
+${POWER_BOX_LOOK}`;
 async function powerLook(node) {
   let r = await run(node, POWER_LOOK, { timeout: 30000 });
   // (a Spark remembered as unreachable a moment ago is asked once more, so one that just came back counts as on)
   if (r.code === 255 && await answersNow(node)) r = await run(node, POWER_LOOK, { timeout: 30000 });
-  if (r.code === 255) return { answers: false, inUse: [], apps: [] };
+  if (r.code === 255) return { answers: false, inUse: [], apps: [], boxes: [] };
   if (!fields(r.out, 'docker').length) throw new HttpError(409, `Docker on ${sparkName(node)} didn’t answer just now, so nothing was changed. Try again in a minute.`);
-  const kept = new Set(desired().running.filter(x => x.app).map(keyOf)), inUse = [], apps = [];
+  const kept = new Set(desired().running.filter(x => x.app).map(keyOf)), inUse = [], apps = [], boxed = powerBoxesIn(node, r.out), found = [];
   for (const [name, protect, ours, app, job, role] of fields(r.out, 'power')) {
     if (!name) continue;
     if (role === 'main' || isProtected(name, protect)) inUse.push(`${name} (protected)`);
     else if (ours === '1') continue;
+    // (Spark Console's own box: said and ended by an asked power-off, 21-power-box.mjs; one it doesn't have open is said)
+    else if (boxed.known.has(name)) found.push(boxed.known.get(name));
+    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${name} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
     else if (app === '1' && job === '1') inUse.push(`${name} (a job that hasn’t ended)`);
     else if (app === '1' && kept.has(`${node.id}/${name}`)) apps.push(name);
     else inUse.push(`${name} (started outside Spark Console)`);
   }
-  return { answers: true, inUse, apps };
+  await powerBoxFiles(node, found);
+  return { answers: true, inUse, apps, boxes: found };
 }
 const inUseWords = (node, list) => `${sparkName(node)} is in use: ${list.join(', ')} ${list.length > 1 ? 'run' : 'runs'} there. Spark Console never stops those, so nothing was changed. Stop ${list.length > 1 ? 'them' : 'it'} first, or turn ${sparkName(node)} off by hand.`;
 // The shutdown needs exactly the two commands deploy/power-setup.sh lets the owner's account run without a password.
@@ -344,7 +349,7 @@ action({
     for (const l of looks) if (l.inUse.length) throw new HttpError(409, inUseWords(nodeById(l.id), l.inUse));
     for (const l of looks.filter(x => x.answers)) if (!(await sudoReady(nodeById(l.id)))) throw new HttpError(409, setupWords(nodeById(l.id)));
     for (const l of looks.filter(x => x.answers)) { const why = await plugUnproven(l.id); if (why) throw new HttpError(409, why); }
-    if (ctx.powerWhy === 'idle') for (const l of looks.filter(x => x.answers)) { const busy = await idleInUse(nodeById(l.id)); if (busy) throw new HttpError(409, `Not idle: ${busy}. Nothing was changed.`); }
+    if (ctx.powerWhy === 'idle') for (const l of looks.filter(x => x.answers)) { const busy = l.boxes.length ? `a box is open on ${sparkWord(l.id)}` : await idleInUse(nodeById(l.id)); if (busy) throw new HttpError(409, `Not idle: ${busy}. Nothing was changed.`); }
     // One that doesn't answer now: cut only when its plug shows it shut down (under 15 W); one that draws power is on,
     // or stuck, and its power is never cut from here.
     for (const l of looks.filter(x => !x.answers)) {
@@ -357,6 +362,8 @@ action({
     const inv = await inventory(null), plan = powerPlan(looks.filter(l => l.answers).map(l => l.id), inv);
     const stops = [...plan.models.map(m => `${m.spark}/${m.head}`), ...looks.flatMap(l => l.apps.map(a => `${l.id}/${a}`))];
     const base = args.spark ? { spark: args.spark } : { sparks: args.sparks };
+    // (Spark Console's own boxes there: said, and ended inside the operation; one of a task under way is asked about first)
+    const boxesThere = looks.flatMap(l => (l.boxes || []).map(b => ({ ...b, spark: l.id }))), boxYes = boxesThere.length ? { confirmBoxes: true } : {};
     // A model that answers Sparkie's chats or apps stops only after the owner's yes, as stop_model asks.
     if (!args.confirmRouted && plan.models.some(m => m.sparks.some(id => routedSparks().has(id)))) {
       const names = plan.models.filter(m => m.sparks.some(id => routedSparks().has(id))).map(m => m.head).join(', ');
@@ -369,16 +376,21 @@ action({
     const agent = ctx.via === 'agent' || Boolean(ctx.agent) || Boolean(viewer.agentKey);
     if (agent) {
       const names = stops.map(x => x.split('/').pop()).join(', ');
-      return question(viewer, ctx, `Power off ${sparksWords(ids)}?${stops.length ? ` It stops ${names} first (parked: ${stops.length > 1 ? 'they come' : 'it comes'} back when the Spark is turned on). ${pairWords(plan, ids)}` : ''}`.replace(/\s+/g, ' ').trim(), [
-        { label: `Yes, ${stops.length ? `stop ${names} and ` : ''}power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, ...(args.confirmRouted ? { confirmRouted: true } : {}) } } },
+      return question(viewer, ctx, `Power off ${sparksWords(ids)}?${stops.length ? ` It stops ${names} first (parked: ${stops.length > 1 ? 'they come' : 'it comes'} back when the Spark is turned on). ${pairWords(plan, ids)}` : ''}${boxesThere.length ? ` ${powerBoxSay(boxesThere)}` : ''}`.replace(/\s+/g, ' ').trim(), [
+        { label: `Yes, ${stops.length ? `stop ${names} and ` : ''}${boxesThere.length ? 'end the box and ' : ''}power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, ...(args.confirmRouted ? { confirmRouted: true } : {}), ...boxYes } } },
+        { label: 'No, leave it on', call: null }], 'question', { ownerOnly: true });
+    }
+    if (boxesThere.some(b => b.live) && !args.confirmBoxes) {
+      return question(viewer, ctx, `${powerBoxSay(boxesThere).replace(/ (?:It ends|They end) first, with (?:its folder|their folders)\.$/, '')} Power off ${sparksWords(ids)} anyway? The box ends first, and what its folder holds goes with it.`, [
+        { label: `Yes, end the box and power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, ...(args.confirmRouted ? { confirmRouted: true } : {}), ...boxYes } } },
         { label: 'No, leave it on', call: null }], 'question', { ownerOnly: true });
     }
     const why = ctx.powerWhy === 'idle' ? 'idle' : 'asked';
     const job = claimed([...ids, ...plan.partners], `powering off ${sparksWords(ids)}`, () => newJob('power-off', { node: ids[0], ...(ids.length > 1 ? { nodes: ids } : {}),
       by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null, why, stops }));
-    runJob(job, j => powerOffJob(j, ids, ctx, why));
-    return { outcome: 'started', operation: job.id, sparks: ids, stops,
-      note: `${stops.length ? `It stops and parks ${stops.map(x => x.split('/').pop()).join(', ')} first. ${pairWords(plan, ids)} ` : ''}Then ${sparksWords(ids)} ${ids.length > 1 ? 'shut' : 'shuts'} down cleanly, and ${ids.length > 1 ? 'their plugs are' : 'its plug is'} switched off once ${ids.length > 1 ? 'they stop' : 'it stops'} answering and ${ids.length > 1 ? 'draw' : 'draws'} under 15 W (about 2 minutes).`.replace(/\s+/g, ' ').trim(),
+    runJob(job, j => powerOffJob(j, ids, ctx, why, args.confirmBoxes === true));
+    return { outcome: 'started', operation: job.id, sparks: ids, stops, ...(boxesThere.length ? { boxes: boxesThere.map(b => b.name) } : {}),
+      note: `${boxesThere.length ? `${powerBoxSay(boxesThere)} ` : ''}${stops.length ? `It stops and parks ${stops.map(x => x.split('/').pop()).join(', ')} first. ${pairWords(plan, ids)} ` : ''}Then ${sparksWords(ids)} ${ids.length > 1 ? 'shut' : 'shuts'} down cleanly, and ${ids.length > 1 ? 'their plugs are' : 'its plug is'} switched off once ${ids.length > 1 ? 'they stop' : 'it stops'} answering and ${ids.length > 1 ? 'draw' : 'draws'} under 15 W (about 2 minutes).`.replace(/\s+/g, ' ').trim(),
       next: `wait_operation {"id":"${job.id}"} to follow it.` };
   },
 });
@@ -398,7 +410,7 @@ async function unpark(job, stopped, pairHeads = new Set()) {
   if (stopped.some(x => pairHeads.has(x.split('/')[1].replace(/-part2$/, '')))) note(job, 'A model across two Sparks wasn’t started again here: self-healing starts it again across both.');
   try { parkDesired(stopped, false); } catch (e) { note(job, `The list of what should be running couldn’t be updated: ${e.message}`); }
 }
-async function powerOffJob(j, ids, ctx, why) {
+async function powerOffJob(j, ids, ctx, why, boxYes = false) {
   pausedCheck(ctx);
   // Looked at again inside the operation (R14): nothing that isn't Spark Console's came since, and sudo is still set up.
   step(j, `Checking ${sparksWords(ids)}`);
@@ -408,6 +420,9 @@ async function powerOffJob(j, ids, ctx, why) {
   for (const id of up) if (!(await sudoReady(nodeById(id)))) throw new Error(setupWords(nodeById(id)));
   for (const id of up) { const unproven = await plugUnproven(id); if (unproven) throw new Error(unproven); }
   if (why === 'idle') for (const id of up) { const busy = await idleInUse(nodeById(id)); if (busy) throw new Error(`Not idle: ${busy}. Nothing was changed.`); }
+  if (why === 'idle') for (const l of looks) if (l.boxes?.length) throw new Error(`Not idle: a box is open on ${sparkWord(l.id)}. Nothing was changed.`);
+  // (Spark Console's own box there ends first, before anything is parked: 21-power-box.mjs)
+  await powerBoxesEnd(j, looks, ctx, boxYes);
   await copyBeforeOff(j, up);   // (the state's copy first, if it changed: 20-state-copy.mjs)
   // Parking: Spark Console's models and kept apps there stop (both parts of a model across two Sparks), and stay on the
   // list of what should be running, marked parked.
@@ -442,10 +457,10 @@ async function powerOffJob(j, ids, ctx, why) {
     await unpark(j, stopped, pairHeads);
     throw new Error(`Its models were stopped, but the last look before the shutdown didn’t work (Docker there didn’t answer), so nothing was shut down and what was parked was put back.`);
   }
-  const came = again.filter(l => l.inUse.length || l.apps.length);
+  const came = again.filter(l => l.inUse.length || l.apps.length || l.boxes?.length);
   if (came.length) {
     await unpark(j, stopped, pairHeads);
-    throw new Error(`Something started on ${sparksWords(came.map(l => l.id))} while its models stopped (${came.flatMap(l => [...l.inUse, ...l.apps]).join(', ')}), so it wasn’t shut down; what was parked was put back.`);
+    throw new Error(`Something started on ${sparksWords(came.map(l => l.id))} while its models stopped (${came.flatMap(l => [...l.inUse, ...l.apps, ...(l.boxes || []).map(b => `${b.name} (a box)`)]).join(', ')}), so it wasn’t shut down; what was parked was put back.`);
   }
   // The shutdown. From here it is off on purpose: healing and the needs-me line leave it alone.
   const at = new Date().toISOString(), by = ctx.actor || 'the owner', entries = desired().running.filter(x => parked.includes(keyOf(x)));
