@@ -29,7 +29,9 @@
 # started, at once and to its end, in its /out folder (the source of its -v …:/out), with these stand-ins on PATH: what it
 # prints is its log, and it ends with the command's exit code (otherwise a job stays running). With ~/.mock/stamp-starts,
 # a run or start writes ~/.mock/started-<name> with the time, so a container's StartedAt is when it really started.
-# With ~/.mock/ids-per-run, a container made again under a name gets a new id (cid).
+# With ~/.mock/ids-per-run, a container made again under a name gets a new id (cid). `docker inspect -f '{{json .Args}}'`
+# gives the words after a container's image in its run (~/.mock/args-<name>, written by every run; a seeded one ships
+# its own): what Sparkie's model loaded is read from them (R52).
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
 cmd=$1; shift
@@ -67,6 +69,16 @@ runSplit() {
     case "$a" in --name|--label|--restart|--memory|--log-opt|-p|-v|-e|-w|--gpus|--shm-size) want=1 ;; -*) ;; *) img=$a ;; esac
   done < "$1"
   printf '%s\n[%s]\n' "$img" "$cmd"
+}
+# The words after a run's image, as a JSON string list (what docker inspect -f '{{json .Args}}' gives).
+runArgs() {
+  local a want= img= out= sep=
+  while IFS= read -r a; do
+    if [ -n "$img" ]; then out="$out$sep\"$(printf '%s' "$a" | sed 's/[\\"]/\\&/g')\""; sep=,; continue; fi
+    if [ -n "$want" ]; then want=; continue; fi
+    case "$a" in --name|--label|--restart|--memory|--log-opt|-p|-v|-e|-w|--gpus|--shm-size|--entrypoint|--mount|--network|--ipc|--ulimit) want=1 ;; -*) ;; *) img=$a ;; esac
+  done < "$1"
+  printf '[%s]\n' "$out"
 }
 # One of an app's run labels (spark.gpu=1 …), when its run has it.
 runLabel() { grep -qx -- "$2" "$1" 2>/dev/null; }
@@ -181,7 +193,7 @@ case "$cmd" in
   rm)
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
-      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name"
+      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/args-$name"
     done ;;
   run)
     printf '%s\n' "$@" > "$M/last-run-args"
@@ -211,6 +223,7 @@ case "$cmd" in
     lineOf "$name" >/dev/null && { echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2; exit 125; }
     if [ -f "$M/ids-per-run" ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
     [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
+    runArgs "$M/last-run-args" > "$M/args-$name"
     if [ "$ours" = app ] && [ -f "$M/app-port-taken" ]; then
       echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
       echo "docker: Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1 failed: port is already allocated." >&2; exit 125
@@ -327,6 +340,7 @@ case "$cmd" in
       # The image a container runs, as docker's own id: ~/.mock/imageid-<name> if a test gave one (Sparkie's brain check
       # and rail read it: R52).
       *'{{.Image}}'*) cat "$M/imageid-$name" 2>/dev/null || echo sha256:abc ;;
+      *'{{json .Args}}'*) cat "$M/args-$name" 2>/dev/null || echo '[]' ;;
       # (exactly waitJobEnd's format: the brain's status check reads ExitCode too, with StartedAt, below)
       *'{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
       *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;;

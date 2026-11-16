@@ -3851,7 +3851,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     Object.assign(turn, turnRequest(turn));
     Object.assign(turn, brainContext(turn));
     Object.assign(turn, howAsked(turn));
-    Object.assign(turn, turnBudgets(turn));
+    // (the limits of the brain's profile: its own once checked, else the careful ones, turnLimits in 21-brain-rail.mjs)
+    Object.assign(turn, turnBudgets({ ...turn, limits: await turnLimits(turn) }));
     // What the rounds add to as they go (each was one of the turn’s own variables).
     Object.assign(turn, { answer: '', thinking: false, finishReason: null, changes: 0, used: [], pastes: [] });
     Object.assign(turn, turnGroups(turn));
@@ -3862,6 +3863,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
+      taskStepsKept(turn);
       journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn), task: turn.ctx?.task || null });
       finish();
     }
@@ -3990,7 +3992,7 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, works, spent, asked, failed }) {
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, spent, asked, failed }) {
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
@@ -4003,17 +4005,17 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
   // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
   if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
-  // (and its work steps in all, against its limit of 120: taskOver, 14-tasks.mjs)
-  if (!agent && conv.task && (!task || conv.task === task) && works) conv.task.steps = (Number(conv.task.steps) || 0) + works;
   // (and the jobs of the request, whose end wakes it: jobEnded, 21-apps.mjs; noted here, as the watcher's list can be a
   // minute behind)
   if (!agent && conv.task && (!task || conv.task === task)) {
     const started = [...jobs.values()].filter(j => j.conv === conv.id && j.once && !['failed', 'cancelled'].includes(j.status) && String(j.createdAt) >= String(now));
     if (started.length) conv.task.jobs = [...(conv.task.jobs || []), ...started.map(j => ({ spark: j.node, container: j.container, at: j.createdAt }))].slice(-20);
   }
-  // (a turn a budget ended that would have carried on but for the task's own limit: its reply carries the mark,
-  // 14-tasks.mjs)
-  if (!agent && task && conv.task === task && !carry && ['steps', 'output'].includes(spent) && taskOver(task)) taskStopped(conv, task, taskOver(task), conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
+  // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
+  // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
+  // after this, so this turn's are no count of keepTask's)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
+  if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
     taskPark(conv.task);
@@ -4125,52 +4127,73 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
-// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
-// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
-// its rounds, at most 30); the tool output it may read (40% of its context, budgetContext, at 3 characters a token);
-// and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4, held to 40 and 12 (design E 2.3). And the
+// loop's budgets (design A 2.10, R50), each counted by code on this turn, so per message and per chat, and each set
+// beside a setup's ask block, never in it (askBlock leaves them out): work steps, the run calls one message may make
+// (the setup's workSteps, else twice its rounds, at most 30), and one task may make over all its turns (120); the tool
+// output it may read (40% of its context, budgetContext, at 3 characters a token); and three refused calls in a row.
+// Reaching one makes the next round the last, as overBudget does. Which of them a turn gets is the brain's profile's
+// (turnLimits, 21-brain-rail.mjs: a brain not checked gets the careful ones).
+const ROUNDS_MOST = 40, CHANGES_MOST = 12;   // limits: tool rounds and changes in one message, whatever a setup says
 const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const TASK_STEPS = 120;            // limit: run calls in one task, over all its turns (design A 2.10)
 const CONTEXT_TOKENS = 32768;      // limit: the context of a setup that says none
 const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
 // (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
 const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
-function turnBudgets({ tuned }) {
-  const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
+// A setup's own limits, each held to the most any setup may have.
+function setupLimits(tuned) {
+  const rounds = Math.min(ROUNDS_MOST, Math.max(1, Math.floor(Number(tuned.toolRounds)) || 6)), changes = Math.min(CHANGES_MOST, Math.max(1, Math.floor(Number(tuned.maxChanges)) || 4));
   const steps = Number(tuned.workSteps);
-  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
-  const TOOL_OUTPUT = Math.floor(budgetContext(tuned) * 12 / 10);
-  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+  return { rounds, changes, steps: Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * rounds), output: Math.floor(budgetContext(tuned) * 12 / 10) };
 }
-// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
-// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
-// else 32,768.
-const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+// What one task has left of its 120 run calls (task.steps: those its turns made, taskStepsKept); 120 with no task. The one
+// place that says whether a task may run more (a task's carrying on asks it too).
+const taskStepsDone = task => (Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0);
+const taskStepsLeft = task => Math.max(0, TASK_STEPS - taskStepsDone(task));
+// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left. A task with none
+// left ends this turn's tools at once ('task').
+function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
+  const done = taskStepsDone(task), left = taskStepsLeft(task);
+  const WORK_STEPS = Math.min(limits.steps, left);
+  return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
+    works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
+}
+// After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
+// has only what is left of the 120. A new request starts a new task, and with it a new count.
+function taskStepsKept({ conv, task, agent, works = 0 }) {
+  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = taskStepsDone(task) + works;
+}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
+// the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup
+// saying it); one from 1,000 to 1,048,576, or else 32,768.
 function budgetContext(setup) {
-  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576, args = Array.isArray(setup?.args) ? setup.args.map(String) : [];
+  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576;
   if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);
-  const at = args.findIndex(a => BUDGET_CONTEXT_FLAG.test(a)), n = at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+  const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
 // (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are paused): only the owner's request that is a
 // task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
-function budgetCarries({ spent, agent, task, text, now, works, conv }) {
+function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
   if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
-  return !taskOver({ ...t, steps: (Number(t.steps) || 0) + (works || 0) }) && !(agentSettings().halted && !agentSettings().autoPaused);
+  // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
+  return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
 }
 // What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
-// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
-// step that reaches them makes the next round the last.
+// One run call is one work step (runOne, before it is handed over): past the message's steps (or what its task has
+// left) it is not run, and the step that reaches them makes the next round the last.
 function workStep(turn) {
   if (turn.works >= turn.WORK_STEPS) {
     turn.notRun++;
-    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
+    throw new HttpError(429, turn.taskBound ? `Not run: one task may run ${TASK_STEPS} commands, and this one has. Answer now with what you found and what is left.`
+      : `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
   }
-  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= turn.taskBound ? 'task' : 'steps';
 }
 // After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
 // refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
@@ -4205,7 +4228,10 @@ function budgetReport(turn) {
   if (!turn.spent) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
-  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${more}.`);
+  // (a task's last: no carrying on, and the owner's next message is a new request with its own 120)
+  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
@@ -4389,7 +4415,8 @@ async function runOne(turn, { round, calls, steps }, c, i) {
 // by then (another Telegram pairing or none, the device's sign-in over) ends instead, a record from before these limits
 // is taken off quietly, and one that was waiting on an operation gets one line saying the restart may have cut it off,
 // which wakes it as a result would.
-const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72, TASK_STEPS = 120;
+// (a task's 120 commands, TASK_STEPS, are E5b's: 14-rounds.mjs)
+const TASK_PLAIN = { hours: CONTINUE_HOURS, turns: CONTINUE_MAX }, TASK_AWAY = { hours: 4, turns: 60 }, TASK_TURNS_AN_HOUR = 15, TASK_HOURS_MAX = 72;
 const TASK_WORDS = /\b(?:on\s+your\s+own|by\s+yourself|unattended|overnight|while\s+i(?:'m|\s+am)\s+away|as\s+a\s+task)\b/i;
 const TASK_HOURS = /\b(?:for|up\s+to|over\s+the\s+next)\s+(\d{1,4})\s*(?:hours?|hrs?)\b/i;
 // An instruction's opening ("please", "could you", "I want you to", …), then a verb of working on it or carrying on.
@@ -4422,12 +4449,13 @@ const taskLimits = t => ({
   hours: Number.isInteger(t?.hours) ? Math.min(TASK_HOURS_MAX, Math.max(1, t.hours)) : TASK_PLAIN.hours,
   turns: Number.isInteger(t?.turns) ? Math.min(TASK_HOURS_MAX * TASK_TURNS_AN_HOUR, Math.max(1, t.turns)) : TASK_PLAIN.turns,
 });
-// Which limit a task has reached, or null: its carry-on turns, its hours from the request, its work steps in all.
+// Which limit a task has reached, or null: its carry-on turns, its hours from the request, its work steps in all (one
+// count, E5b's: what taskStepsKept keeps on the task after each turn, read through taskStepsLeft, 14-rounds.mjs).
 function taskOver(t, now = Date.now()) {
   const { hours, turns } = taskLimits(t);
   if ((Number(t?.continuations) || 0) >= turns) return 'turns';
   if (!((t?.parked ? Math.min(now, Date.parse(t.parked)) : now) - Date.parse(t?.at) <= hours * 3600000)) return 'hours';
-  if ((Number(t?.steps) || 0) >= TASK_STEPS) return 'steps';
+  if (!taskStepsLeft(t)) return 'steps';
   return null;
 }
 // Which Telegram pairing a task came from, kept on it without the chat's ids (they stay in the secrets file): a new
@@ -4492,6 +4520,7 @@ function taskAgain(conv, text) {
   if (!(t?.stopped || t?.parked) || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
   // (parked at a button: this turn carries it on, so Sparkie asks again; its budget stays)
   if (!t.stopped) { taskUnpark(t); return t; }
+  // (its count of commands starts again too, as at the owner's next message: taskStepsLeft reads 0 as all 120 left)
   Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
   // (its next end is reported again: E7)
   delete t.reported;
@@ -4864,8 +4893,9 @@ async function sparkieApi(req, res, path, viewer = null) {
   if (req.method === 'GET' && path === '/v1/models') {
     const running = await runningModels(viewer).catch(() => []);
     const seen = new Set();
-    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52)
-    if (MAIN) await brainRanLook().catch(() => null);
+    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52; apps poll this,
+    // so a look up to 5 seconds old does)
+    if (MAIN) await brainRanLook({ within: 5000 }).catch(() => null);
     return send(res, 200, { object: 'list', ...(MAIN ? { spark_console: { brain: brainInUse() } } : {}), data: [
       agents ? { id: SPARKIE_ID, object: 'model', created: 0, owned_by: 'spark-console', title: agents.title } : null,
       main ? { id: main.model, object: 'model', created: 0, owned_by: 'spark-console', title: main.title } : null,
@@ -5437,7 +5467,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail()).checked) {
+    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
@@ -11179,12 +11209,20 @@ const pickWords = text => nameWords(text).filter(w => w.length >= 3 && !/^\d+$/.
 // The eval's switch (test/eval.mjs --memory-off names, on the stand-in fleet only): with it the picker is off and the
 // brain is sent what it was before the picker (memoryPrompt as it was, nothing picked).
 const memoryPicking = () => !(ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes('names'));
+// The number after a setup's serving flag for its context (--context-length for SGLang, --max-model-len for vLLM,
+// --ctx-size for llama.cpp), the last when one is given twice, as an engine reads it; NaN with none. Both the sizes
+// below and the loop's output budget (budgetContext, 14-rounds.mjs) read it.
+const CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+function contextFlag(setup) {
+  const args = Array.isArray(setup?.args) ? setup.args.map(String) : [], at = args.findLastIndex(a => CONTEXT_FLAG.test(a));
+  return at < 0 ? NaN : Number(CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+}
 // The three sizes (design G 3.4), in characters: the block of lines in the system prompt (today's 4,000), the lines
 // picked for one message (1,500) and a recall answer (6,000, G3). A brain with a small context gets less: the block is
 // at most 4% of its tokens, at 3 characters a token (3,932 at 32,768 tokens), and the other two shrink with it.
+// (its context from the same flags as the output budget's, budgetContext in 14-rounds.mjs)
 function memorySizes(setup = chatTarget()?.kind === 'main' ? MAIN : {}) {
-  const a = Array.isArray(setup?.args) ? setup.args : [], at = a.indexOf('--context-length');
-  const tokens = askOf(setup).tokenBudget || (at >= 0 ? Number(a[at + 1]) || 0 : 0);
+  const tokens = askOf(setup).tokenBudget || contextFlag(setup) || 0;
   const k = tokens > 0 ? Math.min(1, (tokens * 0.04 * 3) / MEMORY_CHARS) : 1;
   return { block: Math.floor(MEMORY_CHARS * k), picks: Math.floor(1500 * k), cards: Math.floor(900 * k), recall: Math.floor(6000 * k) };
 }
@@ -11940,7 +11978,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
-    if (t === '--' && !w.unknown) { rest(k + 1); break; }
+    // (after --, a word is a name whatever its first sign)
+    if (t === '--' && !w.unknown) { for (const x of args.slice(k + 1)) x.literal = true; rest(k + 1); break; }
     if (!t.startsWith('-') || t === '-' || (plainRe && !w.unknown && plainRe.test(t))) {
       if (first) { rest(k); break; }
       if (w.unknown && (!t || w.split)) unknown ??= w.text || '$…';
@@ -12275,7 +12314,11 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
 // writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
-function sortTouch(w, ctx, r, wide = false, write = true) {
+// (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
+// apart, R64)
+// (a redirection's word, and a word after --, is a name whatever its first sign: the word itself is a place too, R64)
+const sortCandsOf = (w, t) => (w?.literal ? [...new Set([t, ...sortCands(t)])] : sortCands(t));
+function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
   ctx.touched?.add(w);
@@ -12283,18 +12326,19 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
   const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
-  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
+  for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
-  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
-  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCandsOf(w, t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
+    (read ? ctx.readOnly : ctx.wrote)?.add(p);
   }
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
@@ -12328,7 +12372,7 @@ function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
     const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
@@ -12389,7 +12433,7 @@ function sortInterp(args, ctx, r, x, name) {
   if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
-  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, x); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
+  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
@@ -12406,7 +12450,7 @@ function sortSets(names, ctx, r, how) {
   for (const n of names) {
     if (!n || n.unknown || /\[/.test(n.text)) unsure(`${sortQ(how)} sets a name the sorter can't read (an index worked out as arithmetic, or a $).`);
     const m = /^[A-Za-z_]\w*/.exec(n.text)?.[0];
-    if (m) sortAssign(m, ctx, r, false);
+    if (m) sortAssign(m, ctx, r, false, n.unknown || !n.text.includes('=') ? null : n.text.slice(n.text.indexOf('=') + 1));
   }
 }
 const sortDeclare = (a, ctx, r, x, name) => {
@@ -12548,6 +12592,8 @@ const SORT_HANDLERS = {
     const f = a[0] ?? unsure('source with no file.');
     if (/^\/dev\/(?:stdin|fd\/)|^\/proc\/self\/fd\//.test(f.text)) unsure('It reads shell code from its input, which can’t be shown.');
     if (f.fetches) ctx.fetched = true; else if (f.unknown) unsure('It runs a shell file named by a $ or a command.');
+    // (a Python environment's activate: pip after it installs there, not in ~/.local, R64)
+    if (/(?:^|\/)bin\/activate$/.test(f.text)) ctx.venv = true;
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
   set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
@@ -12598,8 +12644,10 @@ const SORT_HANDLERS = {
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
-    for (const w of o.plain) sortTouch(w, ctx, r, false, false);
-    for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate'));
+    // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
+    const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
+    for (const w of o.plain) sortTouch(w, ctx, r, false, false, packs && !o.has('remove-files'));
+    for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, packs, !packs && !o.has('delete') && o.has('x', 'extract', 'get'));
     if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }
     after();
   },
@@ -12610,7 +12658,7 @@ const SORT_HANDLERS = {
     // (-: and -^ let its members leave the folder: it reaches / then)
     const o = sortOpts(SORT_OPTS.unzip, a);
     sortInto(a.some(w => /^-[^-]*[:^]/.test(w.text)) ? { text: '/', subs: [] } : o.all('d').at(-1) ?? null, ctx, r);
-    for (const w of o.plain) sortTouch(w, ctx, r, false);
+    for (const [i, w] of o.plain.entries()) sortTouch(w, ctx, r, false, true, i === 0);
   },
   '7z'(a, ctx, r) {
     const v = a.find(w => !w.text.startsWith('-'))?.text;
@@ -12842,9 +12890,12 @@ Object.assign(SORT_HANDLERS, {
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
     const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `${sortQ(name)} reaches ${sortQ(near)}, a Spark or the home network: inside the wall there is no route there, so it is asked.`);
+    for (const w of [...o.plain, ...o.all('url')]) if (!w.unknown) usesReach(usesHost(w.text) ?? (/^[^/:]+(?=[:/]|$)/.exec(w.text)?.[0]), ctx);
     // (an option that decides where it connects, or reads its addresses from a file, may point at the same: asked)
     const via = o.opts.find(([n]) => (name === 'curl' ? /^(?:resolve|connect-to|x|proxy|preproxy|socks\w*|dns-servers|doh-url)$/ : /^(?:i|input-file|B|base|e|execute)$/).test(n));
     if (via) raise(r, 'risky', `${sortQ(name)} ${sortQ(`${via[0].length > 1 ? '--' : '-'}${via[0]}`)} decides where it connects, maybe a Spark or the home network: asked.`);
+    // (and where that option points, when its words show it: a proxy's host, the address --resolve or --connect-to gives)
+    if (name === 'curl') for (const [n, v] of o.opts) if (typeof v?.text === 'string' && !v.unknown && /^(?:x|proxy|preproxy|socks\w*|resolve|connect-to|dns-servers|doh-url)$/.test(n)) for (const s of v.text.split(',')) usesReach(/^(?:resolve|connect-to)$/.test(n) ? /([^:[\]]+|\[[^\]]*\])$/.exec(s)?.[1] : usesHost(s) ?? /^[^/:]+/.exec(s)?.[0], ctx);
     if (ctx.root) {
       const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
       const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
@@ -12893,6 +12944,7 @@ Object.assign(SORT_HANDLERS, {
     if (!a[k] || a.some(w => w.unknown)) unsure('ssh’s host or command holds a $ or a command, which the sorter can’t read.');
     if (a[k + 1]?.text.startsWith('-')) unsure('ssh takes options after the host too, which the sorter does not read there.');
     const dest = a[k].text, host = dest.replace(/^[^@]*@/, ''), place = sortHost(ctx, host), remote = a.slice(k + 1).map(w => w.text).join(' ');
+    usesReach(host.replace(/^ssh:\/\/|[:/].*$/g, ''), ctx);
     user ??= /^([^@]*)@/.exec(dest)?.[1] ?? null;
     if (user === 'root') ctx.kinds.add('root');
     if (relay) return raise(r, place ? 'risky' : 'notdone', place ? `${sortQ(relay)} opens a tunnel between Sparks.` : `${sortQ(relay)} would open a tunnel or relay through ${sortQ(host)}, outside the fleet, round a network filter.`);
@@ -12912,11 +12964,14 @@ Object.assign(SORT_HANDLERS, {
     const o = sortOpts(SORT_OPTS[name], a), plain = o.plain, rec = name === 'sftp' || o.has('r', 'a', 'recursive', 'archive');
     if (name === 'sftp') {
       const host = plain.at(-1)?.text.replace(/^[^@]*@/, '').replace(/:.*$/, '') ?? '';
+      usesReach(host, ctx);
       return raise(r, 'risky', sortHost(ctx, host) ? `sftp to ${sortQ(host)} can write any file there, outside every wall and copy: asked.` : `It connects to ${sortQ(host)}, which isn’t one of the Sparks.`);
     }
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
-      if (!m) return sortTouch(w, ctx, r, rec && lastOne);
+      // (a local source is only read, unless it is moved away)
+      if (!m) return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text)));
+      usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
@@ -13241,8 +13296,9 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 // the few a look may carry.
 const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
-function sortAssign(name, ctx, r, prefix) {
+function sortAssign(name, ctx, r, prefix, value = null) {
   ctx.sets?.add(name);
+  ctx.setTo?.set(name, value);
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
@@ -13311,13 +13367,14 @@ function sortCmd(cmd, ctx, r, inPipe) {
         continue;
       }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
+      d.w.literal = true;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
       raise(c, 'change', `It writes ${sortQ(d.w.text || 'a file')} (a redirection).`);
       if (/^(?:>|>\||&>)$/.test(d.op)) c.deletes = true;
       later.push(d.w);
     }
-    for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0);
+    for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0, a.unknown ? null : a.text.replace(/^[^=]*=/, ''));
     try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
     // (after what it does, so the more dangerous answer stands)
     if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
@@ -13334,6 +13391,7 @@ const sortWroteIn = (d, ctx) => [...ctx.written].some(p => p.startsWith(d === '/
     : ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`)) || [d, ...sortUp(d)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, d, ctx))));
 function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
+  ctx.unread = true;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
   if (file) r.scripts.push(file);
   raise(r, 'change', why);
@@ -13344,7 +13402,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
-    else if (sortCands(w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
+    else if (sortCandsOf(w, w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
   }
   if (dir?.unknown) unsure('It runs code in a folder named by a $ or a command.');
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
@@ -13381,21 +13439,24 @@ function sortProgram(words, ctx, r, x) {
 
   for (const a of args) if (!a.unknown) for (const t of [a.text, /=(.+)$/.exec(a.text)?.[1], /@([~/].*)$/.exec(a.text)?.[1], /^file:\/\/(\/.*)$/.exec(a.text)?.[1]].filter(Boolean)) ctx.seen.push(t, ...[...ctx.cwds].filter(d => d && !/^[~/]/.test(t)).map(d => `${d}/${t}`));
   try {
-    let name = w0.text;
+    // (via: the path it is run by, or, for python -m pip, the interpreter's: where an install lands, R64)
+    let name = w0.text, via = x.module ? x.via ?? null : null;
     if (name.includes('/')) {
       // A file it runs; and, when its last part names a program the sorter knows, that program too.
       const p = sortPaths(name, ctx)[0], base = p.slice(p.lastIndexOf('/') + 1);
+      via = p;
       if (!/^\/(?:usr\/)?(?:local\/)?s?bin\/[^/]+$/.test(p)) { sortNames(p, ctx, r); sortRuns(name, ctx, r, `It runs the file ${sortQ(name)}.`); if (!sortKnown(base.replace(/^(mkfs|fsck)\.\w+$/, '$1'))) return; }
       name = base;
     }
     if (/^(?:mkfs|fsck)\.\w+$/.test(name)) name = name.split('.')[0];
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
+    sortInstall(name, args, ctx, via);
     if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
     if (x.unknownArgs && reads !== '') { if (file === 'del') ctx.kinds.add('delete'); raise(r, 'risky', `${sortQ(name)} gets words it reads from its input, which the sorter can't see.`); }
     let own = args.length;
-    if (h) { const n = h(args, ctx, r, x, name); if (typeof n === 'number' && n >= 0) own = n; }
+    if (h) { const n = h(args, ctx, r, { ...x, via, module: false }, name); if (typeof n === 'number' && n >= 0) own = n; }
     else if (reads != null) sortReads(name, reads, args, ctx, r);
     else if (file != null) sortFile(name, file, args, ctx, r, x);
     else if (g.cls === 'open') sortOpen(ctx, r, `${sortQ(name)} ${g.why}, which the run wall hides.`);
@@ -13453,7 +13514,9 @@ function sortFile(name, kind, args, ctx, r) {
   for (const a of files) {
     if (a === dir) continue;
     const src = !!dir, at = dir?.text.replace(/\/+$/, '');
-    sortTouch(a, ctx, r, kind === 'wide' || (kind === 'del' && rec) || (name === 'mv' && src) || (name === 'ln' && src), writes);
+    // (a copy's source, and what zip packs, are only read: not cp's links, nor zip -m, which moves them in)
+    const read = (src && /^(?:cp|install)$/.test(name) && !o.has('l', 's', 'link', 'symbolic-link')) || (name === 'zip' && a !== plain[0] && !o.has('m', 'move'));
+    sortTouch(a, ctx, r, kind === 'wide' || (kind === 'del' && rec) || (name === 'mv' && src) || (name === 'ln' && src), writes, read);
     if (src) to(a, `${at}/${a.text.replace(/\/+$/, '').split('/').pop()}`);
     if (src && o.has('parents')) to(a, `${at}/${a.text.replace(/^\/+/, '')}`);
   }
@@ -13469,7 +13532,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), readOnly: new Set(), wrote: new Set(), installs: new Set(), reach: new Set(), setTo: new Map(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -13527,8 +13590,10 @@ function sortCommand(command, opts) {
   if (ctx.root) ctx.kinds.add('root');
   const kinds = r.class === 'look' ? [] : ['root', 'lockout', 'delete', 'brain'].filter(k => ctx.kinds.has(k)), plain = p => !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(p);
   const why = r.why.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 400), changes = [...ctx.changes].filter(([p]) => plain(p));
+  let uses = { reads: [], installs: [], reach: [] };
+  try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
-    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p) };
+    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses };
 }
 /* ───────── when the state's copy goes: only while another Spark is awake anyway ───────── */
 // Area: safety        Rules: R23, R41        Tests: copy.test.mjs, state.test.mjs
@@ -13742,7 +13807,7 @@ function sortWrap(args, ctx, r, x, name) {
     const a = args[k], t = a.text;
     if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
     if (t === '--') { k++; break; }
-    if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
+    if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true, args[k].unknown ? null : t.slice(t.indexOf('=') + 1)); continue; }
     // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
     // wall keeps git's hooks off: asked)
     if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
@@ -14214,6 +14279,7 @@ Object.assign(SORT_HANDLERS, {
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
     // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
+    if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) usesReach(usesHost(w.text), ctx);
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
@@ -14240,6 +14306,7 @@ Object.assign(SORT_HANDLERS, {
     if (o.has('allow-unauthenticated', 'force-yes', 'allow-downgrades', 'allow-remove-essential', 'allow-change-held-packages')) raise(r, 'risky', `${sortQ(name)} is told to skip a check of its own (unsigned packages, downgrades, essential or held packages).`);
     if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     if (/^(?:upgrade|full-upgrade|dist-upgrade|dselect-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
+    if (/^(?:install|reinstall|update|upgrade|full-upgrade|dist-upgrade|dselect-upgrade|satisfy|source|build-dep|download|changelog)$/.test(v)) ctx.reach.add('internet');
     sortPkgs(p.slice(1), ctx, r);
   },
   dpkg(a, ctx, r) {
@@ -14266,6 +14333,9 @@ Object.assign(SORT_HANDLERS, {
     for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))].map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
     for (const d of o.all('d', 'dest')) sortTouch(d, ctx, r);
+    // (an address it is handed, or the default index when none replaces it)
+    for (const w of a) if (!w.unknown && /:\/\//.test(w.text)) usesReach(usesHost(w.text.replace(/^[^:]*?=|^git\+/, '')), ctx);
+    if (/^(?:install|download|wheel|lock)$/.test(v) && !o.has('no-index') && !o.has('i', 'index-url')) ctx.reach.add('internet');
   },
   conda(a, ctx, r, x, name = 'conda') {
     const g = sortOpts(SORT_OPTS.conda, a, null, []), v = a[g.end]?.text ?? '', o = sortOpts(SORT_OPTS.conda, a.slice(g.end + 1)), p = o.plain.map(w => w.text);
@@ -14291,6 +14361,8 @@ Object.assign(SORT_HANDLERS, {
     for (const f of o.all('f', 'file')) if (v === 'env' && p[0] === 'export') { r.deletes = true; sortTouch(f, ctx, r); } else sortRuns(f.text, ctx, r, `${sortQ(name)} installs what the file ${sortQ(f.text)} lists.`);
     for (const w of o.plain) if (/^(?:\.{0,2}\/|~|file:)|\.(?:conda|tar\.bz2)$/.test(w.text)) sortRuns(w.text.replace(/^file:\/*/, '/'), ctx, r, `${sortQ(name)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
     for (const d of o.all('p', 'prefix')) sortInto(d, ctx, r);
+    for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=/, '')), ctx);
+    if (/^(?:install|create|update|upgrade)$/.test(v) && !t.includes('--offline')) ctx.reach.add('internet');
   },
   npm(a, ctx, r, x, name = 'npm') {
     const o = sortOpts(SORT_OPTS.npm, a), p = o.plain.map(w => w.text), t = a.map(w => w.text), v = p[0] ?? (name === 'yarn' ? 'install' : '');
@@ -14302,6 +14374,9 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'node' && name === 'yarn') { const i = t.indexOf('node'); sortProgram(a.slice(i), ctx, r, x); return i; }
     if (!/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|uninstall|remove|rm|r|un|unlink|update|up|upgrade|run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|link|ln|prune|dedupe|audit|fund|doctor|cache|whoami|ping|search|pkg|query|sbom|shrinkwrap|global|store|import|env|init|create|innit)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (t.some(s => /:\/\/|^git\+|^github:|^--registry/.test(s))) raise(r, 'risky', `${sortQ(name)} installs code from an address or another registry: always asked.`);
+    // (an address or registry it is handed, else the default registry for what fetches packages)
+    for (const s of t) if (/:\/\//.test(s)) usesReach(usesHost(s.replace(/^[^:]*?=|^git\+/, '')), ctx);
+    if (/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|update|up|upgrade|global)$/.test(v) && !t.some(s => /^--(?:registry|offline)/.test(s))) ctx.reach.add('internet');
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
     // fetched into that folder, or as root)
@@ -14329,7 +14404,9 @@ Object.assign(SORT_HANDLERS, {
     const store = cd ?? { text: '~/.cache/huggingface/hub', bare: '', tilde: true, plain: true, subs: [] }, sure = [id, kind, cd].every(w => !w || !(w.unknown || w.glob || w.brace));
     if (d) sortInto(d, ctx, r);
     else if (p[0] === 'download' && id) sortInto(sure ? { ...store, text: `${store.text.replace(/\/+$/, '')}/${kind?.text ?? 'model'}s--${id.text.replace(/\//g, '--')}` } : store, ctx, r);
-    for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false);
+    // (what download names is fetched by name, not written there; it reaches the hub unless told to stay offline)
+    for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false, true, p[0] === 'download');
+    if (!/^(?:cache|delete-cache)$/.test(p[0]) && !/^(?:1|true|yes|on)$/i.test(ctx.setTo.get('HF_HUB_OFFLINE') ?? '')) ctx.reach.add('internet');
   },
   systemctl(a, ctx, r) {
     const o = sortOpts(SORT_OPTS.systemctl, a), t = a.map(w => w.text), user = o.has('user'), bus = user ? 'the owner’s service manager' : 'systemd’s bus';
@@ -14366,6 +14443,61 @@ Object.assign(SORT_HANDLERS, {
 // (what git itself writes in its handler is git's own: it leaves the folder git's; a program git runs is not git)
 const sortGitBody = SORT_HANDLERS.git;
 SORT_HANDLERS.git = (a, ctx, r, x, n) => { const was = ctx.gitTouch; ctx.gitTouch = true; try { return sortGitBody(a, ctx, r, x, n); } finally { ctx.gitTouch = was; } };
+/* ───────── what a sorted command uses beside the places it changes: reads, installs, the GPU, the network (R64) ───────── */
+// Area: safety        Rules: R64        Tests: sort.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Fields of sortCommand's result for the ladder (A7c), never a class: the class stays the tables' and the shape's.
+// reads: places of placed a known program only reads (a copy's source, what tar or zip packs, an archive it unpacks, a
+// name hf fetches by), when nothing in the command writes there and no code the sorter doesn't read runs: placed keeps
+// them for the copy first. installs: where an install puts programs that the plain wall keeps read-only. gpu: true when
+// the command plainly uses the GPU, unset when that can't be told. reach: which of another Spark of this fleet, the home
+// network and the internet its words reach.
+const USES_INSTALL = ['~/.local', '~/.cargo/bin', '~/bin'];
+const USES_GPU_PROGS = /^(?:nvidia-smi|nvidia-debugdump|nvidia-cuda-mps-control|nvtop|nvitop|gpustat|dcgmi|nsys|ncu|trtexec)$/;
+// The host of an address or of host:path, user@ and a port taken off; null when there is none.
+const usesHost = t => (/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(t) ?? /^(?:[^@/:]*@)?([^/:@\s]+):(?!\/\/)/.exec(t))?.[1] ?? null;
+// Another Spark of the fleet (a name or an address the console knows), the home network (a private, link-local or
+// tailnet address, a one-word or local name, this Spark's own ports), or the internet.
+function usesReach(h, ctx) {
+  const x = String(h ?? '').replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  if (!x || !ctx.reach || /[^\w.:%-]/.test(x)) return;
+  const fleet = !!(sortHost(ctx, x) || sortHost(ctx, x.split('.')[0]));
+  const home = x.includes(':') ? /^(?:f[cd]|fe[89ab]|::1?$|::ffff:(?:10|127|192\.168)\.)/.test(x) : /^(?:0\.0\.0\.0|localhost)$/.test(x) || sortNear(x, ctx);
+  ctx.reach.add(fleet ? 'fleet' : home ? 'home' : 'internet');
+}
+// An install that puts programs where the plain wall keeps them read-only (pip outside a Python environment or with
+// --user, pipx, uv tool, cargo install, npm -g), from the program and its own words.
+function sortInstall(name, args, ctx, via) {
+  const t = args.map(w => w.text), plain = t.filter(s => !s.startsWith('-'));
+  if (/^pip(?:3(?:\.\d+)?)?$/.test(name) && plain[0] === 'install') {
+    const env = ctx.venv || (via && !/^(?:\/usr(?:\/local)?)?\/s?bin\/|^~\/\.local\/bin\//.test(via));
+    if (t.includes('--user') || (!env && !t.some(s => /^(?:-t|--target|--prefix|--root)(?:=|$)|^-t./.test(s)))) ctx.installs.add('~/.local');
+  }
+  if (/^(?:npm|pnpm)$/.test(name) && /^(?:install|i|in|isnt|add|update|up|upgrade|link|ln)$/.test(plain[0] ?? '') && t.some(s => /^(?:-g|--global|--location=global)$/.test(s))) ctx.installs.add('npm -g');
+  if (name === 'yarn' && plain[0] === 'global' && /^(?:add|upgrade)$/.test(plain[1] ?? '')) ctx.installs.add('npm -g');
+  if (name === 'cargo' && plain[0] === 'install' && !t.some(s => /^--root(?:=|$)/.test(s))) { ctx.installs.add('~/.cargo/bin'); ctx.reach.add('internet'); }
+  if ((name === 'pipx' && /^(?:install|inject|upgrade|upgrade-all|reinstall|reinstall-all)$/.test(plain[0] ?? '')) || (name === 'uv' && plain[0] === 'tool' && /^(?:install|upgrade)$/.test(plain[1] ?? ''))) { ctx.installs.add('~/.local'); ctx.reach.add('internet'); }
+  if (name === 'go' && /^(?:install|get)$/.test(plain[0] ?? '')) ctx.reach.add('internet');
+}
+// The fields, from what the parts noted: reads (only when the command is a look or a plain change, runs no code the
+// sorter doesn't read, and no place it writes is one of them, above or under one, or matched by a pattern either way).
+function sortUses(ctx, r, text, form) {
+  const out = {}, g = p => /[*?[]/.test(p), wrote = [...ctx.wrote].filter(p => ctx.changes.has(p));
+  const under = (p, q) => p === q || p.startsWith(q === '/' ? '/' : `${q}/`);
+  const hits = (pat, p) => [p, ...sortUp(p)].some(a => sortGlob(pat).test(a));
+  const clash = (p, q) => under(p, q) || under(q, p) || (g(p) && (g(q) || hits(p, q))) || (g(q) && hits(q, p));
+  const cand = [...ctx.readOnly].filter(p => ctx.changes.get(p) === false && !ctx.wrote.has(p));
+  out.reads = /^(?:look|change)$/.test(r.class) && !ctx.unread && cand.length <= 64 && wrote.length <= 64 ? cand.filter(p => !wrote.some(q => clash(p, q))) : [];
+  for (const p of wrote) for (const d of USES_INSTALL) if (under(p, d)) ctx.installs.add(d);
+  out.installs = [...USES_INSTALL, 'npm -g'].filter(d => ctx.installs.has(d));
+  // (an NVIDIA tool, a GPU picked by name, a device file, --gpus)
+  const progs = [...ctx.programs].map(w => w.text.split('/').pop()), first = form ? text.trim().split(/\s+/)[0] : null;
+  const picked = ['CUDA_VISIBLE_DEVICES', 'NVIDIA_VISIBLE_DEVICES'].some(n => ctx.setTo.has(n) && ctx.setTo.get(n) != null && !/^(?:|-1|none|void|nodevfiles)$/i.test(ctx.setTo.get(n).trim()));
+  if (USES_GPU_PROGS.test(first ?? '') || progs.some(p => USES_GPU_PROGS.test(p)) || picked || ctx.words.some(w => !w.unknown && /^--gpus(?:=|$)|(?:^|[=:])\/dev\/nvidia/.test(w.text))) out.gpu = true;
+  out.reach = ['fleet', 'home', 'internet'].filter(k => ctx.reach.has(k));
+  return out;
+}
 /* ───────── the ways in, watched ahead: Tailscale's keys, linger, Funnel (ledger 5b, addition 6) ───────── */
 // Area: safety        Rules: R49        Tests: ways-in.test.mjs
 // Owns: funnel-seen.json (writers: noteFunnel; deploy/open-to-internet.sh --undo removes it)
@@ -15365,8 +15497,10 @@ async function brainCheckAsk(m, key, messages, tools) {
   const r = await brainAsk(m, messages, tools);
   // (still loading or overloaded: not an answer to judge)
   if (r.status === 503) throw new Error('Sparkie’s model answered 503 (loading or busy)');
-  // (a server error is no answer either: never "it never calls a tool", R52)
+  // (a server error is no answer either: never "it never calls a tool", R52; nor any status but 200 and a refusal of
+  // the request itself, 400 or 422: a 429 or a 404 says the server was busy or the route missing, not how it calls tools)
   if (r.status >= 500) throw new Error(`Sparkie’s model answered ${r.status}, a server error, so the check couldn’t be made: ${r.error || 'no reason given'}`);
+  if (![200, 400, 422].includes(r.status)) throw new Error(`Sparkie’s model answered ${r.status}, so the check couldn’t be made: ${r.error || 'no reason given'}`);
   return r;
 }
 
@@ -15604,7 +15738,8 @@ function keepEvalRecord(p, rec, setupId) {
   if (stored) saveBrainProfile(p, evals);
   audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
   return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
-    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
+    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.${sealKey ? '' : ' It isn’t sealed (the eval seal’s key, eval-seal.json beside the secrets file, can’t be read or made), so it counts for nothing.'}`
+      : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
 
 // What sparkie_setup shows for the brain in use (p: its profile, or null): the newest result on record for what this
@@ -15653,26 +15788,65 @@ function brainEvalView(p) {
 const EVAL_MAIN_SET = 'test/eval/cases.json';
 const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'))}/eval-seal.json` : null) : `${homedir()}/.config/spark-console/eval-seal.json`;
 
-// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's). The
-// last look is kept (brainRanOf reads it for the key); every caller that decides something looks again first.
-let brainRan = null;
-async function brainRanLook() {
-  const m = MAIN, node = m ? mainNode(m) : null;
+// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's) that
+// the container loaded: the commit in its weights' path among the container's own arguments, or, for a setup served
+// from an overlay (rope settings), in the overlay's links its start made; for a model in the models folder, the folder.
+// Never the snapshot a start would serve now: one downloaded later moves no key until a start loads it. The last look is
+// kept (brainRanOf reads it for the key); every caller that decides something looks again first, and GET /v1/models,
+// which apps poll, takes one up to 5 seconds old (within). One look runs at a time (the others share it), and the chat's
+// callers wait for it at most 3 seconds (wait, RAIL_LOOK_WAIT_MS): a Docker that doesn't answer by then gives "not seen,
+// slow" (slow: true), and the look goes on to its end by itself.
+const RAIL_LOOK_WAIT_MS = 3000;    // limit: how long a reply or a change waits for the look at what Sparkie's model runs
+let brainRan = null, brainRanAt = 0, brainLooking = null;
+const brainRanScript = m => `c=${q(m.container)}; ov="$HOME/.cache/spark-console/overlay/"${q(m.served)}
+a=$(docker inspect -f '{{json .Args}}' "$c" 2>/dev/null | head -1)
+snap() {
+  case "$a" in *'"/overlay/'"$1"'"'*) l=$(find "$ov/$1" -maxdepth 1 -type l 2>/dev/null | head -1); [ -n "$l" ] && readlink "$l" ;; *) printf '%s\\n' "$a" ;; esac |
+    awk -v p="/hf/$2/snapshots/" '{ i = index($0, p); if (i) { s = substr($0, i + length(p)); split(s, x, "/"); s = x[1]; sub(/".*/, "", s); print s; exit } }'
+}
+model=${m.store === 'models' ? q(m.model) : `$(snap model ${q(`models--${m.model}`)})`}; draft=${m.draft && m.store !== 'models' ? `$(snap draft ${q(`models--${m.draft}`)})` : ''}
+printf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' "$c" 2>/dev/null | head -1)" "$model" "$draft"`;
+async function brainRanLook({ within = 0, wait = 0 } = {}) {
+  const m = MAIN;
   if (!m) return null;
+  if (within && brainRan?.id === m.id && Date.now() - brainRanAt < within) return brainRan;
+  if (brainLooking?.id !== m.id) {
+    const p = brainLookNow(m).finally(() => { if (brainLooking?.p === p) brainLooking = null; });
+    brainLooking = { id: m.id, p };
+  }
+  if (!wait) return brainLooking.p;
+  const look = brainLooking.p, late = new Promise(r => { setTimeout(() => r(null), wait).unref?.(); });
+  return (await Promise.race([look, late])) || { id: m.id, image: null, model: null, draft: null, slow: true };
+}
+async function brainLookNow(m) {
+  const node = mainNode(m);
   let seen = { id: m.id, image: null, model: null, draft: null };
   if (node) {
     try {
-      const r = await run(node, `${mainSnapshots(m)}\nprintf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' ${q(m.container)} 2>/dev/null | head -1)" "$model" "$draft"`, { timeout: 20000 });
+      const r = await run(node, brainRanScript(m), { timeout: 20000 });
       const [image, model, draft] = fields(r.out, 'ran')[0] || [];
-      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: model || null, draft: draft || null };
+      const name = v => (/^[\w.-]{1,200}$/.test(v || '') ? v : null);
+      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: name(model), draft: name(draft) };
     } catch {}
   }
-  if (MAIN === m) brainRan = seen;
+  if (MAIN === m) { brainRan = seen; brainRanAt = Date.now(); }
   return seen;
 }
 const brainRanOf = m => (brainRan && brainRan.id === m?.id && brainRan.image && brainRan.model ? { image: brainRan.image, model: brainRan.model, draft: brainRan.draft } : null);
-// The console's own limits for this brain: what turnBudgets and toolCap give its chats.
-const brainLimits = m => { const b = turnBudgets({ tuned: m }); return { toolRounds: b.ROUNDS, maxChanges: b.CHANGES, toolCap: String(toolCap(m)) }; };
+// The console's own limits for this brain (setupLimits, 14-rounds.mjs: tool rounds, changes, work steps and tool output a
+// message) and its tool cap: part of its key, so a profile and an eval belong to the limits they were made with.
+const brainLimits = m => { const l = setupLimits(m); return { toolRounds: l.rounds, maxChanges: l.changes, workSteps: l.steps, toolOutput: l.output, toolCap: String(toolCap(m)) }; };
+// The loop's limits for one turn (E5b; design E 2.3): a brain checked for this setup and build (brainRail: its check
+// passed and the eval on record met the bar) gets the limits its profile was made with (its key holds them, so they are
+// its setup's own); any other, and a chat routed to another model, the careful ones: at most 8 rounds and 16 work steps
+// a message. (Its changes are each a button then anyway: R52.) The look it judges by may be 5 seconds old, and it waits
+// for one at most 3 seconds: a Docker that doesn't answer makes the reply careful, never late.
+const CAREFUL_LIMITS = { rounds: 8, steps: 16 };
+async function turnLimits({ target, tuned }) {
+  const own = setupLimits(tuned), careful = { ...own, rounds: Math.min(own.rounds, CAREFUL_LIMITS.rounds), steps: Math.min(own.steps, CAREFUL_LIMITS.steps) };
+  if (target?.kind !== 'main' || tuned !== MAIN) return careful;
+  return (await brainRail({ within: 5000, wait: RAIL_LOOK_WAIT_MS }).catch(() => null))?.checked && tuned === MAIN ? own : careful;
+}
 // The setup's key without what runs now: the eval's runner compares it with its own stand-in console's (test/eval.mjs).
 const brainSetupKey = m => { const { ran, ...declared } = brainSetupOf(m); return createHash('sha256').update(JSON.stringify(declared)).digest('hex').slice(0, 16); };
 
@@ -15710,9 +15884,11 @@ function evalSealed(profileKey, x) {
   return timingSafeEqual(Buffer.from(seal, 'hex'), Buffer.from(evalSealOf(key, profileKey, rec), 'hex'));
 }
 
-// A record of the main case set with every memory addition on: the only kind that can count (and the only kind kept in
-// a slot's five that count).
-const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length;
+// A record of the main case set with every memory addition on (each of the runner's switches named on, none off): the
+// only kind that can count (and the only kind kept in a slot's five that count).
+const EVAL_SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
+const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length
+  && Array.isArray(x.memorySwitches.on) && [...x.memorySwitches.on].map(String).sort().join() === [...EVAL_SWITCHES].sort().join();
 // What could let Sparkie change things without asking once stored: a full run of the main set, with no cap, that met
 // the bar (counted here from the runs). Storing one needs the owner's passkey (needsPasskey, 22-passkey.mjs).
 const evalCouldUnlock = r => !evalRecordProblem(r) && r.cap === null && evalMainSet(r) && evalScore(r).met === true;
@@ -15725,14 +15901,16 @@ function evalCounts(x, key, reads, set, sealed = true) {
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
-async function brainRail() {
+async function brainRail({ within = 0, wait = 0 } = {}) {
   const no = why => ({ checked: false, why });
   try {
     if (!MAIN) return no('Sparkie has no model set up');
-    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look)
-    const ran = await brainRanLook();
+    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look; a reply's may be a
+    // few seconds old, and the chat waits for it a few seconds at most: within, wait)
+    const ran = await brainRanLook({ within, wait });
     if (chatTarget()?.kind !== 'main') return no('Sparkie’s chat is routed to another model, which no eval has checked');
     if (mainBusy()) return no('Sparkie’s model is starting, stopping or changing');
+    if (ran?.slow) return no(`Docker didn’t say within ${Math.round(wait / 1000)} seconds what Sparkie’s model runs (its Spark may be busy or stuck), so it counts as not checked`);
     const reads = brainReadsNow(), set = evalSetLocked();
     if (!reads) return no('there is no lock for this build, so what its brain reads isn’t known');
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
@@ -15744,14 +15922,16 @@ async function brainRail() {
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
     const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => evalOrder(a, b, evalScore));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
-    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
+    // (records with no seal's key to read them by count for nothing: said, so it isn't taken for a bad run; R52)
+    const unsealed = kept.length && !counted.length && !evalSealKey() ? ': the eval seal’s key (eval-seal.json, beside the secrets file) can’t be read, so no record on file is sealed' : '';
+    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : `no eval result on record counts for this brain and build${unsealed}`);
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
     return { checked: true, why: `the brain check passed, and the eval on record for this build (${day}) ran in full and met the bar` };
   } catch (e) { return no(`its record couldn’t be read (${String(e?.message || e).slice(0, 160)})`); }
 }
 // sparkie_setup's one line about changes.
 async function railWords() {
-  const r = await brainRail();
+  const r = await brainRail({ wait: RAIL_LOOK_WAIT_MS });
   return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
     : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
 }
@@ -15827,7 +16007,8 @@ async function evalYes(args, viewer, ctx) {
   let keys = 1;
   try { keys = passkeys().length; } catch {}
   const out = keepEvalRecord(p, { ...w.rec, keptWith: keys ? 'passkey' : 'the owner’s press' }, w.setup);
-  return { outcome: 'kept', note: out.stored ? 'Kept: Sparkie makes the changes your words clearly ask for at once again.' : out.says };
+  // (what the rail says now, not what keeping it was hoped to mean: a newer failing run, or a check that says not checked)
+  return { outcome: out.stored ? 'kept' : 'not kept', note: out.stored ? `Kept. ${await railWords()}` : out.says };
 }
 // One needs-you line while a result waits (20-needs.mjs).
 function evalWaitingNeeds(add) {
@@ -16986,14 +17167,30 @@ function offeredNames(groups) {
   return [...ACTIONS.values()].filter(a => groups.cap === Infinity || open.has(a.group)).map(a => a.name);
 }
 // What the brain can be sent beyond one turn's prompt and tools: the cap, the groups and their words, the prompt lines
-// that follow tools, and the brain's setup's sampling and limits. GET /actions shows it; test/lock.mjs marks it.
+// that follow tools, the brain's setup's sampling and limits, and the fixed words of its other messages (words). GET
+// /actions shows it; test/lock.mjs marks it.
 function brainCatalog() {
   const s = MAIN || {};
   return { toolCap: TOOL_CAP, groupSize: GROUP_SIZE, groups: GROUP_WORDS.map(([group, about, re]) => ({ group, about, words: re.source, tools: groupActions(group).map(a => a.name) })),
     core: groupActions('core').map(a => a.name), lines: TOOL_LINES.map(([tools, text]) => ({ tools, text })),
     setup: { sampling: s.sampling || null, thinking: Boolean(s.thinking), templateKwargs: s.templateKwargs || null, maxTokens: s.maxTokens || null,
-      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) } };
+      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) },
+    words: brainWords() };
 }
+// The fixed words the brain is sent outside the system prompt and the tools, by the code that writes them: the carry-on
+// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines (budgetReport),
+// the digest's words (digestOut), the cards' heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
+// (lessonSeenBefore); a card and "Seen before" say what was tried and how it failed with lessonTried and lessonFailWords,
+// from the failures' titles (START_FAILURES', 17-changes.mjs, and LESSON_APP_FAILS). Each is a hash of that code with its
+// whole-line comments left out, and of those titles as JSON, so a change to any of them is another mark and owes an eval
+// (R52); a change to the code around them does too.
+const BRAIN_WORDS = () => {
+  const lesson = [lessonTried, lessonFailWords, START_FAILURES.map(f => [f.id, f.title]), LESSON_APP_FAILS];
+  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
+    cards: [memoryPickBlock, lessonCard, ...lesson], seenBefore: [lessonSeenBefore, ...lesson] };
+};
+const brainWordsOf = parts => createHash('sha256').update(parts.map(f => (typeof f === 'function' ? String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n') : JSON.stringify(f))).join('\n\n')).digest('hex').slice(0, 16);
+const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([k, fns]) => [k, brainWordsOf(fns)]));
 
 action({
   name: 'guide', title: 'Guide to the tools', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',

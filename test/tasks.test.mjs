@@ -105,6 +105,7 @@ const messagesOn = async id => (await (await fetch(`${B.base}/chats/${id}`)).jso
 const bPost = async (path, body) => { const r = await fetch(`${B.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: B.origin }, body: JSON.stringify(body) }); return { status: r.status, text: await r.text() }; };
 const carriedIn = id => waitFor(async () => { const m = await messagesOn(id), i = m.findIndex(x => x.auto); return i >= 0 && m[i + 1]?.role === 'assistant' && m[i + 1]; }, { timeout: 120000 * SLOW, what: `the carry-on turn in ${id}` });
 const STOP = `stop ${GGUF} on spark 3, then tell me how it went`;
+const NEAR = 'read the workflows near the end, then tell me which one stops a model', LOOK = { name: 'run', arguments: { on: 'spark3', command: 'uptime' } };
 
 test('set-up: killed with every carry-on turn due, started again from that disk; a request is made before the look for tasks', { timeout: 300000 * SLOW }, async () => {
   assert.ok(made.plain, 'the tests above made the tasks');
@@ -125,6 +126,11 @@ test('set-up: killed with every carry-on turn due, started again from that disk;
     messages: [{ role: 'user', content: words, createdAt: ago(4 * 3600000) }, { role: 'assistant', content: 'I looked: night mode stops a model.', createdAt: ago(3 * 3600000) }],
     task: { request: words, at: ago(4 * 3600000), continuations: 1 } });
   // (E6b) A task whose chat is full, owed a carry-on turn: no turn can come there.
+  // (the swap to E5b's count) A task 3 commands short of its 120, owed a carry-on turn that asks for 4.
+  made.near = 'sc_00000000000000f2';
+  chats.push({ id: made.near, login: chats[0].login, title: 'near the end', spark: null, createdAt: ago(600000), updatedAt: ago(60000),
+    messages: [{ role: 'user', content: NEAR, createdAt: ago(120000) }, { role: 'assistant', content: 'I looked.\n\nStopped here: one message may read 1,200 characters of tool results, so 1 result wasn’t read.\nCarrying on with your request in a fresh turn.', createdAt: ago(100000) }],
+    task: { request: NEAR, at: ago(60000), continuations: 0, hours: 2, turns: 8, steps: 117, carry: true } });
   made.full = 'sc_00000000000000f1';
   chats.push({ id: made.full, login: chats[0].login, title: 'full', spark: null, createdAt: ago(600000), updatedAt: ago(60000),
     messages: Array.from({ length: 200 }, (_, i) => (i % 2 ? { role: 'assistant', content: `answer ${i}`, createdAt: ago(100000) } : { role: 'user', content: `question ${i}`, createdAt: ago(120000) })),
@@ -145,6 +151,7 @@ test('set-up: killed with every carry-on turn due, started again from that disk;
   await waitFor(async () => (JSON.parse((await bPost('/actions/workloads', { spark: 'spark3' })).text).workloads || []).some(w => w.name === GGUF && w.state === 'running'), { timeout: 60000 * SLOW, what: 'B’s watcher seeing Spark 3' });
   const run = { name: 'run_workflow', arguments: { name: 'night mode' } };
   script([{ match: `^${esc(STOP)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }] },
+    { match: `${CARRIED}.*${esc(NEAR)}`, rounds: [Array(4).fill(LOOK)] },
     { match: `${CARRIED}.*run night mode`, rounds: [[run]] }, { match: CARRIED, calls: [] }, { match: FINISHED, calls: [] }, { match: '^carry on$', calls: [run] }], B);
   // A request made after the start and before the look, whose stop is still under way when the look comes.
   made.fresh = JSON.parse((await bPost('/chats', {})).text).id;
@@ -227,6 +234,17 @@ test('(E6b) the owner’s “carry on” in a chat stopped at its 120 commands: 
   assert.equal(said.status, 200, said.text);
   const t = chatsOf(B).find(c => c.id === made.six).task;
   assert.deepEqual([t?.request, t?.continuations, t?.steps, t?.stopped ?? null, t?.hours, t?.turns], ['read the workflows again for 6 hours, then tell me which one stops a model', 0, 0, null, 6, 90]);
+});
+
+test('a task’s 120 commands are one count: the carry-on turn that reaches them is stopped by it, the task stops at its limit with that reply, and its record holds 120', { timeout: 120000 * SLOW }, async () => {
+  assert.ok(made.g, 'set-up');
+  const t = await waitFor(() => { const x = chatsOf(B).find(c => c.id === made.near).task; return x?.stopped && x; }, { timeout: 60000 * SLOW, what: 'the task stopped at its 120' });
+  assert.deepEqual([t.steps, t.stopped, t.continuations], [120, 'steps', 1], JSON.stringify(t));
+  const m = await messagesOn(made.near), last = m.at(-1);
+  assert.deepEqual([last.role, last.stopped, last.notice ?? null], ['assistant', 'steps', null]);
+  assert.match(last.content, /\n\nStopped here: one task may run 120 commands, and this one has \(3 in this message\); 1 more was asked for and not run\.\nSay “go on” to carry on\.$/, last.content.slice(-300));
+  assert.equal(m.filter(x => x.stopped).length, 1, 'said once: by the reply');
+  assert.ok(JSON.parse((await bPost('/actions/fleet_status', {})).text).needsOwner.includes('Sparkie stopped carrying on with one of your requests at its limit (120 commands). Say “carry on” in that chat to go on, or anything else to leave it.'));
 });
 
 test('a state put back from a copy ends every task in it, also at a second put-back under the hold: a line in each chat, and nothing carries on', { timeout: 200000 * SLOW }, async () => {
