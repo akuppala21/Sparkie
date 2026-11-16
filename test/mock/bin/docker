@@ -375,8 +375,10 @@ case "$cmd" in
       w=$(sed -n 's/^type=bind,src=\(.*\),dst=\/work$/\1/p' "$M/run-$bname"); cd -P -- "$w" || exit 126
       # (with -i its input goes in; without, it runs while the box is there: removed, as docker rm -f does, it is killed)
       printf '%s\n' "${all[@]}" | grep -qx -- -i && HOME="$w" exec "${all[@]:$i}"
-      HOME="$w" "${all[@]:$i}" </dev/null & p=$!
-      while kill -0 "$p" 2>/dev/null; do lineOf "$bname" >/dev/null || { kill -9 "$p" 2>/dev/null; exit 137; }; sleep 0.2; done
+      HOME="$w" setsid "${all[@]:$i}" </dev/null & p=$!
+      # (ended itself, as timeout ends docker exec: all it ran goes too, so nothing holds the output open)
+      trap 'kill -9 -- "-$p" 2>/dev/null; exit 143' TERM INT
+      while kill -0 "$p" 2>/dev/null; do lineOf "$bname" >/dev/null || { kill -9 -- "-$p" 2>/dev/null; exit 137; }; sleep 0.2; done
       wait "$p"; exit $?
     fi
     if [ "$(lineOf "$name" | cut -d'|' -f4)" = box ] && printf '%s\n' "$@" | grep -qx box-check; then
