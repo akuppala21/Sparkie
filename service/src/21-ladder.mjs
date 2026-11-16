@@ -54,8 +54,9 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
   const reached = runnerProtected(sorted, dir);
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
-  const outside = runnerOutside(sorted, command, dir, topDirs);
-  if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
+  const walls = runnerWalls(sorted, command, dir, topDirs);
+  if (walls.open.length) return `${walls.open[0]}, so it runs outside that wall after your yes`;
+  if (walls.home.length) return `${walls.home[0]}, so it runs after your yes with the top of your home writable`;
   const wide = runnerWiden(node, command, widen, sorted);
   if (wide.fleet) return 'it reaches another Spark of this fleet';
   if (wide.home) return 'it reaches your home network';
@@ -153,9 +154,12 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+  const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+  const wideLines = [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
-    ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
+    // (outside the plain wall, with its stark words; or the top of the home writable, keys still hidden; or what widens)
+    ...(walls.open.length ? [`Runs outside the plain wall: ${[...walls.open, ...walls.home].join('; ')}.`, RUNNER_OPEN_HOLDS]
+      : walls.home.length ? [`Runs with the top of your home writable: ${walls.home.join('; ')}. Keys stay hidden and it cannot reach Docker.`, ...wideLines] : wideLines),
     ...(wide.internet ? [RUNNER_WIDE.internet] : []),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');

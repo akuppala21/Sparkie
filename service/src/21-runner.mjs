@@ -110,22 +110,35 @@ const runnerProtected = (sorted, dir = RUNNER_DIR) => RUNNER_PROTECT.filter(d =>
 // inside the wall: it is asked, and after the owner's yes runs outside it (run --open, design A 2.13), the button and
 // the result saying why.
 const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'];
-function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
-  const out = [];
-  if (sorted?.open) out.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
+// Each would-fail reason with the wall it needs after the owner's yes: --home (the plain wall with the top of the home,
+// ~/.local, ~/bin and ~/.cargo/bin writable; keys still hidden, no Docker) for a write there or an install into one of
+// them; --open (nothing hidden, every group, design A 2.13) for what the sorter calls open, another dot folder at the
+// top, the system's own folders (npm -g) or anything outside the home but the temporary folders.
+const RUNNER_HOME_WRITE = ['~/.local', '~/bin', '~/.cargo/bin'];
+function runnerWalls(sorted, command, dir = RUNNER_DIR, topDirs = []) {
+  const open = [], home = [];
+  if (sorted?.open) open.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
   // (a place the command only reads is no write there, R64's reads: the copy first still covers it)
   const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
   for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
     if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
-    const where = p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.')) ? ' at the top of the home'
-      : parts ? (parts[0].startsWith('.') || parts[0] === 'bin' ? '' : null)
-        : p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p) ? ', outside the home' : null;
-    if (where !== null && out.length < 4) out.push(`it writes ${p}${where} which the plain wall keeps read-only`.replace(/(\S) which/, '$1, which'));
+    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
+    else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) home.push(`it writes ${p}, which the plain wall keeps read-only`);
+    else if (parts && parts[0].startsWith('.')) open.push(`it writes ${p}, which the plain wall keeps read-only`);
+    else if (!parts && p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p)) open.push(`it writes ${p}, outside the home, which the plain wall keeps read-only`);
   }
   // (an install that puts programs where the plain wall keeps them read-only, the sorter's installs, R64)
-  for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) if (out.length < 4) out.push(`it installs into ${w === 'npm -g' ? 'the system’s own folders (npm -g)' : w}, which the plain wall keeps read-only`);
-  return [...new Set(out)];
+  for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) {
+    if (w === 'npm -g') open.push('it installs into the system’s own folders (npm -g), which the plain wall keeps read-only');
+    else home.push(`it installs into ${w}, which the plain wall keeps read-only`);
+  }
+  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4) };
+}
+// The would-fail reasons, those that need --open first.
+function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
+  const w = runnerWalls(sorted, command, dir, topDirs);
+  return [...w.open, ...w.home].slice(0, 4);
 }
 function runnerMemoryCap(available) {
   const room = Math.floor((Number(available) - KEEP_FREE) / 2 ** 30);
@@ -150,10 +163,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen, sorted), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
-  if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
+  const wide = runnerWiden(node, command, widen, sorted), walls = runnerWalls(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted)), outside = [...walls.open, ...walls.home];
+  if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs ${walls.open.length ? 'outside that wall' : 'with the top of the home writable'}, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
-  const open = asked && outside.length > 0;
+  const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
@@ -184,7 +197,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
       gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
-      ...(open ? { outside: outside.slice(0, 4) } : wide.fleet || wide.gpu ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
+      ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
+      ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
@@ -204,7 +218,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };

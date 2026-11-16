@@ -434,18 +434,30 @@ test('an asked change may reach the other Sparks (--fleet) or the GPU (--gpu), e
 });
 const api_ = (command, extra = {}) => api('/actions/run', { method: 'POST', body: { on: 'spark3', command, dir: '~', ...extra } });
 
-test('a change that would fail inside the plain wall is asked, not run to fail: pip install --user, a write at the top of the home; after the yes it runs outside that wall', { timeout: 120000 * SLOW }, async () => {
+test('a change that would fail inside the plain wall is asked, not run to fail: a write at the top of the home runs with it writable (--home), another dot folder outside the plain wall (--open); pip install --user', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat(), cmd = 'echo top > top.txt';
   const r = await turn(chat, 'fix the top note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the top note on spark 3');
-  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only\.\nThere it still can’t gain root by itself, and the ways in \(~\/\.ssh\) and the start files stay read-only; but it runs as you with all your groups \(Docker’s too\), and the keys and tokens in your home are open to it\.\n/, JSON.stringify(asked));
+  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nRuns with the top of your home writable: it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only\. Keys stay hidden and it cannot reach Docker\.\n/, JSON.stringify(asked));
   assert.ok(!existsSync(at3('top.txt')), 'nothing ran');
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
   assert.equal(text('top.txt'), 'top\n');
-  const open = propsOf(cmd);
-  assert.ok(!open.includes('ReadOnlyPaths=/spark3') && !open.some(a => a.startsWith('IPAddressDeny=')) && !open.includes('PrivateDevices=yes'), JSON.stringify(open));
-  assert.deepEqual(startOf(cmd).outside, ['it writes ~/top.txt at the top of the home, which the plain wall keeps read-only']);
+  // (the plain wall with the top of the home writable: still no network ranges, no devices)
+  const homeWall = propsOf(cmd);
+  assert.ok(!homeWall.includes('ReadOnlyPaths=/spark3') && homeWall.some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')) && homeWall.includes('PrivateDevices=yes'), JSON.stringify(homeWall));
+  assert.deepEqual([startOf(cmd).outside, startOf(cmd).wall], [['it writes ~/top.txt at the top of the home, which the plain wall keeps read-only'], 'home']);
+  // Another dot folder at the top: outside the plain wall (--open), with its stark words.
+  const dot = 'echo c > .myapp/c.txt', c3 = await newChat();
+  mkdirSync(at3('.myapp'), { recursive: true });
+  const rd = await turn(c3, 'fix the app config on spark 3', [[RUN(dot)]]);
+  const [askedDot] = sentBack('fix the app config on spark 3');
+  assert.match(askedDot?.question || '', /\nAsked because it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/\.myapp\/c\.txt, which the plain wall keeps read-only\.\nThere it still can’t gain root by itself, and the ways in \(~\/\.ssh\) and the start files stay read-only; but it runs as you with all your groups \(Docker’s too\), and the keys and tokens in your home are open to it\.\n/, JSON.stringify(askedDot));
+  const pd = await choose(c3, rd.choices.find(c => c.label === 'Run it').id);
+  assert.equal(pd.status, 200, pd.text);
+  const openWall = propsOf(dot);
+  assert.ok(!openWall.includes('ReadOnlyPaths=/spark3') && !openWall.some(a => a.startsWith('IPAddressDeny=')) && !openWall.includes('PrivateDevices=yes'), JSON.stringify(openWall));
+  assert.equal(startOf(dot).wall, 'open');
   // The press ran exactly what the button showed (the unit's own held command, after code's git line).
   assert.ok(readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', startOf(cmd).unit, 'command'), 'utf8').endsWith(`\n${cmd}`));
   // Nothing takes that path without the owner's press: the brain's arguments can't ask for it, an agent's call is a
@@ -461,7 +473,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   assert.ok(!existsSync(at3('forced.txt')) && !startOf(forced), 'nothing ran, nothing started');
   const pip = await run('pip install --user requests', 'spark3', null);
   assert.equal(pip.status, 409, pip.text);
-  assert.equal(pip.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs outside that wall, and only after the owner’s yes. Nothing ran.');
+  assert.equal(pip.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs with the top of the home writable, and only after the owner’s yes. Nothing ran.');
   assert.ok(!readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8').includes('pip install --user'), 'run’s words no longer give it as a change that works');
 });
 
@@ -550,7 +562,7 @@ test('a place the command only reads is no write: a source at the top of the hom
 test('an install that lands where the plain wall keeps programs read-only is asked, the button naming where (the sorter\'s installs)', { timeout: 60000 * SLOW }, async () => {
   const api = await run('pip install requests', 'spark3', null);
   assert.equal(api.status, 409, api.text);
-  assert.equal(api.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs outside that wall, and only after the owner’s yes. Nothing ran.');
+  assert.equal(api.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs with the top of the home writable, and only after the owner’s yes. Nothing ran.');
   await turn(await newChat(), 'fix the npm tool on spark 3', [[RUN('npm i -g x')]]);
   const [asked] = sentBack('fix the npm tool on spark 3');
   assert.match(asked?.question || '', /\nRuns outside the plain wall: it installs into the system’s own folders \(npm -g\), which the plain wall keeps read-only\.\n/, JSON.stringify(asked));

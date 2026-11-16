@@ -11580,7 +11580,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
-    if (t === '--' && !w.unknown) { rest(k + 1); break; }
+    // (after --, a word is a name whatever its first sign)
+    if (t === '--' && !w.unknown) { for (const x of args.slice(k + 1)) x.literal = true; rest(k + 1); break; }
     if (!t.startsWith('-') || t === '-' || (plainRe && !w.unknown && plainRe.test(t))) {
       if (first) { rest(k); break; }
       if (w.unknown && (!t || w.split)) unknown ??= w.text || '$…';
@@ -11917,6 +11918,8 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
 // (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
 // apart, R64)
+// (a redirection's word, and a word after --, is a name whatever its first sign: the word itself is a place too, R64)
+const sortCandsOf = (w, t) => (w?.literal ? [...new Set([t, ...sortCands(t)])] : sortCands(t));
 function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
@@ -11925,15 +11928,15 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
   const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
-  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
+  for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
-  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
-  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCandsOf(w, t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
@@ -11971,7 +11974,7 @@ function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
     const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
@@ -12968,6 +12971,7 @@ function sortCmd(cmd, ctx, r, inPipe) {
         continue;
       }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
+      d.w.literal = true;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
       raise(c, 'change', `It writes ${sortQ(d.w.text || 'a file')} (a redirection).`);
@@ -13002,7 +13006,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
-    else if (sortCands(w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
+    else if (sortCandsOf(w, w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
   }
   if (dir?.unknown) unsure('It runs code in a folder named by a $ or a command.');
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
@@ -16824,8 +16828,9 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
   const reached = runnerProtected(sorted, dir);
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
-  const outside = runnerOutside(sorted, command, dir, topDirs);
-  if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
+  const walls = runnerWalls(sorted, command, dir, topDirs);
+  if (walls.open.length) return `${walls.open[0]}, so it runs outside that wall after your yes`;
+  if (walls.home.length) return `${walls.home[0]}, so it runs after your yes with the top of your home writable`;
   const wide = runnerWiden(node, command, widen, sorted);
   if (wide.fleet) return 'it reaches another Spark of this fleet';
   if (wide.home) return 'it reaches your home network';
@@ -16923,9 +16928,12 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+  const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+  const wideLines = [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
-    ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
+    // (outside the plain wall, with its stark words; or the top of the home writable, keys still hidden; or what widens)
+    ...(walls.open.length ? [`Runs outside the plain wall: ${[...walls.open, ...walls.home].join('; ')}.`, RUNNER_OPEN_HOLDS]
+      : walls.home.length ? [`Runs with the top of your home writable: ${walls.home.join('; ')}. Keys stay hidden and it cannot reach Docker.`, ...wideLines] : wideLines),
     ...(wide.internet ? [RUNNER_WIDE.internet] : []),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
@@ -18462,22 +18470,35 @@ const runnerProtected = (sorted, dir = RUNNER_DIR) => RUNNER_PROTECT.filter(d =>
 // inside the wall: it is asked, and after the owner's yes runs outside it (run --open, design A 2.13), the button and
 // the result saying why.
 const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'];
-function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
-  const out = [];
-  if (sorted?.open) out.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
+// Each would-fail reason with the wall it needs after the owner's yes: --home (the plain wall with the top of the home,
+// ~/.local, ~/bin and ~/.cargo/bin writable; keys still hidden, no Docker) for a write there or an install into one of
+// them; --open (nothing hidden, every group, design A 2.13) for what the sorter calls open, another dot folder at the
+// top, the system's own folders (npm -g) or anything outside the home but the temporary folders.
+const RUNNER_HOME_WRITE = ['~/.local', '~/bin', '~/.cargo/bin'];
+function runnerWalls(sorted, command, dir = RUNNER_DIR, topDirs = []) {
+  const open = [], home = [];
+  if (sorted?.open) open.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
   // (a place the command only reads is no write there, R64's reads: the copy first still covers it)
   const reads = new Set(Array.isArray(sorted?.reads) ? sorted.reads : []);
   for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
     if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
-    const where = p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.')) ? ' at the top of the home'
-      : parts ? (parts[0].startsWith('.') || parts[0] === 'bin' ? '' : null)
-        : p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p) ? ', outside the home' : null;
-    if (where !== null && out.length < 4) out.push(`it writes ${p}${where} which the plain wall keeps read-only`.replace(/(\S) which/, '$1, which'));
+    if (p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.'))) home.push(`it writes ${p} at the top of the home, which the plain wall keeps read-only`);
+    else if (parts && RUNNER_HOME_WRITE.some(h => p === h || p.startsWith(`${h}/`))) home.push(`it writes ${p}, which the plain wall keeps read-only`);
+    else if (parts && parts[0].startsWith('.')) open.push(`it writes ${p}, which the plain wall keeps read-only`);
+    else if (!parts && p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p)) open.push(`it writes ${p}, outside the home, which the plain wall keeps read-only`);
   }
   // (an install that puts programs where the plain wall keeps them read-only, the sorter's installs, R64)
-  for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) if (out.length < 4) out.push(`it installs into ${w === 'npm -g' ? 'the system’s own folders (npm -g)' : w}, which the plain wall keeps read-only`);
-  return [...new Set(out)];
+  for (const w of Array.isArray(sorted?.installs) ? sorted.installs : []) {
+    if (w === 'npm -g') open.push('it installs into the system’s own folders (npm -g), which the plain wall keeps read-only');
+    else home.push(`it installs into ${w}, which the plain wall keeps read-only`);
+  }
+  return { open: [...new Set(open)].slice(0, 4), home: [...new Set(home)].slice(0, 4) };
+}
+// The would-fail reasons, those that need --open first.
+function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
+  const w = runnerWalls(sorted, command, dir, topDirs);
+  return [...w.open, ...w.home].slice(0, 4);
 }
 function runnerMemoryCap(available) {
   const room = Math.floor((Number(available) - KEEP_FREE) / 2 ** 30);
@@ -18502,10 +18523,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen, sorted), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
-  if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
+  const wide = runnerWiden(node, command, widen, sorted), walls = runnerWalls(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted)), outside = [...walls.open, ...walls.home];
+  if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs ${walls.open.length ? 'outside that wall' : 'with the top of the home writable'}, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
-  const open = asked && outside.length > 0;
+  const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
@@ -18536,7 +18557,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
       gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
-      ...(open ? { outside: outside.slice(0, 4) } : wide.fleet || wide.gpu ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
+      ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
+      ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
@@ -18556,7 +18578,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -20270,7 +20292,7 @@ function commandShown(c, ok, out) {
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '52ab7dba30e035311fed8ed4c4ef41f9eb5b488ba67edc99e6bc29a1a99ca990';
+const HELPER_SHA256 = '4a65f95893609e4d0c4d40c817614e790c2fc1bed52e32a811d4f0d96d4f4507';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
@@ -20396,14 +20418,14 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
