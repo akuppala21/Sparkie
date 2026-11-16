@@ -1,17 +1,26 @@
 # Reply to round 1
 
-Date: 2026-11-14. From the builders: Fable 5.2 checks each finding against the code and writes this; Opus 5.5 builds
-what is accepted. This answers `findings-1.md` under [the agreed procedure](README.md).
+Written on 2026-11-14, and brought up to the build of 2026-11-15 before it was sent. From the builders: Fable 5.2
+checks each finding against the code and writes this; Opus 5.5 builds what is accepted. This answers `findings-1.md`
+under [the agreed procedure](README.md). Every finding keeps its id and its place. Where the code has moved since
+2026-11-14 the answer is corrected in place: look for "Since", "Closed since" and "As built".
 
 **Status: complete for round 1.** Every point in `findings-1.md` is answered below: A-1 to A-12, the test run
 (T-1, and T-2, a second harness fault we found ourselves), P-1 to P-7, the broader answers, the design clean-up and
 the "no trash" default. The eight app fixes and two harness fixes that were accepted for now are on `main`, each with
 a test that fails without it. Before they went to `main`, our own review of the fixes found five more things in
 them, and those are fixed too, in five further commits. The whole suite passed on Linux with all of it together
-(1,056 of 1,057; the one skipped needs zsh, which the test container does not have, and it passed on the Mac). The
-commits and tests are listed [at the end](#where-each-fix-landed), with what is later and what is not accepted in one
-place. The Sparks still run the build Astra reviewed; the install waits for the owner. Nothing here is closed:
-[`open.md`](open.md) has one row per id.
+(1,056 of 1,057; the one skipped needs zsh, which the test container does not have, and it passed on the Mac). That
+was build `32cfab4f06fa`. It was installed on Spark 2 on 2026-11-14, after this reply was first written, and it is
+the build Spark 2 runs today. The commits and tests are listed [at the end](#where-each-fix-landed), with what is
+later and what is not accepted in one place. Nothing here is closed: [`open.md`](open.md) has one row per id.
+
+**What has changed since 2026-11-14.** The build sent with this reply is a later one: the next phase, which part 2
+answers as a plan, is now code on top of these fixes (`REVIEW-GUIDE.md`, sections 4 and 10). So four findings that
+were "later" are closed by removal (A-6, A-10, A-11, A-12), and every P section has an "As built" paragraph (P-5's
+waits: see its PENDING line). None of that later build is installed (the guide's section 8). Its test result:
+
+TESTS_LINE
 
 How each finding was checked: a checker read the code paths named, then reproduced the fault with its own scripts on
 the repository's stand-in fleet (the real service, a scripted model) or on the function's own text. Astra's evidence
@@ -24,17 +33,17 @@ was read as a report; its scripts were not run. Where we ran something, it says 
 | A-3 | Accepted, and wider than reported | Fixed, `25f0cdb`; made narrower in one place and wider in another after our own review, `8e9dceb` and `55fd2cd` |
 | A-4 | Accepted | Fixed, `a65f880` |
 | A-5 | Accepted, with two more places found | Fixed, `acd2b92`; a third place after our own review, `7182534` |
-| A-6 | Accepted in part: the race is real; "blocks install" is not | Later, with the next `worker.py` change |
+| A-6 | Accepted in part: the race is real; "blocks install" is not | Closed since by removal: the worker's delete is gone (`42ddc29`) |
 | A-7 | Accepted; the byte-count limit is not taken | Fixed, `418e16b` |
 | A-8 | Accepted in part: the cause is real; "don't mark before telling" is not taken | Fixed, `3f8044c` |
 | A-9 | Accepted; the macOS run does not carry over, and the stronger harm is the pruning | Fixed, `aba4683`; its first command after our own review, `ea0d6f1` |
-| A-10 | Accepted | Later (page) |
-| A-11 | Accepted | Later (page) |
-| A-12 | Accepted, and reachable one more way | Later (page) |
+| A-10 | Accepted | Closed since by removal: the view is off the page |
+| A-11 | Accepted | Closed since by removal: the file browser is gone |
+| A-12 | Accepted, and reachable one more way | Closed since by removal: the file browser and members are gone |
 | "No trash" default | Not accepted as a change of default; one sentence accepted for design A 2.6 | Written into A 2.6 |
 | T-1, T-2 | Accepted: two faults in the test harness, none in the app | Fixed, `48ca258`, `8b65066` |
-| P-1 to P-7 | Six accepted, P-3 in part | Written into the one page and the designs ([the plan](#the-plan-part-2)) |
-| Broader answers, design clean-up | Fourteen points adopted; all four clean-up points accepted | Written into the plan |
+| P-1 to P-7 | Six accepted, P-3 in part | Written into the one page and the designs, and built since ([the plan](#the-plan-part-2)) |
+| Broader answers, design clean-up | Fourteen points adopted; all four clean-up points accepted | Written into the plan; what was and was not built is said there |
 
 ## The app as built
 
@@ -54,14 +63,22 @@ answer was pending, and `stop_model` still ran 12 seconds later and stopped the 
 changes only, reads the key as it is now: gone, or may only look, is a 403 with a plain sentence, and nothing runs. It
 fails closed when the keys file can't be read. The owner's own turns read nothing extra.
 
+**Since:** `run` and `write_file`, built on 2026-11-15, are lookups to `runAction`, so that check never sees them.
+For them the key is read again by `whoMayLook` (`21-work.mjs`), which every path of theirs calls: a look, a
+change, the box, Spark 2, root and a command given a key. It refuses an agent whose key is gone or may only look.
+
 **Already-running operations: the policy, written down.** They keep running and post their result. Removing an agent
 cancels nothing, the same rule as `/stop` (R34), because cancelling a start half-way stops models and puts others
 back, which is the bigger surprise. This includes the remaining steps of a saved workflow the agent started; the owner
 cancels it in Activity. The sentence is now in R9 and beside the route.
 
-**Rating: medium, fix now.** One reply, at most four changes, each asked for in the agent's own words while it was
-allowed; `/pause` already stops an agent's very next change mid-reply. But it is the moment an owner removes an agent
-to stop it, and a healthy model can be stopped after the owner said no.
+PENDING: R1-02, the saved-workflow sentence above (what a removed agent's saved workflow does in today's build).
+
+**Rating: medium, fix now.** One reply, a bounded number of changes, each asked for in the agent's own words while it
+was allowed; `/pause` already stops an agent's very next change mid-reply. But it is the moment an owner removes an
+agent to stop it, and a healthy model can be stopped after the owner said no. (Since: the number is the brain setup's
+`maxChanges`, 12 in the shipped agent setups and 4 when a setup names none. `run` and `write_file` are counted
+apart, at most 30 calls a message, and an agent's change through them is always a button for the owner, R61.)
 
 **Later (A-1b):** the removed agent still receives the answer of the request that was open (looked-up data, up to
 40 seconds). Not on the bar.
@@ -112,8 +129,9 @@ recoverable; it does not replace this gate.
 
 **Rating: medium, fix now.** It loses the owner's data without a word, on the mistake the gate exists to catch.
 
-**Known and unchanged (not new):** an agent that may change things can call `forget_memory` over the agent door with
-no owner's-words gate. That is R26's "Today" note; G closes it.
+**Closed since (`fc42765`).** On 2026-11-14 an agent that may change things could call `forget_memory` over the agent
+door with no owner's-words gate. Now an agent never replaces or forgets an owner's line, with its own call or through
+Sparkie in its own chat (`notTheOwners` in `20-memory.mjs`; R45). Its own lines it may replace and forget.
 
 ### A-4. A model error cut off part-way leaves the chat stuck: accepted
 
@@ -154,6 +172,8 @@ across the cut can't leave a piece. R7's "Today" note for operation errors close
 third healing reason built from an error (the one kept when a restart fails its check) and one audit line that cut
 before masking; both mask first now (`7182534`).
 
+PENDING: R1-06, "every spot an error's text is kept" above (one more healing reason came with the power work).
+
 **Rating: fix now, low likelihood.** A key at rest in a file that is copied off Spark 2 every day.
 
 ### A-2. A stopped GPU app starts on checks made before its claim: accepted in part
@@ -170,6 +190,8 @@ inside a stubbed memory read, which shows the order of the code, not that real t
 job, whose claim ends right after `docker run`: two GPU starts on one Spark in the same second from separate callers.
 Sparkie runs changes one after another, and healing skips a claimed Spark. So: not "high", and not a blocker.
 
+PENDING: R1-05, "Sparkie runs changes one after another" above (`run` and `write_file` calls of one round).
+
 **What changes anyway.** The same two re-checks the siblings run, inside the claim, before `docker start` (and before
 the `try`, so a refusal doesn't run the put-back for a container that was never started). The checks before the claim
 stay: they give the caller the plain refusal. It is three lines, no workflow version changes, and the harm if it ever
@@ -179,6 +201,8 @@ happened (two GPU workloads on one Spark's shared memory) is on the bar.
 `restart_model`'s code list, so a fix is a new workflow version with its own validation run on the Sparks; it goes
 with the next change to that workflow. Re-checking identity and protection inside the claim is not taken: neither
 sibling does it, and a swap needs a hand `docker rm` and `run` in that same second.
+
+PENDING: R1-07, the restart path (A-2b) and its reason above, and the A-2b row of the later list.
 
 ### A-7. A character split across two pieces of a request body is spoiled: accepted
 
@@ -194,8 +218,11 @@ drain-then-413 behaviour and the byte-order-mark refusal all as before.
 (multi-byte text between the limit and three times it) and is not needed to stop the damage; memory stays bounded
 either way.
 
-**Later (A-7b):** the same `+=` on raw pieces in three places that are much less likely to split a character:
-`modelStep` (the brain's stream), `run` in `02-ssh.mjs` (command output), `servedModel`.
+**Later (A-7b):** the same `+=` on raw pieces in other places, each less likely to split a character than a request
+body: `modelStep` (the brain's stream), `run` in `02-ssh.mjs` (command output), `servedModel`. **Since:** there are
+more than those three now. The hub's own checks (`21-hub.mjs`), the net's Tailscale look (`21-net.mjs`) and the
+brain check (`21-brain-check.mjs`) join pieces the same way, and the brain's stream is not plain ASCII. The new `run`
+tool does not have it: `helperCall` (`21-work.mjs`) joins the bytes and decodes them once.
 
 **Rating: medium, fix now.** Quiet damage to the owner's text, reported as success.
 
@@ -238,10 +265,18 @@ The first command also removes a `.part` an earlier try left, with `find … -de
 review found that a pattern matching nothing stops the whole command when the far user's shell is zsh, and no copy
 would land (`ea0d6f1`).
 
-**Rating: medium, fix now.** It needs a fault first, but the daily copy is the only thing between a failing disk on
-Spark 2 and losing people, passkeys, agent keys and chats.
+**Rating: medium, fix now.** It needs a fault first, but the copy is the only thing between a failing disk on
+Spark 2 and losing passkeys, agent keys and chats. (Since: the owner is the only user, so there are no people to
+lose. And a copy no longer goes at a fixed time each day: it goes when a compute Spark comes online, before Spark
+Console powers one off, and hourly while one is on, and only if the state changed; `20-state-copy.mjs`, R23.)
 
-### A-6. A file delete can remove a save that lands at the same moment: accepted in part, later
+### A-6. A file delete can remove a save that lands at the same moment: accepted in part; closed since by removal
+
+**Closed since, by removal (`42ddc29`, milestone 4).** The file browser's route and the worker's delete, rename and
+new-folder calls are gone. `FILE_OPS` is list, read and write (`12-status.mjs`), and the old route answers as an
+unknown path does. Tests: `test/no-file-browser.test.mjs` ("it never deletes, renames or makes a folder"; "the
+owner's POST /nodes/<spark>/files answers as an unknown path does, whatever it asks"). The rest of this section is
+the answer as written on 2026-11-14, kept for the record: the fix it describes was never needed.
 
 **The interleaving is real (ran).** After the worker has hashed the file, nothing looks at its bytes again; a write
 into the same file between that and the unlink is deleted with it.
@@ -263,10 +298,14 @@ that stays. One case remains under any design but a trash: a program that alread
 the last check. So the closing test needs one word changed: "remain or are recoverable" can hold only for a writer
 that opens the file by name.
 
-**Accepted as written:** when the file browser is removed (D12), `delete`, `rename` and `mkdir` leave `FILE_OPS` and
-the worker too, not only the page.
+**Accepted as written, and done:** with the file browser removed (D12), `delete`, `rename` and `mkdir` left
+`FILE_OPS` and the worker too, not only the page.
 
-### A-10. A pair's plan that arrives late replaces the plan of the Spark picked since: accepted, later
+### A-10. A pair's plan that arrives late replaces the plan of the Spark picked since: accepted; closed since by removal
+
+**Closed since, by removal (milestone 4).** Home, Models, Files and Access are off the page, with the page code only
+they used, so the plan picker this finding is about is gone (`test/page.test.mjs`: "Home, Models, Files and Access
+are off the page: no view, no nav entry, no link to one"). What follows is the answer as written on 2026-11-14.
 
 **True, as reported (ran in `node:vm` with the page's own code).** `pick` returns for a cached single Spark before
 `++token`, so a pair's answer still on its way takes over the plan while the radio stays on the single Spark.
@@ -279,7 +318,10 @@ both.
 **Later.** Nothing unseen stops, nothing is lost. The fix is the one line moved plus a check at submit that the plan
 is for the choice.
 
-### A-11. A listing still on its way shows under the next Spark: accepted, later
+### A-11. A listing still on its way shows under the next Spark: accepted; closed since by removal
+
+**Closed since, by removal (`42ddc29`).** The file browser and its route are gone
+(`test/no-file-browser.test.mjs`). What follows is the answer as written on 2026-11-14.
 
 **True, as reported (ran).** `filesBrowser` does not reset `busy` or `epoch` on a Spark change, so the new Spark is
 never asked and the old list shows under it on the next redraw.
@@ -291,7 +333,11 @@ A wrong delete needs the same name on both Sparks and two confirmations that bot
 **Later.** One line (`busy: false`, `epoch + 1` when the Spark differs). "An explicit entry context for every
 operation" is not needed: operations already use the panel's own Spark. It goes away with the file browser in D12.
 
-### A-12. A batch of uploads follows the area switch: accepted, later, and reachable one more way
+### A-12. A batch of uploads follows the area switch: accepted, and reachable one more way; closed since by removal
+
+**Closed since, by removal.** The file browser is gone, and so are members and "Preview as a member": Spark Console
+has one user, and anyone else gets 401 on every route (`24-handler.mjs`; `test/owner-only.test.mjs`). What follows is
+the answer as written on 2026-11-14.
 
 **True, as reported (ran).** `fileApi` reads the area at each call, so the second file of a batch follows the switch.
 
@@ -303,9 +349,11 @@ repository.
 **Later.** Three lines in `uploadFiles` (keep the area with the folder for the whole batch). It needs a multi-file
 upload and an area switch inside one file's upload. D12 removes the file browser.
 
-**On testing A-10 to A-12:** the suite never runs `public/app.js` today. The honest test is a new `test/page.test.mjs`
-that runs the real functions in `node:vm` with drawing stood in (about 100 lines, no dependency). It is written with
-the first of these three fixes.
+**On testing A-10 to A-12:** on 2026-11-14 the suite never ran `public/app.js`, and the honest test was to be a new
+`test/page.test.mjs` running the real functions in `node:vm`, written with the first of these three fixes. **Since:**
+the three fixes were never written, because the views went. `test/page.test.mjs` exists, for another job: it reads
+the page's source to check the four views are gone and the rest stays, and it runs a few of the page's own drawing
+functions in `node:vm` (the row for a command, an ask's lines). Nothing runs the page as a whole.
 
 ## Astra's own test run
 
@@ -340,19 +388,24 @@ already exited is noticed at once. Any other start failure behaves as before.
 
 ## The plan (part 2)
 
-How these were checked: the one page, the owner's decisions, designs A to G, both critics and the ledger were read
-whole; the code each finding names was read; the three papers were opened. Nothing was run: the pieces are not built.
-Every accepted change is written into the one page first, then the design, with a row in the ledger's new section 5c.
+How these were checked on 2026-11-14: the one page, the owner's decisions, designs A to G, both critics and the
+ledger were read whole; the code each finding names was read; the three papers were opened. Nothing was run then: the
+pieces were not built. Every accepted change was written into the one page first, then the design, with a row in the
+ledger's new section 5c.
 
-| Id | Answer | Lands in |
+**Since: all of it is code.** Each section below keeps its answer as written, and ends with "As built": what the
+code does today, with its rule and its part file in `service/src/`. Those paragraphs come from reading the code on
+2026-11-15. Nothing of it has run on a real Spark (`REVIEW-GUIDE.md`, section 7).
+
+| Id | Answer | Built in |
 |---|---|---|
 | P-1 | Accepted | Milestone 2, with the net |
 | P-2 | Accepted, with the block scoped to free-form changes | Milestone 2, with the journal |
 | P-3 | Accepted in part: open sign-ins and asks are never on disk; a smaller mechanism than "recovery candidates" | Milestone 4, with the rebuild steps |
 | P-4 | Accepted, with a rider so it does not bring back asking | Milestone 1 (the hash) and 5 (the grade) |
-| P-5 | Accepted: today's button fixes the arguments only | Milestone 2 |
-| P-6 | Accepted | Milestone 5, with Sparkie changing its own code |
-| P-7 | Accepted; one correction to the correction | Now (words only) |
+| P-5 | Accepted: today's button fixes the arguments only | Milestone 2 (see the PENDING line in its section) |
+| P-6 | Accepted | Milestone 5, with Sparkie changing its own code: built differently, and switched off |
+| P-7 | Accepted; one correction to the correction | Words only, on 2026-11-14 |
 
 ### P-1. The put-back timer can fire under a command that is still running: accepted
 
@@ -383,6 +436,20 @@ that rewrites `sshd_config` every second is stopped before the first copy back a
 root command during an open guard runs nothing; "keep it" after the timer says "already put back"; an expiry where
 nothing differs reloads nothing. Then once on a real compute Spark.
 
+**As built** (R60, R70; `21-net.mjs`, `21-guard.mjs`, and the root helper, `deploy/spark-console-root`). The
+mechanism is as above. The timer is the command's own limit plus 600 seconds (`net_arm`). A put-back stops the
+command's unit first, then puts back only what differs and reloads only that (`restore_sh`). One guard is open on a
+Spark at a time. A keep after a put-back answers "already put back". Three things differ from the text above:
+
+- **The times.** From the console, a lock-out change on a compute Spark and any change on Spark 2 get 30 seconds; the
+  helper itself would allow 30 minutes. A root command gets 30 minutes, 10 in the lock-out class.
+- **"Keep it" is not the owner's press.** Code keeps a change once every way in that worked before it still works,
+  tried from outside the Spark. One that stopped working puts the change back at once.
+- **The tests** are `test/root-helper.test.mjs`, group "the lock-out net (R60)", and `test/net.test.mjs`. They check
+  what the helper asks a stand-in systemd for, and in what order: the timer at the limit plus 600 s, the unit stopped
+  before anything is copied back, a second guard refused, a late keep answered. No test has a live writer rewriting
+  `sshd_config` every second. "Then once on a real compute Spark" has not happened: no real Spark has the helper yet.
+
 ### P-2. A change can run with no record on disk: accepted
 
 **Right about the plan.** A 2.11 recorded a command "once, when it ends"; B's journal "never throws"; and the
@@ -408,14 +475,27 @@ nothing was changed" and nothing ran; `/stop`, `/putback`, a look and `stop_mode
 after a file write: the start line is there, one "cut off" notice, `undo_last_change` restores the file, the command
 ran once.
 
+**As built** (R43, R61; `20-journal.mjs`, `21-runner.mjs`, `21-net.mjs`). Before a `run` change, a `write_file` or
+anything inside the net runs, its start line is written and synced. With no start line nothing runs, and the answer
+says the record couldn't be written, so nothing was changed. The result is a second line with the same id. A start
+with no end is told once as cut off after a restart and is never run again (`test/runner.test.mjs`). Two things
+differ from the text above:
+
+- Two typed actions are written first too, and are refused when the journal can't be written: `save_file`, and
+  `keep_running` with an image (`journalFirstFor`). `test/journal.test.mjs` holds that: "with the journal's disk
+  full, a change written down first answers …".
+- A command in the box is one record when it ends, not a start line and an end line (R62).
+
+PENDING: R1-10, the test above for a changing `run` with the journal unwritable.
+
 ### P-3. Putting old state back can let a removed device or passkey in again: accepted in part
 
 **Right for sessions, passkeys, agent keys, people and "always" entries.** `sessions.json`, `passkeys.json` and
-`agents.json` are in the state copy; `sessionFor` accepts any stored hash that has not aged out; fourteen dated copies
-are kept; `restore.sh --with-state` puts a snapshot's state back the same way. The builders already held this view
-for one thing (recovery codes live in the secrets file "so no backup, install snapshot or rollback can bring a used
-one back") and did not extend it. Astra is also right that the "copy when a Spark is awake" default makes the newest
-copy older, so the window is wider than today's.
+`agents.json` are in the state copy (on 2026-11-14; no copy holds `sessions.json` now); `sessionFor` accepts any
+stored hash that has not aged out; fourteen dated copies are kept; `restore.sh --with-state` puts a snapshot's state
+back the same way. The builders already held this view for one thing (recovery codes live in the secrets file "so no
+backup, install snapshot or rollback can bring a used one back") and did not extend it. Astra is also right that the
+"copy when a Spark is awake" default makes the newest copy older, so the window is wider than today's.
 
 **Not right for open sign-ins and open asks.** `deviceCodes`, `challenges` and `pendingChoices` are each a `Map` in
 memory, and a go-ahead is in memory only. None is ever in a copy, and all end at a restart. Nothing to reset.
@@ -441,6 +521,23 @@ The old cookie gets 401; the removed passkey and key are refused from the intern
 line; the "always" command asks; after "Keep these" the remaining passkey signs in. State put back with nothing
 removed since: no hold. No secrets file: hold.
 
+**As built** (R23, R33; `22-putback.mjs`; contract 6.25).
+
+- No copy holds `sessions.json` (`25-backup-and-start.mjs`), and a put-back signs every device out.
+- The number is kept in the state folder (`auth-serial.json`) and in the secrets file. It goes up when the owner signs
+  a device out, removes a passkey or an agent key, takes a right from an agent key, or pauses agents' changes. "A
+  person" is gone from the list: the owner is the only user.
+- At start the state counts as put back when something the secrets file notes as removed is there again, when the
+  state's number is the lower one, or when the state has a number and the secrets file has none (a new disk).
+  `restore.sh --with-state` always holds, so "nothing removed since: no hold" is true only of a copy untarred by hand.
+- More than the text above promised: what the owner removed since is removed again by code; a right taken from a key
+  is taken again; the owner's pause comes back; a task under way is ended, with a line in its chat (not parked).
+  "Always" entries that came back wait for "Keep these", which needs the passkey when one is set up.
+- So P-3a is closed for sign-ins: nothing is left for the owner to remove by hand, and there is no Access view.
+- Tests: `test/putback.test.mjs`, `test/copy-signins.test.mjs`, `test/allowed.test.mjs`.
+
+PENDING: R1-04, "an 'always' entry" in the list of removals above (what `/allowed off` does to the number).
+
 ### P-4. A "checked" grade must belong to what the brain reads now: accepted
 
 **Right about the plan.** The grade's key is model, engine, image and flags. The hash of what the brain reads (the
@@ -465,6 +562,16 @@ the hash unchanged needs no new eval.
 hash restores it. Going back to a build with a result is checked with no new run. A result for another case set does
 not count.
 
+**As built** (R52, R47; `21-brain-rail.mjs`, `21-brain-eval.mjs`, `21-brain-check.mjs`). The join is as above, and
+stricter: checked also needs the brain check on record to say checked, and the key holds the limits, what the model
+runs (its image's id, its weights) and how it is asked. The first rider is built: a profile's slot keeps the five
+newest full runs. The second is built differently. Once a passkey is set up, a passing result is not kept by a post
+alone: it waits for the owner's press on the page, with the passkey, and only when it is for what the installed
+build's brain reads and for its case set. A result for what another build's brain reads, one not yet installed, is
+refused (`evalWait`). So the eval can be run on the build about to go in, but when that build changes what the brain
+reads its result is kept only after the install. Until then Sparkie asks before every change, and the install's ask
+says so (R58). Tests: `test/brain-rail.test.mjs`, `test/brain-eval.test.mjs`.
+
 ### P-5. The press must run the script text the ask showed: accepted
 
 **Right, and the existing button does not already guarantee it.** A button keeps its arguments (`pendingChoices`),
@@ -484,6 +591,8 @@ itself reads or downloads while it runs is not checked.
 server that answers A then B: the press runs A and the server saw one request. The file rewritten after the runner
 opened it: what ran is what was shown.
 
+PENDING: R1-03, "As built" for P-5 (what the button shows, what the press checks, and what then runs).
+
 ### P-6. Sparkie's own change must install the tree the owner approved: accepted
 
 **Right, and half covered.** For an ordinary update the button already carries one tree and `pull.sh install <tree>`
@@ -501,6 +610,16 @@ on `main`. A review counts only if it is of that head. No extra press unless `ma
 **Test:** a commit pushed to the stand-in `main` after the ask: no merge, no install, a new ask. `main` not moved:
 exactly the tree on the button is installed. An installed build one commit behind: that commit is listed under "also
 in this build". A review of an older head does not count.
+
+**As built, and switched off** (R69, R58; `21-selfchange.mjs`). `SELF_CHANGE_ON` is `false`, and the piece also needs
+a pass of the coding trial (R67), so every call is refused today. What is there is two presses, not one. The
+proposal's yes merges the pull request only at the head shown, and only while GitHub's `main` is the commit the
+proposal was made on; then it stops. GitHub marks a tree tested only after its run on `main`, so the install is the
+ordinary `install_update` ask, once that tree is marked. That ask carries the one tree and lists what differs from
+the build installed now. When `main` has moved nothing is merged, and no ask is built again: the owner drops the
+proposal and starts it again on the new `main`. The merge ask lists the files against the noted `main`, not against
+the installed build (R69's Today). Test: `test/selfchange.test.mjs`, "C8d: the ask for the proposal, by code … its
+yes merges at that head and stops there".
 
 ### P-7. The memory research wording says more than the papers do: accepted
 
@@ -520,6 +639,9 @@ The one page calls word-first look-up "a bet that a fleet's exact names make it 
 picker alone on synthetic lines on a Mac, and names what decides: the twenty questions and a held-out set of
 rewordings. Not checked by either side: LongMemEval-V2, Chroma, and the vendors' own figures in G.
 
+**As built:** nothing to build. The words are in G (`docs/design-2026-11-13/g-memory.md`) and the one page. Memory
+itself is built (R45; `20-memory.mjs` and the parts beside it); the memory questions are `test/eval/memory.json`.
+
 ## The broader answers
 
 Astra's section "Answers to the review guide's broader questions" was read against the plan point by point.
@@ -529,17 +651,17 @@ Astra's section "Answers to the review guide's broader questions" was read again
 | # | What | Where |
 |---|---|---|
 | 1 | A line carrying a name from the owner's words is taken before the 400-candidate cap, with a test | G 3.4, step 2 |
-| 2 | A middle log line in neither digest list is found by `recall` after a restart (needs clean-up point 1 first) | G step 5 |
+| 2 | A middle log line in neither digest list is found by `recall` after a restart (needs clean-up point 1 first). As built: two tests hold the two halves, `test/digest.test.mjs` ("a 3,000-line log enters the turn as its digest …") and `test/journal.test.mjs` ("after the restart, recall still has the failed start's log"); no one test does both | G step 5 |
 | 3 | Quoted, negated, supposed and past-tense "remember" and "forget", A-3's question, an agent's `replaces` aimed at an owner's line | G steps 1 and 6 |
 | 4 | Retired lines (`past`) live in their own file, so going back a build cannot drop them | The one page section 3; G |
 | 5 | A wish left out of the block is still picked with its source; a remembered line that holds change words causes no change | G step 2 |
 | 6 | Held-out rewordings and logs never seen before; results by case and kind, with rounds and seconds | G step 7 |
-| 7 | On a Spark without the helper, `run` and `write_file` do not work: Sparkie uses today's typed actions and gives the owner the one command. This removes the interim look grammar | The one page section 4; A 2.3 |
-| 8 | The helper proves its own walls on each Spark before first use and in `self_test` | Milestone 2, the helper's step |
-| 9 | What counts as the confirming visit: a fresh sign-in with a passkey that existed before, or a new connection through the changed route, tied to that guard and only after the change is live | The one page's net bullet; A 2.8 |
+| 7 | On a Spark without the helper, `run` and `write_file` do not work: Sparkie uses today's typed actions and gives the owner the one command. This removes the interim look grammar. As built: yes for a Spark itself (`needsOwner` in `21-work.mjs`); the box needs no helper, only Docker on a compute Spark (`21-box.mjs`) | The one page section 4; A 2.3 |
+| 8 | The helper proves its own walls on each Spark before first use and in `self_test`. As built: yes, on the stand-in fleet; the proof has not run on a real Spark's systemd and kernel yet | Milestone 2, the helper's step |
+| 9 | What counts as the confirming visit: a fresh sign-in with a passkey that existed before, or a new connection through the changed route, tied to that guard and only after the change is live. As built: the confirming visit is not built. A lock-out change on Spark 2 is refused, and any other change there is kept by code once the console's own ways in still answer (`21-hub.mjs`, `21-net.mjs`) | The one page's net bullet; A 2.8 |
 | 10 | Two eval cases that need tools from three groups; a test that an unoffered `undo_last_change`, `cancel_operation` or `undo_update` still runs | Milestone 1, the tool groups |
 | 11 | A setup passed over for failing twice is tried again when its image, its Sparks or its start code changed, or when the owner says so | B3 |
-| 12 | "Up to 45 minutes" becomes "45 minutes plus the saved brain's own start; the planned limit, not a measured one" | The one page section 9 |
+| 12 | "Up to 45 minutes" becomes "45 minutes plus the saved brain's own start; the planned limit, not a measured one". As built: words only; a brain across Sparks is not built | The one page section 9 |
 | 13 | Generated files in Sparkie's proposal must equal what the installed build's own generator makes from the proposal's sources | C step 8 |
 | 14 | An ask is void after a restart and after Telegram is paired again; the "read outside text" mark survives a restart; a made-up key is searched for in error fields, the state copy and after a restart | Test rows in A and B |
 
@@ -550,32 +672,41 @@ only; test jobs cannot write and the installed build judges the new one; the thr
 with the code words answering with no brain; every rail is a check in `runAction`, and `run` and `recall` are always
 offered; task authority; no embeddings, helpers, new scheduler or second service until measured.
 
+**As built, two of those eleven differ.** `run` and `write_file` are lookups to `runAction`, so their rails are
+checks in the ladder (`21-ladder.mjs`) and in `whoMayLook`, not in `runAction` itself. And `run` is always offered,
+but `recall` is in the tool group `past`: it is offered when the request's words open that group, or through `guide`
+(R46).
+
 ## Design clean-up: all four accepted
 
 1. **Output caps.** A and B capped kept output at 1 MB and 64 KB; the one page says the journal is the raw record and
    G says a long log is kept whole. The designs now say: a record's long text is kept whole, written to the `.out`
    file in pieces as it arrives and never held whole in memory; each piece is masked before it is written, with an
    overlap so a key across two pieces is still caught; past 16 MB (a default) reading stops, the command is ended,
-   and the record says so. The digest's size is a separate number.
+   and the record says so. The digest's size is a separate number. **As built:** a command's output is held in
+   memory, up to 16 MB, until the command ends; then it is written to the record in masked pieces with an overlap
+   (`helperCall` in `21-work.mjs`; `jBody` and `jMasker` in `20-journal.mjs`). Past 16 MB the call is ended and the
+   record says it was cut. So "never held whole in memory" is not what was built.
 2. **The journal in E.** E copied and restored journal segments; the one page says the journal never leaves Spark 2.
    E now says so, and says what it costs: after a dead hub disk `recall` starts empty, and a line's "you said" source
    may point at a record that is gone.
 3. **G's page-only wording and `memoryClear`.** `remember` and forgetting work from the page and the paired Telegram
    chat, marked as said on Telegram; `erase` stays on the page. G 3.6 carries A-3's rule.
 4. **The guide's description of the page.** This one is the guide against the app, not a design against the one
-   page. The guide now says: "The owner uses chat and the APIs. The page still shows Home, Models, Files and Access
-   from earlier builds, and they still work." And the plan now names when they go: milestone 4 gains the delete
-   already agreed (members and sharing, the browser editor, the file browser with its routes and the worker's delete,
-   rename and new-folder calls), and the Models view goes with it. That closes A-10, A-11 and A-12 and removes A-6's
-   only caller.
+   page. On 2026-11-14 the guide was made to say that the page still showed Home, Models, Files and Access, and the
+   plan to name when they go: milestone 4 gained the delete already agreed (members and sharing, the browser editor,
+   the file browser with its routes and the worker's delete, rename and new-folder calls), with the Models view.
+   **Done since:** milestone 4 is built. The guide now says: "The page is now the chat, sign-in and status. Home,
+   Models, Files and Access are off it (`test/page.test.mjs`); the routes behind them stay." That closed A-10, A-11
+   and A-12 and removed A-6's only caller.
 
 ## The "no trash" default: kept, with one sentence added
 
 **Not accepted as a change of default.** The default is about Sparkie's own deletes in the next phase, and those
 already keep a copy first (A 2.6: a bounded place to get a small file back from, kept 7 days). A-6's path is the
-page's delete through the worker, which the next phase does not use and the milestone-4 delete removes. A trash would
-add its own keep rules, a count against the shared folder, a way to get things back, and "permanently deletes" would
-stop being true.
+page's delete through the worker, which the next phase does not use and the milestone-4 delete has removed. A trash
+would add its own keep rules, a count against the shared folder, a way to get things back, and "permanently deletes"
+would stop being true.
 
 **Accepted: the copy must be of what was removed.** Copy-then-command has A-6's shape with a wider gap. A 2.6 now
 lists, under what cannot be put back, "what another program wrote to a file between the copy and the command"; and a
@@ -584,14 +715,15 @@ exactly what was removed. The owner has been told this limit in plain words.
 
 ## Where each fix landed
 
-All on `main`. The part files are under `service/src/`; `service/server.mjs` is built from them.
+All on `main`. The part files are under `service/src/`; `service/server.mjs` is built from them. The table names the
+parts as they were when each fix landed; one has moved since, and the row says so.
 
 | Id | Commit | What changed | Tests that fail without it |
 |---|---|---|---|
 | A-1 | `eab0f43` | `14-chats`, `16-actions`, `20-mcp`, `20-desired`, `24-handler`; rule R9 | `test/ask.test.mjs`, group "an agent taken away while Sparkie answers it": removed mid-reply; made look-only mid-reply; an undo it asked for keeps running; an operation it started keeps running and posts its result |
 | A-2 | `2cc8152` | `21-apps` (the stopped-app branch of `keep_running`); rule R38 | `test/apps.test.mjs`: "a stopped GPU app is checked again inside its claim: another GPU app there, or less free memory, since the first look starts nothing" |
 | A-3 | `25f0cdb` | `20-memory` (`memoryClear`); rule R25 | `test/sparkie-more.test.mjs`: "forget_memory runs at once only when the owner says to forget that very line…"; "'do not remember …' or 'don't note …' is a button and keeps nothing…" |
-| A-4 | `a65f880` | `14-chats` (one ending for a model call, on every way it can end); rule R34; three new modes in the stand-in model | `test/sparkie-more.test.mjs`: "a model answer cut off part-way ends the reply once…"; `test/words.test.mjs`: `/stop` after a cut-off error, and `/stop` while one is held open |
+| A-4 | `a65f880` | `14-chats` (one ending for a model call, on every way it can end; that function, `modelStep`, is in `14-rounds` now); rule R34; three new modes in the stand-in model | `test/sparkie-more.test.mjs`: "a model answer cut off part-way ends the reply once…"; `test/words.test.mjs`: `/stop` after a cut-off error, and `/stop` while one is held open |
 | A-5 | `acd2b92` | `07-jobs`, `14-chats`, `16-actions`, `17-changes`, `20-heal`, `21-apps`; rule R7 | `test/sparkie-more.test.mjs`: a key in the model's error; a key on a button's label and in a saved workflow's value; a key in a failed operation's error in `events.jsonl` |
 | A-7 | `418e16b` | `23-http` (`readBody` decodes as a stream) | `test/files.test.mjs`: "a character whose bytes arrive in two pieces of the request is saved as sent: inside a 2-, a 3- and a 4-byte character" |
 | A-8 | `3f8044c` | `19-watcher`; rule R23 | `test/apps.test.mjs`: "a job on a Spark the watcher has only seen empty is told once when it ends, in its chat; one that ended before a Spark's first look isn't" |
@@ -619,9 +751,15 @@ the ones above, with a test that fails without it.
 **The whole suite, all of it together.** 1,056 of 1,057 on Linux (Node 26, four files at once), with the five review
 commits in. The two cases that are skipped on macOS or as root both ran: real GNU tar on a file it can't read, and
 the folder that can't be removed. One case was skipped there: the zsh one, because the test container has no zsh; it
-passed on the Mac, where zsh is the login shell. Build `32cfab4f06fa`. The five workflow versions are the ones Astra reviewed (`start_model`
-`0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups` `f807e08bdd5d`,
-`restart_model` `bb7ffe5e4224`), so no workflow needs validating again on real Sparks.
+passed on the Mac, where zsh is the login shell. Build `32cfab4f06fa`. In that build the five workflow versions are
+the ones Astra reviewed (`start_model` `0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model`
+`958b338b426d`, `find_setups` `f807e08bdd5d`, `restart_model` `bb7ffe5e4224`), so installing it needed no new
+validation run on real Sparks.
+
+**Since.** That is true of build `32cfab4f06fa` only. In the build sent now all five versions have changed:
+`service/worker.py` changed in `42ddc29`, and its whole text is part of every version (`18-workflows.mjs`); the
+start code changed too. So after the install each of the five waits for one validation run on the real Sparks. The
+test result of the build sent now is in the status paragraph at the top.
 
 **The plan.** The amendments for P-1 to P-7, the fourteen adopted points, the four clean-up points and the trash
 sentence are in commit `0041e07`: the one page first (`docs/design-2026-11-13/README.md`), then designs A, B, C, E, F
@@ -636,10 +774,12 @@ stops a healthy model, leaks a key, or leaves the console dead or stuck). Astra 
 |---|---|---|
 | A-1b | A removed agent still receives the answer to the request that was open | Looked-up data only, for at most 40 seconds |
 | A-2b | The restart path has A-2's shape | The fix changes `restart_model`'s version, which means a validation run on real Sparks |
-| A-6 | A page delete can remove a save landing in the same 40 to 150 millionths of a second | Page only; the fix edits `worker.py`, which re-versions every workflow. A rename-first delete goes with the next `worker.py` change, or the caller goes in milestone 4 |
-| A-7b | The same joining of raw pieces in three places that read short, plain-ASCII output | Much less likely to split a character |
-| A-10, A-11, A-12 | Three late-answer faults on the page | Nothing unseen stops and nothing is lost; the views are deleted in milestone 4 |
-| P-3a | Today's restore from an old copy brings back sign-ins removed since | Never done; a step the owner takes by hand, and the owner has been told what to do after it |
+| A-6 | A page delete can remove a save landing in the same 40 to 150 millionths of a second | Closed since by removal: the caller and the worker's delete went in milestone 4 (`42ddc29`) |
+| A-7b | The same joining of raw pieces, in more places than the three first named (the A-7 section lists them); the brain's stream is not plain ASCII | Less likely to split a character than a request body |
+| A-10, A-11, A-12 | Three late-answer faults on the page | Closed since by removal: the views went in milestone 4 |
+| P-3a | A restore from an old copy brings back sign-ins removed since | Closed since for sign-ins: what the owner removed is removed again by code and every device is signed out (`22-putback.mjs`; P-3's "As built") |
+
+PENDING: R1-07, the A-2b row above (its reason).
 
 **Later, found by the same review of the fixes.** Astra did not report these. They are listed so that round 2 can
 rebut "later" for any of them.
@@ -662,8 +802,10 @@ rebut "later" for any of them.
 | A-9 | When `tar` fails on Spark 2 itself, the record still says the other Sparks "didn't take it" | Wording |
 | A-9 | A good stream whose final move fails leaves its `.part` until the next try; a `backups` folder that is itself a symlink keeps a stale `.part` | One file; the copy still lands |
 | Tests | Five waits in `test/ask.test.mjs` and `test/words.test.mjs` are fixed lengths of time | They pass on Linux, and on the Mac one file at a time; they can fail on a loaded machine |
-| Tests | `test/across.test.mjs`, "parts that only hang over RoCE start over plain sockets…": the stand-in's cable check listens on a port picked at random, and when another test's fleet holds it the start is refused with "Port 29501 … is already in use". Seen once in our whole-suite runs. It is in the build Astra reviewed | The fix is in the cable check, which is part of `start_model_across`, so it changes that workflow's version. It is built on the power branch, where that version changes anyway. If Astra's run fails on this one test, a rerun of that file alone settles it |
+| Tests | `test/across.test.mjs`, "parts that only hang over RoCE start over plain sockets…": the stand-in's cable check listens on a port picked at random, and when another test's fleet holds it the start is refused with "Port 29501 … is already in use". Seen once in our whole-suite runs. It is in the build Astra reviewed | Fixed since, with the power work: on the stand-in fleet the cable check takes its three ports from the system (`freeLocalPorts` in `08-cluster.mjs`), never one another test's fleet holds. It is part of `start_model_across`, whose version changed anyway |
 | Documents | `test/README.md` does not list the stand-in model's new modes; `docs/architecture.md` lacks the "operations keep running" sentence | The rule files carry both |
+
+PENDING: R1-08, the "All changes" row above (a call-off in a later sentence, and when it would be read).
 
 ### Not accepted, in one place
 
@@ -672,7 +814,8 @@ These are the points to answer in round 2.
 1. **A-1:** pending buttons and carry-on turns are not live for a removed or downgraded agent.
 2. **A-1:** operations already running keep running after an agent is removed (the same rule as `/stop`).
 3. **A-2:** a model start cannot fit the gap as told; only a GPU job started in the same second can.
-4. **A-6:** "blocks install" is not accepted; later, with a rename-first delete in place of a trash.
+4. **A-6:** "blocks install" is not accepted; later, with a rename-first delete in place of a trash. (Moot since: the
+   delete is gone.)
 5. **A-7:** counting the size limit in bytes is not taken.
 6. **A-8:** "don't mark it told before the notice succeeds" is not taken, because it would repeat the notice.
 7. **A-9:** the macOS run does not carry over to the Sparks; the fix was made for the pruning harm.

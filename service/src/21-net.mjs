@@ -283,7 +283,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     g.ways = Object.keys(NET_PROBES).filter(p => before[p] === true);
     // (on record before the call: a restart from here on puts it back at start)
     netSave(f => f.guards.push({ ...g, state: 'arming', at: new Date().toISOString(), goesBackAt: new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString() }));
-    rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: cls, gate, unit, seconds,
+    rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: cls, gate, unit, seconds,
       root: root === true, net: id, args: { spark: node.id, command: command.slice(0, 600), dir }, sub: jSub(node.id) });
     if (!rid) { netMark(id, { state: 'never' }); throw new HttpError(507, JOURNAL_REFUSED); }
     netMark(id, { record: rid });
