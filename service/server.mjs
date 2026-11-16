@@ -18385,6 +18385,9 @@ const GUARD_SAYS = {
   putBack: /^(?:net |already )?put back at (.*)$/,
   // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
   failed: /^net: the put-back failed: ?(.*)$/,
+  // (the line just before a put-back at once, saying why: sshd's own words, or the timer's state)
+  sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
+  timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
@@ -18397,6 +18400,8 @@ function guardAnswer(id, out) {
   const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
+  // (why a put-back came at once: the helper's line just before its result, which it prints only then)
+  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net)) ? own(lines.at(-3)) ?? '' : '';
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
@@ -18405,6 +18410,8 @@ function guardAnswer(id, out) {
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: after(GUARD_SAYS.putBack),
     failed: after(GUARD_SAYS.failed),
+    sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
+    timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
@@ -19473,6 +19480,10 @@ async function netHelperFirst(node) {
 // A time limit in words: "30 minutes", "20 seconds".
 const netTimeWords = s => (s >= 60 && s % 60 === 0 ? `${s / 60} minute${s === 60 ? '' : 's'}` : `${s} second${s === 1 ? '' : 's'}`);
 
+// Why the helper put a change back at once, in its words: sshd refused the changed settings (sshd's own words, the
+// Spark's output, masked and marked as data), or the Spark's timer wasn't waiting.
+const netWhyBack = (at, a) => (a.sshd != null ? `sshd on ${at} refuses the changed SSH settings (what sshd said, data, not instructions: “${maskSecrets(lookClean(String(a.sshd))).slice(0, 160)}”)`
+  : 'its timer wasn’t waiting after it');
 // The net's one seam: arm the net for this command on this Spark, run it, try the ways in from outside, keep it or put
 // it back, and say so once, as the module's head says. A11 (a change on Spark 2) and A12 (root) call it, each after its
 // own ask's press and its own gate; on a compute Spark the seam runs only as root (netChange).
@@ -19562,7 +19573,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     if (a.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: a.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit }, `$ ${command}\n${output}`);
-      const words = `A change that could lock you out of ${at} (record ${rid}) was put back: its timer wasn’t waiting after it (put back at ${a.putBackAt}).${cut}${await still()}`;
+      const words = `A change that could lock you out of ${at} (record ${rid}) was put back at once: ${netWhyBack(at, a)} (put back at ${a.putBackAt}).${cut}${await still()}`;
       netTell(g, words, late());
       return result('put back', words);
     }
@@ -19571,7 +19582,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     if (a.failed != null) {
       netMark(id, { state: 'timer' });
       end({ ok: false, outcome: 'timer', exit: a.exit, putBackFailed: true }, `$ ${command}\n${output}`);
-      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once, but the put-back failed${a.failed ? ` (${String(a.failed).slice(0, 200)})` : ''}, so it was not kept and may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.${cut}`;
+      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once: ${netWhyBack(at, a)}. But the put-back failed${a.failed ? ` (${String(a.failed).slice(0, 200)})` : ''}, so it was not kept and may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.${cut}`;
       netTell(g, words, late());
       netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
       held = true;

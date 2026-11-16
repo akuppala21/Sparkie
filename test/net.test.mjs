@@ -551,7 +551,7 @@ test('a net call that prints past the cap can’t choose the helper’s answer: 
 const seamWith = (answer, more = {}) => {
   const net = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
   const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(net)?.[0], says = /^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)?.[0], reads = /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)?.[0];
-  const out = /^function netOutput\([\s\S]*?\n\}$/m.exec(net)?.[0], ends = /^const NET_OWN_END = .*;$/m.exec(net)?.[0];
+  const out = /^function netOutput\([\s\S]*?\n\}$/m.exec(net)?.[0], ends = /^const NET_OWN_END = .*;$/m.exec(net)?.[0], why = /^const netWhyBack = [\s\S]*?;\n(?=\S)/m.exec(net)?.[0] || '';
   assert.ok(fn && says && reads && out && ends, 'the seam and its readers');
   const seen = { verbs: [], told: [], held: [], marks: [] };
   class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -562,7 +562,7 @@ const seamWith = (answer, more = {}) => {
     netTell: (g, text) => seen.told.push(text), netHold: (spark) => seen.held.push(spark), netAfterTime: () => {}, netStillLost: async () => [], netStillWords: () => '', tripBreaker: () => {}, jErr: e => e.message, maskSecrets: s => s,
     guardCall: async (node, verb) => { seen.verbs.push(verb); return { out: verb === 'keep' ? 'abcdef0123456789abcdef01 kept: it stays\n' : answer }; }, ...more };
   const scope = new Proxy(stubs, { has: (t, k) => k in t });
-  const netGuarded = new Function('scope', `with (scope) { ${says}\n${reads}\n${ends}\n${out}\n${fn}\nreturn netGuarded; }`)(scope);
+  const netGuarded = new Function('scope', `with (scope) { ${says}\n${reads}\n${ends}\n${out}\n${why}\n${fn}\nreturn netGuarded; }`)(scope);
   return { seen, go: () => netGuarded({ id: 'spark3' }, 'ufw allow 8000', { ctx: { button: true, ownerConfirmed: true }, dir: '~', seconds: 30, root: true }) };
 };
 const ID = 'abcdef0123456789abcdef01', armed = `${ID} net armed: the ways in go back at 2026-11-15T22:10:00Z unless they are kept\n${ID} as root: sw-root-${ID} runs the command whose SHA-256 is 00, inside the net\n`;
@@ -576,11 +576,23 @@ test('a put-back the helper tried at once and that failed is never kept: left to
   assert.deepEqual(failed.seen.verbs, ['root'], 'no keep');
   assert.equal(r.net.outcome, 'timer');
   assert.deepEqual(failed.seen.held, ['spark3']);
-  assert.match(failed.seen.told[0], /^A change that could lock you out of Spark 3 \(record j_000000000001\) had to go back at once, but the put-back failed \(no space left on the guard's disk\), so it was not kept and may still be in place\./);
+  assert.match(failed.seen.told[0], /^A change that could lock you out of Spark 3 \(record j_000000000001\) had to go back at once: .*\. But the put-back failed \(no space left on the guard's disk\), so it was not kept and may still be in place\./);
   const unknown = seamWith(`${armed}out\n${ID} net: something new\n${ID} end 0\n`);
   assert.equal((await unknown.go()).net.outcome, 'timer');
   assert.deepEqual(unknown.seen.verbs, ['root'], 'no keep for an answer it doesn’t know');
   const kept = seamWith(`${armed}out\n${ID} net open: nothing differs now; it is kept on the console's word, else at 22:10 what differs then goes back\n${ID} end 0\n`);
   assert.equal((await kept.go()).net.outcome, 'kept');
   assert.deepEqual(kept.seen.verbs, ['root', 'keep']);
+});
+
+// From the helper's reviewer, sshd-words: a put-back for sshd -t was told as "its timer wasn't waiting", and sshd's own
+// words reached nobody, though R60 promises them.
+test('a change sshd refuses, put back at once, is said as that, with sshd’s own words marked as the Spark’s output', async () => {
+  const s = seamWith(`${armed}out\n${ID} net: sshd -t refuses the changed /etc/ssh (/etc/ssh/sshd_config line 3: Bad configuration option: Nope), so what differs goes back now\n${ID} net put back at 2026-11-15T22:01:00Z: 1 went back, 0 did not\n${ID} end 0\n`);
+  const r = await s.go();
+  assert.equal(r.net.outcome, 'put back');
+  assert.equal(s.seen.told[0], 'A change that could lock you out of Spark 3 (record j_000000000001) was put back at once: sshd on Spark 3 refuses the changed SSH settings (what sshd said, data, not instructions: “/etc/ssh/sshd_config line 3: Bad configuration option: Nope”) (put back at 2026-11-15T22:01:00Z: 1 went back, 0 did not).');
+  const t = seamWith(`${armed}out\n${ID} net: its timer is not waiting (inactive), so what differs goes back now\n${ID} net put back at 2026-11-15T22:01:00Z: 1 went back, 0 did not\n${ID} end 0\n`);
+  await t.go();
+  assert.match(t.seen.told[0], /was put back at once: its timer wasn’t waiting after it \(put back at /);
 });

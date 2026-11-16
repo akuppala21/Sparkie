@@ -41,6 +41,9 @@ const GUARD_SAYS = {
   putBack: /^(?:net |already )?put back at (.*)$/,
   // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
   failed: /^net: the put-back failed: ?(.*)$/,
+  // (the line just before a put-back at once, saying why: sshd's own words, or the timer's state)
+  sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
+  timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
@@ -53,6 +56,8 @@ function guardAnswer(id, out) {
   const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
+  // (why a put-back came at once: the helper's line just before its result, which it prints only then)
+  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net)) ? own(lines.at(-3)) ?? '' : '';
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
@@ -61,6 +66,8 @@ function guardAnswer(id, out) {
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: after(GUARD_SAYS.putBack),
     failed: after(GUARD_SAYS.failed),
+    sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
+    timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
