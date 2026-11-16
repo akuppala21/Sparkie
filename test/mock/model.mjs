@@ -96,7 +96,8 @@ function stream(res, usage = null) {
 
 // The brain check's requests. ~/.mock/brain-kind on spark2 picks the brain: none (or "good") calls the toy tool once a
 // city with arguments that fit and answers from its result; "bad-arguments" calls it with arguments that don't fit;
-// "no-tools" never calls a tool; "server-error" answers 500 to a request with tools. Every request is a line in $MOCK_DIR/brain-check.jsonl (when, the brain, the tools
+// "no-tools" never calls a tool; "server-error" answers 500 to a request with tools, and "status-<code>" that code (429, 404:
+// a server busy or missing a route, no answer either). Every request is a line in $MOCK_DIR/brain-check.jsonl (when, the brain, the tools
 // offered, the last message's role, the words, how it was asked).
 async function checkReply(b, msgs, tools, res) {
   let kind = 'good';
@@ -108,6 +109,8 @@ async function checkReply(b, msgs, tools, res) {
   } catch {}
   // "server-error": a request with tools gets a 500, as a server that fails on them (R52: no answer, never "no tools").
   if (kind === 'server-error' && tools.length) { res.writeHead(500, { 'content-type': 'application/json' }); return res.end('{"error":{"message":"stand-in server error"}}'); }
+  const code = /^status-(\d{3})$/.exec(kind)?.[1];
+  if (code && tools.length) { res.writeHead(Number(code), { 'content-type': 'application/json' }); return res.end(`{"error":{"message":"stand-in ${code}"}}`); }
   const s = stream(res), cities = [...words.matchAll(/\b(Oslo|Lima)\b/g)].map(m => m[1]);
   if (tools.length && last.role === 'user' && cities.length && kind !== 'no-tools') {
     for (const [i, city] of cities.entries()) {

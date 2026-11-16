@@ -30,6 +30,7 @@ const RUNKEY_BASH = /^(?:BASH\w*|UID|EUID|PPID|PWD|OLDPWD|SHELL|SHLVL|USER|LOGNA
 // empty line; then its input is nothing, as without keys. (sck_k: lower case, so no key's name can be it.)
 const RUNKEY_PREFIX = 'while IFS= read -r sck_k && [ -n "$sck_k" ]; do export -- "$sck_k"; done; unset sck_k; exec </dev/null\n';
 const RUNKEY_SCRIPT_CHANGED = 'Not run: a script it runs changed after you were asked, and a key is never given to a script you weren’t shown. Nothing ran: ask for it again to see the script as it is now.';
+const RUNKEY_SCRIPT_UNPINNED = 'Not run: it runs a script whose text isn’t pinned by a hash here, and a key is never given to a script you weren’t shown as it is. Name the script plainly, from where the change starts or after one first cd <folder> &&. Nothing was asked or run.';
 // The hosts a command's text names: each word as the sorter reads an address (usesHost: a scheme's host, host:path,
 // user@ and a port taken off; an option's value after = too), user@host, and a bare name with a common top-level part
 // (example.com, api.x.io/v1) or an IPv4 address. Read from the text alone: where a program sends a key by itself (its
