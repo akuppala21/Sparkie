@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25758 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25764 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -554,12 +554,12 @@ Spark Console's own record of what happens through it, so it is still known afte
 A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the message here, before anything else reads it: the chat file, the journal, the audit, a title, the gate, the brain. Two forms: "/key NAME value" (the value alone, after the name or on the next line), and the heartbeat's address, known by its shape anywhere in the words. It is kept by name in the secrets file (03-secrets.mjs, through secretsWrite), never shown back, and its exact value is hidden wherever text is written or sent (keptHidden, which hideKeys runs first). Two names …
 
 - **Area:** safety. **Rules:** R51, R7, R32. **Tests:** app-keys.test.mjs
-- **Lines:** 179
+- **Lines:** 185
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `keyNameOk`, `keysGiven`, `keysHidden`, `keepKey`, `keepNamed`, `keepGithub`, `keepBeat`, `giveKey`, `hideKeptInChats`, `answerKeys`, `tgKeys`
-- **Uses:** `01-setup` (`HttpError`, `ALL_LOCAL`), `03-identity` (`accessList`), `03-secrets` (`keptHidden`, `secretsWrite`, `secretsRead`, `SECRETS_FILE`, `keptSeen`), `14-chats` (`LIMITS`, `saveChats`, `chatData`), `16-actions` (`action`), `20-beat` (`BEAT_URL_RE`, `beatSave`), `20-journal` (`journalSaid`), `20-mcp` (`hideKeys`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-telegram` (`tgPaired`, `tgCall`, `tgConv`)
+- **Functions:** `keyNameOk`, `keysGiven`, `keysHidden`, `keepKey`, `keepNamed`, `keepGithub`, `keepBeat`, `giveKey`, `keptHiddenIn`, `hideKeptInChats`, `answerKeys`, `tgKeys`
+- **Uses:** `01-setup` (`HttpError`, `ALL_LOCAL`), `03-identity` (`accessList`), `03-secrets` (`keptHidden`, `secretsWrite`, `secretsRead`, `SECRETS_FILE`, `keptSeen`), `14-chats` (`LIMITS`, `saveChats`, `chatData`, `chatWhole`, `chatAsksWhole`), `16-actions` (`action`), `20-beat` (`BEAT_URL_RE`, `beatSave`), `20-journal` (`journalSaid`), `20-mcp` (`hideKeys`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-telegram` (`tgPaired`, `tgCall`, `tgConv`)
 - **Used by:** `14-chats`, `20-mcp`, `21-run-keys`, `21-selfchange`, `21-telegram`, `21-updates`, `24-handler`
 
 ### `20-lessons.mjs`: lessons: what failed, written by code when an operation ends (B2, R48)

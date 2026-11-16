@@ -406,3 +406,20 @@ test('with no eval on record, a plain write Sparkie proposes is a button, and th
     assert.equal(readFileSync(join(fleet.root, 'spark3', 'notes', 'rail.txt'), 'utf8'), 'railed\n');
   } finally { Object.assign(T, was); await fleet.stop(); }
 });
+
+// The final read, K3: the lines a write's ask shows whole on the page are held in memory beside the chat file; a value
+// typed before it was given with /key is hidden there too, as in the chat file.
+test('a value in a write ask\'s lines, given later with /key, is hidden in the page\'s copy held in memory and in the chat file', { timeout: 120000 * SLOW }, async () => {
+  const X = `kz${createHash('sha256').update(`${Date.now()} ${Math.random()}`).digest('hex').slice(0, 30)}`, mark = '(shown whole: what would be hidden here holds signs that run something)';
+  const chat = await newChat();
+  const r = await turn(chat, 'fix the registry note', [[WRITE('~/notes/registry.txt', `token=$(reboot)\nregistry ${X}\n`)]]);
+  const page = r.message.asks?.[0]?.text || '';
+  assert.ok(page.includes(`+ token=$(reboot) ${mark}`) && page.includes(`+ registry ${X}`), page);
+  const k = await say(chat, `/key REGISTRY_NOTE ${X}`);
+  assert.match(k.text, /^Kept your key REGISTRY_NOTE\./);
+  const got = (await api(`/chats/${chat}`)).json, ask = got.messages.find(m => m.asks?.length)?.asks[0].text || '';
+  assert.ok(ask.includes(`+ token=$(reboot) ${mark}`) && ask.includes('+ registry [hidden]'), ask);
+  assert.ok(!JSON.stringify(got).includes(X), JSON.stringify(got).slice(0, 2000));
+  assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(X), 'chats.json');
+  assert.ok(!existsSync(at3('notes/registry.txt')), 'nothing written');
+});
