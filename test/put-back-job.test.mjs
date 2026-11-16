@@ -15,14 +15,16 @@
 // operation, the cancel's answer nor the chat line says it was put back. A `docker run` that made the container but
 // never came back is stopped by the put-back too, and the job then runs again. A start that never becomes ready (the
 // limit set short here, SPARK_CONSOLE_READY_MS) says the start gave up on it, never that it may still be loading, and is
-// stopped. A stand-in docker in front of the fleet's (PATH) holds a stop or a run of the one container a test names.
+// stopped; that limit moves only on the stand-in fleet, and on any other console the variable is ignored (pure, from the
+// limit's own line). A stand-in docker in front of the fleet's (PATH) holds a stop or a run of the one container a test
+// names.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, renameSync, symlinkSync, existsSync, mkdtempSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { T, useFleet, api, waitFor, newChat, say, chatMessages, auditLines, SLOW } from './lib.mjs';
+import { T, useFleet, api, waitFor, newChat, say, chatMessages, auditLines, SLOW, REPO } from './lib.mjs';
 
 // A stop of the container named in ~/.mock/stop-hangs never comes back (putBack gives a stop 90 s); one named in
 // ~/.mock/stop-fails is refused at once and keeps running; a run of the one named in ~/.mock/run-hangs makes it, then
@@ -233,4 +235,15 @@ describe('a failed start puts back only beside what is known to have stopped (A-
       assert.deepEqual([stateOf('spark4', SC), stateOf('spark4', JOB)], ['exited', 'running']);
     } finally { await modelStopped(); await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container: JOB, do: 'stop' } }).catch(() => {}); }
   });
+});
+
+// The limit moves only on the stand-in fleet (ALL_LOCAL, SPARK_CONSOLE_ALL_LOCAL=1, the switch every other test-only
+// setting needs): a stray SPARK_CONSOLE_READY_MS on any other console moves nothing. Pure: the limit's own line, read from 07-jobs.mjs.
+test('the limit moves only on the stand-in fleet: on any other console SPARK_CONSOLE_READY_MS is ignored', () => {
+  const line = /^const START_READY_MS = (.+);$/m.exec(readFileSync(join(REPO, 'service', 'src', '07-jobs.mjs'), 'utf8'))?.[1];
+  assert.ok(line, 'START_READY_MS in 07-jobs.mjs');
+  const limit = (allLocal, value) => new Function('ALL_LOCAL', 'process', `return ${line};`)(allLocal, { env: value == null ? {} : { SPARK_CONSOLE_READY_MS: value } });
+  assert.equal(limit(false, '20000'), 45 * 60000, 'a console that isn’t the stand-in fleet');
+  assert.equal(limit(true, '20000'), 20000, 'the stand-in fleet');
+  assert.deepEqual([limit(true, undefined), limit(true, ''), limit(true, 'soon')], [45 * 60000, 45 * 60000, 45 * 60000], 'not set, or not a number');
 });

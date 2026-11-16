@@ -1304,8 +1304,9 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
-// How long a one-Spark start waits for its model to answer (settable on the stand-in fleet, as the other waits are).
-const START_READY_MS = Number(process.env.SPARK_CONSOLE_READY_MS || 45 * 60000);
+// How long a one-Spark start waits for its model to answer (settable on the stand-in fleet only: ALL_LOCAL, as the
+// press and door waits are; a stray variable on any other console moves nothing).
+const START_READY_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_READY_MS) || 45 * 60000;
 const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
@@ -7497,8 +7498,9 @@ async function restartRoom(viewer, spark, container, model, inv = null) {
   if (!Number.isFinite(avail) || !need) throw new HttpError(409, `free memory on ${spark} is unknown right now, so it can’t be checked`);
   if (avail - KEEP_FREE < need) throw new HttpError(409, `${spark} doesn’t have room for ${container} now (it takes about ${Math.round(need / 1e9)} GB beyond the 8 GB kept free). start_model can make room.`);
 }
-// How long a restart waits for it to answer (settable on the stand-in fleet, as the other waits are).
-const RESTART_WAIT_MS = Number(process.env.SPARK_CONSOLE_RESTART_WAIT_MS || 30 * 60000);
+// How long a restart waits for it to answer (settable on the stand-in fleet only: ALL_LOCAL, as the press and door
+// waits are; a stray variable on any other console moves nothing).
+const RESTART_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_RESTART_WAIT_MS) || 30 * 60000;
 function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
   const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
