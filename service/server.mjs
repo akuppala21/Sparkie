@@ -16394,9 +16394,20 @@ const FILL_BOUNDS = '5,000 files and folders, 8 MiB a file, 64 MiB in all, 255 b
 // The links the repository itself keeps for the stand-in fleet (its model cache): left out of a fill, so the box never
 // holds them and a read back never says they went. A link anywhere else refuses the fill; a read back takes none.
 const FILL_LINKS_LEFT = 'test/mock/root/';
-// The brain eval's held-out set (R47): it tests a brain, so the brain never reads it. A fill leaves it out of the box (git's
-// list and stream alike), a read back never says it went, and a box that holds a file of its name refuses the read.
-const FILL_HELD_OUT = 'test/eval/memory-held-out.json';
+// The eval sets a box may hold: those the console's own source as it runs has under test/eval/ (on Spark 2 the installed
+// copy, ~/spark-console-src, which the installer ships without an eval set that tests a brain, R47; on the stand-in fleet
+// the repository, or for a test the folder SPARK_CONSOLE_SOURCE_DIR names). A fill leaves out of the box any file under
+// test/eval/ that source lacks (git's list and stream alike), a read back never says one went, and a box that holds one
+// refuses the read. Unreadable, it ships none: no file under test/eval/ goes into a box.
+const FILL_EVAL = 'test/eval/';
+const fillSource = () => (ALL_LOCAL && /^\/[^\0]+$/.test(process.env.SPARK_CONSOLE_SOURCE_DIR || '') ? process.env.SPARK_CONSOLE_SOURCE_DIR : selfSource());
+function fillEvalShipped() {
+  const out = new Set(), root = `${fillSource()}/${FILL_EVAL}`;
+  const walk = rel => { for (const d of readdirSync(`${root}${rel}`, { withFileTypes: true })) { if (d.isDirectory()) walk(`${rel}${d.name}/`); else if (d.isFile()) out.add(`${FILL_EVAL}${rel}${d.name}`); } };
+  try { walk(''); } catch { out.clear(); }
+  return out;
+}
+const fillEvalLeft = (path, shipped) => path.startsWith(FILL_EVAL) && !shipped.has(path);
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
@@ -16423,7 +16434,7 @@ const fillBlobId = data => createHash('sha1').update(`blob ${data.length}\0`).up
 // gives it, strict UTF-8; nothing else is ever written anywhere. A link, a hard link, a device, a fifo, a type it
 // doesn't know, a pax key it doesn't know, a damaged header, a path that leaves the folder, a name that differs from
 // another only by case or Unicode form, or one past a bound refuses the whole stream, with the entry's name. Only a
-// link or a file whose path is in `skip` (a fill's FILL_LINKS_LEFT and FILL_HELD_OUT, never a read back's) is passed
+// link or a file whose path is in `skip` (a fill's FILL_LINKS_LEFT and eval sets left out, never a read back's) is passed
 // over, and its bytes (with its extended header) are given back in `drop`, for the fill to leave out of the stream.
 const TAR_UTF8 = new TextDecoder('utf-8', { fatal: true });
 const TAR_TYPES = { 1: 'a hard link', 2: 'a link', 3: 'a device', 4: 'a device', 6: 'a fifo', 7: 'an entry type the reader doesn’t know' };
@@ -16521,7 +16532,7 @@ async function fillTreeList(tree) {
   if (r.code === 3) throw new HttpError(409, `${tree} isn’t a tree in Spark Console’s copy of the repository. Nothing was changed.`);
   if (r.over) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
   if (r.code !== 0) throw new HttpError(502, `git couldn’t list the tree on Spark 2: ${fillShow(r.err.split('\n')[0] || `exit ${r.code}`)}. Nothing was changed.`);
-  const blobs = new Map(), trees = new Set(), links = new Set(), left = new Set(), seen = new Map();
+  const blobs = new Map(), trees = new Set(), links = new Set(), left = new Set(), seen = new Map(), shipped = fillEvalShipped();
   let bytes = 0;
   for (const rec of r.out.toString('latin1').split('\0').filter(Boolean)) {
     const m = /^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t([\s\S]+)$/.exec(rec);
@@ -16541,12 +16552,12 @@ async function fillTreeList(tree) {
     seen.set(key, path);
     if (link) { links.add(path); continue; }
     if (type === 'tree') { trees.add(path); continue; }
-    if (path === FILL_HELD_OUT) { left.add(path); continue; }
+    if (fillEvalLeft(path, shipped)) { left.add(path); continue; }
     if (Number(size) > FILL_MAX_FILE) throw fillRefuse(`a file is over ${FILL_MAX_FILE / 2 ** 20} MiB`, path);
     if ((bytes += Number(size)) > FILL_MAX_BYTES) throw fillRefuse(`the tree’s files are over ${FILL_MAX_BYTES / 2 ** 20} MiB in all`, null);
     blobs.set(path, { mode, oid, size: Number(size) });
   }
-  return { blobs, trees, links, left, bytes };
+  return { blobs, trees, links, left, shipped, bytes };
 }
 // Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
 // Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
@@ -16657,7 +16668,7 @@ async function boxReadBack(viewer, ctx) {
     if (r.code !== 0) throw new HttpError(502, `The box’s folder on ${at} couldn’t be read out whole${r.code === 255 ? ` (${at} didn’t answer)` : ''}: ${fillShow(r.err.split('\n').filter(Boolean).pop() || `exit ${r.code}`)}. Nothing was taken.`);
     const got = tarRead(r.out, FILL_FOLDER), list = await fillTreeList(fill.tree), changes = [];
     for (const f of got.files) {
-      if (f.path === FILL_HELD_OUT) throw fillRefuse('the eval’s held-out set is never taken from a box', `${FILL_FOLDER}/${f.path}`);
+      if (fillEvalLeft(f.path, list.shipped)) throw fillRefuse('an eval set the installer doesn’t ship is never taken from a box', `${FILL_FOLDER}/${f.path}`);
       const blob = fillBlobId(f.data), was = list.blobs.get(f.path);
       if (was && was.oid === blob && was.mode === f.mode) continue;
       // (bytes only: hash-object, no filter, no path given; the id it answers must be the console's own)
@@ -20299,6 +20310,14 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (refused after the net was armed: its unit never started, so nothing ran. The guard is taken away at once, by the
+      // helper's own putback, which finds nothing that differs; never left armed to block the next change there until
+      // its timer)
+      if (a.goesBackAt && a.refused != null) {
+        const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
+        const freed = Boolean(p.putBackAt) || /^there is no guard /.test(p.refused || '');
+        throw new HttpError(409, `Nothing ran on ${at}: ${String(a.refused).replace(/\.$/, '').slice(0, 300)}. ${freed ? `The net it had armed there was taken away again, so ${at} is free for the next change.` : `The net it had armed there goes away by itself at ${netHhmm(a.goesBackAt)}.`}`);
+      }
       // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
       if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);

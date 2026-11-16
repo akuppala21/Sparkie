@@ -452,6 +452,32 @@ test('a lock-out command given minutes is refused in plain words, nothing asked 
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
 });
 
+// From the helper's builder: a call whose unit never started is refused by the helper after the net's own lines. The
+// guard was left armed on the Spark until its timer, and blocked the next change there.
+test('a change whose unit never starts runs nothing: said so, its guard taken away at once, and the next change there runs', { timeout: 180000 * SLOW }, async () => {
+  keysReset();
+  const knob = join(T.fleet.root, 'standin', 'start-fails');
+  const chat = await newChat(), a = await ask(chat, 'add my key on spark 3 though systemd fails', ADD);
+  assert.ok(a.m && a.yes, 'the dangerous ask');
+  mkdirSync(dirname(knob), { recursive: true });
+  writeFileSync(knob, 'sw-root- 226\n');
+  let p;
+  try { p = await press(chat, a.yes.id, a.pair); } finally { rmSync(knob, { force: true }); }
+  assert.equal(p.status, 200, p.text);
+  assert.match(p.json.message.content, /Nothing ran on Spark 3: its unit never started \(systemd answered 226\), so the command never ran\. The net it had armed there was taken away again, so Spark 3 is free for the next change\./, p.json.message.content);
+  const g = newest();
+  assert.equal(g.state, 'never', JSON.stringify(g));
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  assert.ok(!timerWaits(g.id) && !existsSync(join(guardDir(g.id), 'pending')), 'no guard left armed on Spark 3');
+  // (the next change there: asked and, pressed, kept; not refused for a guard still open)
+  const b = await ask(chat, 'add my key on spark 3 right after', ADD);
+  assert.ok(b.m && b.yes, `the second dangerous ask: ${JSON.stringify(sentBack('add my key on spark 3 right after'))}`);
+  const q = await press(chat, b.yes.id, b.pair);
+  assert.equal(q.status, 200, q.text);
+  assert.match(q.json.message.content, /: it is kept\.$/, q.json.message.content);
+  assert.equal(keysNow(), `${KEYS_LINE}${ADDED}\n`);
+});
+
 // It kills this file's console: only the tests that need no fleet come after it.
 test('a restart of Spark Console inside the window puts the change back at start, and says so in the chat it was asked in', { timeout: 300000 * SLOW }, async () => {
   keysReset();
