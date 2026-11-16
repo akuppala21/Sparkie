@@ -256,6 +256,26 @@ function chatAsks(asked, message) {
   if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
   return message;
 }
+// What a chat read from outside, in every turn of it (contract 8.5: "a command quoted from an earlier answer counts as
+// read"): each read by its journal record, {id, label, at} as ctx.reads holds them (workRead, 21-ladder.mjs; the label
+// built by code, the text only in the journal), the newest 40, kept on the chat in chats.json (conv.reads).
+const CHAT_READS = 40;
+function chatReadsKeep(conv, ctx) {
+  const add = (Array.isArray(ctx?.reads) ? ctx.reads : []).filter(r => r && /^j_[0-9a-f]{12}$/.test(String(r.id || '')));
+  if (!add.length) return;
+  const have = Array.isArray(conv.reads) ? conv.reads : [], seen = new Set(have.map(r => r.id));
+  conv.reads = [...have, ...add.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, label: String(r.label || '').slice(0, 120), at: r.at }))].slice(-CHAT_READS);
+}
+// What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
+// (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
+// dangerReadsLoaded ([{label, at, text, cut}]); answers, Sparkie's own earlier answers in the chat ([{at, text}]),
+// which can quote what was read. Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
+function chatEarlier(conv, ctx = {}) {
+  const byId = new Map();
+  for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
+  const answers = (conv?.messages || []).filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  return { reads: dangerReadsLoaded([...byId.values()]), answers };
+}
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',
@@ -580,6 +600,9 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
 function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, spent, asked, failed }) {
+  // (what this turn read from outside stays with its chat for the turns after it, whatever becomes of its request:
+  // chatEarlier, contract 8.5)
+  chatReadsKeep(conv, ctx);
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the

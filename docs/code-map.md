@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27034 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27057 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -191,7 +191,7 @@ Every deploy that comes up healthy is recorded with exactly how it ran (model, i
 - **Wakes:** none
 - **Functions:** `verifiedList`, `httpJson`, `answerTest`, `answers`, `measureSpeed`, `recordVerified`, `adoptRunning`, `verifiedView`
 - **Uses:** `01-setup` (`STATE_DIR`, `sleep`, `ALL_LOCAL`, `nodeById`, `CONFIG`), `03-identity` (`readKept`, `writePrivate`), `05-library` (`withoutShare`, `inventory`, `engineOf`, `imageOf`), `07-jobs` (`step`, `note`), `13-main-model` (`MAIN`, `mainStatus`, `repoOf`), `15-routes` (`servedModel`), `20-desired` (`keyOf`), `21-brain-check` (`checkBrainSoon`), `25-backup-and-start` (`local`)
-- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `11-setups`, `13-main-model`, `16-reads`, `17-changes`, `18-workflows`, `20-came-from`, `20-danger`, `20-mcp`, `20-recall`, `21-ahead`, `21-apps`, `21-power`, `24-handler`
+- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `11-setups`, `13-main-model`, `14-chats`, `16-reads`, `17-changes`, `18-workflows`, `20-came-from`, `20-danger`, `20-mcp`, `20-recall`, `21-ahead`, `21-apps`, `21-power`, `24-handler`
 
 ### `10-recipes.mjs`: recipes
 
@@ -276,12 +276,12 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs, agent-words.test.mjs
-- **Lines:** 704
+- **Lines:** 727
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `pressRan`, `runChoice`, `pressSaid`, `pressPost`, `pressLate`, `chatWholeOne`, `chatWholeShown`, `chatAsks`, `postResult`, `multiStep`, `chatRunning`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `endTask`, `endTasksFrom`, `turnAnswer`, `turnFailed`, `chatReply`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `nodeById`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `taskStepsKept`, `budgetsOf`), `14-tasks` (`taskAnswered`, `taskGone`, `taskRetryLines`, `taskOver`, `taskStopped`, `taskRetry`, `taskJobsOwed`, `taskEnded`, `taskAgain`, `taskAsked`, `taskBudget`, `tgPairingMark`, `taskPark`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-danger` (`dangerLive`, `dangerGone`, `dangerPress`, `dangerParked`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-memory-time` (`memoryTodayLine`), `20-tell` (`tellAgain`, `tellResult`, `tellCarry`, `tell`), `20-tg-approve` (`tgAskOpen`), `21-ahead` (`aheadGive`, `aheadKeep`, `aheadEnd`, `aheadNewRequest`, `AHEAD_SINCE`), `21-brain-rail` (`turnLimits`), `21-ladder` (`workTask`, `workKeep`), `21-telegram` (`tgPaired`, `tgRanLine`, `tg`), `23-http` (`recordFault`)
+- **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `pressRan`, `runChoice`, `pressSaid`, `pressPost`, `pressLate`, `chatWholeOne`, `chatWholeShown`, `chatAsks`, `chatReadsKeep`, `chatEarlier`, `postResult`, `multiStep`, `chatRunning`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `endTask`, `endTasksFrom`, `turnAnswer`, `turnFailed`, `chatReply`
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `nodeById`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `09-verified` (`answers`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `taskStepsKept`, `budgetsOf`), `14-tasks` (`taskAnswered`, `taskGone`, `taskRetryLines`, `taskOver`, `taskStopped`, `taskRetry`, `taskJobsOwed`, `taskEnded`, `taskAgain`, `taskAsked`, `taskBudget`, `tgPairingMark`, `taskPark`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-came-from` (`dangerReadsLoaded`), `20-danger` (`dangerLive`, `dangerGone`, `dangerPress`, `dangerParked`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-memory-time` (`memoryTodayLine`), `20-tell` (`tellAgain`, `tellResult`, `tellCarry`, `tell`), `20-tg-approve` (`tgAskOpen`), `21-ahead` (`aheadGive`, `aheadKeep`, `aheadEnd`, `aheadNewRequest`, `AHEAD_SINCE`), `21-brain-rail` (`turnLimits`), `21-ladder` (`workTask`, `workKeep`), `21-telegram` (`tgPaired`, `tgRanLine`, `tg`), `23-http` (`recordFault`)
 - **Used by:** `07-jobs`, `10-recipes`, `14-rounds`, `14-tasks`, `16-reads`, `18-run-record`, `18-saved-from`, `20-danger`, `20-journal`, `20-keys`, `20-mcp`, `20-memory`, `20-needs`, `20-tg-approve`, `20-words`, `21-ahead`, `21-apps`, `21-brain-check`, `21-brain-rail`, `21-brain-trial`, `21-compare`, `21-guide`, `21-long`, `21-net`, `21-power-box`, `21-power`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
 
 ### `14-rounds.mjs`: Sparkie’s rounds
@@ -480,7 +480,7 @@ Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its by
 - **Wakes:** none
 - **Functions:** `dangerThings`, `dangerWhole`, `cameFrom`, `dangerJournalText`, `dangerReadsLoaded`
 - **Uses:** `09-verified` (`answers`), `20-danger` (`dangerPlain`, `dangerHhmm`), `20-journal` (`journalFiles`, `jLinesOf`, `jParse`, `jFile`)
-- **Used by:** `20-danger`, `21-ahead`
+- **Used by:** `14-chats`, `20-danger`, `21-ahead`
 
 ### `20-danger.mjs`: the dangerous ask: hard to tap by reflex (A10b)
 

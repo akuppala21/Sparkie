@@ -5,7 +5,8 @@
 // (a model's spark.json title and config.json architecture, type and dtype; a model container's spark.model label,
 // which its server answers as its id; a GPU process's name; a failed start's log line; a saved workflow's "when")
 // reaches the outside reads and none of the inside ones, in any form their arguments allow, nor the record ahead of the
-// owner's words (fleetNotes: the console's own words and bare names).
+// owner's words (fleetNotes: the console's own words and bare names). A chat keeps what its turns read from outside
+// (conv.reads) for the turns after it, in the form cameFrom takes (chatEarlier, contract 8.5).
 // The stand-in fleet, with the real root helper rehearsed for Spark 3 (test/rehearsal.mjs, run: true), the stand-in
 // brain told by a script which tools to call. Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test } from 'node:test';
@@ -142,4 +143,22 @@ test('the record ahead of the owner’s words holds no planted sentence: the fai
   const record = `${sent.system}\n${sent.lastUser}`;
   assert.deepEqual(planted(record), [], record.slice(0, 3000));
   assert.match(String(sent.lastUser), new RegExp(`UTC: [a-z-]+ \\S*${esc(MODEL)}\\S* failed \\(operation_log has why\\)`), String(sent.lastUser).slice(0, 3000));
+});
+
+// What a chat read from outside stays with it for its later turns (contract 8.5), in cameFrom's form.
+test('a chat keeps what its turns read from outside (conv.reads), for the turns after it', { timeout: 180000 * SLOW }, async () => {
+  const chat = await newChat();
+  const q = await turn(chat, 'What does notes/howto.txt on Spark 3 say?', [[RUN('cat notes/howto.txt')]]);
+  assert.deepEqual(q.tools.map(t => [t.name, t.ok]), [['run', true]], JSON.stringify(q.tools));
+  await turn(chat, 'thanks, that is all', [[]]);
+  const conv = JSON.parse(readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat);
+  const read = lines(join(T.fleet.journalDir, readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).sort().at(-1))).filter(x => x.k === 'tool' && x.chat === chat && x.act === 'run').at(-1);
+  assert.deepEqual((conv.reads || []).map(r => [r.id, r.label]), [[read.id, 'Run a command on a Spark on Spark 3']], JSON.stringify(conv.reads));
+  // (chatEarlier, lifted: the chat's reads and this request's, once each, loaded; Sparkie's earlier answers)
+  const src = readFileSync(join(REPO, 'service', 'src', '14-chats.mjs'), 'utf8'), m = /^function chatEarlier\(conv, ctx = \{\}\) \{[\s\S]*?\n\}$/m.exec(src);
+  assert.ok(m, 'chatEarlier in 14-chats.mjs');
+  const earlier = new Function(`const dangerReadsLoaded = rs => rs.map(r => ({ label: r.label, at: r.at, text: 'read ' + r.id }));\n${m[0]}\nreturn chatEarlier;`)();
+  const e = earlier(conv, { reads: [conv.reads[0], { id: 'j_000000000002', label: 'Recall', at: '2026-11-16T00:00:00Z' }] });
+  assert.deepEqual(e.reads.map(r => r.text), [`read ${read.id}`, 'read j_000000000002']);
+  assert.ok(e.answers.length >= 2 && e.answers.every(a => typeof a.text === 'string' && a.at), JSON.stringify(e.answers).slice(0, 400));
 });
