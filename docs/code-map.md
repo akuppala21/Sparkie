@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27881 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27887 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -906,12 +906,12 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and don't ask again for this task: …". For the rest of that request (the turns that carry it on), a command of that kind then runs without a button: the kind is a plain change's tool (the program the sorter resolved, 20-sort.mjs), its place (the folder its places are under) and the Spark, all built here by code from the sorter's answer, never from words the brain or a page gave. A command with no kind (not one simple program, or working at the top of the home or outside it) gets "this same command" instead. One list a …
 
 - **Area:** features. **Rules:** R65. **Tests:** ahead.test.mjs, allowed.test.mjs
-- **Lines:** 202
+- **Lines:** 208
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `aheadMark`, `aheadFacts`, `aheadKind`, `aheadIn`, `aheadFits`, `aheadWords`, `aheadWritten`, `aheadWhyNot`, `aheadNot`, `aheadChat`, `aheadOffer`, `aheadGive`, `aheadCover`, `allowedList`, `allowedWords`, `aheadKeep`, `allowedWord`, `aheadEnd`, `aheadEndAll`, `aheadNewRequest`, `aheadShown`
-- **Uses:** `01-setup` (`nodeById`), `03-identity` (`accessList`), `09-verified` (`answers`), `12-status` (`sparkName`), `14-chats` (`chatData`), `16-actions` (`action`), `17-changes` (`brainSparks`, `agentSettings`, `setAgentSettings`), `20-came-from` (`dangerThings`, `cameFrom`, `dangerReadsLoaded`), `20-danger` (`dangerOwnerWords`), `20-mcp` (`maskSecrets`, `audit`), `21-runner` (`runnerProtected`, `runnerOutside`, `runnerWiden`), `21-work` (`lookWords`, `keyWord`), `22-passkey` (`passkeys`), `22-putback` (`putBackHeld`, `putBackRemoval`)
+- **Uses:** `01-setup` (`nodeById`), `03-identity` (`accessList`), `09-verified` (`answers`), `12-status` (`sparkName`), `14-chats` (`chatData`), `16-actions` (`action`), `17-changes` (`brainSparks`, `agentSettings`, `setAgentSettings`), `20-came-from` (`dangerThings`, `cameFrom`, `dangerReadsLoaded`), `20-danger` (`dangerOwnerWords`), `20-mcp` (`maskSecrets`, `audit`), `21-ladder` (`workEarlier`), `21-runner` (`runnerProtected`, `runnerOutside`, `runnerWiden`), `21-work` (`lookWords`, `keyWord`), `22-passkey` (`passkeys`), `22-putback` (`putBackHeld`, `putBackRemoval`)
 - **Used by:** `14-chats`, `20-tg-approve`, `20-words`, `21-ladder`, `21-telegram`, `22-putback`, `24-handler`
 
 ### `21-apps.mjs`: apps kept running (R38)
@@ -1110,7 +1110,7 @@ run hands every command the sorter does not call a look to workChange (21-work.m
 - **Wakes:** none
 - **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `workNames`, `workEarlier`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workHelperPins`, `workScripts`, `workPinLines`, `workScriptText`, `workScriptRecord`, `workRecord`, `workWallLines`, `workScriptLines`, `workStartsIn`, `workLabel`, `workCommandText`, `workUnshownLines`, `workUnknownLines`, `workScriptRecordLines`, `workKeyed`, `workKeyLines`, `workAsk`, `workPressCovers`, `workFetchRun`, `workKeyCode`, `workHeld`, `workChange`, `workAfter`, `workGoneLines`
 - **Uses:** `01-setup` (`nodeById`, `CONFIG`, `ALL_LOCAL`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `07-jobs` (`claimSparks`), `12-status` (`sparkName`), `14-chats` (`chatData`, `chatEarlier`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`pendingChoices`, `question`), `20-came-from` (`dangerThings`, `dangerWhole`, `cameFrom`), `20-danger` (`dangerPlain`, `DANGER_LATE_MS`, `dangerAsk`), `20-desired` (`desired`), `20-journal` (`journal`, `jSub`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-ahead` (`aheadOffer`, `aheadCover`), `21-brain-rail` (`brainRail`), `21-hub` (`HUB_ON`, `hubChange`), `21-long` (`longHeld`, `LONG_MOST`), `21-net` (`NET_ON`, `netChange`), `21-run-keys` (`RUNKEY_SCRIPT_UNPINNED`, `runKeysLabel`, `runKeysNever`, `runKeysOutside`, `RUNKEY_SCRIPT_CHANGED`, `runKeysWhy`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `runnerHomeLines`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`shellWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `lookClean`, `lookWords`, `keyWord`, `whoMayLook`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
-- **Used by:** `14-chats`, `14-rounds`, `21-hub`, `21-root`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
+- **Used by:** `14-chats`, `14-rounds`, `21-ahead`, `21-hub`, `21-root`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
 
 ### `21-long.mjs`: a long command: run with minutes, as an operation (A6)
 
