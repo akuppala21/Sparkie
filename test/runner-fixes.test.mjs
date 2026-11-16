@@ -700,6 +700,32 @@ test('a2: every script a command names is pinned or said not pinned, past the ei
   assert.equal(Object.keys(r.sums).length, 8);
   assert.deepEqual(r.unpinned, ['s9.sh', 's10.sh'], 'the ninth and tenth are said not pinned');
   assert.equal(r.texts['~/work/s1.sh'].text, 'echo 0\n', 'each pinned script\'s text, as hashed');
+  // (one the look found reached through a link, "L": the root helper copies no such script, so it is said not pinned)
+  const L = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', 'CONFIG', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
+    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts };'].join('\n'))(
+    async (n, verb, o) => o,
+    o => ({ kind: 'ran', output: o.words.map((w, i) => (i === 1 ? `h${i} L` : `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1 7\n${Buffer.from(`echo ${i}\n`).toString('base64')}`)).join('\n') }),
+    createHash, s => `'${s}'`, 30, '~/work', { user: 'owner' });
+  const l = await L.workScripts({ id: 'spark3' }, ['a.sh', 'b.sh'], '~/work', 'bash a.sh && bash b.sh');
+  assert.deepEqual([Object.keys(l.sums), l.unpinned, l.unread], [['~/work/a.sh'], ['~/work/b.sh'], undefined], JSON.stringify(l));
+});
+
+// The root helper refuses a --script reached through a link anywhere in its path; the ask's look finds it first, says
+// it is not pinned, and its press runs it by its path, never handing it to the helper (which would refuse the run).
+test('a2: a script reached through a link is said not pinned on the ask, and its press runs it by its path', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('notes/a2real'), { recursive: true });
+  writeFileSync(at3('notes/a2real/l.sh'), 'echo linked > notes/a2l-out.txt\n');
+  if (!existsSync(at3('notes/a2lnk'))) symlinkSync('a2real', at3('notes/a2lnk'));
+  const chat = await newChat(), words = 'run the linked script', t = await turn(chat, words, [[RUN('bash notes/a2lnk/l.sh')]]);
+  const q = String(sentBack(words)[0]?.question || '');
+  assert.match(q, /\nIt runs ~\/notes\/a2lnk\/l\.sh; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen\.\n/, q);
+  assert.ok(!q.includes('│ echo linked'), 'no text shown as pinned');
+  const yes = t.choices.find(c => c.label === 'Run it');
+  assert.ok(yes, JSON.stringify(t.choices));
+  const p = await choose(chat, yes.id);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('notes/a2l-out.txt'), 'linked\n', 'it ran');
+  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\//.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
 });
 
 // P-5 (A-16 beside it): a key went to code no hash pins: a module, a build, a one-liner's file. It is refused now,

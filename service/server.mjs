@@ -19949,8 +19949,9 @@ function workScriptPaths(scripts, dir, command) {
 // than a look may. With each hash, the script's text as that look read it (its first WORK_TEXT bytes; for a script no
 // longer than that the hash is of those very bytes), and how many lines it has, for the button (workScriptLines).
 // {sums: {path: SHA-256, or null when it isn't a file there}, texts: {path: {text, lines, whole}}, unpinned (the names
-// not pinned)}; or, when the look gave no answer of its own (no helper, walls not proven, refused, the Spark silent), no
-// sums and unread: why. Every script named is in sums or unpinned, past the eighth too.
+// not pinned: past the eighth, reached through a link, or one the root helper can't copy)}; or, when the look gave no
+// answer of its own (no helper, walls not proven, refused, the Spark silent), no sums and unread: why. Every script
+// named is in sums or unpinned, past the eighth too.
 const WORK_TEXT = 256 * 1024, WORK_TEXT_LINES = 40, WORK_SCRIPT_MAX = 4 * 1024 * 1024;
 // Whether the root helper can pin a script (its --script, deploy/spark-console-root): ~/ and a file, or a whole path in
 // the owner's home, each part of A-Z a-z 0-9 . _ @ + -, no . or .. part.
@@ -19967,14 +19968,16 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
   if (!paths.length) return { sums: {}, texts: {}, unpinned };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
-  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}) && z=$(stat -c %s -- ${word(s)}); then printf 'h${i} %s %s %s\\n' "\${h%% *}" "\${n// /}" "$z"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
+  // (a file reached through a link, anywhere in its path, is "L": the root helper copies no such script, R72)
+  const look = paths.map((s, i) => `if [ -f ${word(s)} ] && { [ -L ${word(s)} ] || [ "$(realpath -e -- ${word(s)} 2>/dev/null)" != "$(realpath -s -- ${word(s)} 2>/dev/null)" ]; }; then echo 'h${i} L'; elif [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}) && z=$(stat -c %s -- ${word(s)}); then printf 'h${i} %s %s %s\\n' "\${h%% *}" "\${n// /}" "$z"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
-  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+) (\d+)\n([A-Za-z0-9+/=]*)|-)$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), size: Number(m[4]), bytes: Buffer.from(m[5], 'base64') } : null]));
+  const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+) (\d+)\n([A-Za-z0-9+/=]*)|-|(L))$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), size: Number(m[4]), bytes: Buffer.from(m[5], 'base64') } : m[6] ? 'linked' : null]));
   if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   const sums = {}, texts = {};
   for (const [i, s] of paths.entries()) {
     const g = got.get(i);
     if (!g) { sums[s] = null; continue; }
+    if (g === 'linked') { unpinned.push(s); continue; }
     // (read whole: the hash is of the bytes read, so the text shown is what was hashed; one that changed between the
     // two reads of the look is said not pinned)
     const whole = g.bytes.length < WORK_TEXT;
