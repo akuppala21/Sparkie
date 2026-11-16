@@ -116,6 +116,7 @@ function writeShown(at, place, old, text, from, to) {
 }
 
 async function writeFile(input, viewer, ctx = {}) {
+  if (input.on === 'box') return boxWrite(input, viewer, ctx);   // (in the box, 21-box.mjs: written from inside it)
   whoMayLook(viewer, ctx);
   const node = sparkOf(viewer, input.on), text = String(input.text), { from, to } = input, no = (code, why) => new HttpError(code, `${why} Nothing was written.`);
   if ((from === undefined) !== (to === undefined)) throw no(400, 'from and to go together: lines from to to are replaced (to = from - 1 puts the text before line from).');
@@ -163,9 +164,9 @@ async function writeFile(input, viewer, ctx = {}) {
 
 action({
   name: 'write_file', title: 'Write a file on a Spark', kind: 'read', changes: true, scope: 'fleet:read', who: 'owner', group: 'reading',
-  description: 'Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on Spark 2, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; a key is given by its name, never in the text.',
+  description: 'Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on Spark 2, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; a key is given by its name, never in the text. With on "box", a file in your box under /work, written from inside it.',
   input: { type: 'object', properties: {
-    on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
+    on: { ...sparkArg, box: true, description: 'Where: a Spark id, like spark3 ("Spark 3" works too), or "box".' },
     path: { type: 'string', maxLength: 1024, pattern: '^[^\\x00-\\x1f]+$', description: 'The file: ~/…, a whole path, or a path from ~/work.' },
     text: { type: 'string', maxLength: WRITE_MAX, pattern: '^[^\\x00]*$', description: 'The whole file, or the lines that go in place of from to to.' },
     from: { type: 'integer', minimum: 1, maximum: 1000000, description: 'The first line replaced; with to.' },
