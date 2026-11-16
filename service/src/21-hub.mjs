@@ -135,6 +135,10 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
+  // (no root helper on Spark 2, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
+  // nothing is asked)
+  const first = await netHelperFirst(node);
+  if (first.needs) return first.needs;
   // The owner's own call with no chat to show a button in (the API): nothing is asked there.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
   return hubAsk(node, command, sorted, viewer, ctx, dir);

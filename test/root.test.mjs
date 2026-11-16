@@ -21,7 +21,8 @@ const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 const sha = s => createHash('sha256').update(s).digest('hex');
 const SWITCH = () => join(T.fleet.root, 'var/lib/spark-console/root-on');
-useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
+// (a root command's time limit is the helper's own, 30 minutes; here 15 seconds, so one can be seen ended at it)
+useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_ROOT: '1', SPARK_CONSOLE_ROOT_SECONDS: '15', SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     // (root's switch, as the owner's one-time command with --with-root writes it: 0600, the day and this helper's SHA-256)
@@ -92,6 +93,26 @@ test('pressed: it runs through the root helper’s root verb inside the net (the
   const start = journalLines().find(x => x.id === g.record && x.start);
   assert.equal(start.root, true, JSON.stringify(start));
   assert.equal(start.unit, `sw-root-${g.id}`);
+});
+
+test('as root: a script is never run (its text isn’t on the button); the time limit is the helper’s own, said on the button, and one ended at it says so; with no root helper on a Spark, the owner’s command and nothing asked', { timeout: 180000 * SLOW }, async () => {
+  const c1 = await newChat(), s = await ask(c1, 'as root on spark 3, run the fix script', 'bash ~/work/fix.sh');
+  assert.equal(s.m, undefined, 'nothing asked');
+  assert.match(sentBack('as root on spark 3, run the fix script')[0]?.error || '', /^Nothing was asked or run: as root, give the command itself, not a script \(~\/work\/fix\.sh\)/);
+  const c2 = await newChat(), t = await ask(c2, 'as root on spark 3, wait a while in ~', 'sleep 30 && ls ~');
+  assert.ok(t.m, 'the dangerous ask');
+  const shown = t.m.danger.lines.join('\n');
+  assert.ok(shown.includes('\nIt may run 15 seconds; at that limit it is ended, and the result says so.\nAs root, ~ is /root, not your own home.'), shown);
+  const p = await press(c2, t.yes.id, t.pair);
+  assert.equal(p.status, 200, p.text);
+  assert.match(p.json.message.content, /The command itself was ended at its time limit \(15 seconds\), before it finished\./, p.json.message.content);
+  const g = netRecord().at(-1), start = journalLines().find(x => x.id === g.record && x.start);
+  assert.equal(start.seconds, 15, JSON.stringify(start));
+  // (no root helper on Spark 4: the owner's one command, and nothing is asked)
+  const n = await api('/actions/run', { method: 'POST', body: { on: 'spark4', command: 'printf x > rooted4.txt', dir: '~', root: true } });
+  assert.equal(n.status, 200, n.text);
+  assert.equal(n.json.ran, false, n.text);
+  assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh 4'?$/, n.text);
 });
 
 test('the lock-out class as root: ROOT on Spark 3 · CAN LOCK YOU OUT, and the helper is called with --lockout', { timeout: 120000 * SLOW }, async () => {

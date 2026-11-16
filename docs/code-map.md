@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25676 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25706 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -276,7 +276,7 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
-- **Lines:** 655
+- **Lines:** 656
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
@@ -1078,12 +1078,12 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or changes the …
 
 - **Area:** features. **Rules:** R1, R60, R61. **Tests:** hub-change.test.mjs
-- **Lines:** 206
+- **Lines:** 210
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `hubStarts`, `hubPrograms`, `hubEsc`, `hubBrainNames`, `hubRefuses`, `hubChange`, `hubAsk`, `hubSelf`, `hubRoute`, `hubJson`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `STATE_DIR`, `HttpError`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `13-main-model` (`MAIN`, `repoOf`, `mainStatus`), `16-actions` (`action`), `17-changes` (`agentSettings`, `question`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`, `consoleOrigin`), `21-ladder` (`workAsks`, `workScripts`, `workScriptLines`, `workRecord`), `21-net` (`netGuarded`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `RUNNER_SECONDS`, `RUNNER_PROTECT`), `21-work` (`shellWords`, `whoMayLook`), `23-http` (`API_SOCKET`), `25-backup-and-start` (`door`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `STATE_DIR`, `HttpError`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `13-main-model` (`MAIN`, `repoOf`, `mainStatus`), `16-actions` (`action`), `17-changes` (`agentSettings`, `question`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`, `consoleOrigin`), `21-ladder` (`workAsks`, `workScripts`, `workScriptLines`, `workRecord`), `21-net` (`netGuarded`, `netHelperFirst`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `RUNNER_SECONDS`, `RUNNER_PROTECT`), `21-work` (`shellWords`, `whoMayLook`), `23-http` (`API_SOCKET`), `25-backup-and-start` (`door`)
 - **Used by:** `21-ladder`, `21-work`
 
 ### `21-ladder.mjs`: the ladder: a change on a Spark at once, asked first, or not done (A7c)
@@ -1117,12 +1117,12 @@ run with minutes (design A 2.10, step 6) runs one command as an operation of typ
 A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8). run's ladder (21-ladder.mjs) hands it here. It is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's claim (R13) is taken; the ways in that work now …
 
 - **Area:** features. **Rules:** R60, R54, R61, R13, R43. **Tests:** net.test.mjs
-- **Lines:** 352
+- **Lines:** 372
 - **Owns:** net.json (writers: netSave)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `netHhmm`, `netNow`, `netSave`, `netMark`, `netOpenOn`, `netHold`, `netUnhold`, `netTell`, `netTailnet`, `netProbe`, `netRestart`, `netStillLost`, `netStillWords`, `netGoneWords`, `netAfterTime`, `netOutput`, `netFact`, `netChange`, `netRun`, `netGuarded`, `netPutbackWord`, `netRecover`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `nodeById`, `HttpError`), `02-ssh` (`fields`, `run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `tripBreaker`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`), `21-guard` (`guardAnswer`, `guardCall`), `21-runner` (`RUNNER_SECONDS`, `RUNNER_DIR`, `runnerNever`), `21-work` (`helperCall`, `needsOwner`, `lookClean`, `forBrain`)
+- **Functions:** `netHhmm`, `netNow`, `netSave`, `netMark`, `netOpenOn`, `netHold`, `netUnhold`, `netTell`, `netTailnet`, `netProbe`, `netRestart`, `netStillLost`, `netStillWords`, `netGoneWords`, `netAfterTime`, `netOutput`, `netFact`, `netChange`, `netHelperFirst`, `netTimeWords`, `netRun`, `netGuarded`, `netPutbackWord`, `netRecover`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `nodeById`, `HttpError`), `02-ssh` (`fields`, `run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `tripBreaker`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`), `21-guard` (`guardAnswer`, `guardCall`), `21-runner` (`RUNNER_SECONDS`, `RUNNER_DIR`, `runnerNever`), `21-work` (`helperCall`, `helperNeeds`, `helperAnswer`, `needsOwner`, `lookClean`, `forBrain`)
 - **Used by:** `19-watcher`, `20-words`, `21-hub`, `21-ladder`, `21-root`, `21-telegram`, `21-write`
 
 ### `21-power-pair.mjs`: a start wakes both Sparks a model across two needs (R56)
@@ -1157,12 +1157,12 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark holding the brain, never with a key, minutes, fleet or gpu, never while changes are paused. It is never run at once, whatever the owner's words, and never covered by a go-ahead or the standing list: it is always the dangerous ask (20-danger.mjs, R54), "ROOT on Spark 3" (and "CAN LOCK YOU OUT" for the lock-out class), and only that ask's press runs it, through the net's seam (netGuarded, 21-net.mjs) and the root helper's `root --net` (--lockout for the lock-out class), armed in …
 
 - **Area:** features. **Rules:** R70, R60, R54. **Tests:** root.test.mjs
-- **Lines:** 54
+- **Lines:** 59
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `rootLine`, `rootOff`, `rootChange`
-- **Uses:** `01-setup` (`HttpError`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `action`), `17-changes` (`brainSparks`, `agentSettings`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-net` (`netGuarded`, `netOpenOn`, `netHhmm`, `netFact`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `RUNNER_SECONDS`), `21-work` (`helperCall`, `ROOT_ON`, `whoMayLook`, `lookWords`, `needsOwner`)
+- **Functions:** `rootLine`, `rootSeconds`, `rootChange`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `action`), `17-changes` (`brainSparks`, `agentSettings`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-net` (`netGuarded`, `netOpenOn`, `netHhmm`, `netHelperFirst`, `netFact`, `netTimeWords`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`), `21-work` (`ROOT_ON`, `whoMayLook`, `lookWords`, `needsOwner`)
 - **Used by:** `21-runner`, `21-work`
 
 ### `21-run-keys.mjs`: a kept key, by its name, in one change's environment (A14b)

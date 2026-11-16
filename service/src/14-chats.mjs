@@ -54,7 +54,8 @@ function ownChat(viewer, id) {
 
 // What Sparkie never changes, and how the changes that could lock the owner out are made: in its prompt and in what it
 // says it can do (abilities, 16-reads.mjs). Written for the pieces turned on (the lock-out net, Spark 2, root: M2w).
-const NEVER_CHANGES = 'keys or who has access';
+// (whose keys and access: Spark Console's own; the users and keys of a Spark change only inside the net, CHANGES_ASKED)
+const NEVER_CHANGES = 'Spark Console’s own keys, or who may use Spark Console';
 const CHANGES_ASKED = 'On a compute Spark a change to SSH, Tailscale, the firewall or users runs only inside the put-back net, after the owner’s press. A command as root runs only on a compute Spark where the owner turned root on, always asked and always inside that net. On Spark 2 every change is asked and runs inside the net; one that could lock the owner out is refused, and so is a long one (minutes).';
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
 // (One a line, in this order: the prompt and the brain's catalog say them so.)

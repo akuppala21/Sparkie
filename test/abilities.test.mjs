@@ -18,7 +18,7 @@ async function viaApi() {
   assert.equal(r.status, 200, r.text);
   return r.json;
 }
-const NEVER = 'keys or who has access';
+const NEVER = 'Spark Console’s own keys, or who may use Spark Console';
 
 test('sparkie_setup {about: "abilities"}: every action by its title, from the list as it is now, with the limits; the same through POST /actions and the agent door', { timeout: 60000 * SLOW }, async () => {
   const x = await viaApi();

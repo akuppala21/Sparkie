@@ -22,9 +22,9 @@ async function runInChat(words, on, command) {
 
 test('the pieces on: the prompt, the abilities text and run\'s text say what is true, and the code does it', { timeout: 240000 * SLOW }, async () => {
   const sent = await brainSent(T.fleet), runText = sent.tools.find(t => t.function?.name === 'run')?.function?.description || '';
-  assert.ok(sent.system.includes(`You never change keys or who has access, and never turn Spark Console off. If asked, say the owner does that by hand. ${ASKED}`), sent.system);
+  assert.ok(sent.system.includes(`You never change Spark Console’s own keys, or who may use Spark Console, and never turn Spark Console off. If asked, say the owner does that by hand. ${ASKED}`), sent.system);
   const ab = (await api('/actions/sparkie_setup', { method: 'POST', body: { about: 'abilities' } })).json;
-  assert.deepEqual([ab.limits[0], ab.limits.at(-1)], ['Sparkie never changes keys or who has access, and never turns Spark Console off. The owner does those by hand.', ASKED]);
+  assert.deepEqual([ab.limits[0], ab.limits.at(-1)], ['Sparkie never changes Spark Console’s own keys, or who may use Spark Console, and never turns Spark Console off. The owner does those by hand.', ASKED]);
   assert.ok(runText.includes(' On Spark 2 every change is asked, and one that could lock the owner out is refused. On a compute Spark anything that could lock the owner out runs only inside the put-back net, after the owner’s press; as root (root: true, never sudo) only where the owner turned root on, always asked and always inside that net.'), runText);
   assert.equal((await runInChat('fix the keys on spark 3', 'spark3', 'chmod 600 ~/.ssh/authorized_keys')).tail, 'Asked first, as its own message: nothing ran yet.');
   assert.equal((await runInChat('fix the notes on spark 2', 'spark2', 'touch notes/x.txt')).tail, 'Asked first, with a button: nothing ran yet.');
