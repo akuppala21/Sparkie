@@ -11,7 +11,8 @@
 // is asked, and everything the other rounds can add: every action's name, description, inputs and group, the cap, the
 // groups' words and the lines that follow tools, the brain's setup: R46; and what a turn in the paired Telegram chat is
 // sent: R52), so a later build can say whether what the brain reads has changed. Without git (a copy with no .git
-// folder) tree and commit are left out; off GitHub, run is. After the suite it prints the seconds each test file took.
+// folder) commit is left out, and tree is the one the runner hands in (SPARK_TEST_TREE), else left out too; off
+// GitHub, run is left out. After the suite it prints the seconds each test file took.
 //
 // SPARK_TEST_MAP=1 also records which test files run each function of the service's parts, for picking the tests a
 // change needs (tools/affected.mjs): every file runs with Node's own coverage, and a passing run writes
@@ -109,6 +110,15 @@ async function telegramSent(start) {
 }
 export const brainReadsOf = ({ system, tools, params = null, catalog = null }) => createHash('sha256').update(JSON.stringify({ system, tools, params, catalog })).digest('hex');
 
+// What was tested: git's tree and commit where there is git (gitFields); in a copy without it (a whole run on a Spark),
+// the tree the runner hands in, SPARK_TEST_TREE (git's hash of the files it copied, taken as gitFields takes it), and no
+// commit. pull.sh finds the installed build's commit on main from that tree, so a build installed from the Mac is never
+// taken as older than a tested one it can't place (R29, R58).
+export function testedFiles(git, env = process.env) {
+  if (git?.tree) return git;
+  return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(env.SPARK_TEST_TREE || '') ? { tree: env.SPARK_TEST_TREE } : {};
+}
+
 // The lock for the build the stand-in fleet runs. `git` is what gitFields gave before the suite ran. `evalSet` is the eval's
 // case set this tree holds (its version and each case's id and expect), so a build reads its own set (R52).
 export async function lockFor(fleet, { git = gitFields(), env = process.env } = {}) {
@@ -116,7 +126,7 @@ export async function lockFor(fleet, { git = gitFields(), env = process.env } = 
   const { build } = await (await fetch(`${fleet.base}/health`)).json();
   const run = runOf(env);
   return { build, testedAt: new Date().toISOString(), versions: Object.fromEntries(workflows.map(w => [w.id, w.version])),
-    ...git, ...(run ? { run } : {}), brainReads: brainReadsOf(await brainSent(fleet)), evalSet: evalSetOf() };
+    ...testedFiles(git, env), ...(run ? { run } : {}), brainReads: brainReadsOf(await brainSent(fleet)), evalSet: evalSetOf() };
 }
 
 // Run in each test file's process before the file itself (Node's test runner passes --import on to every file): the

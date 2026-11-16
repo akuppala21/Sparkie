@@ -2,8 +2,8 @@
 // `run` and `brainReads`, the same on a second write; a changed tool description, tool input or system prompt changes
 // `brainReads`; a character whose bytes reach the stand-in brain in two pieces is recorded whole, so the mark of one
 // tree is the same every time; the lock leaves itself out of `tree`, names `commit` only when HEAD holds exactly the
-// files, and doesn't touch git's own index; `run` only on GitHub; the service still counts every workflow of the build
-// as tested with the new lock.
+// files, and doesn't touch git's own index; without git it names the runner's `SPARK_TEST_TREE` as `tree`; `run` only
+// on GitHub; the service still counts every workflow of the build as tested with the new lock.
 //
 // The tested mark, test/lock.mjs, without running the whole suite: the lock it writes for the stand-in fleet's build
 // names the files tested (tree, and commit when they are exactly a commit's), the GitHub run (only on GitHub) and what
@@ -103,6 +103,22 @@ describe('the lock', () => {
       assert.ok(workflows.length >= 5);
       for (const w of workflows) assert.equal(w.tested, true, w.id);
     } finally { await other.stop(); }
+  });
+
+  // (the final read's U1: a lock from a whole run on a Spark named no tree, so pull.sh couldn't place a build installed
+  // from the Mac on main and offered an older tested build as newer)
+  test('where there is no git (a whole run on a Spark), the lock names the tree the runner hands in, SPARK_TEST_TREE, and no commit', { timeout: 120000 * SLOW }, async () => {
+    const tree = 'c'.repeat(40);
+    const lock = await lockFor(T.fleet, { git: {}, env: { SPARK_TEST_TREE: tree } });
+    assert.equal(lock.tree, tree);
+    assert.equal('commit' in lock, false);
+    const { testedFiles } = await import('./lock.mjs');
+    // git's own where there is git; a value of another shape is no tree; git's sha-256 trees too
+    const both = { tree: 'a'.repeat(40), commit: 'b'.repeat(40) };
+    assert.deepEqual(testedFiles(both, { SPARK_TEST_TREE: tree }), both);
+    for (const bad of ['', 'c'.repeat(39), `${tree}\n`, 'C'.repeat(40), '../x', `${tree} ${tree}`]) assert.deepEqual(testedFiles({}, { SPARK_TEST_TREE: bad }), {}, JSON.stringify(bad));
+    assert.deepEqual(testedFiles({}, { SPARK_TEST_TREE: 'd'.repeat(64) }), { tree: 'd'.repeat(64) });
+    assert.deepEqual(testedFiles({}, {}), {});
   });
 });
 

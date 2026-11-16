@@ -7,7 +7,7 @@
 // Nothing newer: said, nothing asked. An agent's
 // own call shows nothing and is told the owner asks in their own chat; the tree can't be passed in. The seventh read's
 // lines: a build that changes only the eval's cases is said to (with the eval for it on those, and that Sparkie then
-// asks before every change); what differs isn't known when the installed commit isn't in Spark 2's copy; "tested"
+// asks before every change); when the installed commit can't be told nothing is asked (the final read's U1); "tested"
 // names its day; a second yes while an install asked from chat is going is refused, and the first one's result is
 // still told; a yes after that very tree was installed another way says so; a check at the yes that takes longer than
 // the press waits is answered at once and what comes of it is told in the chat; install_update is no saved
@@ -190,15 +190,24 @@ describe('install_update', { concurrency: 1 }, () => {
     assert.equal((await press(a.chat, a.no.id)).status, 200);
   });
 
-  // (Later 1)
-  test('when the installed build’s commit isn’t in Spark 2’s copy, the ask says what differs isn’t known', async () => {
+  // (Later 1, turned round by the final read's U1: an installed commit that can't be told is no longer taken as older
+  // than the newest tested build, so nothing is asked; whenever a build is offered, what differs is known)
+  test('when the installed build’s commit can’t be told (its lock’s commit isn’t in Spark 2’s copy and its tree isn’t on main), nothing is asked and it says so; with its tree on main, the ask names what differs', async () => {
     const lock = join(HOME, 'spark-console-service', 'workflows.lock.json'), was = readFileSync(lock, 'utf8');
     writeFileSync(lock, JSON.stringify({ build: 'd'.repeat(12), tree: 'd'.repeat(40), commit: 'd'.repeat(40), brainReads: READS_A }));
     try {
+      script(ASK_INSTALL);
+      const chat = await newChat(), before = installLog();
+      const r = await say(chat, 'install the newest build');
+      assert.ok(!(await chatMessages(chat)).some(m => m.danger), 'no ask');
+      assert.match(r.text, /install_update said: .*whether it is newer than the build installed now can’t be told/, r.text);
+      assert.equal(installLog(), before);
+      // (its lock's commit isn't in the copy, but its tree is on main: placed there, and what differs is named)
+      writeFileSync(lock, JSON.stringify({ ...JSON.parse(was), commit: 'd'.repeat(40) }));
       const a = await asking();
       assert.ok(a.ask, JSON.stringify(a.msgs.slice(-3)));
-      assert.match(a.ask.content, /What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository\./);
-      assert.doesNotMatch(a.ask.content, /No file differs/);
+      assert.match(a.ask.content, /files differ from the build installed now: .*service\/server\.mjs/);
+      assert.doesNotMatch(a.ask.content, /isn’t known/);
       assert.equal((await press(a.chat, a.no.id)).status, 200);
     } finally { writeFileSync(lock, was); }
   });

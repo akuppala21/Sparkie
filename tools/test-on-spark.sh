@@ -19,8 +19,10 @@
 # pass also leaves <name>.lock.json, which names the build it tested (copy it to service/ only when that build is the
 # one in the folder), and <name>.affected-map.json, which test files ran each function (tools/affected.mjs): the whole
 # suite runs with SPARK_TEST_MAP=1 and SPARK_TEST_TREE, git's hash of the files copied (taken here before and after
-# the copy, kept only when the two agree). An empty file ../spark-test-runs/run-now still means "the main folder's
-# whole suite", answered in latest.log, done and workflows.lock.json. tools/land.mjs queues a request the same way.
+# the copy, kept only when the two agree), which the map and the lock name as their tree (the copy has no .git: without
+# it the lock names none, and pull.sh can't place that build on main). An empty file ../spark-test-runs/run-now still
+# means "the main folder's whole suite", answered in latest.log, done and workflows.lock.json. tools/land.mjs queues a
+# request the same way.
 # On the Spark each queue folder has its own copy of a work folder, ~/sparkie-tests-<folder>-<queue folder> (2026-11-15:
 # two queues ran the main folder on one Spark at once in ~/sparkie-tests-spark-console; the later copy put newer code
 # under the earlier run, whose fleets started after it found no lock for their build). A queue runs one at a time.

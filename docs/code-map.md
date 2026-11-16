@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25790 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25795 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1234,10 +1234,10 @@ Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long 
 
 ### `21-updates.mjs`: Spark Console's own updates, from chat: is a newer tested build out (design C 2.3, step 5)
 
-check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer; whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update is not in INSIDE_READS). It installs and changes nothing; the token never leaves pull.sh. When GitHub refuses the …
+check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer (never when the installed build's commit on main can't be told: it says so); whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update is not in INSIDE_READS). It installs and …
 
 - **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs
-- **Lines:** 306
+- **Lines:** 311
 - **Actions:** `install_update`, `check_update`
 - **Owns:** update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 - **Timers:** updResultLook (every 10 s while an install asked from chat waits for its result)
