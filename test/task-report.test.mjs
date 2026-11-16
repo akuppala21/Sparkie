@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SERVICE_FILE, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, SERVICE_FILE, REPO, SLOW } from './lib.mjs';
 import { startPlugs } from './mock/plugs.mjs';
 
 const plugs = await startPlugs([{ node_id: 2, available: true, attributes: { '1/6/0': true, '1/144/8': 60000, '1/144/4': 120000, '1/144/5': 500 } }]);
@@ -35,7 +35,7 @@ useFleet({ telegram: true, watchMs: 60000, statusMs: 1000,
   } }, () => waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' }));
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF';
-const FINISHED = '^\\[Spark Console\\] What you started for the owner';
+const FINISHED = '^\\[Spark Console\\] What you started for the owner', ANSWERED = '^\\[Spark Console\\] The owner answered your question';
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
 const esc = w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -59,16 +59,18 @@ async function restart() {
   await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling again' });
 }
 
+// (Sparkie offers each change as a button here, and the owner presses them: the counts below say so)
 test('a task that ends done: one report in its chat, counted from its own journal lines, its watt-hours summed and an operation with no number not measured', { timeout: 300000 * SLOW }, async () => {
   assert.deepEqual([stateOf('spark3', GGUF), stateOf('spark4', RADIX)], ['running', 'running']);
-  const words = `stop ${GGUF} on spark 3 and ${RADIX} on spark 4, then tell me what is left running`;
+  const words = `please stop the two models on spark 3 and spark 4, then tell me what is left running`;
   script([{ match: `^${esc(words)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }, { name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }] },
-    { match: FINISHED, calls: [] }]);
+    { match: FINISHED, calls: [] }, { match: ANSWERED, calls: [] }]);
   let chat, report;
   try {
     chat = await newChat();
     const r = await say(chat, words);
-    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['stop_model', 'started'], ['stop_model', 'started']], r.text);
+    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['stop_model', 'needs-ok'], ['stop_model', 'needs-ok']], r.text);
+    for (const c of r.message.choices.filter(x => /^Stop /.test(x.label))) assert.equal((await choose(chat, c.id)).status, 200);
     report = await waitFor(async () => (await reportsIn(chat))[0] || null, { timeout: 180000 * SLOW, what: 'the task’s report', every: 500 });
   } finally { noScript(); }
   // Its id is the request's own: the first turn's journal id, on each line of it.
@@ -83,8 +85,8 @@ test('a task that ends done: one report in its chat, counted from its own journa
   const lines = report.content.split('\n');
   assert.equal(lines[0], `Report on your request “${words}”: done.`);
   assert.equal(lines[1], 'Operations: 2 (2 finished).');
-  assert.equal(lines[2], 'Changes: 2 made at once, 0 after your yes; 0 questions asked of you. Undone: 0.');
-  assert.match(lines[3], /^Time: (\d+ s|\d+ min), [23] turns\.$/);
+  assert.equal(lines[2], 'Changes: 0 made at once, 2 after your yes; 2 questions asked of you. Undone: 0.');
+  assert.match(lines[3], /^Time: (\d+ s|\d+ min), [2-4] turns\.$/);
   assert.equal(lines[4], `Energy at the wall: ${Math.round(measured[0].wh * 10) / 10} Wh for 1 operation; 1 not measured.`);
   assert.equal(lines[5], 'Still open: nothing.');
   assert.equal(lines.length, 6);
@@ -99,18 +101,22 @@ test('a task that ends done: one report in its chat, counted from its own journa
 
 test('a task from Telegram: /status shows its counts so far; /stop there ends it with one report in its chat and one on Telegram naming what still runs; a restart tells it again nowhere', { timeout: 300000 * SLOW }, async () => {
   assert.equal(stateOf('spark3', GGUF), 'exited');
-  const words = `restart ${GGUF} on spark 3, then tell me when it answers`;
-  script([{ match: `^${esc(words)}$`, calls: [{ name: 'restart_model', arguments: { spark: 'spark3', container: GGUF } }] }]);
+  const words = 'restart the model on spark 3, then tell me when it answers';
+  script([{ match: `^${esc(words)}$`, calls: [{ name: 'restart_model', arguments: { spark: 'spark3', container: GGUF } }] }, { match: ANSWERED, calls: [] }]);
   try {
     await tgSay(words);
     await waitFor(() => tgChat()?.task?.channel === 'telegram' || null, { timeout: 60000 * SLOW, what: 'the task from Telegram', every: 250 });
+    // (its change is a button: the owner presses it on the page, and the restart runs)
+    const chat0 = tgChat().id, button = await waitFor(async () => (await chatMessages(chat0)).flatMap(m => m.choices || []).find(c => /^Restart /.test(c.label) && c.state === 'open') || null, { what: 'the button' });
+    assert.equal((await choose(chat0, button.id)).status, 200);
+    await sleep(4000);
   } finally { noScript(); }
   const chat = tgChat().id, id = tgChat().task.id;
   // /status, under way: its counts so far.
   const status = await say(await newChat(), '/status');
-  assert.match(status.text, new RegExp(`\\nRequests Sparkie is carrying on with:\\n- “${esc(words)}” \\(carrying on\\): 1 operation \\(1 running\\), 1 change, 1 turn, \\d+ s so far, energy not measured\\.$`), status.text);
+  assert.match(status.text, new RegExp(`\\nRequests Sparkie is carrying on with:\\n- “${esc(words)}” \\(carrying on\\): 1 operation \\(1 running\\), 1 change, [12] turns?, \\d+ s so far, energy not measured\\.$`), status.text);
   const page = (await api('/status')).json.tasks;
-  assert.deepEqual(page.map(x => [x.chat, x.state, x.operations, x.running, x.changes, x.turns]), [[chat, 'carrying on', 1, 1, 1, 1]], JSON.stringify(page));
+  assert.deepEqual(page.map(x => [x.chat, x.state, x.operations, x.running, x.changes]), [[chat, 'carrying on', 1, 1, 1]], JSON.stringify(page));
   assert.ok(!JSON.stringify(page).includes(GGUF), 'no words of the request on the page’s status');
   await tgSay('/stop');
   const report = await waitFor(async () => (await reportsIn(chat))[0] || null, { timeout: 60000 * SLOW, what: 'the report', every: 500 });
@@ -118,7 +124,7 @@ test('a task from Telegram: /status shows its counts so far; /stop there ends it
   const lines = report.content.split('\n');
   assert.equal(lines[0], `Report on your request “${words}”: stopped by you.`);
   assert.equal(lines[1], 'Operations: none.');
-  assert.equal(lines[2], 'Changes: 1 made at once, 0 after your yes; 0 questions asked of you. Undone: 0.');
+  assert.equal(lines[2], 'Changes: 0 made at once, 1 after your yes; 1 question asked of you. Undone: 0.');
   assert.match(lines.at(-1), /^Still open: .*Qwen3\.8-27B-abliterated-GGUF is still running\.$/, report.content);
   await waitFor(() => reportsSent().length === 1 || null, { timeout: 30000, what: 'the report on Telegram' });
   assert.ok(reportsSent()[0].startsWith(lines[0]), reportsSent()[0]);

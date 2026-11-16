@@ -271,7 +271,8 @@ function taskEnded(conv, t, how) {
     if (t.stopped && how !== t.stopped && ['replaced', 'stopped', 'no', 'gone', 'put-back'].includes(how)) return;
     t.reported = how;
     const end = new Date().toISOString(), since = t.since || t.at, { hours, turns } = taskLimits(t);
-    const tg = t.channel === 'telegram' || Boolean(t.tgAsked) || Date.parse(end) - Date.parse(since) > TASK_REPORT_TG_MS;
+    // (never when its way in is gone: Telegram unpaired or paired with someone else is told nothing of it)
+    const tg = how !== 'gone' && (t.channel === 'telegram' || Boolean(t.tgAsked) || Date.parse(end) - Date.parse(since) > TASK_REPORT_TG_MS);
     conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, jobs: (t.jobs || []).slice(-20) }];
     saveChats();
     setTimeout(() => taskReportsDue(conv.id), TASK_REPORT_MS).unref?.();
