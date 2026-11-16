@@ -262,6 +262,7 @@ function forBrain(t) {
 
 // run's own work: today a look (A7 sorts each command into a look, a change or an ask).
 async function runCommand(input, viewer, ctx = {}) {
+  if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: opened and checked; A4 runs the command)
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
   // (stand-in fleet only, while the runner is dark: a command the sorter doesn't call a look goes to the runner, which
