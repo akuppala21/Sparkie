@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25909 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26012 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -243,7 +243,7 @@ Each Spark's status comes from the portal's own worker.py (now shipped with the 
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`
 - **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `PATH_PROGRAMS`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`), `12-plugs` (`wallFor`), `14-tasks` (`tasksNow`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
-- **Used by:** `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `14-tasks`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-ahead`, `21-apps`, `21-box-fill`, `21-box`, `21-copies`, `21-door`, `21-ladder`, `21-long`, `21-net`, `21-power`, `21-root`, `21-run-keys`, `21-runner`, `21-selftest`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Used by:** `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `14-tasks`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-ahead`, `21-apps`, `21-box-fill`, `21-box`, `21-copies`, `21-door`, `21-ladder`, `21-long`, `21-net`, `21-power`, `21-root`, `21-run-keys`, `21-runner`, `21-selftest`, `21-telegram`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-ask.mjs`: how the brain is asked and read: its setup's ask block (B9, R50)
 
@@ -275,13 +275,13 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
-- **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
-- **Lines:** 658
+- **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs, agent-words.test.mjs
+- **Lines:** 717
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `runChoice`, `chatWholeOne`, `chatWholeShown`, `chatAsks`, `postResult`, `multiStep`, `chatRunning`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `endTask`, `endTasksFrom`, `turnAnswer`, `turnFailed`, `chatReply`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `sleep`, `nodeById`), `02-ssh` (`run`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `taskStepsKept`, `budgetsOf`), `14-tasks` (`taskAnswered`, `taskGone`, `taskRetryLines`, `taskOver`, `taskStopped`, `taskRetry`, `taskJobsOwed`, `taskEnded`, `taskAgain`, `taskAsked`, `taskBudget`, `tgPairingMark`, `taskPark`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-danger` (`dangerLive`, `dangerGone`, `dangerPress`, `dangerParked`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-memory-time` (`memoryTodayLine`), `20-tell` (`tellResult`, `tellCarry`, `tell`), `20-tg-approve` (`tgAskOpen`, `tgAsks`), `21-ahead` (`aheadGive`, `aheadKeep`, `aheadEnd`, `aheadNewRequest`, `AHEAD_SINCE`), `21-brain-rail` (`turnLimits`), `21-ladder` (`workTask`, `workKeep`), `21-telegram` (`tgPaired`, `tg`), `23-http` (`recordFault`)
+- **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `pressRan`, `runChoice`, `pressSaid`, `pressPost`, `pressLate`, `chatWholeOne`, `chatWholeShown`, `chatAsks`, `postResult`, `multiStep`, `chatRunning`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `endTask`, `endTasksFrom`, `turnAnswer`, `turnFailed`, `chatReply`
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `nodeById`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `taskStepsKept`, `budgetsOf`), `14-tasks` (`taskAnswered`, `taskGone`, `taskRetryLines`, `taskOver`, `taskStopped`, `taskRetry`, `taskJobsOwed`, `taskEnded`, `taskAgain`, `taskAsked`, `taskBudget`, `tgPairingMark`, `taskPark`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-danger` (`dangerLive`, `dangerGone`, `dangerPress`, `dangerParked`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-memory-time` (`memoryTodayLine`), `20-tell` (`tell`, `tellResult`, `tellCarry`), `20-tg-approve` (`tgAskOpen`), `21-ahead` (`aheadGive`, `aheadKeep`, `aheadEnd`, `aheadNewRequest`, `AHEAD_SINCE`), `21-brain-rail` (`turnLimits`), `21-ladder` (`workTask`, `workKeep`), `21-telegram` (`tgPaired`, `tgRanLine`, `tg`), `23-http` (`recordFault`)
 - **Used by:** `07-jobs`, `10-recipes`, `14-rounds`, `14-tasks`, `16-reads`, `18-run-record`, `18-saved-from`, `20-danger`, `20-journal`, `20-keys`, `20-mcp`, `20-memory`, `20-needs`, `20-tg-approve`, `20-words`, `21-ahead`, `21-apps`, `21-brain-check`, `21-brain-rail`, `21-brain-trial`, `21-compare`, `21-guide`, `21-long`, `21-net`, `21-power`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
 
 ### `14-rounds.mjs`: Sparkie’s rounds
@@ -301,8 +301,8 @@ The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them i
 
 A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made, and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work on its own ("sort it out on your own", "work through it overnight", "while I'm away") has 4 hours and 60 turns; hours the owner asks it to work for ("work on this for 6 hours") give those hours, 1 to 72, and 15 turns an hour. Only an instruction …
 
-- **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
-- **Lines:** 345
+- **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
+- **Lines:** 350
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -554,12 +554,12 @@ Spark Console's own record of what happens through it, so it is still known afte
 A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the message here, before anything else reads it: the chat file, the journal, the audit, a title, the gate, the brain. Two forms: "/key NAME value" (the value alone, after the name or on the next line), and the heartbeat's address, known by its shape anywhere in the words. It is kept by name in the secrets file (03-secrets.mjs, through secretsWrite), never shown back, and its exact value is hidden wherever text is written or sent (keptHidden, which hideKeys runs first). Two names …
 
 - **Area:** safety. **Rules:** R51, R7, R32. **Tests:** app-keys.test.mjs
-- **Lines:** 179
+- **Lines:** 185
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `keyNameOk`, `keysGiven`, `keysHidden`, `keepKey`, `keepNamed`, `keepGithub`, `keepBeat`, `giveKey`, `hideKeptInChats`, `answerKeys`, `tgKeys`
-- **Uses:** `01-setup` (`HttpError`, `ALL_LOCAL`), `03-identity` (`accessList`), `03-secrets` (`keptHidden`, `secretsWrite`, `secretsRead`, `SECRETS_FILE`, `keptSeen`), `14-chats` (`LIMITS`, `saveChats`, `chatData`), `16-actions` (`action`), `20-beat` (`BEAT_URL_RE`, `beatSave`), `20-journal` (`journalSaid`), `20-mcp` (`hideKeys`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-telegram` (`tgPaired`, `tgCall`, `tgConv`)
+- **Functions:** `keyNameOk`, `keysGiven`, `keysHidden`, `keepKey`, `keepNamed`, `keepGithub`, `keepBeat`, `giveKey`, `keptHiddenIn`, `hideKeptInChats`, `answerKeys`, `tgKeys`
+- **Uses:** `01-setup` (`HttpError`, `ALL_LOCAL`), `03-identity` (`accessList`), `03-secrets` (`keptHidden`, `secretsWrite`, `secretsRead`, `SECRETS_FILE`, `keptSeen`), `14-chats` (`LIMITS`, `saveChats`, `chatData`, `chatWhole`, `chatAsksWhole`), `16-actions` (`action`), `20-beat` (`BEAT_URL_RE`, `beatSave`), `20-journal` (`journalSaid`), `20-mcp` (`hideKeys`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-telegram` (`tgPaired`, `tgCall`, `tgConv`)
 - **Used by:** `14-chats`, `20-mcp`, `21-run-keys`, `21-selfchange`, `21-telegram`, `21-updates`, `24-handler`
 
 ### `20-lessons.mjs`: lessons: what failed, written by code when an operation ends (B2, R48)
@@ -1223,13 +1223,13 @@ propose_update {do: start|send|drop, title, why} (group updates): Sparkie propos
 
 Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long polling): no route, port or Funnel, so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as the page. Everyone else gets silence. Going back a build, memory and saved workflows wait as an owner-only button in Spark Console; access, agent keys, passkeys and devices have no path from here at all. (docs/architecture.md R32, …
 
-- **Area:** features. **Rules:** R32, R34. **Tests:** telegram.test.mjs
-- **Lines:** 434
+- **Area:** features. **Rules:** R32, R34. **Tests:** telegram.test.mjs, pressed.test.mjs
+- **Lines:** 463
 - **Owns:** telegram.json (writers: tgSave)
 - **Timers:** tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while Sparkie answers, 5 minutes at most)
 - **Wakes:** none
-- **Functions:** `tgBinding`, `tgPaired`, `tgSaved`, `tgSave`, `tgSaveSoon`, `tgSetState`, `tgProblem`, `telegramView`, `tgCall`, `tgSend`, `tgTyping`, `tgLoop`, `tgStop`, `tgRestart`, `tgOwner`, `tgUpdate`, `tgTryPair`, `tgNewCode`, `tgForget`, `tgConv`, `tgTurn`, `tgPress`, `tgRun`, `tgStatusText`, `tgAfterRestart`, `telegramRoute`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `sleep`, `HttpError`), `03-identity` (`readJson`, `writePrivate`, `accessList`, `ownerPermissions`), `03-secrets` (`secretsRead`, `secretsProblem`, `secretsWrite`, `SECRETS_FILE`), `07-jobs` (`draining`, `jobs`), `14-chats` (`chatData`, `endTasksFrom`, `LIMITS`, `saveChats`, `sparkieTurn`, `TURN_STOPPED`, `replying`, `runChoice`), `16-actions` (`action`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerTypedHere`), `20-keys` (`tgKeys`), `20-mcp` (`audit`), `20-tell` (`tellOwnerAt`, `tell`, `TELL_LIMITS`, `tellReplyText`, `tellButtons`), `20-tg-approve` (`tgApproveOn`, `tgLock`, `tgNewPairing`, `tgApproving`, `tgApprovalCounted`, `tgApproved`, `tgAskedThere`, `tgApprovalsLine`, `tgApproveRoute`), `20-words` (`ownerWord`, `pauseWord`, `restartWord`, `stopWord`, `undoChangeWord`, `statusText`), `21-ahead` (`allowedWord`), `21-net` (`netPutbackWord`), `22-passkey` (`passkeys`), `23-http` (`send`, `readBody`)
+- **Functions:** `tgBinding`, `tgPaired`, `tgSaved`, `tgSave`, `tgSaveSoon`, `tgSetState`, `tgProblem`, `telegramView`, `tgCall`, `tgSend`, `tgTyping`, `tgLoop`, `tgStop`, `tgRestart`, `tgOwner`, `tgUpdate`, `tgTryPair`, `tgNewCode`, `tgForget`, `tgConv`, `tgTurn`, `tgPress`, `tgRun`, `tgFollowUp`, `tgRanLine`, `tgStatusText`, `tgAfterRestart`, `telegramRoute`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `sleep`, `nodeById`, `HttpError`), `03-identity` (`readJson`, `writePrivate`, `accessList`, `ownerPermissions`), `03-secrets` (`secretsRead`, `secretsProblem`, `secretsWrite`, `SECRETS_FILE`), `07-jobs` (`draining`, `jobs`), `12-status` (`sparkName`), `14-chats` (`chatData`, `endTasksFrom`, `LIMITS`, `saveChats`, `sparkieTurn`, `TURN_STOPPED`, `replying`, `runChoice`), `16-actions` (`action`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerTypedHere`), `20-keys` (`tgKeys`), `20-mcp` (`audit`), `20-tell` (`tellOwnerAt`, `tell`, `TELL_LIMITS`, `tellReplyText`, `tellButtons`), `20-tg-approve` (`tgApproveOn`, `tgLock`, `tgNewPairing`, `tgApproving`, `tgApprovalCounted`, `tgApproved`, `tgAskedThere`, `tgApprovalsLine`, `tgApproveRoute`), `20-words` (`ownerWord`, `pauseWord`, `restartWord`, `stopWord`, `undoChangeWord`, `statusText`), `21-ahead` (`allowedWord`), `21-net` (`netPutbackWord`), `22-passkey` (`passkeys`), `23-http` (`send`, `readBody`)
 - **Used by:** `14-chats`, `14-tasks`, `16-reads`, `19-watcher`, `20-danger`, `20-keys`, `20-memory-tg`, `20-tell`, `20-tg-approve`, `20-words`, `24-handler`, `25-backup-and-start`
 
 ### `21-updates.mjs`: Spark Console's own updates, from chat: is a newer tested build out (design C 2.3, step 5)
@@ -1292,13 +1292,13 @@ run (the one page's tool, design A's host_look) runs one command Sparkie writes 
 write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the bytes on the helper's …
 
 - **Area:** features. **Rules:** R68, R61. **Tests:** write.test.mjs
-- **Lines:** 199
+- **Lines:** 203
 - **Actions:** `write_file`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `writePlace`, `writeKey`, `writeOld`, `writeProgram`, `writeSplit`, `writeSplice`, `writeLineShown`, `writeShown`, `writeFile`
-- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-box` (`boxWrite`), `21-ladder` (`workChange`), `21-net` (`NET_ON`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`, `helperNeeds`)
+- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-box` (`boxWrite`), `21-ladder` (`workChange`), `21-net` (`NET_ON`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `lookClean`, `whoMayLook`, `helperNeeds`)
 - **Used by:** `21-box`
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
