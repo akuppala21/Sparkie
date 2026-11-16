@@ -1,3 +1,8 @@
 #!/bin/bash
-# Stand-in timeout (macOS has none): runs the command without a limit; the stand-in commands it wraps return at once.
+# Stand-in timeout. Where a real one is (Linux: /usr/bin/timeout or /bin/timeout) it is used as it is, so a limit holds
+# (the box's commands, 21-box.mjs, are ended by it); where none is (macOS) the command runs without a limit, its options
+# (-k, -s, --kill-after, --signal, --foreground, --preserve-status) and the duration passed over: the stand-in
+# commands it wraps return at once.
+for t in /usr/bin/timeout /bin/timeout; do [ -x "$t" ] && exec "$t" "$@"; done
+while [ $# -gt 0 ]; do case "$1" in -k|-s|--kill-after|--signal) shift 2 ;; -*) shift ;; *) break ;; esac; done
 shift; exec "$@"

@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25541 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25673 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -334,7 +334,7 @@ Every workflow is a named action with typed inputs, so a model can pick up which
 - **Wakes:** none
 - **Functions:** `action`, `gbOfGiB`, `sparkIdOf`, `sparkList`, `sparkOf`, `checkValue`, `checkInput`, `liveSchema`, `normQuotes`, `sparkNames`, `tokensOf`, `changeIntent`, `pageOnlyLabel`, `pickContainer`, `tracesToRequest`, `planOf`, `modelCandidates`, `namesModel`, `sparkieCheck`, `powerSparksSaid`, `tripBreaker`, `firmModel`, `requestLine`, `runAction`, `recent`, `recentInventory`, `recentMain`, `onDiskAs`, `libraryModel`, `mainArg`, `wordStart`, `filePattern`, `sizeWords`, `filePath`, `sharedFolder`
 - **Uses:** `01-setup` (`NODES`, `HttpError`, `q`), `02-ssh` (`run`), `05-library` (`inventory`, `plan`), `07-jobs` (`agentFailuresInARow`, `jobs`), `10-recipes` (`recipeCatalog`), `11-setups` (`squash`, `sameRepo`), `12-status` (`sparkName`, `statusCache`, `sparkFor`, `sparkFiles`), `13-main-model` (`mainStatus`, `MAIN`), `17-changes` (`question`, `changeLabel`, `pendingChoices`, `resolveModelName`, `agentSettings`, `setAgentSettings`, `propose`), `18-saved-from` (`fromRequest`), `18-saved-yes` (`savedImagesLabel`), `18-workflows` (`stepWords`, `findSaved`, `savedWorkflows`, `stepArgs`, `workflowFor`, `workflowStatus`, `offMessage`, `unvalidatedMessage`, `workflowVersion`, `workflowById`), `19-watcher` (`knowledge`, `fleetEvent`), `20-journal` (`journalLooks`, `journalLook`, `journalFirst`, `journalCalled`), `20-mcp` (`audit`, `maskSecrets`, `agentKeys`), `20-memory-tg` (`tgOwnMemory`), `20-memory` (`memoryClear`), `20-tell` (`tellAwait`), `21-apps` (`appNamed`), `21-brain-rail` (`EVAL_YES`, `evalYes`, `brainRail`, `RAIL_LOOK_WAIT_MS`), `21-brain-trial` (`TRIAL_YES`, `trialYes`), `21-power` (`powerSettingsClear`), `21-selfchange` (`selfGate`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
-- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `14-tasks`, `15-routes`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-needs`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-ahead`, `21-apps`, `21-brain-eval`, `21-brain-rail`, `21-brain-trial`, `21-compare`, `21-door`, `21-guide`, `21-hub`, `21-ladder`, `21-net`, `21-power`, `21-root`, `21-runner`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
+- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `14-tasks`, `15-routes`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-needs`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-ahead`, `21-apps`, `21-box`, `21-brain-eval`, `21-brain-rail`, `21-brain-trial`, `21-compare`, `21-door`, `21-guide`, `21-hub`, `21-ladder`, `21-net`, `21-power`, `21-root`, `21-runner`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
 
 ### `16-reads.mjs`: reads: the lookups, what people, Sparkie and agents can look up
 
@@ -493,7 +493,7 @@ Before root, a lock-out change, an install of Spark Console, a delete that canno
 - **Wakes:** none
 - **Functions:** `dangerEnvMs`, `dangerPlain`, `dangerHhmm`, `dangerDay`, `dangerSha`, `dangerSame`, `dangerHead`, `dangerCodeOf`, `dangerBack`, `dangerMore`, `dangerAskedFor`, `dangerOwnerWords`, `dangerAsk`, `dangerBound`, `dangerJournal`, `dangerLive`, `dangerClose`, `dangerGone`, `dangerHeadOf`, `dangerStopped`, `dangerPaused`, `dangerTelegramGone`, `dangerParked`, `dangerShown`, `dangerTell`, `dangerPressedHere`, `dangerWrong`, `dangerHolds`, `dangerPairInChat`, `dangerTypedHere`, `dangerPress`, `dangerForTest`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `HttpError`, `q`, `STATE_DIR`, `sleep`), `03-identity` (`accessList`), `07-jobs` (`note`), `09-verified` (`answers`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`, `replying`), `16-actions` (`sizeWords`, `action`, `ACTION_KIND`, `tokensOf`, `ACTIONS`), `17-changes` (`question`, `pendingChoices`), `20-came-from` (`cameFrom`, `dangerThings`, `dangerReadsLoaded`), `20-journal` (`journal`, `jSub`), `20-mcp` (`maskSecrets`), `20-tell` (`TELL_PART`, `tell`), `20-tg-approve` (`tgAsks`, `tgApproveOn`, `TG_ASK_MAX`, `tgAskOpen`, `tgApprovalsHeld`), `21-telegram` (`tgPaired`, `tg`, `tgRun`)
-- **Used by:** `14-chats`, `14-rounds`, `17-changes`, `20-came-from`, `20-tg-approve`, `20-words`, `21-ahead`, `21-hub`, `21-ladder`, `21-net`, `21-root`, `21-telegram`, `21-updates`, `21-write`, `24-handler`
+- **Used by:** `14-chats`, `14-rounds`, `17-changes`, `20-came-from`, `20-tg-approve`, `20-words`, `21-ahead`, `21-box`, `21-hub`, `21-ladder`, `21-net`, `21-root`, `21-telegram`, `21-updates`, `21-write`, `24-handler`
 
 ### `20-desired.mjs`: what should be running (docs/contract.md 6.13, 8.8–8.10)
 
@@ -933,13 +933,13 @@ Design C 2.5 needs a box that Spark Console's code, never the brain, fills with 
 run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its own folder, …
 
 - **Area:** features. **Rules:** R62, R52, R1, R43. **Tests:** box.test.mjs
-- **Lines:** 257
+- **Lines:** 388
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxRecord`, `boxOpen`, `boxEnd`, `boxRun`, `boxStop`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `12-status` (`statusCache`, `sparkName`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`), `20-journal` (`journal`, `jErr`, `jSub`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`)
-- **Used by:** `19-watcher`, `20-words`, `21-apps`, `21-box-fill`, `21-work`
+- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxRecord`, `boxOpen`, `boxEnd`, `boxGate`, `boxReady`, `boxPulling`, `boxExecScript`, `boxExec`, `boxSaid`, `boxRun`, `boxWrite`, `boxOld`, `boxStop`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `12-status` (`statusCache`, `sparkName`), `16-actions` (`action`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`, `question`), `20-danger` (`DANGER_HIDDEN`), `20-journal` (`journal`, `jErr`, `jSub`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`, `lookClean`, `forBrain`), `21-write` (`WRITE_MAX`, `writeKey`, `writeSplit`, `writeSplice`, `writeShown`, `writeProgram`, `WRITE_READ`)
+- **Used by:** `19-watcher`, `20-words`, `21-apps`, `21-box-fill`, `21-work`, `21-write`
 
 ### `21-brain-check.mjs`: the brain check: does Sparkie's model call tools, with arguments that fit (design E 2.3)
 
@@ -1292,14 +1292,14 @@ run (the one page's tool, design A's host_look) runs one command Sparkie writes 
 write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the bytes on the helper's …
 
 - **Area:** features. **Rules:** R68, R61. **Tests:** write.test.mjs
-- **Lines:** 198
+- **Lines:** 199
 - **Actions:** `write_file`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `writePlace`, `writeKey`, `writeOld`, `writeProgram`, `writeSplit`, `writeSplice`, `writeLineShown`, `writeShown`, `writeFile`
-- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-ladder` (`workChange`), `21-net` (`NET_ON`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`, `helperNeeds`)
-- **Used by:** no other part
+- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-box` (`boxWrite`), `21-ladder` (`workChange`), `21-net` (`NET_ON`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`, `helperNeeds`)
+- **Used by:** `21-box`
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
 
