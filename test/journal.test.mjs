@@ -125,21 +125,21 @@ test('Sparkie\'s turn: the owner\'s words, each tool call with its result, the t
 // caller sees who, what, when and whether it worked, and the arguments of its own calls (follow-up to the review of B1:
 // a line the owner remembered, forgot and erased stayed readable in the remember call's arguments).
 test('an agent sees who, what and when of the owner\'s calls but not what they carried; its own calls whole', { timeout: 120000 * SLOW }, async () => {
-  const line = 'the side door opens with code 4471', owner = (name, body) => api(`/actions/${name}`, { method: 'POST', body });
+  const line = 'the side door opens with code quorvix', owner = (name, body) => api(`/actions/${name}`, { method: 'POST', body });
   const kept = await owner('remember', { text: line, kind: 'fact' });
   assert.equal(kept.json.outcome, 'remembered', kept.text);
   assert.equal((await owner('forget_memory', { id: kept.json.id })).json.outcome, 'forgotten');
   assert.equal((await owner('forget_memory', { id: kept.json.id, erase: true })).json.outcome, 'erased');
   // A failed call of the owner's whose error names its file.
-  for (let i = 0; i < 2; i++) await owner('save_file', { spark: 'spark3', path: 'door-4471.md', text: 'x\n' });
-  const remembered = records().find(r => r.k === 'call' && r.act === 'remember' && r.via === 'api' && /4471/.test(JSON.stringify(r.args)));
-  const failed = records().find(r => r.k === 'call' && r.act === 'save_file' && r.end && /4471/.test(r.err || ''));
+  for (let i = 0; i < 2; i++) await owner('save_file', { spark: 'spark3', path: 'door-quorvix.md', text: 'x\n' });
+  const remembered = records().find(r => r.k === 'call' && r.act === 'remember' && r.via === 'api' && /quorvix/.test(JSON.stringify(r.args)));
+  const failed = records().find(r => r.k === 'call' && r.act === 'save_file' && r.end && /quorvix/.test(r.err || ''));
   assert.ok(remembered && failed, 'the journal holds both, for the owner');
   // Keys of their own, so each one's own calls (which it sees whole, these words too) are told apart by name.
   const look = await createKey('recall-look'), act = await createActKey('recall-act'), asker = await createKey('recall-ask');
   await ok('find_recipes', { query: 'zebra unicorn' }, look.token);
-  const asks = [{ kind: 'call', limit: 20 }, { about: 'side door' }, { about: '4471' }, { about: 'remember' }, { id: remembered.id }, { id: failed.id }];
-  const blind = text => !/4471|side door/.test(text);
+  const asks = [{ kind: 'call', limit: 20 }, { about: 'side door' }, { about: 'quorvix' }, { about: 'remember' }, { id: remembered.id }, { id: failed.id }];
+  const blind = text => !/quorvix|side door/.test(text);
   for (const k of [look, act]) {
     for (const args of asks) {
       const r = await call(k.token, 'recall', args);
@@ -148,7 +148,7 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
       assert.ok(blind(JSON.stringify(others)), `${JSON.stringify(args)}: ${r.text}`);
       for (const v of others) if (v.via === 'api') assert.ok(!('args' in v) && !('error' in v), JSON.stringify(v));
     }
-    const probe = (await call(k.token, 'recall', { about: '4471', limit: 20 })).value.records.filter(v => v.actor !== k.name);
+    const probe = (await call(k.token, 'recall', { about: 'quorvix', limit: 20 })).value.records.filter(v => v.actor !== k.name);
     assert.deepEqual(probe, [], 'the owner\'s words match nothing of the owner\'s');
   }
   // Its own call it sees whole; another key doesn't.
@@ -164,8 +164,8 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
   await sleep(1000);
   assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
   // The owner reads everything.
-  const all = (await owner('recall', { about: '4471', limit: 20 })).json.records;
-  assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-4471\.md/.test(v.error)), JSON.stringify(all));
+  const all = (await owner('recall', { about: 'quorvix', limit: 20 })).json.records;
+  assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-quorvix\.md/.test(v.error)), JSON.stringify(all));
 });
 
 // The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
