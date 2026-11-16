@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 90 parts in `service/src/`, joined in name order into `service/server.mjs` (22562 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 90 parts in `service/src/`, joined in name order into `service/server.mjs` (22583 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -984,7 +984,7 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; it disarms only on the console's word (`keep`, after the check from outside), and otherwise what differs goes back when the timer fires, or at once with `putback`. Only the console's half calls these (21-net.mjs, A13b: dark until its switch is on): guardScript builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build ships), and …
 
 - **Area:** features. **Rules:** R60, R42. **Tests:** root-helper.test.mjs
-- **Lines:** 61
+- **Lines:** 64
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1011,12 +1011,12 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or changes the …
 
 - **Area:** features. **Rules:** R1, R60, R61. **Tests:** hub-change.test.mjs
-- **Lines:** 188
+- **Lines:** 202
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `hubStarts`, `hubPrograms`, `hubEsc`, `hubBrainNames`, `hubRefuses`, `hubChange`, `hubAsk`, `hubSelf`, `hubRoute`, `hubJson`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `STATE_DIR`, `HttpError`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `13-main-model` (`MAIN`, `repoOf`, `mainStatus`), `16-actions` (`action`), `17-changes` (`agentSettings`, `question`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`, `consoleOrigin`), `21-ladder` (`workKey`, `workAsks`, `workScripts`, `WORK_ASK_MS`), `21-net` (`netGuarded`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `RUNNER_SECONDS`), `21-work` (`shellWords`, `whoMayLook`), `23-http` (`API_SOCKET`), `25-backup-and-start` (`door`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `STATE_DIR`, `HttpError`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `13-main-model` (`MAIN`, `repoOf`, `mainStatus`), `16-actions` (`action`), `17-changes` (`agentSettings`, `question`), `20-danger` (`dangerAsk`), `20-mcp` (`maskSecrets`, `consoleOrigin`), `21-ladder` (`workKey`, `workAsks`, `workScripts`, `WORK_ASK_MS`), `21-net` (`netGuarded`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `RUNNER_SECONDS`, `RUNNER_PROTECT`), `21-work` (`shellWords`, `whoMayLook`), `23-http` (`API_SOCKET`), `25-backup-and-start` (`door`)
 - **Used by:** `21-ladder`
 
 ### `21-ladder.mjs`: the ladder: a change on a Spark at once, asked first, or not done (A7c)
@@ -1037,7 +1037,7 @@ run hands every command the sorter does not call a look to workChange (21-work.m
 A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8). run's ladder (21-ladder.mjs) hands it here. It is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's claim (R13) is taken; the ways in that work now …
 
 - **Area:** features. **Rules:** R60, R54, R61, R13, R43. **Tests:** net.test.mjs
-- **Lines:** 293
+- **Lines:** 297
 - **Owns:** net.json (writers: netSave)
 - **Timers:** none
 - **Wakes:** none

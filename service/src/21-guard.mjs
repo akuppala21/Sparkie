@@ -8,14 +8,16 @@
 // at once with `putback`. Only the console's half calls these (21-net.mjs, A13b: dark until its switch is on): guardScript
 // builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
 // ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
-function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null }) {
+function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null, protect = [] }) {
   // (the id goes into a shell line: only the shape every helper call has)
   if (!/^[a-z0-9]{8,40}$/.test(String(id))) throw new Error('A guard id is 8 to 40 of a-z and 0-9.');
   // (where the change starts: ~ or a folder under it, as run's dir takes it, A13b; never quietly ~)
   if (!/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new Error('A guard’s folder is ~ or a folder under it.');
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
+  // (a folder given read-only, as helperScript gives a change's: each only when it is a real folder there now, A11)
+  const under = d => `"$HOME"${q(d.slice(1))}`, pr = verb === 'run' ? (protect || []).filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   const call = verb === 'run'
-    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''} -- ${q(command)}`
+    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`}${pr.length ? ' "${p[@]}"' : ''}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''} -- ${q(command)}`
     : verb === 'putback' ? 'putback --id "$id"' : 'keep --id "$id"';
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -23,6 +25,7 @@ function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', me
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
+    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
     `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
@@ -49,9 +52,9 @@ function guardAnswer(id, out) {
 }
 // One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
 // first, starting in dir (~ or a folder under it); keep: id is the guard's own.
-function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null } = {}) {
+function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [] } = {}) {
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory }), limit: Number(seconds) + 180 });
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect }), limit: Number(seconds) + 180 });
     const chunks = [];
     let bytes = 0;
     child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });

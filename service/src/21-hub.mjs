@@ -9,21 +9,33 @@
 // by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
 // removes or changes the brain's container or its model files; nothing that starts a model, a job or any other workload
 // there; nothing that touches Spark Console's own unit, state, secrets or repository copy (only its installer changes
-// those); nothing about Spark 2's power or its plug; no more than 10 minutes. Then it is always asked: one button, one
+// those); nothing about Spark 2's power or its plug. Then it is always asked: one button, one
 // command a press, built here (a delete it cannot see is the dangerous ask, 20-danger.mjs), never at once. The press
 // sorts it again and runs it through the lock-out net's seam (netGuarded, 21-net.mjs): the call reaches the root helper
 // through the owner's service manager, so the command runs outside the console's own unit (helperScript's and
 // guardScript's local case), in the run wall with 2 GB, the net armed first. Before and after it, beside the net's own
 // ways in, Spark Console's (the installer's check_ways: the owner signs in, the agent door answers, the model address
 // lists; its route on Tailscale; the brain answering): one that worked before and doesn't after puts it back at once,
-// pauses Sparkie's and agents' changes and tells the owner what stopped working.
+// pauses Sparkie's and agents' changes and tells the owner what stopped working (a put-back puts files back: it starts
+// no container, so a stopped brain is the owner's /restart sparkie). Why a command the sorter can't read ($ for a
+// program, a script, python -c, a link) still can't reach the brain: in the run wall /run (Docker's socket, the
+// service manager) and /var/lib/docker are hidden, Docker's group is left out, the model folders are given read-only
+// (--protect) and the console's own are read-only; its button says so. A console restart leaves its unit to the net: at
+// start netRecover finds the guard by its id and puts it back, which stops the unit first, or the Spark's own timer
+// does; it never runs again. (minutes, A6's long command, is not on Spark 2 yet: 21-work.mjs refuses it.)
 
 // The switch, dark: a change on Spark 2 is not done until this one line is on, once the whole chain has been read. The
 // stand-in fleet may turn it on for a test (SPARK_CONSOLE_HUB=1).
 const HUB_ON = ALL_LOCAL && process.env.SPARK_CONSOLE_HUB === '1';
-// The run wall's cap there (design A 2.7: 2 GB), and the most a command there may run (decision P-1, 2.10: 10 minutes).
-const HUB_MEMORY = 2, HUB_MOST_MINUTES = 10;
+// The run wall's cap there (design A 2.7: 2 GB).
+const HUB_MEMORY = 2;
 const HUB_NOT = 'Spark 2 runs only Spark Console and the brain; nothing was asked or run.';
+// Spark Console's own folders, as the sorter places a path (~/…): its state, its share (releases, the way back), its
+// settings and secrets, its caches, its code and source.
+const HUB_OWN_PLACES = /^~\/(?:\.local\/state\/spark-console|\.local\/share\/spark-console|\.config\/spark-console|\.cache\/spark-console|spark-console(?:-src|-service)?)(?:\/|$)/;
+// What its wall holds, said on its button: why a command the sorter can't read still can't reach the brain (R63; the
+// helper hides /run, Docker's socket among it, and /var/lib/docker, and leaves Docker's group out; --protect).
+const HUB_WALL = 'In its wall it can’t reach Docker (so not the brain’s container), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only.';
 // Programs that set the next one going (their options skipped): what that one is counts.
 const HUB_WRAPPERS = new Set(['env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
 const HUB_CONTAINERS = new Set(['docker', 'podman', 'nerdctl', 'ctr', 'crictl', 'docker-compose', 'kubectl', 'k3s', 'microk8s', 'containerd', 'dockerd']);
@@ -83,7 +95,9 @@ function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
     || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return 'it touches Spark 2’s power or its plug, which are never changed from here';
   // Spark Console's own unit, state, secrets and repository copy (the installer's, and only through its own actions)
   const own = [STATE_DIR, SECRETS_FILE, `${homedir()}/spark-console-src`].filter(Boolean).map(hubEsc).join('|');
-  if (/spark-console|api\.sock|door\.sock/i.test(text) || (own && new RegExp(own).test(text)) || has(HUB_KILL)) return 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes';
+  const places = [...(sorted?.placed || []), ...(sorted?.wide || [])].filter(x => typeof x === 'string');
+  if (/spark-console|api\.sock|door\.sock/i.test(text) || (own && new RegExp(own).test(text)) || has(HUB_KILL)
+    || places.some(x => HUB_OWN_PLACES.test(x) || (own && new RegExp(`^(?:${own})(?:/|$)`).test(x)))) return 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes';
   // The brain's container and its model files (a container program other than a start, a name of the brain's, the folders models are kept in)
   const brain = hubBrainNames(), box = progs.find(p => HUB_CONTAINERS.has(p.prog));
   if ((sorted?.kinds || []).includes('brain') || (brain.length && new RegExp(brain.join('|'), 'i').test(text)) || runnerProtected(sorted, dir).length
@@ -92,8 +106,6 @@ function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
   if (box || has(HUB_SERVERS) || has(HUB_LASTING) || /(?:^|\s)-m\s+(?:vllm|sglang|http\.server|uvicorn|jupyter|torch\.distributed)\b/.test(text)
     || /\bloginctl\s+enable-linger\b/.test(text) || widen.gpu === true || sorted?.gpu === true) return 'it would start a model, a job or another workload there';
   if (unit) return 'it would start, stop or change a service there';
-  // (minutes, A6: held to 10 there, and more is not done)
-  if (Number(ctx.long?.minutes) > HUB_MOST_MINUTES) return `a command on Spark 2 runs ${HUB_MOST_MINUTES} minutes at most`;
   return null;
 }
 
@@ -108,7 +120,7 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
   const why = hubRefuses(command, sorted, ctx, dir, widen);
   if (why) throw new HttpError(403, `Not done on Spark 2: ${why}. ${HUB_NOT}`);
   if (sorted.class === 'lockout') throw new HttpError(403, `Not done on Spark 2 yet: a change that can lock you out of Spark 2 is kept only by a fresh visit to Spark Console, which comes with a later build. ${sorted.why} Nothing was asked or run.`);
-  if (widen.fleet === true) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
+  if (widen.fleet === true || sorted?.reach?.fleet) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
   const dangerous = (sorted.kinds || []).filter(k => k === 'delete');
   // The owner's yes, pressed (the dangerous ask's press carries its pair): sorted again, its scripts read again.
   if (ctx.button && ctx.ownerConfirmed && (!dangerous.length || ctx.danger)) {
@@ -118,7 +130,7 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
       const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) return hubAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false, danger: false }, dir, 'a script it runs changed after you were asked, so that yes was void');
     }
-    return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true });
+    return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
   // The owner's own call with no chat to show a button in (the API): nothing is asked there.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
@@ -133,7 +145,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
-  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told.`;
+  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_WALL}`;
   if ((sorted.kinds || []).includes('delete')) {
     return dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: net } });
@@ -178,6 +190,8 @@ function hubRoute() {
 }
 const hubJson = s => { try { return JSON.parse(s); } catch { return null; } };
 const HUB_WAYS = {
+  // (a put-back puts files back; it doesn't start a container: the brain is started again by the owner's word)
+  after: lost => (lost.includes('brain') ? 'The put-back puts back files only; it doesn’t start the brain again: /restart sparkie does.' : ''),
   words: { signin: 'your sign-in to Spark Console', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
   probe: async () => {
     const [who, door, models, route, brain] = await Promise.all([hubSelf('/whoami'), hubSelf('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize' }), hubSelf('/v1/models'),

@@ -7,7 +7,9 @@
 // it inside the net through the owner's service manager (outside the console's own unit) with 2 GB; Spark Console's
 // own ways in (sign-in, the agent door, the model address, its route on Tailscale, the brain) are tried before and
 // after: all still answer, so it is kept; its route stopped answering, so it is put back at once, changes pause and
-// the owner is told. A script changed after its ask voids the press; a delete it cannot see is the dangerous ask.
+// the owner is told. A script changed after its ask voids the press; a delete it cannot see is the dangerous ask. A
+// command the sorter can't read is asked, its button saying why its wall keeps it from the brain (no Docker, its
+// group left out, /run hidden, the model folders read-only: the unit's own settings show it).
 // The stand-in fleet, with the real root helper set up and proven for Spark 2 (test/rehearsal.mjs, run: true), called
 // through a stand-in systemd-run --user that notes the call and runs it (the console's own unit can't use sudo), and
 // the stand-ins in test/mock/bin. Linux only: run it on a Spark with tools/test-on-spark.sh.
@@ -47,6 +49,10 @@ useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_H
     put('notes/a.txt', 'a before\n');
     put('notes/a.tmp', 'a\n');
     put('notes/hub.sh', 'echo from the script > notes/from-script.txt\n');
+    put('notes/stop.sh', 'd=dock; ${d}er stop sparkie-main\n');
+    // (the folders models are kept in, there: given read-only to a change on Spark 2)
+    put('models/m1/config.json', '{}\n');
+    put('.cache/huggingface/hub/version.txt', '1\n');
   } });
 
 const H2 = () => join(T.fleet.root, 'spark2'), at2 = p => join(H2(), p);
@@ -71,6 +77,9 @@ async function inChat(chat, words, command) {
 const HOST = new URL(serviceConfig().origin).host;
 const routes = own => writeFileSync(join(T.fleet.dir, 'serve.json'), JSON.stringify({ TCP: { 8443: { HTTPS: true } }, Web: { [own ? HOST : 'elsewhere.example:8443']: { Handlers: { '/': { Path: '/x' } } } } }));
 const NOT = 'Spark 2 runs only Spark Console and the brain; nothing was asked or run.';
+const WALL = 'In its wall it can’t reach Docker (so not the brain’s container), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only.';
+// The run wall's unit for a guard (the rehearsal's own record of what the helper asked systemd for).
+const unitOf = id => lines(join(T.fleet.root, 'calls.log')).find(c => c[0] === 'systemd-run' && c.includes(`--unit=sw-run-${id}`)) || [];
 
 test('the owner\'s standing rules for Spark 2: each refused by code before anything is asked, in its own words, with perfect words too', { timeout: 120000 * SLOW }, async () => {
   const before = starts().length;
@@ -111,7 +120,7 @@ test('always asked, one command a press, whatever the words; from the API, with 
   assert.equal(api0.json.error, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
   const chat = await newChat(), c = await inChat(chat, 'fix the notes on spark 2', 'echo hub > notes/hub.txt');
   assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value));
-  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of your sign-in to Spark Console, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\.\n/, c.value.question);
+  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of your sign-in to Spark Console, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\. In its wall it can’t reach Docker \(so not the brain’s container\), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only\.\n/, c.value.question);
   assert.ok(!existsSync(at2('notes/hub.txt')) && !existsSync(at2('notes/api.txt')), 'nothing ran');
   const yes = c.r.message.choices.find(x => x.label === 'Run it');
   assert.ok(yes, JSON.stringify(c.r.message.choices));
@@ -128,6 +137,12 @@ test('always asked, one command a press, whatever the words; from the API, with 
   const start = starts().at(-1);
   assert.deepEqual([start.args.command, start.gate, Boolean(start.net)], ['echo hub > notes/hub.txt', 'asked', true]);
   assert.equal(netRecord().at(-1).state, 'kept');
+  // Its wall: Docker's group left out (999 in this rehearsal), /run hidden (Docker's socket, the service manager), the
+  // model folders read-only.
+  const props = unitOf(netRecord().at(-1).id);
+  assert.ok(props.includes('--groups=1000') && !props.some(a => /^--groups=.*\b999\b/.test(a)), JSON.stringify(props));
+  assert.ok(props.includes('TemporaryFileSystem=/run:ro'), JSON.stringify(props));
+  for (const d of ['/spark2/models', '/spark2/.cache/huggingface']) assert.ok(props.includes(`ReadOnlyPaths=${d}`), `${d}: ${JSON.stringify(props)}`);
   // One press, one command: pressed again, it runs nothing.
   const again = await choose(chat, yes.id);
   assert.notEqual(again.status, 200, again.text);
@@ -178,6 +193,16 @@ test('a script it runs, changed after the ask, voids the press and is asked agai
   assert.match(shown, /\nIt runs inside the lock-out net, through your own service manager/, shown);
   assert.ok(existsSync(at2('notes/a.tmp')), 'nothing ran');
   await choose(d, ask.choices.find(x => x.label === 'No').id);
+});
+
+test('a command the sorter can\'t read ($ for a program, python -c, a script) is asked, never refused by its words alone, and its button says why it still can\'t reach the brain', { timeout: 120000 * SLOW }, async () => {
+  for (const [i, command] of ['c=sparkie; d=dock; ${d}er stop ${c}-main', `python3 -c "import os; os.system('true')"`, 'bash notes/stop.sh'].entries()) {
+    const chat = await newChat(), c = await inChat(chat, `fix the hub notes ${'abc'[i]} on spark 2`, command);
+    assert.equal(c.value?.outcome, 'needs-ok', `${command}: ${JSON.stringify(c.value ?? c.error)}`);
+    assert.ok(c.value.question.includes(`\n${WALL}`) || c.value.question.includes(` ${WALL}`), c.value.question);
+    await choose(chat, c.r.message.choices.find(x => x.label === 'No').id);
+  }
+  assert.equal(starts().filter(r => /stop/.test(r.args?.command || '')).length, 0, 'none ran');
 });
 
 test('off (no SPARK_CONSOLE_HUB): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
