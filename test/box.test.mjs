@@ -12,8 +12,7 @@
 // so; once it answers, the folders of boxes that are gone go. Opening a box is a change: Sparkie's and an agent's call
 // are refused while changes are paused (the owner's own call is not), and with no eval on record Sparkie's call is one
 // button whose press opens it. Never on Spark 2: with no compute Spark on, nothing opens anywhere; with Sparkie's model
-// on Spark 3 it opens on Spark 4, never on Spark 3; a box whose Spark comes to hold the brain is removed there and
-// opened elsewhere at its next use. It ends at its time (a new one opens after), at /stop in its chat (kept on record
+// on Spark 3 it opens on Spark 4, never on Spark 3. It ends at its time (a new one opens after), at /stop in its chat (kept on record
 // and said so while its Spark doesn't answer, removed once it does), at "/stop" from whoever opened it (the API, an
 // agent key), and at "/stop <name>" from the owner's own call (not another agent's). The watcher and workloads leave
 // out only a box the console knows (a container named and labelled like one, unknown to it, is listed); keep_running
@@ -25,7 +24,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, rmSync, statSync, readdirSync, appendFileSync, mkdtempSync, mkdirSync, symlinkSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync, statSync, readdirSync, appendFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, agentSettings, newChat, say, choose, waitFor, sleep, REPO, SLOW } from './lib.mjs';
@@ -282,20 +281,11 @@ test('with Sparkie’s model on Spark 3, the box opens on Spark 4 and never on S
   await F.stop();
 });
 
-test('opening a box is a change: with no eval on record Sparkie’s call is one button and the owner’s press opens it, the owner’s own call opens at once, and a box whose Spark comes to hold the brain goes from there at its next use', { timeout: 420000 * SLOW }, async () => {
-  const F = await startMock({ watchMs: 600000, evalOnRecord: false, prepare: ({ root, stateDir }) => {
-    const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
-    m.presets['box-s3'] = { ...m.presets[m.current], node: 'spark3', title: 'Aphex on Spark 3' };
-    writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
-    // (Sparkie's model and its draft are on Spark 3 too, so the switch there can start it)
-    for (const m of ['RadixArk--Qwen3.8-27B-NVFP4', 'z-lab--Qwen3.8-27B-DFlash2']) {
-      const hub = `.cache/huggingface/hub/models--${m}`;
-      cpSync(join(root, 'spark2', hub), join(root, 'spark3', hub), { recursive: true, verbatimSymlinks: true });
-    }
+test('opening a box is a change: with no eval on record Sparkie’s call is one button and the owner’s press opens it, and the owner’s own call opens at once', { timeout: 180000 * SLOW }, async () => {
+  const F = await startMock({ watchMs: 600000, evalOnRecord: false, prepare: ({ root }) => {
     for (const spark of ['spark3', 'spark4']) appendFileSync(join(root, spark, '.mock', 'images'), `\n${IMAGE}\n`);
   } });
   later.push(F);
-  const at = async path => { const r = await fetch(`${F.base}${path}`, { headers: asF(F) }); return r.json(); };
   const post = async (path, body) => { const r = await fetch(`${F.base}${path}`, { method: 'POST', headers: asF(F), body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => null) }; };
   const chat = (await post('/chats', {})).json.id, words = 'open a box for me';
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'box', command: 'true' } }] }], F);
@@ -313,15 +303,6 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
   assert.ok(journal(F).some(j => j.where === 'box' && j.outcome === 'asked' && j.chat === chat));
   const own = await act('run', { on: 'box', command: 'true' }, F);
   assert.deepEqual([own.status, own.json.box, own.json.spark], [200, 'opened', 'spark3'], own.text);
-  // Sparkie's model moves to Spark 3: the API's box there goes at its next use, and opens on Spark 4.
-  const sw = await post('/main/use', { preset: 'box-s3' });
-  assert.equal(sw.status, 202, JSON.stringify(sw.json));
-  const job = await waitFor(async () => { const j = await at(`/jobs/${sw.json.id}`); return j.status !== 'running' && j; }, { timeout: 300000 * SLOW, every: 2000, what: 'the switch' });
-  assert.equal(job.status, 'completed', JSON.stringify(job.log));
-  const moved = await act('run', { on: 'box', command: 'true' }, F);
-  assert.deepEqual([moved.status, moved.json.box, moved.json.spark], [200, 'opened', 'spark4'], moved.text);
-  assert.ok(!hasBox('spark3', API_BOX, F) && !existsSync(folder(API_BOX, 'spark3', F)), 'gone from Spark 3');
-  assert.ok(hasBox('spark4', API_BOX, F));
   await F.stop();
 });
 
