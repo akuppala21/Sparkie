@@ -8,7 +8,8 @@
 // them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
 // only for a task begun there, without the failure lines (C-8, R32). In the paired chat a /key message past the
 // minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one. A reply
-// there that broke off part-way says so (C-9). A press
+// there that broke off part-way says so (C-9). A follow-up to a yes there for a page chat's ask carries no buttons
+// that only answer "expired" (C-15). A press
 // whose command outlasts the press's time (50 seconds; 3 in a fleet of its own) says it is still running, never that it
 // failed, and its end is posted in the chat, and told on Telegram for a press made there (press-50s).
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
@@ -288,6 +289,22 @@ test('a press whose command outlasts the press’s time says it is still running
     for (const chat of [a.chat, b.chat]) assert.ok(!(await chatMessages(chat)).some(m => /^(?:Approved from Telegram: )?Couldn’t do/.test(m.content)), chat);
     assert.ok(!tgSent().some(x => /didn’t work/.test(x.body.text)));
   } finally { Object.assign(T, was); await G.stop(); }
+});
+
+// C-15: after a yes in the paired chat to a page chat's ask, a follow-up question goes there with no buttons (a page
+// chat's plain buttons are pressed on the page) and says where to answer; in a chat of Telegram's its buttons go too.
+// (Read from the part: no action on the stand-in fleet asks a plain follow-up after an owner-only yes.)
+test('a follow-up to a yes in the paired chat: its buttons only for a Telegram chat; for a page chat, where to answer', () => {
+  const m = /^function tgFollowUp\(conv, message\) \{[\s\S]*?\n\}$/m.exec(readFileSync(join(REPO, 'service', 'src', '21-telegram.mjs'), 'utf8'));
+  assert.ok(m, 'tgFollowUp in 21-telegram.mjs');
+  const stubs = 'const tellReplyText = m => m.content; const tellButtons = m => m.choices.map(c => ({ id: c.id, label: c.label }));';
+  const f = new Function(`${stubs}\n${m[0]}\nreturn tgFollowUp;`)();
+  const q = { content: 'Which one?', choices: [{ id: 'a1b2c3d4e5', label: 'The first' }] };
+  assert.deepEqual(f({ channel: null }, q), { text: 'Which one?\n\nAnswer it in Spark Console.', buttons: [] });
+  assert.deepEqual(f({ channel: 'telegram' }, q), { text: 'Which one?', buttons: [{ id: 'a1b2c3d4e5', label: 'The first' }] });
+  assert.deepEqual(f({ channel: null }, { content: 'Stop it?\n\nThat one waits for you in Spark Console.', choices: [] }).text, 'Stop it?\n\nThat one waits for you in Spark Console.');
+  // (tgRun sends what it gives)
+  assert.match(readFileSync(join(REPO, 'service', 'src', '21-telegram.mjs'), 'utf8'), /const f = tgFollowUp\(conv, r\.message\); return await tell\('reply', f\.text, \{ buttons: f\.buttons \}\);/);
 });
 
 // K6 (R51): tgKeys first, before the minute's limit, as /lock is: a message holding a key is always taken and deleted.

@@ -22747,7 +22747,7 @@ async function tgRun(conv, choice, ask) {
     const r = await runChoice(tgOwner(), conv, choice, { via: 'telegram', actor: 'owner on Telegram', ...(ask ? { approved: true } : {}) });
     if (ask) tgApproved(ask, conv, r);
     // (a question that went here as its own ask isn't said again)
-    if (r.outcome === 'question' || r.outcome === 'needs-ok') return tgAskedThere(r.message) || await tell('reply', tellReplyText(r.message), { buttons: tellButtons(r.message) });
+    if (r.outcome === 'question' || r.outcome === 'needs-ok') { if (tgAskedThere(r.message)) return true; const f = tgFollowUp(conv, r.message); return await tell('reply', f.text, { buttons: f.buttons }); }
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
@@ -22758,6 +22758,13 @@ async function tgRun(conv, choice, ask) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
     return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
+}
+// A question that came back from a press here (a follow-up): its words, and its plain buttons only for a chat of this
+// one's; a page chat's are pressed on the page (tgPress finds only Telegram chats' plain buttons), so it says where (C-15).
+function tgFollowUp(conv, message) {
+  const words = tellReplyText(message);
+  if (conv?.channel === 'telegram') return { text: words, buttons: tellButtons(message) };
+  return { text: /That one waits for you in Spark Console\.$/.test(words) ? words : `${words}\n\nAnswer it in Spark Console.`, buttons: [] };
 }
 // What a press that ran answers here, from its result's own fields (K2, as the page's line, pressRan in 14-chats.mjs):
 // "Done." only for a command that ran and ended with exit 0, and for a result that is no command's, as before. Fixed
