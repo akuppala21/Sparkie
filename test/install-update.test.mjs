@@ -12,7 +12,7 @@
 // still told; a yes after that very tree was installed another way says so; a check at the yes that takes longer than
 // the press waits is answered at once and what comes of it is told in the chat; install_update is no saved
 // workflow's step; the unit it runs in has a time limit of its own. The eighth read's: an asked time ahead of the
-// clock counts as old.
+// clock counts as old. The final read's: a yes after a build whose commit can't be told was installed says that.
 // The service runs pull.sh check --json against a stand-in GitHub (a bare repository with tested/ tags as the mark job
 // makes them); `install` is a stand-in that writes the console's update-result.json as pull.sh would, so the
 // install itself (test/pull.test.mjs covers it) never runs here and the console never restarts.
@@ -307,5 +307,27 @@ describe('install_update', { concurrency: 1 }, () => {
     await waitFor(async () => (await chatMessages(chat)).some(m => m.content === `The install of tree ${tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`),
       { timeout: 30000, what: 'said in its chat' });
     assert.ok(!existsSync(join(STATE, 'update-asked.json')), 'no longer refuses a yes');
+  });
+
+  // (the final read's follow-up: the yes used to say "isn’t the one you were asked about any more", which wasn't so)
+  test('a yes after a build whose commit can’t be told was installed another way says that; nothing is installed', async () => {
+    const c10 = commit('Build ten');
+    mark(c10, READS_A);
+    const lock = join(HOME, 'spark-console-service', 'workflows.lock.json'), was = readFileSync(lock, 'utf8');
+    const a = await asking();
+    assert.ok(a.ask, JSON.stringify(a.msgs.slice(-3)));
+    let pressed = false;
+    try {
+      // (installed from the Mac meanwhile, with a lock that names no tree or commit)
+      writeFileSync(lock, JSON.stringify({ build: 'e'.repeat(12), brainReads: READS_A }));
+      const r = await press(a.chat, a.yes.id, a.pair);
+      pressed = true;
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.message.content, `Couldn’t do “Install it”: Whether tree ${c10.t12} is newer than the build installed now can’t be told any more: a build was installed another way after you were asked (from the Mac, say), and its lock names no commit or tree on main. Nothing was installed.`);
+      assert.ok(!installLog().includes(c10.t12));
+    } finally {
+      writeFileSync(lock, was);
+      if (!pressed) await press(a.chat, a.no.id);
+    }
   });
 });
