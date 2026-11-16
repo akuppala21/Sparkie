@@ -1800,7 +1800,8 @@ describe('the lock-out net (R60)', () => {
       for (const b of BOOT(s, r.id)) assert.ok(!lstatExists(b), b);
       const q = await atOnce;
       assert.match(q.stdout, new RegExp(`\\n${qid} net: sshd -t refuses the changed /etc/ssh \\(line 1: Bad configuration option: Prot\\), so what differs goes back now\\n`
-        + `${qid} net: the put-back failed: \\S+ attempt 3: 1 went back, 1 could not: not put back /var/lib/systemd/linger/owner: /var/lib/systemd/linger could not be made again \\(Permission denied\\)\\n${qid} end 0\\n$`), q.stdout);
+        // (two could not: the linger folder itself, first, and the file in it)
+        + `${qid} net: the put-back failed: \\S+ attempt 3: 1 went back, 2 could not: not put back /var/lib/systemd/linger: Permission denied\\n${qid} end 0\\n$`), q.stdout);
       assert.ok(timerWaits(t, qid) && existsSync(join(G(t, qid), 'pending')), 'its timer still waits');
     } finally { await atOnce; chmodSync(join(t.R, 'var/lib/systemd'), 0o755); }
   });
