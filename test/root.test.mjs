@@ -95,6 +95,34 @@ test('pressed: it runs through the root helper’s root verb inside the net (the
   assert.equal(start.unit, `sw-root-${g.id}`);
 });
 
+// The chat's row for the command (A5's tool step; the page shows ", as root" when it says root): a root call's row
+// says root, from what code answered (the dangerous ask "ROOT on Spark 3"), never from the brain's arguments; a root
+// call refused says nothing of root, and a plain change's row does not.
+test('the chat’s row for a root command says root, from what code answered, so the page shows “as root”; a refused root call’s row and a plain change’s row do not', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), cmd = 'printf row > rowed.txt';
+  const a = await ask(chat, 'as root on spark 3, write rowed.txt', cmd);
+  assert.ok(a.m, 'the dangerous ask');
+  const [step] = a.r.tools;
+  assert.deepEqual([step.name, step.where, step.line, step.root, step.tail], ['run', 'Spark 3', `$ ${cmd}`, true, 'Asked first, as its own message: nothing ran yet.'], JSON.stringify(step));
+  const saved = (await chatMessages(chat)).flatMap(m => m.tools || []).find(t => t.line === `$ ${cmd}`);
+  assert.equal(saved?.root, true, 'kept so in the chat, which the page reads');
+  const p = await press(chat, a.yes.id, a.pair);
+  assert.equal(p.status, 200, p.text);
+  assert.equal(readFileSync(join(T.fleet.root, 'spark3', 'rowed.txt'), 'utf8'), 'row');
+  // (the brain's root: true on Spark 2 is refused: the row says nothing of root)
+  const c2 = await newChat();
+  script([{ match: '^as root on spark 2, write rowed.txt$', rounds: [[{ name: 'run', arguments: { on: 'spark2', command: cmd, dir: '~', root: true } }]] }]);
+  let r2;
+  try { r2 = await say(c2, 'as root on spark 2, write rowed.txt'); } finally { noScript(); }
+  assert.deepEqual([r2.tools[0].ok, r2.tools[0].root], [false, false], JSON.stringify(r2.tools[0]));
+  // A plain change's row: not root.
+  const c3 = await newChat();
+  script([{ match: '^write the plain row note on spark 3$', rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'printf plain > plain-row.txt', dir: '~' } }]] }]);
+  let r3;
+  try { r3 = await say(c3, 'write the plain row note on spark 3'); } finally { noScript(); }
+  assert.deepEqual([r3.tools[0].where, r3.tools[0].root], ['Spark 3', false], JSON.stringify(r3.tools[0]));
+});
+
 test('as root: a script is never run (its text isn’t on the button); the time limit is the helper’s own, said on the button, and one ended at it says so; with no root helper on a Spark, the owner’s command and nothing asked', { timeout: 180000 * SLOW }, async () => {
   const c1 = await newChat(), s = await ask(c1, 'as root on spark 3, run the fix script', 'bash ~/work/fix.sh');
   assert.equal(s.m, undefined, 'nothing asked');

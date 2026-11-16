@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26956 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26960 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1275,10 +1275,10 @@ When Sparkie doesn't know something (a new model, an error message, an engine fl
 
 ### `21-work-shown.mjs`: what the owner sees of a command Sparkie ran
 
-The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root (whether it ran as root), kept (the journal record that holds the whole command and output, when it ran) and look (the result's own line saying it ran as a look: nothing changed, nothing sent), and putBack (true when a change's ways-in check put back …
+The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root (whether it ran, or is asked to run, as root: from the result, never the brain's arguments), kept (the journal record that holds the whole command and output, when it ran) and look (the result's own line saying it ran as a look: nothing changed, …
 
 - **Area:** features. **Rules:** R42. **Tests:** work.test.mjs, page.test.mjs
-- **Lines:** 57
+- **Lines:** 61
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
