@@ -19639,11 +19639,62 @@ function workWrote(ctx, sorted) {
   for (const p of [...(sorted?.placed || []).filter(x => !reads.has(x)), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
 }
 
+// The names a command gives that a later message's follow-up may have taken from what was read (P-5's "the message
+// before"): the dangerous ask's things (addresses, whole paths, packages: dangerThings) and each word of the command
+// with a / or a . inside (a file, a relative path, a host), never a program run by its bare name nor an option; and the
+// folder it starts in, when it isn't the usual one. Each name with its other spellings: a path without ~/, $HOME/ or the
+// home folder before it, and a file's own name. A bare word (a service's or a process's name) is not looked for.
+function workNames(node, command, dir) {
+  const home = `/home/${node?.user || CONFIG.user}/`, out = new Map();
+  const forms = p => {
+    let rel = p.replace(/^(?:~|\$HOME|\$\{HOME\})\//, '').replace(/^(?:\.\/)+/, '');
+    if (rel.startsWith(home)) rel = rel.slice(home.length);
+    const base = rel.split('/').filter(Boolean).pop() || '';
+    return [...new Set([p, rel, /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(base) ? base : ''])].filter(f => f.length >= 3);
+  };
+  const add = w => { const f = forms(w); if (f.length && !out.has(w)) out.set(w, f); };
+  for (const t of dangerThings(command)) add(t);
+  // (the first word of each command, past NAME=value, is its program; the word after < or > is a file)
+  let program = true;
+  for (const t of shellWords(String(command || ''))) {
+    if (t.op) { program = !['<', '>'].includes(t.op); continue; }
+    const set = /^[A-Za-z_]\w*=/.test(t.w), first = program && !set;
+    if (!set) program = false;
+    const w = t.w.replace(/^[A-Za-z_]\w*=/, '').replace(/^--?[\w-]+=/, '');
+    if ((first && !w.includes('/')) || w.startsWith('-') || !/[A-Za-z]/.test(w) || /[\s$`]/.test(w.replace(/^\$(?:HOME|\{HOME\})\//, ''))) continue;
+    if (w.includes('/') || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(w)) add(w);
+  }
+  if (dir && dir !== RUNNER_DIR && dir !== '~') add(String(dir));
+  return [...out.values()].slice(0, 32);
+}
+// 3 across this chat's messages (contract 8.5, "a command quoted from an earlier answer counts as read"): a change that
+// names what an earlier read or an earlier answer of Sparkie's holds, and no message of the owner's in this chat does, is
+// asked; a name the owner typed in any of their messages here is theirs. Why, or null. (chatEarlier, 14-chats.mjs;
+// cameFrom, 20-came-from.mjs, the dangerous ask's line 4, searched the same way.)
+function workEarlier(node, ctx, command, dir) {
+  const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  if (!conv) return null;
+  const own = (conv.messages || []).filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content || '')).join('\n').toLowerCase();
+  const theirs = workNames(node, command, dir).filter(forms => !forms.some(f => dangerWhole(own, f.toLowerCase())));
+  if (!theirs.length) return null;
+  const e = chatEarlier(conv, ctx);
+  if (!e.reads.length && !e.answers.length) return null;
+  const all = [...new Set(theirs.flat())], from = cameFrom(all, [], e.reads, e.answers);
+  const line = from.lines[0];
+  if (line) {
+    const name = all.filter(f => line.startsWith(`${f}: `)).sort((a, b) => b.length - a.length)[0] || '';
+    return `it names ${dangerPlain(name, 120)}, which came from ${line.slice(name.length + 2)}, not from your words`;
+  }
+  if (from.cut) return `it names ${dangerPlain(theirs[0][0], 120)}, which isn’t in your words, and what was read earlier in this chat couldn’t all be searched`;
+  return null;
+}
+
 // Whether a change runs at once (design A 2.5): why not, or null when it may. 1, the owner (their chats, Telegram, the
 // API; never an agent). 4, the sorter calls it a plain change, one that reaches no protected folder (nor starts in
 // one), would not fail inside the run wall (runnerOutside) and needs neither another Spark nor the GPU (runnerWiden).
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
-// outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
+// outside since, in the turn or its task, and no name taken from an earlier message's read or answer (workEarlier).
+// (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
 // fails is the reason the button gives. file: write_file's (its path's words name no Spark, A7d). ahead (21-ahead.mjs):
 // 'task', a go-ahead of this task covers it, which stands in for 2 and 3; 'always', a standing entry, which stands in for
 // the naming of the Spark and for 3.
@@ -19676,6 +19727,8 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
     if (ahead) return null;
     if (!tokensOf(ctx.said || ctx.request || '').has(node.id)) return `your words don’t name ${sparkName(node)}`;
     if (ctx.readOutside) return 'Sparkie read text from outside first';
+    const earlier = workEarlier(node, ctx, command, dir);
+    if (earlier) return earlier;
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
 }
