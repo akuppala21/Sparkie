@@ -1,6 +1,6 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack)
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
 // Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -60,6 +60,19 @@ function desiredAfter(job) {
     added: add.map(keyOf), removed: stopped, before, ...(job.undo ? { undo: true } : {}), ...(job.app ? { app: true } : {}) });
   if (d.revisions.length > 50) d.revisions.splice(0, d.revisions.length - 50);
   try { writePrivate(DESIRED_FILE, d); } catch (e) { console.error(`Couldn’t save what should be running: ${e.message}`); }
+}
+// The owner's own ask for what already runs (a start, a restart or a keep answered "already", A-22): their newest wish
+// for it, so its entry's since moves (no revision), and a saved workflow's clean-up leaves it (startedStill). Not a run's
+// step, self-healing, an agent or the self-test.
+const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
+function desiredWish(keys) {
+  try {
+    const d = readKept(DESIRED_FILE);
+    if (!d || !Array.isArray(d.running)) return;
+    const at = new Date().toISOString(), hit = d.running.filter(x => keys.includes(keyOf(x)));
+    for (const x of hit) x.since = at;
+    if (hit.length) writePrivate(DESIRED_FILE, d);
+  } catch (e) { console.error(`Couldn’t note the owner’s wish on what should be running: ${e.message}`); }
 }
 // An app already on a Spark joins the list (keep_running, 21-apps.mjs): read with readKept itself, so a file that can't
 // be read is never saved over. A new entry is a revision of its own (undo leaves apps alone).

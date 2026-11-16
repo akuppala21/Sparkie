@@ -7200,6 +7200,8 @@ async function startModel(args, viewer, ctx) {
     // setup and a place goes on as before: which setup the running copy uses isn't known here.)
     const there = !setup && runsWhereNamed(inv, m.name, spark, sparks);
     if (running.length && ((!spark && !sparks) || there)) {
+      // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
+      if (ownersAsk(viewer, ctx)) desiredWish(inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => `${sp.id}/${d.container}`)));
       return { outcome: 'already', model: m.repo || m.name, runningOn: there ? running.filter(r => r.spark === spark || sparks?.includes(r.spark)) : running, note: 'It’s already running; nothing changed.' };
     }
     if (m.role === 'draft') throw new HttpError(409, `${m.repo || m.name} is a draft model; it only runs alongside its main model.`);
@@ -7358,7 +7360,14 @@ action({
     const holding = [...jobs.values()].filter(j => holdsModelsOn(j, parts) && (owners || (ctx.actor && j.actor === ctx.actor)));
     if (holding.length) await cancelJobsAndWait(holding, ctx.actor || viewer.login);
     const job = claimed(parts, `stopping ${container}`, () => newJob('stop', { node: spark, container, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
-    runJob(job, async j => { pausedCheck(ctx); await stopContainer(j, spark, container, viewer); await stoppedForSure(j, spark, container); });
+    runJob(job, async j => {
+      pausedCheck(ctx);
+      // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
+      const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
+      if (left) { j.left = left; note(j, `Left running: ${left}.`); return; }
+      await stopContainer(j, spark, container, viewer);
+      await stoppedForSure(j, spark, container);
+    });
     return { outcome: 'started', operation: job.id, stopping: container, sparks: parts, next: `wait_operation {"id":"${job.id}"}` };
   },
 });
@@ -7455,7 +7464,7 @@ action({
     sparkOf(viewer, spark);
     mustUse(viewer);
     const job = await restartChecked(viewer, ctx, spark, container);
-    if (!job) return { outcome: 'already', note: `${container} is running.` };
+    if (!job) { if (ownersAsk(viewer, ctx)) desiredWish([`${sparkIdOf(spark) || spark}/${container}`]); return { outcome: 'already', note: `${container} is running.` }; }
     return { outcome: 'started', operation: job.id, restarting: container, next: `wait_operation {"id":"${job.id}"}` };
   },
 });
@@ -7911,6 +7920,41 @@ function startedBy(action, args, out, keep = false) {
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
+// What a step started, and what makes it the run's (A-22): the container's Docker id when the step's operation ended, and
+// for a model or an app the `since` of its entry on the list of what should be running just after the step (every start
+// but self-healing's moves it, 20-desired.mjs, and so does the owner's ask answered "already"); for a job, which has no
+// entry, its start time (a run again by hand moves it). The clean-up stops it only while these still match
+// (startedStill).
+// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before.
+const RECEIPT_LOOK = name => `printf 'id\t%s\n' "$(docker inspect -f '{{.Id}}' ${q(name)} 2>/dev/null)"; printf 'at\t%s\n' "$(docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.State.ExitCode}}' ${q(name)} 2>/dev/null | head -1)"`;
+async function receiptOf(spark, container) {
+  const r = await run(nodeById(spark), RECEIPT_LOOK(container), { timeout: 20000 }).catch(() => null);
+  if (r?.code !== 0) return null;
+  const id = (fields(r.out, 'id')[0] || [])[0] || null, at = String((fields(r.out, 'at')[0] || [])[0] || '').split('|')[1] || null;
+  return { id: /^[0-9a-f]{12,64}$/.test(id || '') ? id : null, startedAt: at };
+}
+async function startedReceipts(items) {
+  const out = [];
+  for (const x of items) {
+    const seen = await receiptOf(x.spark, x.container);
+    const entry = x.kind === 'job' ? null : desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    // (a model or an app: its id and its entry's since, so self-healing's restart, which moves neither, is still the run's;
+    // a job: its id and its start time)
+    out.push(seen ? { ...x, seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : x);
+  }
+  return out;
+}
+// Inside the stop's own claim (stop_model, keep_running's stop): whether what a run started is still what it started.
+// null when it is, else the words for why it is left running.
+async function startedStill(spark, container, seen) {
+  if (!seen) return null;
+  const now = await receiptOf(spark, container), at = sparkName(nodeById(spark) || { id: spark });
+  if (!now) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
+  const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const other = (seen.id && now.id && now.id !== seen.id) || (seen.startedAt && now.startedAt && now.startedAt !== seen.startedAt)
+    || ('since' in seen && (entry?.since || null) !== seen.since);
+  return other ? `${container} on ${at} was started again since, not by this run` : null;
+}
 // What a step started that was on the list of what should be running before that step (`listed`: its entry then):
 // the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
 function startedListed(items, before) {
@@ -7920,7 +7964,7 @@ function startedListed(items, before) {
 // the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
 // was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [], back = [];
+  const stopped = [], kept = [], failed = [], back = [], left = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -7937,18 +7981,23 @@ async function stopWhatRan(ran, viewer, ctx, title) {
       // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
       // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
       const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
-      const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await stopAppStarted(viewer, x, c);
+      // (only what this run started: its receipt is looked at again inside the stop's own claim, A-22)
+      const cx = x.seen ? { ...c, onlyIf: x.seen } : c;
+      const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, cx)
+        : await stopAppStarted(viewer, x, cx);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
+      if (out?.left) { left.push(name); continue; }
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
+        if (done.left) { left.push(name); continue; }
       }
       if (out?.outcome !== 'already') stopped.push(name);
       if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
+    ...(left.length ? [`Left running: ${left.join(', ')} ${left.length > 1 ? 'were' : 'was'} started again since, not by this run.`] : []),
     ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
@@ -7961,6 +8010,9 @@ async function stopAppStarted(viewer, x, c) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
     const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
     if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
+    // (one with a receipt that is off the list and running was started again by someone else: left, and never kept first)
+    const why = c.onlyIf ? await startedStill(x.spark, x.container, c.onlyIf) : null;
+    if (why) return { outcome: 'left', left: why };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }
@@ -8117,6 +8169,8 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   jobNotReal,
   JOB_NOT_REAL,
   SHARED_AT,
+  ownersAsk,
+  desiredWish,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -8137,7 +8191,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS] },
+    code: () => [stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -8153,7 +8207,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -8494,7 +8548,9 @@ action({
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
-          ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
+          // (each with its receipt: its Docker id, start time and list entry's since, so the clean-up stops only what this
+          // run started, A-22)
+          ran.push(...await startedReceipts(startedListed(startedBy(st.action, args, out, st.keep === true), listed)));
           savedRunKeep(j, { started: ran, pending: [], starting: null });
           // (in a compare's run only the {model} step's model is handed on: the candidate, never a fixed helper's, D)
           if (!ctx.compare || placeholders(st.args).includes('model')) j.jobModel = jobModel(st.action, args, out) || j.jobModel;
@@ -9722,7 +9778,7 @@ function dangerForTest(viewer, ctx, choices) {
 }
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack)
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
 // Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -9782,6 +9838,19 @@ function desiredAfter(job) {
     added: add.map(keyOf), removed: stopped, before, ...(job.undo ? { undo: true } : {}), ...(job.app ? { app: true } : {}) });
   if (d.revisions.length > 50) d.revisions.splice(0, d.revisions.length - 50);
   try { writePrivate(DESIRED_FILE, d); } catch (e) { console.error(`Couldn’t save what should be running: ${e.message}`); }
+}
+// The owner's own ask for what already runs (a start, a restart or a keep answered "already", A-22): their newest wish
+// for it, so its entry's since moves (no revision), and a saved workflow's clean-up leaves it (startedStill). Not a run's
+// step, self-healing, an agent or the self-test.
+const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
+function desiredWish(keys) {
+  try {
+    const d = readKept(DESIRED_FILE);
+    if (!d || !Array.isArray(d.running)) return;
+    const at = new Date().toISOString(), hit = d.running.filter(x => keys.includes(keyOf(x)));
+    for (const x of hit) x.since = at;
+    if (hit.length) writePrivate(DESIRED_FILE, d);
+  } catch (e) { console.error(`Couldn’t note the owner’s wish on what should be running: ${e.message}`); }
 }
 // An app already on a Spark joins the list (keep_running, 21-apps.mjs): read with readKept itself, so a file that can't
 // be read is never saved over. A new entry is a revision of its own (undo leaves apps alone).
@@ -11261,7 +11330,7 @@ function lessonSeenBefore(job) {
   } catch { return null; }
 }
 /* ───────── the agent door (MCP) ───────── */
-// Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
+// Area: ways in        Rules: R7, R9, R26, R31, R37, R39, R73        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs, door-repeat.test.mjs
 // Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
 //   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
@@ -11413,6 +11482,19 @@ function audit(entry) {
     appendFileSync(AUDIT_FILE, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...text('request'), ...text('error'), args })}\n`, { mode: 0o600 });
   } catch {}
 }
+// The door's own call handling (R73). Every answer comes within DOOR_WAIT_MS (clients give up at 60 s). A call of a tool
+// that can change something (a change, or run and write_file: `changes`) made again by the same agent with the same
+// arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
+// same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
+// runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
+// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
+// once until its work truly ends, not when the door stops waiting for it.
+const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
+const doorWork = new Map();
+const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
+const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+// (still going: the call itself, or the operation its answer names)
+const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
   const reply = (status, body) => send(res, status, { jsonrpc: '2.0', ...body });
   const fail = (status, id, code, message) => reply(status, { id: id ?? null, error: { code, message } });
@@ -11429,7 +11511,7 @@ async function mcpDoor(req, res, viewer) {
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');
   let msg;
-  // (256 KB is far more than any tool call needs; a megabyte of text was a way to stall the console)
+  // (262,144 characters is far more than any tool call needs; a megabyte of text was a way to stall the console)
   try { msg = await readBody(req, 262144); } catch (e) { return fail(e.status || 400, null, -32700, e.message); }
   // Removed while the request was on its way: refused.
   if (!(agent = agentFor(req, viewer))) return noKey();
@@ -11484,34 +11566,49 @@ async function mcpDoor(req, res, viewer) {
     const name = msg.params?.name, a = typeof name === 'string' ? offered.find(x => x.name === name) : null;
     if (!a) return fail(200, id, -32602, typeof name === 'string' ? `No tool called ${name.slice(0, 60)} for this agent.` : 'Name the tool to call (params.name).');
     const toolError = text => reply(200, { id, result: { content: [{ type: 'text', text }], isError: true } });
-    // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
-    if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
-    if (a.openWorld) {
-      // Bad arguments are refused before they count against the web-search limit.
-      try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
-      if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+    // (a tool that can change something: a change, or a read that changes, run and write_file)
+    const changing = a.kind !== 'read' || Boolean(a.changes), key = changing ? doorKey(agent, a, msg.params?.arguments) : null;
+    for (const [k, w] of doorWork) if (!doorGoing(w)) doorWork.delete(k);
+    let work = key ? doorWork.get(key) : null;
+    const joined = Boolean(work);
+    if (!work) {
+      // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
+      if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
+      if (a.openWorld) {
+        // Bad arguments are refused before they count against the web-search limit.
+        try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
+        if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+      }
+      agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
+      agentUseDirty = true;
+      agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
+      work = { p: runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }) };
+      const mine = work;
+      if (key) doorWork.set(key, mine);
+      // (the slot goes when the work ends; an answer that names an operation still running is kept for a repeat, R73)
+      mine.p.then(v => { mine.settled = true; mine.value = v; }, () => { mine.settled = true; if (key && doorWork.get(key) === mine) doorWork.delete(key); })
+        .finally(() => { agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1)); });
     }
-    agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
-    agentUseDirty = true;
-    agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
     try {
       const started = Date.now();
-      // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
-        sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
+      // Answer within 50 s (clients give up at 60). A look that is slow gets a "try again", and its result is cached
+      // when it lands; a call that can change something is never told to try again (R73).
+      // (the timer is cleared once the work answers, so it never rejects later)
+      let timer;
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      let value;
+      try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {
         text = JSON.stringify({ truncated: true, sizeKB: Math.round(text.length / 1024), note: 'Too big to send whole. Ask for less: a lower limit, one Spark, or without detail.', start: text.slice(0, 30000) });
       }
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length });
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length, ...(joined ? { joined: true } : {}) });
       return reply(200, { id, result: { content: [{ type: 'text', text }], isError: false } });
     } catch (e) {
       const code = { 400: 'invalid', 403: 'not_allowed', 404: 'not_found', 409: 'conflict', 413: 'too_large', 429: 'busy', 502: 'unreachable', 503: 'unreachable', 504: 'still_running' }[e.status] || 'failed';
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code });
-      if (isFault(e)) recordFault(`agent tool ${a.name}`, e);
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code, ...(joined ? { joined: true } : {}) });
+      if (isFault(e) && !joined) recordFault(`agent tool ${a.name}`, e);
       return toolError(`[${code}${[409, 429, 502, 503].includes(e.status) ? ', retry later' : ''}] ${maskSecrets(e.message || String(e))}`);
-    } finally {
-      agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1));
     }
   }
   return fail(200, id, -32601, `This server doesn’t do ${String(msg.method).slice(0, 60)}.`);
@@ -16342,6 +16439,9 @@ action({
       const job = claimed([spark], `stopping ${container}`, () => newJob('stop', meta));
       runJob(job, async j => {
         pausedCheck(ctx);
+        // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
+        const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
+        if (left) { j.left = left; j.stoppedHere = []; note(j, `Left running: ${left}.`); return; }
         // (one whose container is gone only comes off the list: a name Docker doesn't have is never handed to docker stop)
         if (state !== 'missing') {
           await stopContainer(j, spark, container, viewer);
@@ -16372,6 +16472,8 @@ action({
     }
     if (state === 'running') {
       if (changed) keepIt();
+      // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
+      if (ownersAsk(viewer, ctx) && (entry || changed)) desiredWish([key]);
       const answers = link ? await appAnswers(sp.tsip, hostPort) : null;
       const said = !entry ? `${container} on ${at} is now on the list of what should be running: Spark Console starts it again if it stops by itself or ${at} is powered off and on.`
         : changed ? `${container} on ${at} was already kept running; its port and memory figure on the list are updated.`
@@ -18489,8 +18591,9 @@ def pruned_answer(sd, man, after, only):
 // 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
-// O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
-// is replaced, never written through. A restore writes only the paths the set's manifest names, the manifest only when
+// O_NOFOLLOW, and a restore writes a new file beside the old one and exchanges it into place (links it, where nothing
+// is), so a link that is there now is replaced, never written through, and an edit made since its look is kept.
+// A restore writes only the paths the set's manifest names, the manifest only when
 // its SHA-256 is the one the journal's start line kept, and a copy only when its bytes have the SHA-256 the manifest
 // kept. Only the console's own text is run: the paths travel as data.
 const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
@@ -18663,6 +18766,29 @@ def put(path, data):
     finally:
         os.close(fd)
 
+def swap(a, b):
+    # one step that exchanges two names (renameat2, RENAME_EXCHANGE): False where this libc or filesystem has none
+    import ctypes, errno
+    try:
+        f = ctypes.CDLL(None, use_errno=True).renameat2
+    except (OSError, AttributeError):
+        return False
+    if f(-100, os.fsencode(a), -100, os.fsencode(b), 2) == 0:
+        return True
+    n = ctypes.get_errno()
+    if n in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+        return False
+    raise OSError(n, os.strerror(n))
+
+def hold():
+    # (tests only, never sent by code: wait in A['hold'] between the look and the put-back, as a second writer needs)
+    if A.get('hold'):
+        open(os.path.join(A['hold'], 'at'), 'a').close()
+        for _ in range(300):
+            if os.path.exists(os.path.join(A['hold'], 'go')):
+                break
+            time.sleep(0.1)
+
 ` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
@@ -18818,6 +18944,9 @@ if A['mode'] == 'restore':
                 if not os.path.isdir(d) or linked(p):
                     missed.append({'path': p, 'why': 'its folder is gone'})
                     continue
+                if now.startswith('dir:'):
+                    missed.append({'path': p, 'why': 'a folder is there now'})
+                    continue
                 tmp = os.path.join(d, '.spark-console-put-back-' + secrets.token_hex(6))
                 if e['kind'] == 'link':
                     os.symlink(e['target'], tmp)
@@ -18837,12 +18966,35 @@ if A['mode'] == 'restore':
                         os.fsync(fd)
                     finally:
                         os.close(fd)
+                # The put-back can't lose another program's edit made since the look above (A-19, beside): nothing at
+                # the name, by a link, which fails when anything is there by then; else the two names are exchanged in
+                # one step and what that displaced is checked: not what was looked at, it goes back and is left as it
+                # is. Where this libc or filesystem has no exchange, a second look just before one replace.
+                hold()
+                drop = True
                 try:
-                    os.replace(tmp, p)
-                except OSError:
-                    os.unlink(tmp)
-                    missed.append({'path': p, 'why': 'a folder is there now'})
-                    continue
+                    if now == 'absent':
+                        try:
+                            os.link(tmp, p, follow_symlinks=False)
+                        except FileExistsError:
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                    elif swap(tmp, p):
+                        if fp(tmp) != now:
+                            if not swap(tmp, p):
+                                drop = False
+                                missed.append({'path': p, 'why': 'changed again since the change, and could not be put back as it was: its newer state is kept as ' + show(tmp)})
+                                continue
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                    else:
+                        if fp(p) != now:
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                        os.replace(tmp, p)
+                finally:
+                    if drop and os.path.lexists(tmp):
+                        os.unlink(tmp)
                 restored.append(p)
         except OSError as x:
             missed.append({'path': p, 'why': 'it could not be written (%s)' % (x.strerror or 'error')})
@@ -25431,38 +25583,65 @@ function writeKey(text) {
 // The file as it is now. What is at the name, by code's own look at the name (no content read): a plain file (and
 // whether its owner may write it), a link, something else, nothing. Its text only through the helper's look, the same
 // wall run's looks go through, so its one hidden list decides: a key, or a file that wall hides, is "hidden" and its
-// text is never read. A helper that can't look there: its own answer (helperNeeds).
+// text is never read; then the program compares it by what code sees without reading it (sig: its inode, size and
+// modification time, from the same look at the name). A helper that can't look there: its own answer (helperNeeds).
 async function writeOld(node, place) {
   const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
-  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo file; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
   if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `${sparkName(node)} couldn’t be asked what is at ${place.shown}, so nothing was asked or written.`);
-  const kind = String(r.out).trim().split('\n')[0];
+  const [kind, ...rest] = String(r.out).trim().split('\n')[0].split(' '), sig = rest.join(' ');
   if (kind !== 'file') return { kind: ['link', 'other', 'readonly'].includes(kind) ? kind : 'none' };
-  if (keyWord(place.look)) return { kind: 'hidden' };
+  if (keyWord(place.look)) return { kind: 'hidden', sig };
   const command = `p=${q(place.look)}; s=$(sha256sum < "$p" 2>/dev/null | cut -d' ' -f1); if [ -f "$p" ] && [ ! -L "$p" ] && [ -n "$s" ]; then printf 'file %s %s\\n' "$(stat -c %s -- "$p")" "$s"; head -c ${WRITE_READ + 1} -- "$p" | base64 -w0; echo; else echo hidden; fi`;
   const { words, walks } = lookWords(command);
   const a = helperAnswer(await helperCall(node, 'look', { command, seconds: LOOK_SECONDS, words, walks }));
   if (a.kind === 'ran') {
     const [head = '', b64 = ''] = String(a.output).split('\n'), m = /^file (\d+) ([0-9a-f]{64})$/.exec(head.trim());
-    return m ? { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null } : { kind: 'hidden' };
+    return m ? { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null } : { kind: 'hidden', sig };
   }
-  if (['key', 'walk', 'refused'].includes(a.kind)) return { kind: 'hidden' };
+  if (['key', 'walk', 'refused'].includes(a.kind)) return { kind: 'hidden', sig };
   return { kind: 'helper', answer: a };
 }
 
 // Code's own program for the unit: the whole new text comes on its input. It writes only while the file is as it was
-// read here and its owner may write it; beside it, then one move into place, with the old permission bits only (0644
-// for a new file); the temporary file never stays behind, the unit ended or not.
+// read here (a hidden file, whose text is never read: its inode, size and modification time) and its owner may write it,
+// with the old permission bits only (0644 for a new file); the temporary file never stays behind, the unit ended or not.
+// It compares at the start, stages the text beside the file, then publishes in one step that can't lose another
+// program's edit made in between (A-19): a new file by a link, which fails when anything is at the name by then; a
+// replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through python3), then checking what it
+// displaced: not the file as read, it is exchanged back and nothing is written. Where this libc or filesystem has no
+// exchange (or no python3, in a box), it compares once more just before one move. old.hold, a folder (tests only, never
+// set by code): the program waits there between staging and publishing, as a test's second writer needs it to.
 function writeProgram(rel, old) {
-  const same = old.kind === 'file' ? `[ -f "$p" ] && [ ! -L "$p" ] && [ "$(sha256sum < "$p" | cut -d' ' -f1)" = ${old.sha} ]`
-    : old.kind === 'hidden' ? '[ -f "$p" ] && [ ! -L "$p" ]' : '[ ! -e "$p" ] && [ ! -L "$p" ]';
+  // (the exchange: 0 done, 4 where this libc or filesystem has none, 1 on any other failure; all inside this function,
+  // which tests lift on its own)
+  const swap = `python3 -I -c 'import ctypes, errno, os, sys
+try:
+    f = ctypes.CDLL(None, use_errno=True).renameat2
+except AttributeError:
+    sys.exit(4)
+if f(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2) == 0:
+    sys.exit(0)
+sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)'`;
+  const same = x => (old.kind === 'file' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(sha256sum < "${x}" | cut -d' ' -f1)" = ${old.sha} ]`
+    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
+  const changed = "{ echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }";
+  const hold = typeof old.hold === 'string' ? [`: > ${q(`${old.hold}/at`)}; n=0; until [ -e ${q(`${old.hold}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : [];
+  const publish = old.kind === 'none'
+    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name)
+    ? [`ln -T -- "$t" "$p" 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; exit 1; }`]
+    : [`${swap} "$t" "$p"; r=$?`,
+      // (exchanged: the temporary name holds what was at the name; not the file as read, it goes back)
+      `if [ $r = 0 ]; then ${same('$t')} || { ${swap} "$t" "$p" || { k=$t; t=; echo "write_file: the file changed since it was read here and couldn’t be put back: its newer text is kept as $k." >&2; exit 3; }; ${changed}; }`,
+      `elif [ $r = 4 ] || [ $r = 127 ]; then ${same('$p')} || ${changed}; mv -fT -- "$t" "$p" || exit 1; t=`,
+      'else exit 1; fi'];
   return [`p=${q(rel)}; t=`, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'exit 143' TERM INT HUP",
-    `${same} || { echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }`,
+    `${same('$p')} || ${changed}`,
     `[ ! -e "$p" ] || [ -w "$p" ] || { echo 'write_file: the file is read-only, so nothing was written.' >&2; exit 3; }`,
     't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
     'cat > "$t" || exit 1',
     `if [ -f "$p" ]; then m=$(stat -c %a -- "$p") && chmod "$(printf '%o' $(( 8#$m & 8#777 )))" -- "$t" || exit 1; else chmod 0644 -- "$t" || exit 1; fi`,
-    'mv -fT -- "$t" "$p" || exit 1', 't='].join('\n');
+    ...hold, ...publish].join('\n');
 }
 
 // A text's lines, without the empty one after its last line break.
@@ -25562,7 +25741,7 @@ async function writeFile(input, viewer, ctx = {}) {
   const spec = {
     key: `write_file\n${place.shown}\n${from ?? ''}-${to ?? ''}\n${createHash('sha256').update(text).digest('hex')}`,
     args: { on: node.id, path: input.path, text, ...(Number.isInteger(from) ? { from, to } : {}) },
-    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind },
+    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind === 'hidden' ? `hidden ${old.sig}` : old.kind },
     // (a file whose old text is hidden is asked, never written at once: the owner sees what they can't read here)
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
