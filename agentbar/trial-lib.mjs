@@ -30,6 +30,19 @@ export function taskSet(dir) {
 export const PROTECTED = [/^\.github(\/|$)/, /^AGENTS\.md$/, /^docs\/architecture\.md$/, /^docs\/contract\.md$/, /^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/,
   /^service\/config\.json$/, /^deploy(\/|$)/, /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock(\/|$)/, /^test\/lock\.mjs$/, /^tools\/(build-server|affected)\.mjs$/];
 
+// The box's bounds on its Spark (agentbar/trial.mjs): its memory cap, which must be free beyond the 8 GB kept for the
+// system (R2) before it starts, as the console's own box asks it (boxRoom, 21-box.mjs); and its time, the task's minutes
+// and the grade's (the build's check, the task's test, the short check, and room to spare), after which it ends by
+// itself and --rm removes it, whatever happened to the runner.
+export const TRIAL_BOX_GB = 16, TRIAL_KEEP_GB = 8, TRIAL_GRADE_SECONDS = 300 + 300 + 40 * 60 + 600;
+export const trialBoxSeconds = task => task.minutes * 60 + TRIAL_GRADE_SECONDS;
+// Why the box can't start with this much memory available (MemAvailable, in bytes), or null.
+export function trialRoomShort(available) {
+  if (!Number.isFinite(available) || available <= 0) return 'This Spark’s free memory can’t be read, so no box started: it could take a running model’s memory.';
+  const room = Math.floor((available - TRIAL_KEEP_GB * 2 ** 30) / 2 ** 30);
+  return room >= TRIAL_BOX_GB ? null : `This Spark doesn’t have room for the trial’s box now: it needs ${TRIAL_BOX_GB} GB free beyond the ${TRIAL_KEEP_GB} GB kept for the system, and ${Math.max(0, room)} GB is. Free memory there first, or run the trial on another compute Spark. No box started.`;
+}
+
 // A record as Spark Console reads it for its sha256 (evalCanon, 21-brain-eval.mjs): every object's fields in name
 // order. The sha256 the runner prints is the one on the owner's button.
 export const canon = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x));

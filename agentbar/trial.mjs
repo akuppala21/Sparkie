@@ -10,7 +10,9 @@
 // A STAND-IN: the box and its tools (A4: run and write_file with on: "box") aren't built yet. The loop and the two
 // tools here stand in for them, with the same shapes: run {on: "box", command, root?, dir?, minutes?} and
 // write_file {on: "box", path, text, from?, to?, root?}. The box is a container from node:26-bookworm with no network,
-// no Docker socket and no keys, holding the copy at /work: the brain's commands run there, and so does the grade.
+// no Docker socket and no keys, holding the copy at /work: the brain's commands run there, and so does the grade. It
+// starts only with its 16 GB free beyond the 8 GB kept (R2), ends by itself after the task's minutes and the grade's
+// (--rm removes it), and is removed when the runner is stopped (Ctrl-C, a session that drops, docker stop).
 //
 //   bash agentbar/trial-on-spark.sh                   on a compute Spark: every task, 3 runs each (the bar's)
 //   node agentbar/trial.mjs --dry                     no brain and no box: each untouched task is graded, and must fail
@@ -24,7 +26,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, cpSync, rmSync,
 import { createHash } from 'node:crypto';
 import { join, dirname, relative, resolve, isAbsolute, posix, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { taskSet, gradeTask, shortCheck, recordHash } from './trial-lib.mjs';
+import { taskSet, gradeTask, shortCheck, recordHash, trialBoxSeconds, trialRoomShort, TRIAL_BOX_GB } from './trial-lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, '..'), TASKS = join(HERE, 'trial', 'tasks');
 const argv = process.argv.slice(2);
@@ -73,6 +75,10 @@ const STEPS = 120;          // limit: brain requests in one task (design A 2.10:
 const OUT_CHARS = 6000;     // limit: one result to the brain (the first 2,000 and the last 3,500 characters)
 const TEXT_MAX = 128 * 1024; // limit: one write_file's text
 const KEEP_OUT = 16 * 1024 * 1024; // limit: a command's output kept
+// The memory free on this Spark (/proc/meminfo's MemAvailable, in bytes; the test suite's stand-in may name another
+// file), asked before the trial starts and before each box: a box never starts without its cap free beyond the 8 GB kept.
+const MEMINFO = (STAND_IN && process.env.SPARK_TRIAL_MEMINFO) || '/proc/meminfo';
+const roomShort = () => { let kb = NaN; try { kb = Number(/^MemAvailable:\s+(\d+) kB$/m.exec(readFileSync(MEMINFO, 'utf8'))?.[1]); } catch {} return trialRoomShort(kb * 1024); };
 
 // --- the build, what its brain reads, and the brain ---
 // The build and the mark (what the brain reads in this build: the lock's brainReads, R29) come from one stand-in
@@ -98,6 +104,8 @@ if (!DRY) {
   if (BOX === 'docker') {
     const v = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8' });
     if (v.status !== 0) die(`Docker doesn’t answer here (is it installed, and can this user run it?): ${(v.stderr || v.error?.message || '').trim().slice(-300)}`);
+    const short = roomShort();
+    if (short) die(short);
     if (spawnSync('docker', ['image', 'inspect', BOX_IMAGE], { stdio: 'ignore' }).status !== 0) {
       console.log(`Getting the box's image ${BOX_IMAGE} …`);
       if (spawnSync('docker', ['pull', '-q', BOX_IMAGE], { stdio: 'inherit' }).status !== 0) die(`Couldn’t get ${BOX_IMAGE}.`);
@@ -149,18 +157,26 @@ function runProc(cmd, args, { seconds, cwd, input = null, group = false }) {
     p.on('close', code => { clearTimeout(timer); if (group) try { process.kill(-p.pid, 'SIGKILL'); } catch {} done({ exit: code, out: size > KEEP_OUT ? `${out}\n(stopped: more than 16 MB of output)` : out, timedOut }); });
   });
 }
-function dockerBox(name, work) {
+// The boxes running now: removed when the runner is stopped (Ctrl-C, a session that drops, docker stop), as in the
+// finally of a run that ends; one the runner can't remove (killed outright) ends at its own time, and --rm removes it.
+const LIVE = new Set();
+const endBoxes = () => { for (const n of LIVE) spawnSync('docker', ['rm', '-f', n], { stdio: 'ignore', timeout: 30000 }); LIVE.clear(); };
+// A box: a container with no network, no capability and no keys, its cap on memory, processes and CPU, and its time
+// (seconds: the task's and the grade's).
+function dockerBox(name, work, seconds) {
   const uid = process.getuid?.() ?? 1000, gid = process.getgid?.() ?? 1000;
-  const r = spawnSync('docker', ['run', '-d', '--name', name, '--network', 'none', '--user', `${uid}:${gid}`, '--memory', '16g', '--cpus', '8', '--pids-limit', '4096',
-    '--security-opt', 'no-new-privileges', '--cap-drop', 'ALL', '-e', 'HOME=/tmp', '-e', 'SPARK_TEST_SLOW=2', '-v', `${work}:/work`, '-w', '/work', BOX_IMAGE, 'sleep', 'infinity'], { encoding: 'utf8' });
+  const r = spawnSync('docker', ['run', '-d', '--rm', '--name', name, '--network', 'none', '--user', `${uid}:${gid}`, '--memory', `${TRIAL_BOX_GB}g`, '--cpus', '8', '--pids-limit', '4096',
+    '--security-opt', 'no-new-privileges', '--cap-drop', 'ALL', '-e', 'HOME=/tmp', '-e', 'SPARK_TEST_SLOW=2', '-v', `${work}:/work`, '-w', '/work', BOX_IMAGE, 'sleep', String(seconds)], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`starting the box: ${(r.stderr || '').trim().slice(-500)}`);
+  LIVE.add(name);
   return {
     exec: (command, seconds, { dir = '' } = {}) => runProc('docker', ['exec', '-w', posix.join('/work', dir), name, 'timeout', '-s', 'KILL', String(seconds), 'bash', '-c', command], { seconds: seconds + 15 }),
     read: path => { const x = spawnSync('docker', ['exec', name, 'cat', '--', `/work/${path}`], { encoding: 'utf8', maxBuffer: KEEP_OUT }); return x.status === 0 ? x.stdout : null; },
     write: path => text => { const x = spawnSync('docker', ['exec', '-i', name, 'sh', '-c', 'mkdir -p -- "$(dirname -- "$1")" && cat > "$1"', 'sh', `/work/${path}`], { input: text, encoding: 'utf8' }); return x.status === 0 ? null : (x.stderr || 'it failed').trim().slice(-300); },
-    // (every process the brain left is stopped before the grade, so nothing changes the copy while it is read)
-    settle: () => { spawnSync('docker', ['restart', '-t', '1', name], { stdio: 'ignore' }); },
-    remove: () => { spawnSync('docker', ['rm', '-f', name], { stdio: 'ignore' }); },
+    // (every process the brain left is stopped before the grade, so nothing changes the copy while it is read: all but
+    // the box's own first one, its sleep, twice for one forked in between; a restart would end a --rm box)
+    settle: () => { spawnSync('docker', ['exec', name, 'bash', '-c', 'kill -9 -1 2>/dev/null; sleep 1; kill -9 -1 2>/dev/null; exit 0'], { stdio: 'ignore', timeout: 60000 }); },
+    remove: () => { spawnSync('docker', ['rm', '-f', name], { stdio: 'ignore' }); LIVE.delete(name); },
   };
 }
 // No box (--box local, a try; and --dry): commands run on this machine in the copy, each in its own process group.
@@ -310,7 +326,10 @@ async function runOne(task, n) {
   for (const args of [['init', '-q'], ['add', '-A', '.'], seed]) must(git(join(work, '.git'), work)(args), 'the copy’s git');
   const prompt = readFileSync(join(TASKS, task.id, 'prompt.md'), 'utf8');
   writeFileSync(join(dir, 'prompt.md'), prompt);
-  const box = BOX === 'docker' ? dockerBox(`trial-${STAMP}-${task.id}-${n}`.toLowerCase().replace(/[^a-z0-9_.-]/g, '-'), work) : localBox(work);
+  // (the 8 GB rule again before each box: a model may have started here since the last)
+  const short = BOX === 'docker' ? roomShort() : null;
+  if (short) die(`${short} Stopped before ${task.id}, run ${n}; the runs so far are in ${relative(process.cwd(), join(OUT, 'runs')) || '.'}, and no record was kept.`);
+  const box = BOX === 'docker' ? dockerBox(`trial-${STAMP}-${task.id}-${n}`.toLowerCase().replace(/[^a-z0-9_.-]/g, '-'), work, trialBoxSeconds(task)) : localBox(work);
   let checks = [], rounds = 0, ended = 'dry';
   try {
     if (!DRY) {
@@ -325,6 +344,9 @@ async function runOne(task, n) {
 }
 
 // --- every run: each task once per round, so a slow hour of the brain falls on all of them ---
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.on(sig, () => { const had = [...LIVE]; endBoxes(); console.error(`\nStopped (${sig})${had.length ? `: the box ${had.join(', ')} was removed` : ''}. No record was kept.`); process.exit(code); });
+}
 const results = TASK_IDS.map(id => ({ id, runs: [] })), STARTED = new Date().toISOString();
 for (let n = 1; n <= RUNS; n++) {
   for (const id of TASK_IDS) {

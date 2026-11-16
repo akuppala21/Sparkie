@@ -10,6 +10,9 @@
 #
 # To leave it going after you log out:
 #   nohup bash agentbar/trial-on-spark.sh > agentbar/trial.log 2>&1 &
+# Safe beside a model: a run's box starts only with 16 GB free beyond the 8 GB kept for the system, ends by itself after
+# its task's time and the grade's, and goes when the runner is stopped (Ctrl-C here, the session dropping, docker stop:
+# docker run passes the signal on, and --init hands it to the runner).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
