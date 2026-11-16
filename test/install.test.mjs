@@ -564,6 +564,18 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.match(m.out, /Not on the fixed path: nvidia-smi\./);
   });
 
+  test('27b. the watchdog never writes into a folder that has one of its files’ names (mv -T)', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    stopRunner(home);
+    writeFileSync(join(home, 'unit-state'), 'active');
+    const S = join(home, '.local', 'state', 'spark-console');
+    rmSync(join(S, 'watchdog-misses'), { force: true });
+    mkdirSync(join(S, 'watchdog-misses'));
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh'), '--stand-in'], { env: envFor(home), cwd: home });
+    assert.deepEqual(readdirSync(join(S, 'watchdog-misses')), [], 'a file was written into the folder');
+    unlinkSync(join(home, 'unit-state'));
+  });
+
   test('27. the watchdog writes its three files whole, by rename: a link left in their place is replaced, and what it pointed at is untouched', CASE, async () => {
     const home = makeHome(); await firstGood(home);
     stopRunner(home);

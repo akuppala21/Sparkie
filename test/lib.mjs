@@ -82,6 +82,7 @@ export const CHANGE_TOOLS = [
   'find_setups',
   'forget_memory',
   'forget_workflow',
+  'install_update',
   'keep_running',
   'power_off',
   'power_on',
