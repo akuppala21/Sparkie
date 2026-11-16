@@ -1264,8 +1264,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
       const run = pull(home, ['install', g.t12], { detached: true });
       await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'the way back being armed, its timer on' });
       assert.ok(existsSync(join(home, 'guard-enabled')), 'the timer was on when the stop came');
-      // (as systemd stops a unit: every process in it gets SIGTERM)
+      // (as systemd stops a unit: every process in it gets SIGTERM; then the stand-in's is-active answers again, which
+      // nothingArmed asks below)
       process.kill(-Number(read(held).trim()), 'SIGTERM');
+      rmSync(hold, { force: true });
       const r = await run;
       assert.equal(r.code, 130, r.out);
       assert.match(r.out, /The install was stopped before it changed anything\./);
