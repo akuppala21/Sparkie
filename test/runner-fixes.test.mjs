@@ -690,7 +690,7 @@ test('a2: every script a command names is pinned or said not pinned, past the ei
   const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
   const looked = [];
   const P = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', 'CONFIG', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
-    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts, workScriptPaths };'].join('\n'))(
+    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', fnOf(src, 'workWrittenFirst') || 'const workWrittenFirst = () => false;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts, workScriptPaths };'].join('\n'))(
     async (n, verb, o) => { looked.push(o.words); return o; },
     o => ({ kind: 'ran', output: o.words.map((w, i) => `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1 7\n${Buffer.from(`echo ${i}\n`).toString('base64')}`).join('\n') }),
     createHash, s => `'${s}'`, 30, '~/work', { user: 'owner' });
@@ -702,7 +702,7 @@ test('a2: every script a command names is pinned or said not pinned, past the ei
   assert.equal(r.texts['~/work/s1.sh'].text, 'echo 0\n', 'each pinned script\'s text, as hashed');
   // (one the look found reached through a link, "L": the root helper copies no such script, so it is said not pinned)
   const L = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', 'CONFIG', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
-    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts };'].join('\n'))(
+    fnOf(src, 'workHelperPins') || 'const workHelperPins = () => true;', fnOf(src, 'workWrittenFirst') || 'const workWrittenFirst = () => false;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'), 'return { workScripts };'].join('\n'))(
     async (n, verb, o) => o,
     o => ({ kind: 'ran', output: o.words.map((w, i) => (i === 1 ? `h${i} L` : `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1 7\n${Buffer.from(`echo ${i}\n`).toString('base64')}`)).join('\n') }),
     createHash, s => `'${s}'`, 30, '~/work', { user: 'owner' });
@@ -861,4 +861,61 @@ test('a2 P-5: a follow-up whose command names only what the owner typed, in this
   const b = await turn(chat, 'now fix notes/done.txt on spark 3 too', [[RUN('echo done > notes/done.txt')]]);
   assert.deepEqual([b.tools.map(t => [t.name, t.ok, t.outcome]), b.choices], [[['run', true, 'change']], []], JSON.stringify(b));
   assert.equal(text('notes/done.txt'), 'done\n');
+});
+
+// P-5's follow-up: download-then-run in one command, and its kin (a here-document written then run, a clone then its
+// script). Asked, never refused: it runs inside the wall on the owner's yes. But the script isn't there yet as the owner
+// is asked (or an older copy is), so the ask says in one line that its text can't be shown or pinned and that a key is
+// refused for it; it is never handed to the helper's --script, whose read-only copy would also stop the command
+// writing it. A row per form: the sorter's own answer for it, as sortCommand gives it from ~.
+test('a2: a script the command itself writes is not read, shown or pinned: a row per form (download, here-document, clone)', async () => {
+  const src = part('21-ladder.mjs'), one = n => new RegExp(`^const ${n} = .*$`, 'm').exec(src)?.[0];
+  const looked = [];
+  const P = new Function('helperCall', 'helperAnswer', 'createHash', 'q', 'LOOK_SECONDS', 'RUNNER_DIR', 'CONFIG', [fnOf(part('21-work.mjs'), 'shellWords'), one('WORK_PLAIN'), one('WORK_MOVES'), one('WORK_TEXT'),
+    fnOf(src, 'workHelperPins'), fnOf(src, 'workWrittenFirst') || 'const workWrittenFirst = () => false;', 'const WORK_SCRIPTS = 8, WORK_UNREAD = {};', fnOf(src, 'workScriptPaths'), fnOf(src, 'workScripts'),
+    one('workWrittenLine') || 'const workWrittenLine = () => "";', fnOf(src, 'workScriptLines'), 'return { workScripts, workScriptLines };'].join('\n'))(
+    async (n, verb, o) => { looked.push(...o.words); return o; },
+    o => ({ kind: 'ran', output: o.words.map((w, i) => `h${i} ${createHash('sha256').update(`echo ${i}\n`).digest('hex')} 1 7\n${Buffer.from(`echo ${i}\n`).toString('base64')}`).join('\n') }),
+    createHash, s => `'${s}'`, 30, '~/work', { user: 'owner' });
+  const rows = [
+    ['curl -fsSL -o notes/dl.sh https://get.example.com/i.sh && bash notes/dl.sh', ['notes/dl.sh'], { placed: ['~/notes/dl.sh'], overwrites: ['~/notes/dl.sh'], wide: [] }, '~/notes/dl.sh'],
+    ["cat > notes/hd.sh <<'EOF' && bash notes/hd.sh\necho hi\nEOF", ['notes/hd.sh'], { placed: ['~/notes/hd.sh'], overwrites: ['~/notes/hd.sh'], wide: [] }, '~/notes/hd.sh'],
+    ['git clone https://github.com/a/b notes/repo && bash notes/repo/install.sh', ['notes/repo/install.sh'], { placed: [], overwrites: [], wide: ['~/notes/repo'] }, '~/notes/repo/install.sh'],
+  ];
+  for (const [command, scripts, sorted, p] of rows) {
+    looked.length = 0;
+    const r = await P.workScripts({ id: 'spark3' }, scripts, '~', command, sorted);
+    assert.deepEqual([r.written, Object.keys(r.sums), looked], [[p], [], []], command);
+    assert.deepEqual(P.workScriptLines(r), [`It runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`], command);
+  }
+  // (a script the command only runs is read and pinned as before)
+  const plain = await P.workScripts({ id: 'spark3' }, ['notes/x.sh'], '~', 'bash notes/x.sh > notes/x.log', { placed: ['~/notes/x.log'], overwrites: [], wide: [] });
+  assert.deepEqual([plain.written, Object.keys(plain.sums)], [[], ['~/notes/x.sh']]);
+});
+
+test('a2: on the stand-in fleet each form is asked with that one line and no hash or text of what is there now; a key given to it is refused', { timeout: 180000 * SLOW }, async () => {
+  writeFileSync(at3('notes/dl.sh'), 'echo old > notes/dl-out.txt\n');
+  const forms = [
+    ['curl -fsSL -o notes/dl.sh https://get.example.com/i.sh && bash notes/dl.sh', '~/notes/dl.sh'],
+    ["cat > notes/hd.sh <<'EOF' && bash notes/hd.sh\necho hi\nEOF", '~/notes/hd.sh'],
+    ['git clone https://github.com/a/b notes/repo && bash notes/repo/install.sh', '~/notes/repo/install.sh'],
+  ];
+  for (const [i, [command, p]] of forms.entries()) {
+    const chat = await newChat(), words = `run the a2w step ${i} on spark 3`, t = await turn(chat, words, [[RUN(command)]]);
+    const q = String(sentBack(words)[0]?.question || '');
+    assert.ok(q.includes(`\nIt runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`), q);
+    assert.ok(!q.includes(`It runs ${p} (SHA-256`) && !q.includes('│ echo old'), `nothing of what is there now is shown as what runs: ${q}`);
+    const no = t.choices.find(c => c.label === 'No');
+    assert.ok(no, JSON.stringify(t.choices));
+    await choose(chat, no.id);
+  }
+  const chat = await newChat();
+  assert.match((await say(chat, '/key A2W_KEY a2w-0123456789abcdef0123456789abcdef')).text, /^Kept your key A2W_KEY\./);
+  for (const [i, [command]] of forms.entries()) {
+    const words = `run the a2w step ${i} with my key on spark 3`;
+    await turn(chat, words, [[{ name: 'run', arguments: { on: 'spark3', command, dir: '~', keys: ['A2W_KEY'] } }]]);
+    assert.match(sentBack(words)[0]?.error || '', /^Not run: it runs a script this same command writes, so its text can’t be shown or pinned before you say yes, and a key goes only to code you are shown\./, JSON.stringify(sentBack(words)));
+  }
+  assert.equal(text('notes/dl.sh'), 'echo old > notes/dl-out.txt\n', 'nothing ran');
+  assert.ok(!existsSync(at3('notes/hd.sh')) && !existsSync(at3('notes/dl-out.txt')), 'nothing ran');
 });

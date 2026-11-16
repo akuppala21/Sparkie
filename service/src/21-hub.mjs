@@ -130,7 +130,7 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     const again = why => hubAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false, danger: false }, dir, `${why}, so that yes was void`);
     if (!was || was.spark !== node.id || was.command !== command || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     if (!was.unread && Object.keys(was.sums).length) {
-      const now = await workScripts(node, sorted.scripts, dir, command);
+      const now = await workScripts(node, sorted.scripts, dir, command, sorted);
       if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on Spark 2 (${now.unread}), so nothing ran.`);
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again('a script it runs changed after you were asked');
     }
@@ -157,7 +157,7 @@ function hubCommandLines(command) {
 }
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
-  const scripts = workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command));
+  const scripts = workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command, sorted));
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
   const starts = `It starts in ${dir}.`;

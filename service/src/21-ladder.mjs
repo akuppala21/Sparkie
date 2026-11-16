@@ -213,19 +213,21 @@ function workHelperPins(path, node = null) {
   const rest = p.startsWith('~/') ? p.slice(2) : p.startsWith(`${home}/`) ? p.slice(home.length + 1) : null;
   return rest !== null && rest.split('/').every(x => /^[A-Za-z0-9._@+-]+$/.test(x) && x !== '.' && x !== '..');
 }
-async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
+async function workScripts(node, scripts, dir = RUNNER_DIR, command = '', sorted = null) {
   const named = (scripts || []).filter(s => typeof s === 'string' && s && !/[\x00-\x1f]/.test(s));
   const list = named.slice(0, WORK_SCRIPTS), past = named.slice(WORK_SCRIPTS);
-  if (!list.length) return { sums: {}, texts: {}, unpinned: past };
-  const r = workScriptPaths(list, dir, command), paths = r.paths, unpinned = [...r.unpinned, ...past];
-  if (!paths.length) return { sums: {}, texts: {}, unpinned };
+  if (!list.length) return { sums: {}, texts: {}, unpinned: past, written: [] };
+  // (one this same command writes is neither read nor pinned: what is there now may not be what runs, workWrittenFirst)
+  const r = workScriptPaths(list, dir, command), written = r.paths.filter(p => workWrittenFirst(sorted, p));
+  const paths = r.paths.filter(p => !written.includes(p)), unpinned = [...r.unpinned, ...past];
+  if (!paths.length) return { sums: {}, texts: {}, unpinned, written };
   // (a look starts in the home: a ~ path is read from there)
   const word = s => q(s === '~' ? '.' : s.startsWith('~/') ? `./${s.slice(2)}` : s);
   // (a file reached through a link, anywhere in its path, is "L": the root helper copies no such script, R72)
   const look = paths.map((s, i) => `if [ -f ${word(s)} ] && { [ -L ${word(s)} ] || [ "$(realpath -e -- ${word(s)} 2>/dev/null)" != "$(realpath -s -- ${word(s)} 2>/dev/null)" ]; }; then echo 'h${i} L'; elif [ -f ${word(s)} ] && h=$(sha256sum < ${word(s)} 2>/dev/null) && n=$(wc -l < ${word(s)}) && z=$(stat -c %s -- ${word(s)}); then printf 'h${i} %s %s %s\\n' "\${h%% *}" "\${n// /}" "$z"; head -c ${WORK_TEXT} -- ${word(s)} | base64 -w0; echo; else echo 'h${i} -'; fi`).join('; ');
   const a = helperAnswer(await helperCall(node, 'look', { command: look, seconds: LOOK_SECONDS, words: paths, walks: [] }));
   const got = new Map([...String(a.kind === 'ran' && !a.cut ? a.output : '').matchAll(/^h(\d+) (?:([0-9a-f]{64}) (\d+) (\d+)\n([A-Za-z0-9+/=]*)|-|(L))$/gm)].map(m => [Number(m[1]), m[2] ? { sha: m[2], lines: Number(m[3]), size: Number(m[4]), bytes: Buffer.from(m[5], 'base64') } : m[6] ? 'linked' : null]));
-  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
+  if (a.kind !== 'ran' || paths.some((_, i) => !got.has(i))) return { sums: {}, texts: {}, unpinned, written, unread: WORK_UNREAD[a.kind] || 'the look didn’t answer the way it does' };
   const sums = {}, texts = {};
   for (const [i, s] of paths.entries()) {
     const g = got.get(i);
@@ -240,8 +242,18 @@ async function workScripts(node, scripts, dir = RUNNER_DIR, command = '') {
     sums[s] = g.sha;
     texts[s] = { text: g.bytes.toString('utf8'), lines: g.lines, whole };
   }
-  return { sums, texts, unpinned };
+  return { sums, texts, unpinned, written };
 }
+// A script this same command writes, fetches or unpacks (curl -o i.sh … && bash i.sh; cat > f <<EOF && bash f;
+// git clone … repo && bash repo/install.sh): the sorter's placed, overwrites or wide hold it, or a folder above it. What
+// is there as the owner is asked may not be what runs, so it is neither read nor shown, nor pinned (the helper's
+// read-only copy would also stop the command writing it), and a key is refused for it.
+function workWrittenFirst(sorted, path) {
+  const at = [...(sorted?.placed || []), ...(sorted?.overwrites || []), ...(sorted?.wide || [])].filter(x => typeof x === 'string' && x).map(x => x.replace(/\/+$/, '') || '/');
+  return at.some(w => path === w || path.startsWith(w === '/' ? '/' : `${w}/`));
+}
+const workWrittenLine = p => `It runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`;
+const WORK_WRITTEN_KEY = 'Not run: it runs a script this same command writes, so its text can’t be shown or pinned before you say yes, and a key goes only to code you are shown. Write or download the script first, then ask to run it with the key. Nothing was asked or run.';
 // What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
 // 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
 // (runnerPins, 21-runner.mjs), and run by its path.
@@ -299,9 +311,10 @@ function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topD
 }
 // Each script's hash, or why it has none.
 function workScriptLines(scripts) {
-  const { sums = {}, unpinned = [], unread = null } = scripts, not = n => `It runs ${n}; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen.`;
-  if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`];
-  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120)))];
+  const { sums = {}, unpinned = [], unread = null, written = [] } = scripts, not = n => `It runs ${n}; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen.`;
+  const first = written.slice(0, 4).map(p => workWrittenLine(String(p).slice(0, 120)));
+  if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`, ...first];
+  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120))), ...first];
 }
 
 // The folder a change starts in, as run took it (~ or a folder under it, no . or .. part: 21-work.mjs), on both asks.
@@ -361,8 +374,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
-  const scripts = spec ? { sums: spec.sums } : workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command)), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
+  const scripts = spec ? { sums: spec.sums } : workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command, sorted)), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
   // (a key goes only to a script pinned by its hash, R51: one whose text isn't, or couldn't be read, is refused)
+  if (keys.length && scripts.written?.length) throw new HttpError(409, WORK_WRITTEN_KEY);
   if (keys.length && (scripts.unread || scripts.unpinned?.length)) throw new HttpError(409, RUNKEY_SCRIPT_UNPINNED);
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
@@ -493,7 +507,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     try {
       if (!was.unread && Object.keys(was.sums).length) {
         // (write_file's: the file as it is read again for this press, 21-write.mjs)
-        const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
+        const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command, sorted);
         if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
         if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) {
           if (keys.length) throw new HttpError(409, RUNKEY_SCRIPT_CHANGED);
