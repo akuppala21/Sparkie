@@ -1,7 +1,6 @@
 # Add a read-only check on the Sparks
 
-A look at a Spark that changes nothing: a probe script, its parsed output, shared with the other readers. From the
-map's "Where new things go", row "A read-only check".
+A look at a Spark that changes nothing: a probe script, its parsed output, shared with the other readers.
 
 ## Touch
 
