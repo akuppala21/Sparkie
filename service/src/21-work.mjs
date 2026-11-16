@@ -152,8 +152,8 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
-// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
+// protect, the folders under the home given read-only (helperProtect); bare, those the owner's yes let it run without.
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -174,14 +174,24 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
-    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    // (the protect folders, a link followed to the folder it leads to: helperProtect)
+    ...(pr.length ? [helperProtect(pr, bare)] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
       : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
         : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
+}
+// The shell line that gives a change its protect folders (each ~/… and plain; R61), for the helper's --protect: a real
+// folder as ~/…; one that is a link, or has a link above it (the model store on a second disk), as the folder it leads
+// to (~/… when that is in the home, else its whole path), never left out; one whose link leads to no folder there stops
+// the call before the helper ("console protect <folder>", which the runner turns into an ask), unless bare names it
+// (the owner's yes said it runs without it). One that isn't there is left out: nothing is there to keep. Its script
+// defines said, as helperScript's and the net's guardScript (21-guard.mjs) do; both call this.
+function helperProtect(dirs, bare = []) {
+  const under = d => `"$HOME"${q(d.slice(1))}`;
+  return `p=(); ${dirs.map(d => `if [ -L ${under(d)} ] || { [ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" != ${under(d)} ]; }; then r=$(realpath -e -- ${under(d)} 2>/dev/null); if [ -n "$r" ] && [ -d "$r" ]; then case $r in "$HOME"/*) p+=(--protect "~/\${r#"$HOME"/}") ;; *) p+=(--protect "$r") ;; esac; else ${bare.includes(d) ? 'true' : `said ${q(`protect ${d}`)}`}; fi; elif [ -d ${under(d)} ]; then p+=(--protect ${q(d)}); fi`).join('; ')}`;
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
 // folders), check (with form: an exact form run after it), or prove. A fresh id each call. Never rejects: { id, code, out

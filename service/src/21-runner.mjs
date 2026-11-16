@@ -59,7 +59,7 @@ const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Ob
 
 // The helper's answers that mean the command never started there (its set goes, and undo passes over it), each only
 // with the exit code that comes with it: a line the command itself printed, then a dropped connection, is not one.
-const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, nosudo: 1, proof: 125, refused: 125 };
+const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, protect: 0, nosudo: 1, proof: 125, refused: 125 };
 // The minute after a change's time limit that a cut-off set still counts as its (the stand-in fleet may shorten it).
 const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK) || 60;
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
@@ -82,7 +82,8 @@ const RUNNER_STOP_S = 6;
 const RUNNER_DIR = '~/work';
 // The folders a change gets read-only (the helper's --protect, as ~/…): the model store, the Hugging Face cache and
 // the jobs' shared folder. A change the sorter places in one is asked (21-ladder.mjs), and after the yes runs without
-// that one. Each goes only when it is a real folder there now (helperScript). (The wall makes the rest of ~/.local
+// that one. Each goes when it is there, a link followed to the folder it leads to; one whose link leads to no folder is
+// asked (helperProtect, 21-work.mjs). (The wall makes the rest of ~/.local
 // read-only by itself, R63: the shared folder's entry costs nothing and stays, should that ever change.)
 const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
 // What an asked change may widen (R63), from the sorter's own fields (R64) and the caller's words: the fleet's ranges
@@ -182,8 +183,9 @@ async function runnerTopDirs(node, sorted) {
 }
 // as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
-// keys (run's, 21-run-keys.mjs): the names of the keys it is given.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [] } = {}) {
+// keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
+// folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [] } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -203,7 +205,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -264,7 +266,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
@@ -288,6 +290,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+      // (a protect folder whose link leads to no folder there: never run without it unasked; the ladder asks, R61)
+      if (a.kind === 'protect' && RUNNER_PROTECT.includes(why)) {
+        return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'protect', protect: why,
+          why: `${why} on ${at} is a link that leads to no folder there, so a change can’t get it read-only, and nothing ran: it runs without it only after the owner’s yes.` };
+      }
       // (the disk floor, R63: said plainly. Only a change at once meets it: one the owner pressed goes with --asked, which
       // may start under it and is ended at the helper's lower floor)
       const floor = HELPER_SAYS.diskFloor.exec(a.said || '');

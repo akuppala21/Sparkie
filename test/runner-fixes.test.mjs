@@ -15,8 +15,10 @@
 // tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, symlinkSync, truncateSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, symlinkSync, truncateSync, renameSync, mkdtempSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, ASK, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { TEST_DIR } from './start-mock.mjs';
@@ -130,4 +132,61 @@ test('K4: a change whose script ends with a line shaped as the helper\'s note ke
   const j = await ended(l.json.operation);
   assert.equal(j.status, 'completed', JSON.stringify(j));
   assert.ok(!JSON.stringify(j).includes('sign in again'), JSON.stringify(j));
+});
+
+// protect-link (the final helper read): a protect folder that was a link (the model store on a second disk) was left
+// out of --protect, and nothing said so. helperProtect gives it as the folder it leads to; one that leads to no folder
+// stops the call and the change is asked.
+test('protect-link: each protect folder as the helper takes it: a real folder as ~/…, a link (on it or above it) as the folder it leads to, one leading nowhere stops the call unless the yes named it', () => {
+  const src = part('21-work.mjs'), q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  const helperProtect = new Function('q', `${fnOf(src, 'helperProtect')}\nreturn helperProtect;`)(q);
+  const D = realpathSync(mkdtempSync(join(tmpdir(), 'sct-protect-'))), home = join(D, 'home'), out = join(D, 'disk2');
+  try {
+    for (const d of ['home/real', 'home/store/models', 'disk2/hf', 'disk2/cache/huggingface']) mkdirSync(join(D, d), { recursive: true });
+    writeFileSync(join(out, 'file'), 'x');
+    symlinkSync(join(home, 'store/models'), join(home, 'models'));
+    symlinkSync(join(out, 'hf'), join(home, 'hf'));
+    symlinkSync(join(out, 'cache'), join(home, '.cache'));
+    symlinkSync(join(D, 'nowhere'), join(home, 'gone'));
+    symlinkSync(join(out, 'file'), join(home, 'afile'));
+    const p = (dirs, bare = []) => {
+      const r = spawnSync('bash', ['-c', `said() { printf 'SAID %s\\n' "$1"; exit 0; }\n${helperProtect(dirs, bare)}\nprintf 'P %s\\n' "\${p[@]}"`], { env: { HOME: home, PATH: process.env.PATH }, encoding: 'utf8', timeout: 20000 });
+      return r.stdout.trim().split('\n');
+    };
+    assert.deepEqual(p(['~/real', '~/models', '~/hf', '~/.cache/huggingface', '~/absent']), ['P --protect', 'P ~/real', 'P --protect', 'P ~/store/models', 'P --protect', `P ${join(out, 'hf')}`, 'P --protect', `P ${join(out, 'cache/huggingface')}`]);
+    assert.deepEqual(p(['~/real', '~/gone']), ['SAID protect ~/gone']);
+    assert.deepEqual(p(['~/afile']), ['SAID protect ~/afile']);
+    assert.deepEqual(p(['~/real', '~/gone'], ['~/gone']), ['P --protect', 'P ~/real']);
+  } finally { rmSync(D, { recursive: true, force: true }); }
+});
+
+test('protect-link: a model store that is a link stays read-only to a plain change; one whose link leads nowhere is asked, nothing runs before the press, and the press runs it without it', { timeout: 180000 * SLOW }, async () => {
+  const models = at3('models'), hf = at3('.cache/huggingface'), aside = [];
+  for (const d of [models, hf]) if (existsSync(d)) { renameSync(d, `${d}.aside`); aside.push(d); }
+  try {
+    mkdirSync(at3('disk2/models'), { recursive: true });
+    symlinkSync(at3('disk2/models'), models);
+    const r = await run('echo m > notes/m.txt');
+    assert.equal(r.status, 200, r.text);
+    assert.equal(text('notes/m.txt'), 'm\n');
+    assert.ok(propsOf('echo m > notes/m.txt').includes('ReadOnlyPaths=/spark3/disk2/models'), JSON.stringify(propsOf('echo m > notes/m.txt')));
+    // A Hugging Face cache whose link leads nowhere: at once, nothing runs and it is asked, saying why.
+    mkdirSync(dirname(hf), { recursive: true });
+    symlinkSync(at3('disk3/nowhere'), hf);
+    const api1 = await run('echo h > notes/h.txt');
+    assert.equal(api1.json?.ran, false, api1.text);
+    assert.match(api1.json.why, /^~\/\.cache\/huggingface on Spark 3 is a link that leads to no folder there/);
+    assert.ok(!('asks' in api1.json), api1.text);
+    const chat = await newChat(), t = await turn(chat, 'fix the h note on spark 3', [[RUN('echo h > notes/h.txt')]]);
+    const [asked] = sentBack('fix the h note on spark 3');
+    assert.match(asked?.question || '', /\nAsked because ~\/\.cache\/huggingface on Spark 3 is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it\.\n/, JSON.stringify(asked));
+    assert.ok(!existsSync(at3('notes/h.txt')), 'nothing ran before the press');
+    const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+    assert.equal(p.status, 200, p.text);
+    assert.equal(text('notes/h.txt'), 'h\n');
+    assert.ok(propsOf('echo h > notes/h.txt').includes('ReadOnlyPaths=/spark3/disk2/models'), 'the other protect folders still read-only');
+  } finally {
+    for (const d of [models, hf]) rmSync(d, { force: true });
+    for (const d of aside) renameSync(`${d}.aside`, d);
+  }
 });

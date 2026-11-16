@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25796 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25826 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1091,11 +1091,11 @@ Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, ste
 run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root": root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside the net) and the lock-out class to netChange (21-net.mjs: the dangerous ask, inside the net); a write_file or a command given a key …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
-- **Lines:** 306
+- **Lines:** 319
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workRecord`, `workWallLines`, `workScriptLines`, `workStartsIn`, `workLabel`, `workAsk`, `workChange`
+- **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workRecord`, `workWallLines`, `workScriptLines`, `workStartsIn`, `workLabel`, `workAsk`, `workChange`, `workAfter`
 - **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`pendingChoices`, `question`), `20-danger` (`DANGER_LATE_MS`, `dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-ahead` (`aheadOffer`, `aheadCover`), `21-brain-rail` (`brainRail`), `21-hub` (`HUB_ON`, `hubChange`), `21-long` (`longHeld`, `LONG_MOST`), `21-net` (`NET_ON`, `netChange`), `21-run-keys` (`RUNKEY_SCRIPT_UNPINNED`, `runKeysLabel`, `runKeysNever`, `runKeysOutside`, `RUNKEY_SCRIPT_CHANGED`, `runKeysWhy`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `runnerHomeLines`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`)
 - **Used by:** `14-chats`, `14-rounds`, `21-hub`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
 
@@ -1183,7 +1183,7 @@ run takes keys: the names of keys the owner gave once (/key NAME value, 20-keys.
 runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13) for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the sorter placed (21-copies.mjs) and the fingerprints of the ways in (a command that removes or overwrites files stops here, with nothing run, when one was not kept); the journal's start line, synced to disk, which names the set and the manifest's SHA-256 …
 
 - **Area:** features. **Rules:** R61, R13, R43. **Tests:** runner.test.mjs
-- **Lines:** 469
+- **Lines:** 476
 - **Owns:** none
 - **Timers:** holdTick (every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end)
 - **Wakes:** none
@@ -1278,12 +1278,12 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the runner's run wall with the copy first; a change on Spark 2 (21-hub.mjs) …
 
 - **Area:** features. **Rules:** R42, R43, R61. **Tests:** work.test.mjs, ladder.test.mjs
-- **Lines:** 438
+- **Lines:** 448
 - **Actions:** `run`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperCall`, `helperAnswer`, `helperNeeds`, `ownerCommand`, `mayRun`, `needsOwner`, `whoMayLook`, `lookClean`, `forBrain`, `runCommand`, `selfTestWalls`
+- **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperProtect`, `helperCall`, `helperAnswer`, `helperNeeds`, `ownerCommand`, `mayRun`, `needsOwner`, `whoMayLook`, `lookClean`, `forBrain`, `runCommand`, `selfTestWalls`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `HttpError`, `CONFIG`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `07-jobs` (`note`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`), `20-sort` (`sortCommand`), `21-box-fill` (`boxFillDoor`), `21-box` (`boxRun`), `21-hub` (`HUB_ON`), `21-ladder` (`workChange`), `21-long` (`longStart`), `21-root` (`rootChange`), `21-run-keys` (`runKeyed`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`)
 - **Used by:** `16-reads`, `20-recall`, `20-sort`, `21-ahead`, `21-box-fill`, `21-box`, `21-guard`, `21-hub`, `21-ladder`, `21-long`, `21-net`, `21-root`, `21-run-keys`, `21-runner`, `21-selftest`, `21-work-shown`, `21-write`
 

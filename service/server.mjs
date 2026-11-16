@@ -18958,7 +18958,9 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = []) {
+// more: what the runner found it can't do unasked (workAfter): bare, the protect folders whose link leads to no folder,
+// which the press then runs without.
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = [], more = {}) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
@@ -18983,7 +18985,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [], at: Date.now() });
   return out;
 }
 
@@ -19031,7 +19033,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
         return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
       }
     }
-    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [] }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
@@ -19046,15 +19048,26 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys });
+  if (!why) return workAfter(await runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, spec ? '' : command, widen, sorted);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec, keys);
+}
+// What the runner found it can't do unasked (runChange's asks, 21-runner.mjs), asked in the chat (R61): a protect
+// folder whose link leads to no folder there, which after the yes it runs without (bare). With no chat to ask in (the
+// API, or write_file's own call), the runner's own answer: nothing ran, and why.
+async function workAfter(r, node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys) {
+  if (!r?.asks) return r;
+  const { asks, protect, ...said } = r;
+  if (spec || (!ctx.conv && !ctx.onQuestion)) return said;
+  const c = { ...ctx, button: false, ownerConfirmed: false };
+  if (asks === 'protect') return workAsk(node, command, sorted, viewer, c, `${protect} on ${sparkName(node)} is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it`, dir, widen, topDirs, spec, keys, { bare: [protect] });
+  return said;
 }
 /* ───────── a long command: run with minutes, as an operation (A6) ───────── */
 // Area: features        Rules: R23, R13, R61        Tests: long.test.mjs
@@ -21028,7 +21041,7 @@ const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Ob
 
 // The helper's answers that mean the command never started there (its set goes, and undo passes over it), each only
 // with the exit code that comes with it: a line the command itself printed, then a dropped connection, is not one.
-const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, nosudo: 1, proof: 125, refused: 125 };
+const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, protect: 0, nosudo: 1, proof: 125, refused: 125 };
 // The minute after a change's time limit that a cut-off set still counts as its (the stand-in fleet may shorten it).
 const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK) || 60;
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
@@ -21051,7 +21064,8 @@ const RUNNER_STOP_S = 6;
 const RUNNER_DIR = '~/work';
 // The folders a change gets read-only (the helper's --protect, as ~/…): the model store, the Hugging Face cache and
 // the jobs' shared folder. A change the sorter places in one is asked (21-ladder.mjs), and after the yes runs without
-// that one. Each goes only when it is a real folder there now (helperScript). (The wall makes the rest of ~/.local
+// that one. Each goes when it is there, a link followed to the folder it leads to; one whose link leads to no folder is
+// asked (helperProtect, 21-work.mjs). (The wall makes the rest of ~/.local
 // read-only by itself, R63: the shared folder's entry costs nothing and stays, should that ever change.)
 const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
 // What an asked change may widen (R63), from the sorter's own fields (R64) and the caller's words: the fleet's ranges
@@ -21151,8 +21165,9 @@ async function runnerTopDirs(node, sorted) {
 }
 // as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
-// keys (run's, 21-run-keys.mjs): the names of the keys it is given.
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [] } = {}) {
+// keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
+// folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [] } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -21172,7 +21187,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -21233,7 +21248,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, bare, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
@@ -21257,6 +21272,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+      // (a protect folder whose link leads to no folder there: never run without it unasked; the ladder asks, R61)
+      if (a.kind === 'protect' && RUNNER_PROTECT.includes(why)) {
+        return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(), asks: 'protect', protect: why,
+          why: `${why} on ${at} is a link that leads to no folder there, so a change can’t get it read-only, and nothing ran: it runs without it only after the owner’s yes.` };
+      }
       // (the disk floor, R63: said plainly. Only a change at once meets it: one the owner pressed goes with --asked, which
       // may start under it and is ended at the helper's lower floor)
       const floor = HELPER_SAYS.diskFloor.exec(a.said || '');
@@ -23621,8 +23641,8 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
-// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
+// protect, the folders under the home given read-only (helperProtect); bare, those the owner's yes let it run without.
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], bare = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -23643,14 +23663,24 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
-    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    // (the protect folders, a link followed to the folder it leads to: helperProtect)
+    ...(pr.length ? [helperProtect(pr, bare)] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
       : bytes != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${bytes}SPARKIE_INPUT\nexit $?`
         : `exec ${sudo} "$h" ${call}${verb === 'run' && input === true ? '' : ' </dev/null'} 2>&1`,
   ].join('\n');
+}
+// The shell line that gives a change its protect folders (each ~/… and plain; R61), for the helper's --protect: a real
+// folder as ~/…; one that is a link, or has a link above it (the model store on a second disk), as the folder it leads
+// to (~/… when that is in the home, else its whole path), never left out; one whose link leads to no folder there stops
+// the call before the helper ("console protect <folder>", which the runner turns into an ask), unless bare names it
+// (the owner's yes said it runs without it). One that isn't there is left out: nothing is there to keep. Its script
+// defines said, as helperScript's and the net's guardScript (21-guard.mjs) do; both call this.
+function helperProtect(dirs, bare = []) {
+  const under = d => `"$HOME"${q(d.slice(1))}`;
+  return `p=(); ${dirs.map(d => `if [ -L ${under(d)} ] || { [ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" != ${under(d)} ]; }; then r=$(realpath -e -- ${under(d)} 2>/dev/null); if [ -n "$r" ] && [ -d "$r" ]; then case $r in "$HOME"/*) p+=(--protect "~/\${r#"$HOME"/}") ;; *) p+=(--protect "$r") ;; esac; else ${bare.includes(d) ? 'true' : `said ${q(`protect ${d}`)}`}; fi; elif [ -d ${under(d)} ]; then p+=(--protect ${q(d)}); fi`).join('; ')}`;
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
 // folders), check (with form: an exact form run after it), or prove. A fresh id each call. Never rejects: { id, code, out

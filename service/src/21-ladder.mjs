@@ -206,7 +206,9 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = []) {
+// more: what the runner found it can't do unasked (workAfter): bare, the protect folders whose link leads to no folder,
+// which the press then runs without.
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = [], more = {}) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
@@ -231,7 +233,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [], at: Date.now() });
   return out;
 }
 
@@ -279,7 +281,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
         return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
       }
     }
-    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys });
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [] }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
@@ -294,13 +296,24 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys });
+  if (!why) return workAfter(await runChange(node, spec?.run ?? command, viewer, gate ? { ...ctx, gate } : ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, spec ? '' : command, widen, sorted);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as, keys }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec, keys);
+}
+// What the runner found it can't do unasked (runChange's asks, 21-runner.mjs), asked in the chat (R61): a protect
+// folder whose link leads to no folder there, which after the yes it runs without (bare). With no chat to ask in (the
+// API, or write_file's own call), the runner's own answer: nothing ran, and why.
+async function workAfter(r, node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys) {
+  if (!r?.asks) return r;
+  const { asks, protect, ...said } = r;
+  if (spec || (!ctx.conv && !ctx.onQuestion)) return said;
+  const c = { ...ctx, button: false, ownerConfirmed: false };
+  if (asks === 'protect') return workAsk(node, command, sorted, viewer, c, `${protect} on ${sparkName(node)} is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it`, dir, widen, topDirs, spec, keys, { bare: [protect] });
+  return said;
 }

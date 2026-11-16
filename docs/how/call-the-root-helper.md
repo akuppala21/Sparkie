@@ -14,7 +14,7 @@ through the root helper (`deploy/spark-console-root`, R42) and its one caller, `
 - `helperAnswer` reads the answer from the lines that begin with the id (a command can learn it); a look's or run's
   answer is its last line, `<id> end <code>` or `<id> end time`; before it only the helper's fixed sentences, whole,
   are `notes`. Map a new kind of answer there, never by searching the output.
-- A change (`runChange`, R61): `--dir`, `--protect '~/…'`, `--memory`; after a yes only `--open`, `--fleet`, `--gpu`.
+- A change (`runChange`, R61): `--dir`, `--protect` (`helperProtect`), `--memory`; after a yes only `--open`, `--fleet`, `--gpu`.
   `state --id` (`runnerRunState`): what became of a call.
 - With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:
   the owner's command (`ownerCommand`) once per Spark and reason while the console runs, then one line; never the
