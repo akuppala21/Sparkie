@@ -13,7 +13,7 @@
 # restart, daemon-reload and try-restart, the user manager's too, which do nothing. A way-in unit (A13b) a test
 # writes as <rehearsal>/standin/units/<unit> ("<active> <file>", as "active enabled") is shown by show
 # --property=ActiveState,UnitFileState,LoadState, and start, stop, restart, enable, disable, mask and unmask change it
-# (--no-block too); one with no such file is not-found.
+# (--no-block too); its LoadState is "masked" while its file is, as systemd says; one with no such file is not-found.
 # A look's or a change's unit (sw-look-, sw-run-) is active
 # while the stand-in systemd-run runs it. Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it
 # answers from that one.
@@ -70,7 +70,8 @@ elif args[:2] == ['is-active', '--quiet'] and len(args) == 3:
     sys.exit(3 if os.path.exists(os.path.join(R, 'standin', 'target-dead')) else 0)
 elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and len(args) == 3:
     u = unit(args[2])
-    print(f'ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState=loaded' if u else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')
+    print(f"ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState={'masked' if u[1] == 'masked' else 'loaded'}" if u
+          else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')   # (as systemd: a masked unit's LoadState is masked)
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4 \
         and os.path.exists(os.path.join(R, 'standin', 'silent', args[3])):
     pass   # (systemd gave no answer for this unit)

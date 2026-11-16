@@ -1275,9 +1275,10 @@ def moved(was_st, now_st):   # (the units and ufw that differ and go back, what 
     back, lost = [], []
     for u in UNITS:
         a, b = was_st.get(u) or {}, now_st.get(u) or {}
-        if a.get('load') == 'loaded' and b.get('load') == 'not-found':
+        # (a masked unit's LoadState is "masked": it is there, and counts like a loaded one)
+        if a.get('load') in ('loaded', 'masked') and b.get('load') == 'not-found':
             lost.append(f'{u} is gone (its package removed?)')
-        elif a.get('load') == 'loaded' and (a.get('file') != b.get('file') or (a.get('active') in ON and b.get('active') in OFF)
+        elif a.get('load') in ('loaded', 'masked') and (a.get('file') != b.get('file') or (a.get('active') in ON and b.get('active') in OFF)
                                              or (a.get('active') in OFF and b.get('active') in ON)):
             back.append(u)   # (a state passing at the copy, or now, never counts: only on to off, off to on, or its file)
     if was_st.get('ufw') in ('active', 'inactive') and now_st.get('ufw') in ('active', 'inactive') and was_st['ufw'] != now_st['ufw']:
