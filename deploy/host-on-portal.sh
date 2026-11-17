@@ -1,33 +1,76 @@
 #!/usr/bin/env bash
-# Installs or updates Spark Console on Spark 2 (the name is from when it ran next to the original portal):
-#   https://<Spark 2>:8443/console/      the UI (static files; :8443/ serves the same folder since the portal's cutover)
-#   https://<Spark 2>:8443/console/api/  its service: status, live metrics, models, deploys, chats
+# Installs or updates Spark Console on the hub (the name is from when it ran next to the original portal):
+#   https://<the hub>:8443/console/      the UI (static files; :8443/ serves the same folder since the portal's cutover)
+#   https://<the hub>:8443/console/api/  its service: status, live metrics, models, deploys, chats
 # The :8443/ route is left alone here; deploy/cutover.sh owns it.
 #
 #   bash spark-console/deploy/host-on-portal.sh [user@host]
 #
+# The hub is the Spark this build runs Spark Console on: its service/config.json's Spark with host "local". From the Mac
+# it is reached at its address in deploy/hub.env (the default target), which must name the same hub, login, address
+# and Sparks. Any other target is refused before anything is sent: a build installed on another Spark would take that
+# Spark for the hub. On the hub itself (`local`) its installer refuses a build whose hub isn't the one installed there.
 # Run it again to push updates; sudo is only needed the first time, to add the two routes.
 #   NOTE='what changed, in plain words' bash spark-console/deploy/host-on-portal.sh   puts that line on the console's update record (no secrets in it)
 # Every update first saves what's installed, with its state, in ~/.local/share/spark-console/releases/<time>/ on
-# Spark 2 (the newest 10 are kept) and prints the command that puts it back. The update is kept only if the new service
+# the hub (the newest 10 are kept) and prints the command that puts it back. The update is kept only if the new service
 # answers, keeps running as the same process for 40 seconds, still knows the owner, answers at the agent door and the
 # model address, Sparkie answers one chat turn with a tool call, and Telegram polls again if it did before; on any miss,
 # or a copy that fails part-way, the previous files go back on their own (in place and checked after, when there is no
 # room for a checked copy beside them; when even that isn't whole, it says so and the line that finishes it). SKIP_CHAT_CHECK=1 updates without the chat
 # turn (for when Sparkie's model is down).
-# If Spark Console ever stops answering, on Spark 2: bash ~/.local/share/spark-console/go-back.sh puts the last build
+# If Spark Console ever stops answering, on the hub: bash ~/.local/share/spark-console/go-back.sh puts the last build
 # back (every install copies it there; RECOVERY.txt beside it lists the other by-hand steps).
-# On Spark 2 without the Mac, deploy/pull.sh installs a tested build from GitHub with `local` and SKIP_ROUTES=1: then
+# On the hub without the Mac, deploy/pull.sh installs a tested build from GitHub with `local` and SKIP_ROUTES=1: then
 # nothing here calls tailscale, sudo or ssh (the routes on 8443 and the other Sparks' reach aren't checked).
 # To remove Spark Console:
 #   ssh -t <host> 'sudo tailscale serve --https=8443 --set-path=/console/ off; sudo tailscale serve --https=8443 --set-path=/console/api off;
 #                  systemctl --user disable --now spark-console-api'
-#   (the saved snapshots, chats included, stay in ~/.local/share/spark-console on Spark 2 until you delete them)
+#   (the saved snapshots, chats included, stay in ~/.local/share/spark-console on the hub until you delete them)
 set -euo pipefail
-HOST="${1:-akuppala@100.79.155.126}"
 # (--stand-in, after the host: the stand-in fleet's tests, through pull.sh; it reaches install.sh as an argument only)
 STAND_IN=''; [ "${2:-}" != --stand-in ] || STAND_IN=' --stand-in'
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# Which Spark this build runs Spark Console on, and its address: config.json's Spark with host "local", and origin.
+read -r BUILD_HUB ORIGIN < <(python3 -I -c 'import json, sys
+c = json.load(open(sys.argv[1]))
+n = [x.get("id") for x in c.get("nodes") or [] if isinstance(x, dict) and x.get("host") == "local"]
+print(n[0] if len(n) == 1 and isinstance(n[0], str) else "-", str(c.get("origin") or "-").rstrip("/") or "-")' "$HERE/service/config.json" 2>/dev/null || echo '- -') || true
+[[ ${BUILD_HUB:-} =~ ^spark[1-9][0-9]*$ ]] || { echo "Stopped: this build's service/config.json names no one Spark with host \"local\", so which Spark is the hub isn't known. Nothing was changed." >&2; exit 2; }
+WHERE="Spark ${BUILD_HUB#spark}"
+if [ "${1:-}" = local ]; then
+  HOST=local
+else
+  . "$HERE/deploy/hub.sh"
+  HOST="${1:-$HUB_HOST}"
+  # The build's own list of the Sparks (config.json) and the one the scripts reach them by (hub.env) must be the same.
+  # (each Spark's line from hub.env, as id=address)
+  PAIRS=(); for s in $SPARKS; do PAIRS+=("$s=$(addr_of "$s")"); done
+  DIFF=$(python3 -I -c 'import json, sys
+c = json.load(open(sys.argv[1])); hub, login, url = sys.argv[2:5]; want = dict(a.split("=", 1) for a in sys.argv[5:])
+nodes = {n.get("id"): n for n in c.get("nodes") or [] if isinstance(n, dict)}
+bad = []
+if sorted(map(str, nodes)) != sorted(want): bad.append("its Sparks are %s in config.json and %s in hub.env" % (" ".join(sorted(map(str, nodes))), " ".join(sorted(want))))
+for i in sorted(set(nodes) & set(want)):
+    h, ip = nodes[i].get("host"), nodes[i].get("ip")
+    if i == hub and h != "local": bad.append("hub.env makes %s the hub, but config.json has it at %s" % (i, h))
+    if i == hub and ip not in (None, want[i]): bad.append("%s is at %s in hub.env and %s in config.json" % (i, want[i], ip))
+    if i != hub and h != want[i]: bad.append("%s is at %s in hub.env and %s in config.json" % (i, want[i], h))
+if c.get("user") != login: bad.append("the login is %s in config.json and %s in hub.env" % (c.get("user"), login))
+if str(c.get("origin") or "").rstrip("/") != url: bad.append("the address is %s in config.json and %s in hub.env" % (c.get("origin"), url))
+print("; ".join(bad))' "$HERE/service/config.json" "$HUB" "$LOGIN" "$HUB_URL" "${PAIRS[@]}" 2>&1) || DIFF="config.json couldn't be read ($DIFF)"
+  [ -z "$DIFF" ] || { echo "Stopped: this build's two lists of the Sparks disagree: $DIFF. deploy/hub.env and service/config.json must name the same hub, login, address and Sparks. Nothing was changed." >&2; exit 2; }
+  TO=$(spark_of "$HOST" || true)
+  if [ "$TO" != "$HUB" ]; then
+    if [ -n "$TO" ]; then
+      echo "Stopped: $HOST is $(says_of "$TO"), and this build runs Spark Console on $HUB_SAYS, the hub (deploy/hub.env, and service/config.json's Spark with host \"local\"). Installed on $(says_of "$TO"), it would take that Spark for $HUB_SAYS. To install it on the hub: bash $0 (or $HUB_HOST). Nothing was changed." >&2
+    else
+      echo "Stopped: $HOST isn't one of the Sparks in deploy/hub.env, so it can't be told to be $HUB_SAYS, the hub this build runs Spark Console on. To install it there: bash $0 (or $HUB_HOST). Nothing was changed." >&2
+    fi
+    exit 2
+  fi
+  echo "Installing onto $HUB_SAYS ($HOST), the hub."
+fi
 # The page's files, one a line in this order: the page's build stamp is the hash of them read in this order.
 UI_FILES=(
   index.html
@@ -54,22 +97,22 @@ SERVICE_FILES=(
   worker.py
   workflows.lock.json
 )
-# The by-hand way back, kept at a fixed path on Spark 2 (~/.local/share/spark-console/): deploy/RECOVERY.txt says how.
+# The by-hand way back, kept at a fixed path on the hub (~/.local/share/spark-console/): deploy/RECOVERY.txt says how.
 RECOVERY_FILES=(go-back.sh RECOVERY.txt)
 # pull.sh (the install from GitHub) and update-guard.sh (its way back) go there too, but only once the build they came
 # with is kept: they judge the next.
 RECOVERY_FILES+=(pull.sh update-guard.sh)
-RECOVERY_FILES+=(REBUILD.txt)   # bringing Spark 2 back after its disk is lost (also on GitHub)
+RECOVERY_FILES+=(REBUILD.txt)   # bringing the hub back after its disk is lost (also on GitHub)
 # server.mjs is built from service/src/*.mjs (tools/build-server.mjs): install only one that matches its parts.
 cat "$HERE"/service/src/[0-9][0-9]-*.mjs | cmp -s - "$HERE/service/server.mjs" || { echo "service/server.mjs doesn't match service/src: run node tools/build-server.mjs, then node test/lock.mjs." >&2; exit 1; }
 # Which workflow versions passed the whole test suite (test/lock.mjs writes it). Without it every workflow is off.
 [ -f "$HERE/service/workflows.lock.json" ] || { echo "service/workflows.lock.json is missing: run node test/lock.mjs (the whole suite) first." >&2; exit 1; }
 SOCK="/tmp/spark-console-ssh-$$"
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$SOCK" -o ControlPersist=120)
-# On Spark 2 itself (2026-11-11, so it can update without the Mac): `local` runs each step here instead of over SSH.
+# On the hub itself (2026-11-11, so it can update without the Mac): `local` runs each step here instead of over SSH.
 if [ "$HOST" = local ]; then
-  on_spark2() { while [ $# -gt 0 ] && [ "$1" != local ]; do shift; done; shift; [ $# -eq 0 ] || bash -c "$*"; }
-  SSH=(on_spark2)
+  on_hub() { while [ $# -gt 0 ] && [ "$1" != local ]; do shift; done; shift; [ $# -eq 0 ] || bash -c "$*"; }
+  SSH=(on_hub)
 fi
 STAGE="$(mktemp -d)"
 trap '"${SSH[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; rm -rf "$STAGE"' EXIT
@@ -84,16 +127,16 @@ grep -q "^const BUILD = '$BUILD';$" "$STAGE/ui/app.js" || { echo "Couldn't stamp
 printf '{"build":"%s"}\n' "$BUILD" > "$STAGE/ui/version.json"
 for f in "${SERVICE_FILES[@]}"; do cp "$HERE/service/$f" "$STAGE/service/"; done
 for f in "${RECOVERY_FILES[@]}"; do cp "$HERE/deploy/$f" "$STAGE/"; done
-# The look install.sh makes on Spark 2 before it changes anything: every program the console's commands call is on the
+# The look install.sh makes on the hub before it changes anything: every program the console's commands call is on the
 # fixed path (R53).
 cp "$HERE/deploy/path-check.sh" "$STAGE/"
 # The service's /health names its build: the first 12 hex digits of the sha256 of its code (server.mjs, dig.mjs,
 # passkey.mjs, in that order). The update only counts once the service answers with the code sent here.
 API_BUILD="$(cd "$STAGE/service" && cat server.mjs dig.mjs passkey.mjs | shasum -a 256 | cut -c1-12)"
-# The whole source goes along and is kept on Spark 2 (~/spark-console-src), so Spark 2 can rebuild, test and install
+# The whole source goes along and is kept on the hub (~/spark-console-src), so the hub can rebuild, test and install
 # without this Mac (2026-11-11, reviews: "truly standalone").
 # The eval's held-out set (test/eval/memory-held-out.json) is never sent: it tests a brain, so the brain must never be
-# able to read it once commands reach Spark 2. Nothing the console runs reads it (the eval runs it from this machine).
+# able to read it once commands reach the hub. Nothing the console runs reads it (the eval runs it from this machine).
 COPYFILE_DISABLE=1 tar -C "$HERE" --exclude='.DS_Store' --exclude='node_modules' --exclude='test/eval/memory-held-out.json' -cf "$STAGE/source.tar" \
   $(cd "$HERE" && ls -d AGENTS.md README.md agentbar deploy docs public service test tools 2>/dev/null)
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -105,7 +148,7 @@ LOCK_BUILD="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])
 NOTE="${NOTE:-}" python3 -I -c 'import json, os, sys; json.dump({"build": sys.argv[1], "note": os.environ["NOTE"][:600]}, open(sys.argv[2], "w"))' "$API_BUILD" "$STAGE/update-note.json" 2>/dev/null \
   || printf '{"build":"%s","note":""}\n' "$API_BUILD" > "$STAGE/update-note.json"
 
-# The part that runs on Spark 2. It travels with the new files to ~/.cache/spark-console/incoming (nothing installed
+# The part that runs on the hub. It travels with the new files to ~/.cache/spark-console/incoming (nothing installed
 # changes by being copied there):
 #   install.sh check                            checks Node.js and the fixed path (path-check.sh); prints "busy <jobs
 #                                               running> <chats answering>", or "busy down" / "busy unknown", for this
@@ -125,6 +168,21 @@ fail() { echo "  STOP: $*" >&2; exit 1; }
 # The stand-in fleet's tests say --stand-in, last (an argument only: the environment never switches it, R53).
 STAND_IN=''
 if [ $# -gt 0 ] && [ "${!#}" = --stand-in ]; then STAND_IN=1; set -- "${@:1:$(($# - 1))}"; fi
+# Which Spark a build runs Spark Console on: its config.json's Spark with host "local" (nothing when it names none). This
+# build's is said by name in what this prints ("this Spark" when it names none).
+hub_of() { python3 -I -c 'import json, sys
+try:
+    n = [x.get("id") for x in json.load(open(sys.argv[1])).get("nodes") or [] if isinstance(x, dict) and x.get("host") == "local"]
+except Exception:
+    n = []
+print(n[0] if len(n) == 1 and isinstance(n[0], str) and n[0][:5] == "spark" and n[0][5:].isdigit() else "")' "$1" 2>/dev/null || true; }
+HUB_IN=$(hub_of "$IN/service/config.json") HUB_NOW=$(hub_of "$HOME/spark-console-service/config.json")
+WHERE='this Spark'; [ -z "$HUB_IN" ] || WHERE="Spark ${HUB_IN#spark}"
+# Never a build whose hub is another Spark than the one the console installed here runs as: it would take this Spark for
+# that one (an old habit, or pull.sh on the old hub once the hub has moved). A first install has nothing to compare.
+if [ -n "$HUB_IN" ] && [ -n "$HUB_NOW" ] && [ "$HUB_IN" != "$HUB_NOW" ]; then
+  fail "Spark Console runs here as Spark ${HUB_NOW#spark} (its installed config.json), and this build runs it on $WHERE, the hub. Installed here, it would take this Spark for $WHERE. Install it on $WHERE instead. Nothing was changed."
+fi
 # Every program the console's commands call has to be on the fixed path (R53): path-check.sh, beside this script, says
 # which isn't. Asked before anything changes; a miss refuses, naming each. (With --stand-in a test marks one missing
 # with ~/.mock/off-path-<program>, as the console's own look reads it; the list is path-check.sh's.)
@@ -139,11 +197,11 @@ path_check() {
     out=$(bash "$IN/path-check.sh" 2>&1) && return 0
   fi
   [ -n "$out" ] || out="path-check.sh gave no answer"
-  fail "Spark 2 is missing programs Spark Console's commands call. $out. Nothing was changed. Install them where that path finds them (not in your home), then run this again."
+  fail "$WHERE is missing programs Spark Console's commands call. $out. Nothing was changed. Install them where that path finds them (not in your home), then run this again."
 }
 
-# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes: Spark
-# 2's own, from the fixed path (R53), never code-server's (~/.local/opt/code-server-*/lib/node: it goes when Spark 2 is
+# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes: the
+# hub's own, from the fixed path (R53), never code-server's (~/.local/opt/code-server-*/lib/node: it goes when the hub is
 # cleared, E 2.6) nor one kept in the home. (With --stand-in, the stand-in fleet's tests, from the PATH they give.)
 # (no /snap/bin: a snap's Node doesn't start under the unit's NoNewPrivileges)
 NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -154,13 +212,13 @@ NODE=$(PATH=$NODE_FROM command -v node 2>/dev/null || true)
 NODE_HOW='Install Node.js 22 from NodeSource: curl -q -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs. Then run this again. Nothing was changed.'
 if [ -z "$NODE" ]; then
   CS_NODE=$(ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
-  [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE). $NODE_HOW"
-  fail "No Node.js found on Spark 2. $NODE_HOW"
+  [ -z "$CS_NODE" ] || fail "$WHERE has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE). $NODE_HOW"
+  fail "No Node.js found on $WHERE. $NODE_HOW"
 fi
 # (where it leads, not only its name: a link on the fixed path into the home is the home's)
 NODE_REAL=$(readlink -f "$NODE" 2>/dev/null || echo "$NODE")
-case "$NODE_REAL" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home ($NODE_REAL); Spark Console runs only on Spark 2's own. $NODE_HOW" ;; esac
-[ -x "$NODE" ] || fail "No Node.js found on Spark 2. $NODE_HOW"
+case "$NODE_REAL" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home ($NODE_REAL); Spark Console runs only on $WHERE's own. $NODE_HOW" ;; esac
+[ -x "$NODE" ] || fail "No Node.js found on $WHERE. $NODE_HOW"
 NODE_V=$("$NODE" --version 2>/dev/null || true)
 NODE_MAJOR=${NODE_V#v}; NODE_MAJOR=${NODE_MAJOR%%.*}
 [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 22 ] \
@@ -285,7 +343,7 @@ USED_KB=$( { du -sk "$HOME/spark-console" "$HOME/spark-console-service" "$STATE"
 FREE_KB=$(df -Pk "$HOME" 2>/dev/null | awk 'NR == 2 {print $4}' || true)
 if [[ "$FREE_KB" =~ ^[0-9]+$ ]]; then
   NEED_KB=$((USED_KB * 2 + 102400))
-  [ "$FREE_KB" -ge "$NEED_KB" ] || fail "Spark 2 has $((FREE_KB / 1024)) MB free, and this update needs about $((NEED_KB / 1024)) MB (a snapshot of what's installed, plus the new files). Nothing was changed. Free some space, then run this again. Old snapshots are in $REL."
+  [ "$FREE_KB" -ge "$NEED_KB" ] || fail "$WHERE has $((FREE_KB / 1024)) MB free, and this update needs about $((NEED_KB / 1024)) MB (a snapshot of what's installed, plus the new files). Nothing was changed. Free some space, then run this again. Old snapshots are in $REL."
 else
   echo "  Note: couldn't read how much disk space is free, so that wasn't checked."
 fi
@@ -531,7 +589,7 @@ systemctl --user daemon-reload
 systemctl --user enable spark-console-api >/dev/null 2>&1
 systemctl --user restart spark-console-api || true   # if it can't start, the check below says so and puts the old one back
 # After a power cut, a user's services start with the Spark only if the user lingers (the owner turns that on, once).
-[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || echo "Note: Spark Console starts after a reboot only once you log in. To start it with the Spark, run once on Spark 2: sudo loginctl enable-linger $USER" >&2
+[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || echo "Note: Spark Console starts after a reboot only once you log in. To start it with the Spark, run once on $WHERE: sudo loginctl enable-linger $USER" >&2
 
 # Only the new build counts: ok on the socket Tailscale uses, naming the server.mjs just installed. Any miss from here
 # to "kept" ends this script, and on_exit puts the previous install back.
@@ -605,7 +663,7 @@ if [ -f "$IN/source.tar" ]; then
   SRC="$HOME/spark-console-src"
   rm -rf "$SRC.new" "$SRC.old" && mkdir -p "$SRC.new" && tar --warning=no-unknown-keyword -C "$SRC.new" -xf "$IN/source.tar" \
     && { [ ! -d "$SRC" ] || mv "$SRC" "$SRC.old"; } && mv "$SRC.new" "$SRC" && rm -rf "$SRC.old" \
-    && echo "  source: $SRC (to update from Spark 2 itself: bash $SRC/deploy/host-on-portal.sh local)" \
+    && echo "  source: $SRC (to update from $WHERE itself: bash $SRC/deploy/host-on-portal.sh local)" \
     || echo "  NOTE: couldn't keep the source in $SRC (the install itself is fine)."
 fi
 # The watchdog: outside the console, so a stuck console can't stop it. Every minute it asks /health on the socket;
@@ -675,7 +733,7 @@ WantedBy=timers.target
 DOGT
 systemctl --user daemon-reload && systemctl --user enable --now spark-console-watchdog.timer >/dev/null 2>&1 \
   && echo "  watchdog: on (every minute)" || echo "  NOTE: the watchdog timer couldn't be turned on."
-echo "  if Spark Console ever stops answering, on Spark 2: bash ~/.local/share/spark-console/go-back.sh puts the last build back (more: ~/.local/share/spark-console/RECOVERY.txt)"
+echo "  if Spark Console ever stops answering, on $WHERE: bash ~/.local/share/spark-console/go-back.sh puts the last build back (more: ~/.local/share/spark-console/RECOVERY.txt)"
 
 # Each workflow's state: active, waiting for its first run on the Sparks (which validates it), or off (not tested).
 socket_health | python3 -I -c '
@@ -719,7 +777,7 @@ REMOTE
 echo "Connecting to $HOST. Your password is asked once and reused for the steps below."
 "${SSH[@]}" -fN "$HOST"
 
-echo "Copying build $BUILD to a holding folder on Spark 2 (nothing installed changes yet) and checking it …"
+echo "Copying build $BUILD to a holding folder on $WHERE (nothing installed changes yet) and checking it …"
 PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh path-check.sh source.tar "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
   'I="$HOME/.cache/spark-console/incoming"; rm -rf "$I" && mkdir -p "$I" && tar --warning=no-unknown-keyword -C "$I" -xf - && bash "$I/install.sh" check'"$STAND_IN")
 PRE="${PRE##*$'\n'}"
@@ -736,7 +794,7 @@ case "$PRE" in
       if [ "${ASSUME_YES:-}" = 1 ]; then ANSWER=y; else read -rp "Update anyway? [y/N] " ANSWER </dev/tty || ANSWER=''; fi
       case "$ANSWER" in [yY]|[yY][eE][sS]) ;; *) echo "Nothing was changed. Run this again once they've finished."; exit 1 ;; esac
     fi ;;
-  *) echo "Couldn't check Spark 2 before installing (it answered: ${PRE:-nothing})." >&2; exit 1 ;;
+  *) echo "Couldn't check $WHERE before installing (it answered: ${PRE:-nothing})." >&2; exit 1 ;;
 esac
 
 printf -v HOST_Q '%q' "$HOST"
@@ -758,23 +816,23 @@ echo "Checking the /console routes on port 8443 …"
 fi
 
 echo
-echo "Done: https://akspark2.tailab9aa9.ts.net:8443/"
-# The retired short address and web page (2026-11-11): if any of it is still on Spark 2, say how to remove it. Nothing
+if [ "$ORIGIN" = - ]; then echo "Done."; else echo "Done: $ORIGIN/"; fi
+# The retired short address and web page (2026-11-11): if any of it is still on the hub, say how to remove it. Nothing
 # here removes it (it's a Tailscale device; the owner does that), and nothing stops if this check can't run.
 if "${SSH[@]}" "$HOST" 'test -e "$HOME/.local/state/spark-console/door.json" || test -e "$HOME/.local/state/spark-console/cloud.json" || docker ps -a --format "{{.Names}}" 2>/dev/null | grep -qx spark-console-door' 2>/dev/null; then
   echo
-  echo "The retired short address or web page is still on Spark 2. To remove it (docs/sharing.md, the last section):"
+  echo "The retired short address or web page is still on $WHERE. To remove it (docs/sharing.md, the last section):"
   echo "  docker rm -f spark-console-door; docker network rm spark-console-door"
   echo "  rm -f ~/.local/state/spark-console/door.json ~/.local/state/spark-console/cloud.json; rm -rf ~/.local/state/spark-console/door ~/.local/share/spark-console-www ~/.config/spark-console-door"
   echo "  sudo rm -rf ~/.local/state/spark-console-door   (then delete its device in the Tailscale admin console)"
 fi
 
 # "Test the changes" runs by itself (docs/contract.md 6.3, v3.1): each changed workflow's real check with a small model
-# on Spark 3 or 4, then everything is put back. No passkey. SKIP_TEST=1 skips it.
-# (On Spark 2 itself the console doesn't take a person's requests from its own address: the test runs from the console
+# on a compute Spark, then everything is put back. No passkey. SKIP_TEST=1 skips it.
+# (On the hub itself the console doesn't take a person's requests from its own address: the test runs from the console
 # by itself when the next start or restart validates each workflow.)
 if [ "${SKIP_TEST:-}" != 1 ] && [ "$HOST" != local ] && command -v node >/dev/null 2>&1; then
   echo
-  node "$HERE/tools/console.mjs" test-changes \
+  node "$HERE/tools/console.mjs" test-changes --url "$ORIGIN/console/api" \
     || echo "The test of the changes didn't pass (see above). If the update itself is at fault, Undo the last update on the page puts the last good build back."
 fi

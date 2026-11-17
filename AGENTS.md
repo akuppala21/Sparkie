@@ -83,6 +83,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | ask the owner before something dangerous (root, lock-out, a final delete) | `docs/how/raise-a-dangerous-ask.md` |
 | add a test file | `docs/how/add-a-test-file.md` |
 | land a step on main | `docs/how/land-a-step.md` |
+| move the hub to another Spark | `docs/how/move-the-hub.md` |
 
 No card fits? Search `docs/rules.md`.
 

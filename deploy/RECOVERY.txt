@@ -1,8 +1,8 @@
 Spark Console: what to do when it doesn't answer
 
-This file is ~/.local/share/spark-console/RECOVERY.txt on Spark 2. Every install writes it again.
-Run these on Spark 2, in a terminal, signed in as the user Spark Console runs as. None needs sudo. None touches
-SSH, Tailscale, the firewall, users or any model.
+This file is ~/.local/share/spark-console/RECOVERY.txt on the hub (the Spark that runs Spark Console; deploy/hub.env
+names it). Every install writes it again. Run these there, in a terminal, signed in as the user Spark Console runs as.
+None needs sudo. None touches SSH, Tailscale, the firewall, users or any model.
 
 1. Go back to the build from before the last update. People, chats and settings stay as they are.
      bash ~/.local/share/spark-console/go-back.sh

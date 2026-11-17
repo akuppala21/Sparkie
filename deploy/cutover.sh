@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Step 6, part B of retiring the original portal (docs/retire-portal.md): make https://<Spark 2>:8443/ open Spark
-# Console, and switch the portal off. Run it from your Mac; it works on Spark 2 over SSH. sudo may ask for your
-# Spark 2 password, for the tailscale serve change.
+# Step 6, part B of retiring the original portal (docs/retire-portal.md): make https://<the hub>:8443/ open Spark
+# Console, and switch the portal off. Run it from your Mac; it works on the hub (deploy/hub.env) over SSH. sudo may ask
+# for the hub's password, for the tailscale serve change. On a hub that never ran the portal (a new hub, or one rebuilt:
+# docs/how/move-the-hub.md, deploy/REBUILD.txt) it only adds the :8443/ route, which open-to-internet.sh needs, and says
+# there is no portal to switch off; --rollback refuses there.
 #
 #   bash spark-console/deploy/cutover.sh              switch over
 #   bash spark-console/deploy/cutover.sh --check      only the checks; changes nothing
@@ -11,8 +13,9 @@
 # `tailscale serve --https=8443 off`, the public Funnel on 443 isn't touched, and nothing is deleted (the portal's code
 # and files stay until step 7).
 set -euo pipefail
-HOST="${SPARK2:-akuppala@100.79.155.126}"
-URL="${SPARK_CONSOLE_URL:-https://akspark2.tailab9aa9.ts.net:8443}"
+. "$(dirname "$0")/hub.sh"
+HOST="$HUB_HOST"
+URL="$HUB_URL"
 FUNNEL="${URL%:8443}"
 case "${1:-}" in
   '') MODE=switch ;;
@@ -25,7 +28,7 @@ SOCK="/tmp/spark-console-cutover-$$"
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$SOCK" -o ControlPersist=60)
 trap '"${SSH[@]}" -O exit "$HOST" >/dev/null 2>&1 || true' EXIT
 
-# The part that runs on Spark 2. It's copied there first, then run with a terminal so sudo can ask for a password.
+# The part that runs on the hub. It's copied there first, then run with a terminal so sudo can ask for a password.
 read -r -d '' REMOTE <<'EOF' || true
 set -euo pipefail
 MODE="$1"
@@ -33,8 +36,11 @@ STATE="$HOME/.local/state/spark-console"
 fail() { echo "  STOP: $*" >&2; exit 1; }
 serve() { tailscale serve --bg --https=8443 "$@" 2>/dev/null || sudo tailscale serve --bg --https=8443 "$@"; }
 root_route() { tailscale serve status 2>/dev/null | awk '/:8443/{p=1} p && $2 == "/" {print $3, $4; exit}'; }
+# Whether this Spark has the old portal's unit at all (a hub that never ran it has none).
+portal_here() { systemctl --user cat spark-portal.service >/dev/null 2>&1; }
 
 if [ "$MODE" = rollback ]; then
+  portal_here || fail "There's no portal on this Spark to put back (no spark-portal.service). Nothing was changed."
   # The old portal must never land on a port that's open to the internet (deploy/open-to-internet.sh, contract 4.10).
   tailscale funnel status 2>/dev/null | grep -qE ':8443 \(Funnel on\)' \
     && fail "Port 8443 is open to the internet. Close it first: bash spark-console/deploy/open-to-internet.sh --undo"
@@ -68,7 +74,9 @@ echo "  ok: /console/ and /console/api are in place"
 echo "  / now: $(root_route)"
 
 if [ "$MODE" = check ]; then
-  systemctl --user is-active --quiet spark-portal.service && echo "  the portal is running" || echo "  the portal isn't running"
+  if ! portal_here; then echo "  there's no portal on this Spark"
+  elif systemctl --user is-active --quiet spark-portal.service; then echo "  the portal is running"
+  else echo "  the portal isn't running"; fi
   echo "Checks passed. Nothing was changed."
   exit 0
 fi
@@ -84,14 +92,18 @@ case "$now" in
 esac
 tailscale serve status 2>&1 | grep -q '/console/api' || fail "/console/api went missing. Run: bash spark-console/deploy/cutover.sh --rollback"
 
-echo "Switching the portal off …"
-systemctl --user disable --now spark-portal.service
-if systemctl --user is-active --quiet spark-portal.service; then fail "spark-portal.service is still running."; fi
-echo "  ok: spark-portal.service is stopped and won't start at boot"
+if ! portal_here; then
+  echo "  There's no portal on this Spark, so there's nothing to switch off."
+else
+  echo "Switching the portal off …"
+  systemctl --user disable --now spark-portal.service
+  if systemctl --user is-active --quiet spark-portal.service; then fail "spark-portal.service is still running."; fi
+  echo "  ok: spark-portal.service is stopped and won't start at boot"
+fi
 echo; tailscale serve status
 EOF
 
-echo "Spark 2: $HOST"
+echo "$HUB_SAYS, the hub: $HOST"
 "${SSH[@]}" "$HOST" 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/cutover-remote.sh' <<<"$REMOTE"
 "${SSH[@]}" -t "$HOST" "bash ~/.cache/spark-console/cutover-remote.sh $MODE"
 

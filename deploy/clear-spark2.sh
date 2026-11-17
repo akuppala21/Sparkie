@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Clearing Spark 2, the hub (design E 2.6). Only the first step is built: the look. Run it on Spark 2, as yourself:
+# Clearing the hub (design E 2.6; deploy/hub.env names it). Only the first step is built: the look. Run it on the hub,
+# as yourself:
 #
 #   bash ~/spark-console-src/deploy/clear-spark2.sh --check
 #
 # It lists what is there: units (your systemd services and timers, and the system's running services), containers,
 # listening TCP ports and the folders in your home, and the programs using the most memory. It marks each unit,
-# container, port and folder as Spark Console's, the brain's or something else (the owner's decision: Spark 2 runs
+# container, port and folder as Spark Console's, the brain's or something else (the owner's decision: the hub runs
 # only the console and the brain), then says what the later clearing step would change and what it never touches.
 # The four lists are the ones a list of what may run on the hub would hold (units, containers, ports, folders), by the
 # same names, so a later step can compare the two.
@@ -32,7 +33,7 @@ set -uo pipefail   # (no -e: a look that can't read one thing says so and goes o
 set -f             # no file name patterns, except where a folder is listed on purpose
 
 if [ $# != 1 ] || [ "$1" != --check ]; then
-  echo "Nothing was changed. Clearing Spark 2 is not built yet; for now this script only looks." >&2
+  echo "Nothing was changed. Clearing the hub is not built yet; for now this script only looks." >&2
   echo "To look (it changes nothing): bash $0 --check" >&2
   exit 2
 fi
@@ -65,9 +66,9 @@ exec_of() {
   return 0
 }
 
-echo "A look at Spark 2 (this is ${HOSTNAME:-this machine}, seen as ${USER:-you}). Nothing is changed."
+echo "A look at the hub (this is ${HOSTNAME:-this machine}, seen as ${USER:-you}). Nothing is changed."
 echo "Each unit, container, port and folder is marked $CONSOLE, $BRAIN or $OTHER;"
-echo "Spark 2 is meant to run only Spark Console and the brain."
+echo "The hub is meant to run only Spark Console and the brain."
 
 # ── Units ──
 U_LIST='' U_FILES='' S_LIST='' U_OK=yes
@@ -241,7 +242,7 @@ echo "Folders (in your home)"
 # path|kind (c, b or o)|note|what the later step does
 KNOWN="spark-console|c|the page
 spark-console-service|c|the service
-spark-console-src|c|its source, for installs from Spark 2
+spark-console-src|c|its source, for installs from the hub
 .local/state/spark-console|c|its state: chats, people, memory
 .local/share/spark-console|c|snapshots, the way back, the watchdog
 .config/spark-console|c|its keys and the plug pairings
@@ -331,7 +332,7 @@ case "$NODE" in
   '') node_is='not known: no unit file for spark-console-api.service was found' NODE='?' ;;
   *) node_is='a Node of its own already' ;;
 esac
-echo "  1. Spark Console gets a Node of its own on Spark 2, is installed again, and Spark 2 restarts once to prove it."
+echo "  1. Spark Console gets a Node of its own on the hub, is installed again, and the hub restarts once to prove it."
 echo "     Today it starts with $NODE: $node_is."
 echo "  2. A build without the browser editor is installed."
 echo "  3. These are stopped and switched off, not deleted (each comes back with one command):"

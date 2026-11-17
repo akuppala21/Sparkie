@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Points Tailscale at Spark Console's private socket instead of its local port, so programs on Spark 2 (containers,
-# scripts) can't reach the API directly and claim to be someone. Run it once from your Mac; sudo may ask for your
-# Spark 2 password. Within a minute of the switch, the service stops answering API requests on its local port
+# Points Tailscale at Spark Console's private socket instead of its local port, so programs on the hub (containers,
+# scripts) can't reach the API directly and claim to be someone. Run it once from your Mac; sudo may ask for the hub's
+# password (deploy/hub.env names the hub). Within a minute of the switch, the service stops answering API requests on its local port
 # (127.0.0.1:8810 keeps only /health).
 #
 #   bash spark-console/deploy/lock-api.sh            switch to the socket
@@ -9,11 +9,12 @@
 #
 # Only the /console/api route changes. It never runs `tailscale serve --https=8443 off`.
 set -euo pipefail
-HOST="${SPARK2:-akuppala@100.79.155.126}"
-URL="${SPARK_CONSOLE_URL:-https://akspark2.tailab9aa9.ts.net:8443}"
+. "$(dirname "$0")/hub.sh"
+HOST="$HUB_HOST"
+URL="$HUB_URL"
 case "${1:-}" in '') MODE=lock ;; --undo) MODE=undo ;; *) echo "Usage: bash $0 [--undo]" >&2; exit 2 ;; esac
 
-# The part that runs on Spark 2 is copied there first, then run in a real terminal so sudo can ask for a password.
+# The part that runs on the hub is copied there first, then run in a real terminal so sudo can ask for a password.
 read -r -d '' REMOTE <<'EOF' || true
 MODE="$1"
 set -euo pipefail

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Opens Spark Console's main address (https://akspark2…ts.net:8443) to the internet with Tailscale Funnel, so you reach
+# Opens Spark Console's main address (https://<the hub>…ts.net:8443) to the internet with Tailscale Funnel, so you reach
 # it from your phone or laptop without Tailscale (docs/contract.md 4.10). From the internet nobody gets past the public
 # fleet page until they sign in: your passkey, a device you let in with a code, or an agent with its own key.
-# Run it once from your Mac; sudo may ask for your Spark 2 password.
+# Run it once from your Mac; sudo may ask for the hub's password (deploy/hub.env names the hub).
 #
 #   bash spark-console/deploy/open-to-internet.sh           open it to the internet
 #   bash spark-console/deploy/open-to-internet.sh --undo    back to tailnet only (on purpose: Spark Console stops saying
@@ -13,11 +13,12 @@
 # Port 8443 is opened only when its routes are exactly Spark Console's three (the page's files twice, and the API's
 # private socket), and the installed build signs people in, with your passkey set up.
 set -euo pipefail
-HOST="${SPARK2:-akuppala@100.79.155.126}"
-URL="${SPARK_CONSOLE_URL:-https://akspark2.tailab9aa9.ts.net:8443}"
+. "$(dirname "$0")/hub.sh"
+HOST="$HUB_HOST"
+URL="$HUB_URL"
 case "${1:-}" in '') MODE=open ;; --undo) MODE=undo ;; *) echo "Usage: bash $0 [--undo]" >&2; exit 2 ;; esac
 
-# The part that runs on Spark 2, sent along with the command (nothing is written there first).
+# The part that runs on the hub, sent along with the command (nothing is written there first).
 read -r -d '' REMOTE <<'EOF' || true
 MODE="$1"
 set -euo pipefail
