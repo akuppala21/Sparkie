@@ -48,13 +48,13 @@ action({
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: { ...n.poweredOff, parkedModels: (n.poweredOff.parkedModels || []).map(bareName).filter(Boolean) }, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: { ...n.poweredOff, parkedModels: (n.poweredOff.parkedModels || []).map(v => nameShown(v, 'fleet_events')).filter(Boolean) }, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
         : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
         ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
         id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
-        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: (n.runningContainers || []).map(bareName).filter(Boolean), issues: n.issues || [],
+        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: (n.runningContainers || []).map(v => nameShown(v, 'running_models')).filter(Boolean), issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
       wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,

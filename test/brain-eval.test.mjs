@@ -249,6 +249,17 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
   });
 });
 
+// J1-5: a run that throws (here its practice fleet can't start: no such setup) is no result, tried once more and named:
+// the file is still written, under the broken kind, and the eval ends with code 1.
+test('a run that throws is no result: the file is still written under the broken kind, the run named with its error', { timeout: 300000 * SLOW }, async () => {
+  const r = await runEval(['--stand-in', '--setup', 'no-such-setup', '--only', 'whats-running', '--runs', '1', '--out', file('threw.json')]);
+  assert.equal(r.code, 1, r.out);
+  const rec = read('threw.json');
+  assert.deepEqual([rec.kind, rec.broken.map(x => [x.case, x.run])], ['spark-console-eval-broken', [['whats-running', 1]]], r.out);
+  assert.match(rec.broken[0].error, /^the run stopped: No setup called no-such-setup/);
+  assert.match(rec.cases[0].runs[0].firstTry, /^the run stopped: /, 'tried once more');
+});
+
 // A scripted brain (an OpenAI-style server) for the runs above: it answers the console's brain check (its system line)
 // as a brain that calls tools does ('good'), or never calls the toy tool ('no-tools'), and every other request with a
 // 500, so a case's chat fails. seen: how many check requests and how many requests with a case's words it got.

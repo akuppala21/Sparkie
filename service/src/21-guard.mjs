@@ -51,6 +51,8 @@ const GUARD_SAYS = {
   putBack: /^(?:net |already )?put back at (.*)$/,
   // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
   failed: /^net: the put-back failed: ?(.*)$/,
+  // (after the command: a put-back finished first, the owner's /putback while it ran; put back, never kept)
+  alreadyBack: /^net: already put back$/,
   // (the line just before a put-back at once, saying why: sshd's own words, or the timer's state)
   sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
   timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
@@ -81,7 +83,10 @@ function guardAnswer(id, out) {
   const refusedText = !end && last.startsWith('refused: ') ? last.slice('refused: '.length) : null;
   const back = after(GUARD_SAYS.putBack), partSaid = GUARD_PART_SAID.exec(net)?.[1] ?? (refusedText != null ? GUARD_PART_SAID.exec(refusedText)?.[1] : null) ?? null;
   const failed = after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null);
-  const counted = failed != null && GUARD_COUNT.test(failed) ? failed : null;
+  // (keep refused after a put-back that did not finish, the console's own keep never sends --as-left: that failure)
+  const keepNotDone = refusedText != null ? /^its put-back did not finish \((.*)\): putback --id /.exec(refusedText)?.[1] ?? null : null;
+  const failedAll = failed ?? keepNotDone;
+  const counted = failedAll != null && GUARD_COUNT.test(failedAll) ? failedAll : null;
   const part = partSaid ?? counted ?? (back && GUARD_PART.test(back) ? back : null);
   // (why a put-back came at once: the helper's line just before its result, which it prints only then)
   const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net) || partSaid != null) ? own(lines.at(-3)) ?? '' : '';
@@ -91,9 +96,12 @@ function guardAnswer(id, out) {
     goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
+    alreadyBack: Boolean(end) && GUARD_SAYS.alreadyBack.test(net),
     putBackAt: part == null ? back : null,
     part,
-    failed: counted == null ? failed : null,
+    failed: counted == null ? failedAll : null,
+    // (keep refused while the helper's look that the ways in run after a restart waits: ask again in two minutes)
+    lookWaits: refusedText != null && /^its look that the ways in run after the restart waits\b/.test(refusedText),
     sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
     timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
@@ -105,10 +113,11 @@ function guardAnswer(id, out) {
 // own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
 // (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
 const GUARD_TAIL = 65536;
-// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn), so
-// it must outlast the helper's worst case, from the helper's own numbers: its command's unit given 60 s to stop and 10
-// more to be killed, then three tries 20 s apart, each with a systemd call that hangs to guard.py's 120 s bound, and
-// another put-back holding the guard's lock for up to 120 s before it: 60 + 10 + 3 × 120 + 40 + 120, and 70 to spare.
+// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn). From
+// the helper's own numbers (restore.sh, guard.py): its command's unit given 60 s to stop and 30 more after SIGKILL,
+// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound: 90 + 3 × 120 + 40 = 490 s, and 170
+// to spare. A put-back already under way ahead of it (restore.sh waits for its lock, with no bound of its own), or a try
+// in which more than one call hangs, can outlast it: the put-back goes on on the Spark, and the console reads no answer.
 const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {

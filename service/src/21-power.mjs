@@ -151,16 +151,20 @@ function asleepView(names = null) {
 }
 
 // What a Spark Spark Console powered off shows: when, why, what it parked, and how to turn it on. Built by code from its
-// own record (names only), so fleet_status stays an inside read (R26).
+// own record (names only, nameShown), so fleet_status stays an inside read (R26).
+// Who powered it off (F2, C5): a saved workflow's step runs as "<its title> (saved workflow)", and a title is free text an
+// agent may write, so it is said by kind only; recent_operations has the run with its title. Anyone else as recorded:
+// the owner, Spark Console's idle power-off, Sparkie, or an agent by the name the owner gave its key.
+const offBy = by => (typeof by !== 'string' || !by ? null : / \(saved workflow\)$/.test(by) ? 'a saved workflow' : by);
 function powerMark(id) {
   const r = powerState().off[id];
   if (!r) return null;
   const parked = (r.parked || []).map(k => String(k).split('/').pop());
-  const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
+  const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked', named = parked.map(p => nameShown(p, 'fleet_events') || 'a name not shown here');
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
-    : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+    : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${named.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
   // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
-  return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
+  return { at: r.at || null, why, by: offBy(r.by), parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
     // (not asleep when its record carries a problem, a wake that failed: the problem is said instead, in words)
     howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: r.problem ? null : asleepView().find(a => a.spark === id)?.words || null };
 }
@@ -842,7 +846,8 @@ function sparkNeeded(id, { recentUse = true, unseen = true } = {}) {
   // (only Spark Console's models are parked for idleness: an app kept running there may be in use in ways the console
   // can't see, so a Spark running one isn't idle; power_off when asked still parks apps)
   const other = Object.values(knowledge.workloads).find(w => w.spark === id && w.running && (w.protected || w.labels?.['spark.role'] === 'main' || w.labels?.['spark.console'] !== '1'));
-  if (other) why.push(`${other.name} runs there`);
+  // (named as fleet_status, an inside read, may show a name, R26: one word of 64 signs at most, nameShown)
+  if (other) why.push(`${nameShown(other.name, 'running_models') || 'a container whose name isn’t shown here'} runs there`);
   // (from the idle loop's last rounds: the model there gives no /metrics counter, so its use can't be seen)
   if (unseen && servesHere(id) && Date.now() - (serveUnseen.get(id) || 0) <= 3 * POWER_TICK_MS) why.push('its model’s use can’t be measured (its server gives no /metrics counter)');
   if (fresh) {
