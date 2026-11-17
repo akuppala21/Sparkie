@@ -388,7 +388,8 @@ if A['mode'] == 'restore':
                     finally:
                         os.close(fd)
                 # The put-back can't lose another program's edit made since the look above (A-19, beside): nothing at
-                # the name, by a link, which fails when anything is there by then; else the two names are exchanged in
+                # the name, by a link (or an exclusive create where the disk has no hard links), which fails when
+                # anything is there by then; else the two names are exchanged in
                 # one step and what that displaced is checked: not what was looked at, it goes back and is left as it
                 # is. Where this libc or filesystem has no exchange, a second look just before one replace.
                 hold()
@@ -400,6 +401,30 @@ if A['mode'] == 'restore':
                         except FileExistsError:
                             missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
                             continue
+                        except OSError:
+                            # (a disk with no hard links, FAT or exFAT: made only where nothing is, then filled; any
+                            # other failure is said with its reason, below)
+                            try:
+                                if e['kind'] == 'link':
+                                    os.symlink(e['target'], p)
+                                else:
+                                    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+                                    try:
+                                        os.write(fd, data)
+                                        try:
+                                            os.fchmod(fd, e['mode'])
+                                        except OSError:
+                                            pass
+                                        os.fsync(fd)
+                                    except OSError:
+                                        # (made here and not filled: it goes, and why is said)
+                                        os.unlink(p)
+                                        raise
+                                    finally:
+                                        os.close(fd)
+                            except FileExistsError:
+                                missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                                continue
                     elif swap(tmp, p):
                         if fp(tmp) != now:
                             if not swap(tmp, p):

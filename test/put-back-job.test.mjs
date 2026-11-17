@@ -21,20 +21,24 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, renameSync, symlinkSync, existsSync, mkdtempSync, chmodSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { T, useFleet, api, waitFor, newChat, say, chatMessages, auditLines, SLOW, REPO } from './lib.mjs';
 
-// A stop of the container named in ~/.mock/stop-hangs never comes back (putBack gives a stop 90 s); one named in
-// ~/.mock/stop-fails is refused at once and keeps running; a run of the one named in ~/.mock/run-hangs makes it, then
+// A stop of the container named in ~/.mock/stop-hangs never comes back (putBack gives a stop 90 s), and of the one in
+// ~/.mock/stop-hangs-once only the first time; one named in ~/.mock/stop-fails is refused at once and keeps running; a
+// start of the one in ~/.mock/start-fails is refused; a run of the one named in ~/.mock/run-hangs makes it, then
 // doesn't come back (run gives it 120 s). Anything else goes to the stand-in docker as it is.
 const BIN = join(dirname(fileURLToPath(import.meta.url)), 'mock', 'bin');
 const WRAP = mkdtempSync(join(tmpdir(), 'put-back-docker-'));
 writeFileSync(join(WRAP, 'docker'), `#!/bin/bash
 real=${JSON.stringify(join(BIN, 'docker'))}
 named() { [ -s "$HOME/.mock/$1" ] || return 1; local n a; n=$(cat "$HOME/.mock/$1"); shift; for a in "$@"; do [ "$a" = "$n" ] && return 0; done; return 1; }
+if [ "$1" = stop ] && named stop-hangs-once "$@"; then rm -f "$HOME/.mock/stop-hangs-once"; exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; fi
 if [ "$1" = stop ] && named stop-hangs "$@"; then exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; fi
+if [ "$1" = start ] && named start-fails "$@"; then echo "Error response from daemon: failed to create task for container: a made-up failure" >&2; exit 1; fi
 if [ "$1" = stop ] && named stop-fails "$@"; then echo "Error response from daemon: cannot stop container: $(cat "$HOME/.mock/stop-fails"): tried to kill container, but did not receive an exit event" >&2; exit 1; fi
 if [ "$1" = run ] && named run-hangs "$@"; then "$real" "$@"; exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; fi
 exec "$real" "$@"
@@ -130,7 +134,7 @@ async function jobRunning() {
   assert.equal(stateOf('spark4', JOB), 'running');
 }
 async function modelStopped() {
-  for (const f of ['daemon-down', 'stop-hangs', 'stop-fails', 'run-hangs', 'serve-down']) rmSync(mock('spark4', f), { force: true });
+  for (const f of ['daemon-down', 'stop-hangs', 'stop-hangs-once', 'stop-fails', 'start-fails', 'run-hangs', 'serve-down']) rmSync(mock('spark4', f), { force: true });
   await idle4();
   if (stateOf('spark4', SC) !== 'running') return;
   const s = await api('/stop', { method: 'POST', body: { node: 'spark4', container: SC } });
@@ -246,4 +250,104 @@ test('the limit moves only on the stand-in fleet: on any other console SPARK_CON
   assert.equal(limit(false, '20000'), 45 * 60000, 'a console that isn’t the stand-in fleet');
   assert.equal(limit(true, '20000'), 20000, 'the stand-in fleet');
   assert.deepEqual([limit(true, undefined), limit(true, ''), limit(true, 'soon')], [45 * 60000, 45 * 60000, 45 * 60000], 'not set, or not a number');
+});
+
+// The final read's put-back faults (W-1, W-3, W-6): a copy of the same model running is set aside for the new one, and
+// its put-back looks at the new one's stop first; what couldn't be started again is owed and said; a new app whose run
+// Docker didn't answer is stopped again.
+const plantRadix = () => {
+  const f = mock('spark4', 'containers');
+  writeFileSync(f, `${readFileSync(f, 'utf8').split('\n').filter(l => l && !l.startsWith(`${SC}|`)).join('\n')}\n${SC}|running|Up 1 hour|1|${RADIX}||||\n`);
+  writeFileSync(mock('spark4', `up-${SC}`), String(Math.floor(Date.now() / 1000) - 3600));
+};
+const asideOf = id => `${SC}-before-${id}`;
+// (the new container under the copy's name runs, and the copy is set aside: from here its stop is what the test holds)
+const newOneRuns = id => waitFor(async () => { if (stateOf('spark4', SC) === 'running' && stateOf('spark4', asideOf(id)) === 'exited') return true; const o = (await api(`/jobs/${id}`)).json; assert.equal(o.status, 'running', JSON.stringify(o)); return false; },
+  { timeout: 120000 * SLOW, what: 'the new one running, the copy set aside', every: 100 });
+const freePort = () => new Promise(res => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+
+describe('the put-back of a copy set aside, of what couldn’t start again, and of a run Docker didn’t answer (W-1, W-3, W-6)', { concurrency: 1 }, () => {
+  test('a start over a running copy of the same model whose new container never stops: neither the job nor the copy is started beside it, both stay on the lists, and it is said', { timeout: 600000 * SLOW }, async () => {
+    await jobRunning();
+    plantRadix();
+    silent(true);
+    let id = null;
+    try {
+      const d = await deployRadix();
+      id = d.id;
+      assert.deepEqual(d.stops.sort(), [JOB, SC].sort());
+      await newOneRuns(id);
+      writeFileSync(mock('spark4', 'stop-hangs'), SC);
+      const w = await opLong(id);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      const owed = `gpu-hold and ${SC} (there as ${asideOf(id)}) weren’t started again on Spark 4: the new ${SC} may still be running there (Spark Console couldn’t confirm it stopped). Stop it there, then start gpu-hold and ${SC} again.`;
+      assert.equal(w.error.split('\n')[1], owed, w.error);
+      assert.equal(w.cleanUp, owed);
+      assert.deepEqual([stateOf('spark4', SC), stateOf('spark4', asideOf(id)), stateOf('spark4', JOB)], ['running', 'exited', 'exited']);
+      assert.deepEqual(w.ranHere, [`spark4/${SC}`]);
+      assert.deepEqual([...w.stoppedHere].sort(), [`spark4/${JOB}`, `spark4/${SC}`].sort());
+      assert.ok(!w.log.some(l => /Started gpu-hold on spark4 again|Started sc-.* on spark4 again/.test(l)), w.log.join('\n'));
+    } finally {
+      silent(false);
+      await modelStopped();
+      // (the copy set aside goes, so the next test starts from one copy)
+      const f = mock('spark4', 'containers');
+      writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter(l => !l.startsWith(`${SC}-before-`)).join('\n'));
+    }
+  });
+
+  test('the new container stops only at the put-back\'s own try: its second look starts the copy set aside again', { timeout: 600000 * SLOW }, async () => {
+    await idle4();
+    if (stateOf('spark4', JOB) === 'running') { await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container: JOB, do: 'stop' } }); await idle4(); }
+    plantRadix();
+    silent(true);
+    let id = null;
+    try {
+      const d = await deployRadix();
+      id = d.id;
+      await newOneRuns(id);
+      writeFileSync(mock('spark4', 'stop-hangs-once'), SC);
+      const w = await opLong(id);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      assert.ok(w.log.some(l => new RegExp(`Started ${SC.replace(/\./g, '\\.')} on spark4 again$`).test(l)), w.log.join('\n'));
+      assert.equal(stateOf('spark4', SC), 'running', 'the copy runs again under its own name');
+      assert.equal(stateOf('spark4', asideOf(id)), undefined, 'nothing left set aside');
+      assert.equal(w.cleanUp, undefined);
+      assert.deepEqual([w.ranHere, w.stoppedHere], [[], []]);
+    } finally { silent(false); await modelStopped(); }
+  });
+
+  test('cancelled, and what it had stopped couldn’t be started again: the cancel says that, never "put back", and it stays on the list', { timeout: 420000 * SLOW }, async () => {
+    await jobRunning();
+    writeFileSync(mock('spark4', 'serve-down'), '');
+    const said = 'gpu-hold couldn’t be started again on Spark 4; start it from Spark Console.';
+    try {
+      const { id } = await deployRadix();
+      await waitFor(() => stateOf('spark4', SC) === 'running' && stateOf('spark4', JOB) === 'exited', { timeout: 120000 * SLOW, what: 'the new model loading, the job stopped', every: 100 });
+      writeFileSync(mock('spark4', 'start-fails'), JOB);
+      const c = await api(`/jobs/${id}/cancel`, { method: 'POST', body: {} });
+      assert.equal(c.json?.outcome, 'cancelled', c.text);
+      assert.equal(c.json.note, said);
+      const w = await opLong(id);
+      assert.equal(w.status, 'cancelled', JSON.stringify(w));
+      assert.equal(w.error, `Cancelled by owner. ${said}`);
+      for (const t of [c.json.note, w.error]) assert.doesNotMatch(t, /put back/);
+      assert.deepEqual(w.stoppedHere, [`spark4/${JOB}`]);
+      assert.deepEqual([stateOf('spark4', SC), stateOf('spark4', JOB)], ['exited', 'exited']);
+    } finally { await modelStopped(); }
+  });
+
+  test('a new app whose docker run Docker didn’t answer in time, but that started: it is stopped again and said', { timeout: 420000 * SLOW }, async () => {
+    await idle4();
+    writeFileSync(mock('spark4', 'run-hangs'), 'hang-app');
+    try {
+      const r = await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container: 'hang-app', image: 'nginx:1.27', port: `${await freePort()}:80` } });
+      assert.equal(r.json?.outcome, 'started', r.text);
+      const w = await opLong(r.json.operation);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      assert.equal(w.error, 'Docker didn’t answer the start of hang-app in time.');
+      assert.ok(w.log.some(l => /It didn’t come up, so it was stopped again\./.test(l)), w.log.join('\n'));
+      assert.notEqual(stateOf('spark4', 'hang-app'), 'running');
+    } finally { rmSync(mock('spark4', 'run-hangs'), { force: true }); }
+  });
 });

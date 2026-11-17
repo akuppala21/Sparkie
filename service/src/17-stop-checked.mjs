@@ -26,18 +26,45 @@ async function runningOn(job, id, except = null) {
   const looks = await Promise.all(mine.map(x => stopLook(nodeById(id), x.split('/').slice(1).join('/'))));
   return mine.filter((x, i) => looks[i] !== 'stopped');
 }
+// A command that didn't get Docker's own answer (it timed out, or the Spark stopped answering) may still have done what
+// it was asked: a `docker run` or `docker start` like that counts as run, and is stopped again and looked at (W-6).
+const unanswered = r => r.code === 255 || /\(timed out\)$/.test(String(r.err || ''));
+// What a put-back starts again, as units: a pair stopped for the start (`<name>` on one Spark, `<name>-part2` on another)
+// goes back whole or not at all (W-7: one part alone holds its memory and does nothing); anything else alone.
+function backUnits(items) {
+  const units = [], used = new Set(), nameOf = x => x.split('/').slice(1).join('/'), sparkOf = x => x.split('/')[0];
+  for (const x of items) {
+    if (used.has(x)) continue;
+    const head = nameOf(x).replace(/-part2$/, ''), mate = items.find(y => y !== x && !used.has(y) && sparkOf(y) !== sparkOf(x)
+      && (nameOf(x) === head ? nameOf(y) === `${head}-part2` : nameOf(y) === head));
+    used.add(x);
+    if (!mate) { units.push({ items: [x] }); continue; }
+    used.add(mate);
+    const [h, p] = nameOf(x) === head ? [x, mate] : [mate, x];
+    units.push({ items: [h, p], model: head.replace(/^sc-/, ''), sparks: [sparkOf(h), sparkOf(p)] });
+  }
+  return units;
+}
 // What a put-back still owes, one sentence a Spark: what may still be running there, and what this operation had stopped
-// there that wasn't started again because of it (a copy set aside named with the name it is there under). Each ends
-// "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
-function owedWords(still, held, asides = []) {
+// there that wasn't started again because of it (a copy set aside named with the name it is there under; the new one of
+// the same name called the new one). Then one sentence a pair held whole (W-7), naming what the owner can ask for: that
+// model across both Sparks. Each ends "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
+function owedWords(still, held, asides = [], pairs = []) {
+  const inPair = new Set(pairs.flatMap(u => u.items)), single = held.filter(x => !inPair.has(x));
   const on = (list, id) => list.filter(x => x.split('/')[0] === id).map(x => x.split('/').slice(1).join('/'));
-  return [...new Set(still.map(x => x.split('/')[0]))].map(id => {
-    const at = sparkName(nodeById(id) || { id }), s = on(still, id), h = on(held, id);
+  const at = id => sparkName(nodeById(id) || { id });
+  const lines = [...new Set(still.map(x => x.split('/')[0]))].map(id => {
+    const h = on(single, id), s = on(still, id).map(n => (asides.some(a => a.node === id && a.name === n) ? `the new ${n}` : n));
     const them = s.length > 1 ? 'them' : 'it', were = s.length > 1 ? 'they' : 'it';
-    if (!h.length) return `${s.join(' and ')} may still be running on ${at}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
+    if (!h.length) return `${s.join(' and ')} may still be running on ${at(id)}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
     const shown = h.map(n => { const a = asides.find(x => x.node === id && x.name === n); return a ? `${n} (there as ${a.aside})` : n; });
-    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
+    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at(id)}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
   });
+  for (const u of pairs) {
+    const across = u.sparks.map(at).join(' + ');
+    lines.push(`${u.model} wasn’t started again across ${across}: both its parts stay stopped while one of its Sparks may still run what this start ran. Once that is stopped, start ${u.model} across ${across} again`);
+  }
+  return lines;
 }
 // A failed start's error with what is still owed after its first line (the line the chat shows): unchanged when nothing is.
 const withOwed = (job, message) => {
