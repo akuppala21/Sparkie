@@ -5471,18 +5471,43 @@ const GENERIC = new Set(['sc', 'the', 'a', 'an', 'model', 'models', 'on', 'it', 
 // "across", "from", "to" ("start gemma on 3", "across 3 and 4", "3+4") when it's a real Spark and isn't a count ("on 2
 // GPUs", "to 4 bits"). (2026-11-11: "start gemma on 3" ran wherever there was room.)
 const BARE_SPARKS = /\b(on|across|onto|over|between|from|to)\s+(\d)((?:\s*(?:,|and|&|\+|or)\s*\d)*)\b(?!\s*(?:sparks?|gpus?|nodes?|machines?|boxes|x\b|mins?|minutes?|hours?|days?|secs?|seconds?|%|gb\b|tb\b|k\b|bits?|b\b|parts?|times?|of\b|\.\d))/g;
-const sparkNames = text => String(text).toLowerCase().replace(/sparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g,
-  (m, first, rest) => ` ${[first, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
-  .replace(BARE_SPARKS, (m, prep, first, rest) => {
-    const ids = [first, ...(rest.match(/\d/g) || [])];
-    return ids.every(d => NODES.some(n => n.id === `spark${d}`)) ? ` ${prep} ${ids.map(d => `spark${d}`).join(' ')} ` : m;
-  });
+// Other ways a Spark is said (S4): "spark four", "spark #4", "spark no 4", "spark number 4", "the fourth spark", "4th
+// spark", "s4" after "on" (or to, onto, at, in, across, from), and "spark" typed one letter off with its number
+// ("sprak 4", "spakr 4", "sp4rk 4"; never a word of its own, like "spare 4").
+const sparkNames = (() => {
+  const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9 };
+  const NOT_TYPO = new Set(['spare', 'spar', 'spars', 'stark', 'shark', 'spank', 'spork', 'sparky', 'spade', 'spat', 'span', 'spa']);
+  function typo(w) {
+    if (w === 'spark' || w.length < 4 || w.length > 6 || !/^[s5]/.test(w) || NOT_TYPO.has(w)) return false;
+    // (one letter off: one changed, added, dropped, or two side by side swapped)
+    const a = w, b = 'spark', d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+    return d[a.length][b.length] === 1;
+  }
+  const NUM = String.raw`(?:\d+|one|two|three|four|five|six|seven|eight|nine)\b`;
+  const spelled = t => t
+    .replace(/\b(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|[1-9](?:st|nd|rd|th))\s+spark\b/g, (m, o) => ` spark ${NUMBER[o] || parseInt(o, 10)} `)
+    .replace(new RegExp(String.raw`\b([a-z0-9]{3,6})(?=[\s_-]*(?:#\s*|no\.?\s*|num(?:ber)?\.?\s*|nr\.?\s*)?${NUM})`, 'g'), w => (typo(w) ? 'spark' : w))
+    .replace(new RegExp(String.raw`\b(sparks?)[\s_-]*(?:#|no\.?|num(?:ber)?\.?|nr\.?)\s*(${NUM})`, 'g'), '$1 $2')
+    .replace(/\b(sparks?)[\s_-]+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, s, n) => `${s} ${NUMBER[n]}`)
+    .replace(/\b(on|onto|to|at|in|across|from)\s+(?:s|sp|spk)(\d)\b/g, '$1 spark $2');
+  return text => spelled(String(text).toLowerCase()).replace(/sparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g,
+    (m, first, rest) => ` ${[first, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
+    .replace(BARE_SPARKS, (m, prep, first, rest) => {
+      const ids = [first, ...(rest.match(/\d/g) || [])];
+      return ids.every(d => NODES.some(n => n.id === `spark${d}`)) ? ` ${prep} ${ids.map(d => `spark${d}`).join(' ')} ` : m;
+    })
+})();
 const tokensOf = text => new Set(sparkNames(normQuotes(text)).split(/[^a-z0-9.]+/).flatMap(t => [t, t.replace(/\./g, '')]).filter(t => t.length >= 2 && !GENERIC.has(t)));
 // "Can you start gemma?" is a request; "can gemma run on Spark 3?", "should I stop it?" and "if it crashes, restart it"
-// aren't.
-const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
+// aren't. (After hey, hi, ok: one more word of greeting, never a name: "hey bob, can you restart Spark 3" is to Bob.)
+const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:(?:sparkie|there|so|then|now|cool|great|thanks|also)[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
 // "Do not …" and "didn't …" are statements, not questions.
-const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
+const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+(?:not|me\s+a)\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
 // Turning a Spark itself off or on: the phrase names the Spark(s) it switches, and powerSparksSaid reads them from it.
 // (a Spark followed by 's is whose, not what is switched: "turn off Spark 3's model" names no Spark to power off)
 const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*`;
@@ -5592,66 +5617,127 @@ function ownSentences(text) {
   });
   return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
 }
-// Where an order puts its verb (A-18, S-3): a change word of any kind asks for a change only as the first word the
-// owner says to Sparkie in that sentence, after nothing but a short closed list of openers: a greeting or a joining
-// word (ORDER_LEAD), a place or a manner ("on Spark 3,", "Spark 3:", "as root on Spark 3,"), or a request to Sparkie
-// ("can you", "I want you to", "go ahead and", "let's"). A later part after a comma, "and" or "then" counts only when
-// the sentence itself began as an order ("pull the repo on spark 3 and build it"). An order has no subject of its own:
-// "I used to build …", "my colleague says to fix …", "the cron job tries to update …" ask for nothing, and neither
-// does a word used as a noun ("Update: …", "the build is slow", "Try as I might"). A statement and an order in one
-// sentence ("The loader on Spark 3 is broken, fix it.") is a button; said as two sentences, it runs. One function, for
-// every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call orderAt(sentence, at)).
-const ORDER_LEAD = String.raw`(?:(?:ok|okay|alright|right|well|so|and|but|also|now|then|next|first|second|third|finally|lastly|afterwards|after\s+that|yes|yep|yeah|sure|great|good|cool|nice|perfect|thanks|thank\s+you|actually|instead|just|simply|quickly|please|pls|plz|kindly|hey|hi|hello|sparkie|@sparkie)\b[\s,:!–—-]*)`;
-const ORDER_WHERE = String.raw`(?:as\s+root\b[\s,:–—-]*|(?:on|in|at)\s+(?:the\s+)?sparks?[\s_-]*\d+\b[\s,:–—-]*|sparks?[\s_-]*\d+\s*[:,–—-]\s*|(?:on|in|at)\s+\d\b\s*[,:]\s*)`;
-const ORDER_YOU = String.raw`(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*|i\s+(?:want|need)\s+you\s+to\s+|i(?:'d|\s+would)\s+like\s+you\s+to\s+|you\s+(?:can|may|should|could)\s+(?:now\s+)?|go\s+ahead\s+and\s+|let(?:'s|s|\s+us)\s+)`;
-const ORDER_OPEN = new RegExp(`^\\s*(?:${ORDER_LEAD}|${ORDER_WHERE}|${ORDER_YOU})*`, 'i');
-// (the verbs an order's sentence may open with, so a part after "and" or "then" is an order too; "don't …" opens one)
-const ORDER_OPENERS = /^(?:(?:don't|do\s+not|never)\s+)?(?:fix|install|set|change|edit|build|clean|update|try|start|stop|restart|run|rerun|launch|relaunch|deploy|redeploy|serve|load|use|kill|cancel|abort|undo|revert|roll|save|write|test|check|pull|clone|fetch|download|grab|get|copy|move|rename|make|create|add|remove|delete|open|close|cd|go|take|put|turn|switch|swap|replace|bring|spin|fire|boot|wake|power|shut|free|clear|unload|reboot|upgrade|configure|enable|disable|apply|patch|rebuild|reinstall|compile|commit|push|merge|checkout|reset|tidy|unpack|unzip|extract|point|keep|sync|find|look|research|search|refresh|compare|forget|remember|note|read|show|list|tell|see|view|print|watch|wait|give|ask|let|have|do)\b/i;
-const ORDER_JOIN = new RegExp(`(?:[,;]|\\band\\b|\\bthen\\b)\\s*(?:${ORDER_LEAD})*$`, 'i');
+// Where an order puts its verb (A-18, S-3, W1, W2; the net's F7, F8): a change word of any kind asks for a change only
+// as the first word the owner says to Sparkie in that sentence, after nothing but a short closed list of openers: marks
+// before the first letter ("-", "*", "(", "#1", "1)", "/", "…", an emoji), a greeting or a joining word (ORDER_LEAD), a
+// place or a manner ("on Spark 3,", "on 3", "Spark 3:", "Spark 3 start …", "for Spark 3,", "in Spark 3's firewall,",
+// "as root", "with root on Spark 3,", "use root to", "gemma on 4,"), or a request to Sparkie ("can you", "I want you
+// to", "go ahead (and)", "let's", "please do", "we need to", "time to"). A later part counts only when the sentence
+// itself began as an order, with a plain command verb (ORDER_OPENERS: never a talk verb such as remember, note, wait,
+// ask, let, go, get, keep, look, see, tell, show, check, find, read, list), and comes after a comma, "and", "then",
+// "&", "+", "after that", a list's "2)", the earlier order's place ("stop qwen on 3 start gemma on 4") or a verb and one
+// or two words ("stop qwen start gemma"). An order has no subject of its own: "I used to build …", "my colleague says to
+// fix …" ask for nothing. Never as a noun or a report: "Update: …", "Try as I might", "restart of …", "start-up",
+// "build.sh", "build's broken", a word that says what the thing did or is ("Build fails", "update stuck on Spark 3",
+// "build is green", "Restart required"; "fix broken links" is still an order), an adjective before a noun with its own
+// verb ("open ports on Spark 3 are a risk"); never told of: a past time in its clause ("… yesterday", "last week",
+// "earlier", "ago", "before" at the end, "already" before and or but), or the change's outcome joined on ("… and it still
+// fails", ", still asks …", "but it doesn't work"). A statement and an order in one sentence ("The loader on Spark 3 is
+// broken, fix it.") is a button; said as two sentences, it runs. One function, for every reader of the owner's words as
+// an ask (changeIntent; netAsks, 21-net.mjs, calls orderAt(sentence, at)).
+const ORDER_LEAD = String.raw`(?:(?:ok|okay|k|kk|alright|right|well|so|and|but|also|now|then|next|first|second|third|finally|lastly|afterwards|after\s+that|yes|yep|yeah|sure|great|good|cool|nice|perfect|thanks|thank\s+you|thx|ty|actually|instead|just|simply|quickly|quick|please\s+do|please|pls|plz|kindly|hey|hi|hello|yo|oh|ah|no|btw|morning|gm|there|buddy|mate|dude|bro|wait|do\s+it|sparkie|@sparkie)\b[\s,:!–—-]*)`,
+  ORDER_MARKS = String.raw`(?:[-*•·(\[/…~]+\s*|#\d{1,2}\s+|\d{1,2}[.)]\s+|(?:[\uD83C-\uD83E][\uDC00-\uDFFF]|[\u2600-\u27BF\uFE0F\u200D])+\s*)`;
+const ORDER_WHERE = String.raw`(?:(?:sudo\s+)?(?:pip3?|python3?\s+-m\s+pip|npm|pnpm|yarn|apt(?:-get)?|uv(?:\s+pip)?|conda|cargo|snap|brew)\s+|(?:as|with)\s+root\b(?:\s+on\s+(?:the\s+)?sparks?[\s_-]*\d+\b)?[\s,:–—-]*|use\s+root\s+(?:to|and)\s+|(?:on|in|at|for)\s+(?:the\s+)?sparks?[\s_-]*\d+\b(?:'s(?:\s+[\w.-]+){1,2}\s*[,:–—-])?[\s,:–—-]*|sparks?[\s_-]*\d+\b\s*[:,–—-]?\s*|(?:on|in|at|for)\s+\d\b\s*[,:–—-]?\s*|[\w.-]+\s+on\s+(?:sparks?[\s_-]*)?\d\b\s*[,:–—-]\s*)`;
+const ORDER_YOU = String.raw`(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*(?:please\s+)?|(?:i\s+)?(?:want|need)\s+(?:you|u)\s+to\s+|i(?:'d|d|\s+would)\s+like\s+(?:you|u)\s+to\s+|(?:you|u)\s+(?:can|may|should|could)\s+(?:now\s+)?|go\s+ahead\s+(?:and\s+)?|go\s+(?:and\s+)?|let(?:'s|s|\s+us)\s+|please\s+do\s+|do\s+me\s+a\s+fav(?:ou?)r\s+(?:and\s+)?|(?:(?:i|we)\s+)?(?:need\s+to|gotta)\s+|we\s+should\s+|time\s+to\s+|try\s+(?:to|and)\s+)`;
+const ORDER_OPEN = new RegExp(`^\\s*(?:${ORDER_MARKS}|${ORDER_LEAD}|${ORDER_WHERE}|${ORDER_YOU})*`, 'i');
+// (the plain command verbs an order's sentence may open with, so a part after "and" or "then" is an order too; "don't
+// …" opens one; never a verb that opens talk, W2)
+const ORDER_OPENERS = /^(?:(?:don't|do\s+not|never)\s+)?(?:(?:sudo\s+)?(?:git|pip3?|npm|pnpm|yarn|apt(?:-get)?|docker|uv|conda|cargo|snap|systemctl|mkdir|rm|cp|mv)|fix|install|set|change|edit|build|clean|update|try|start|stop|restart|run|rerun|launch|relaunch|deploy|redeploy|serve|load|use|kill|cancel|abort|undo|revert|roll|save|write|test|pull|clone|fetch|download|grab|copy|move|rename|make|create|add|remove|delete|open|close|cd|take|put|turn|switch|swap|replace|bring|spin|fire|boot|wake|power|shut|free|clear|unload|reboot|upgrade|configure|enable|disable|apply|patch|rebuild|reinstall|compile|commit|push|merge|checkout|reset|tidy|unpack|unzip|extract|point|sync|research|search|refresh|compare|forget|allow|block)\b/i;
+const ORDER_JOIN = new RegExp(`(?:[,;&+]|\\band\\b|\\bthen\\b|\\bafter\\s+that\\b|\\b\\d{1,2}[.)]|\\bon\\s+(?:the\\s+)?(?:sparks?[\\s_-]*)?\\d+\\b)\\s*(?:${ORDER_LEAD}|${ORDER_YOU})*$`, 'i');
 // (a quote mark before it, not an apostrophe inside a word)
 const ORDER_QUOTE = /["“”‘]|(?:^|\s)'|'(?:\s|$)/;
-const WORK_NOUN = /^\s+(?:is|are|was|were|has|have|had|seems?|looks?|keeps?|broke|failed|did|didn't|does|doesn't|isn't|wasn't|log|logs|folder|script|scripts|output|step|time)\b/i;
-// (a word used as a noun: "Update: …", "Try as I might"; for a work word also "the fix for …", "build 42", WORK_NOUN)
-const ORDER_NOUN = /^\s*[:#]|^\s+as\b/, WORK_NOUN_MORE = /^\s+(?:of|for)\b|^\s+\d/;
+// What after a change word makes it a noun or a report (W1): a thing's word ("build log", "edit mode", "build error"), …
+const WORK_NOUN = /^\s+(?:log|logs|folder|script|scripts|output|step|time|mode|error|errors)\b/i,
+  // … what the thing did or is, whatever follows ("Build fails …", "build's broken", "build is green", "fix didnt work") …
+  ORDER_REPORT = /^(?:'s\b|\s+(?:is|are|was|were|has|had|seems|looks|keeps|broke|fails|failed|hangs|hung|crashes|crashed|breaks|works|worked|passes|passed|takes|took|times\s+out|timed\s+out|went|goes|did|didn't|didnt|does|doesn't|doesnt|isn't|isnt|wasn't|wasnt|won't|wont|can't|cant|never|still|landed|succeeded|died|froze|stalled|failing|crashing|hanging|erroring|working|passing|pending|stalling|freezing|looping|misbehaving)\b)/i,
+  // … a state, when what follows is nothing, a stop mark, a small word or a time ("build broken on Spark 3", "update
+  // stuck", "Restart required"; "fix broken links", "install updated drivers" are orders) …
+  ORDER_STATE = /^\s+(?:broken|stuck|done|complete|completed|finished|available|fine|ok|okay|green|red|ready|missing|(?!(?:need|feed|seed|speed|bed|red|shed|bleed|breed|weed|embed)\b)[a-z]{3,}ed)(?:\s*$|\s*[,.;!?:)]|\s+(?:on|in|at|for|with|by|from|to|again|still|now|today|yesterday|since|after|before|when|and|but|so|btw|already|too|lol|though|tho|anymore|yet|here|there|over|ever|as|because)\b)/i,
+  // … or an adjective before a noun that takes its own verb ("open ports on Spark 3 are a risk", "kill switch is on") …
+  ORDER_ADJ = /^\s+(?!(?:the|a|an|my|your|his|her|our|their|its|it|them|this|that|these|those|all|every|each|some|any|no|what|whatever|which|who|everything|anything|something|nothing|there|here|me|us|him|you|i|we|he|she|they)\b)[\w.-]+(?:\s+(?!(?:what|whatever|which|that|who|where|when|while|it|them|this|these|those|there|here|as|because|cause|cuz|coz|cos|since|so|if|and|but|or|then|i|you|we|he|she|they)\b)[\w'.-]+){0,5}?\s+(?:are|is|was|were|aren't|isn't|wasn't|weren't)\b/i,
+  // (told of, not asked, F7: a past time or a someday ("eventually", "at some point") in its own clause, or the change's
+  // outcome joined on)
+  ORDER_PAST = /\b(?:eventually|at\s+some\s+point|some\s*day|sometime|one\s+of\s+these\s+days|in\s+the\s+future|down\s+the\s+(?:road|line)|yesterday|(?<!\bfor\s+the\s+)last\s+(?:night|week|weekend|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|earlier|(?:days?|weeks?|months?|hours?|minutes?|years?)\s+ago)\b|\bbefore\s*$|\balready\s+(?:and|but)\b/i,
+  ORDER_OUTCOME = /(?:\b(?:and|but)\b|[,;–—-])\s*(?:(?:it|that|this|they|he|she|i)(?:'s|\s+is|\s+are)?\s+)?(?:still\s+(?:fails?|failing|asks?|asking|doesn't|doesnt|didn't|didnt|isn't|isnt|won't|wont|can't|cant|broken|the\s+same|not|no)|(?:doesn't|doesnt|does\s+not|didn't|didnt|did\s+not)\s+(?:work|help|fix|change)|no\s+luck|nothing\s+changed)\b/i,
+  // (a verb that asks to look first may open an order too, "read the workflows, then run night mode", "check the logs and
+  // restart gemma", but only when nothing between it and the next part tells of someone or something: a subject, a "how",
+  // "why", "whether", a "would", "said", "used", "tried": "Read this: we pull the repo and install …", W2)
+  ORDER_LOOK_FIRST = /^(?:read|check|look\s+(?:at|over|through|into)|find|list|show|get|fetch|open|view|print)\b/i,
+  ORDER_TOLD_OF = /\b(?:i|we|you|he|she|they|someone|somebody|everyone|nobody|people|how|why|what|whether|when|where|who|which|if|would|will|could|should|can|might|may|must|used|had|has|have|was|were|is|are|am|did|does|do|said|says|told|tells|wants|wanted|tried|tries|asked|asks|thinks|recommends|suggests|wrote|sent|broke|fixed|i'm|it's|he's|she's|that's|there's|we're|they're)\b/i,
+  // (two orders with no joining word: a command verb and one or two words, then the next verb)
+  ORDER_RUN_ON = new RegExp(String.raw`^(?:${ORDER_OPENERS.source.replace(/^\^/, '')})\s+(?:(?!(?:to|that|when|if|i|you|we|he|she|they|is|was|are|were|will|would|and|or|but|so|because|as|for|of|with|from|it's)\b)[\w.:/-]+\s+){1,2}$`, 'i');
+// (a word used as a noun: "Update: …", "Try as I might", "restart of …", "stop nothing", "start-up", "restart.sh",
+// "build/"; for a work word also "the fix for …", "build 42", "change in the config")
+const ORDER_NOUN = /^\s*[:#]|^\s+(?:as(?!\s+root\b)|of|nothing)\b|^(?:\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css)\b|\/|_|-(?:on|up|off|in|out|[a-z]{3,})\b)/i, WORK_NOUN_MORE = /^\s+(?:for\b|\d|in\s+the\b)/i;
 // (a match that opens with a noun, "run the self-test", "run it on whatever is best": the sentence must open as an order)
 const ORDER_NOUN_START = /^(?:self[\s-]?tests?|whatever\s+is\s+best)/i;
-// Whether the change word at this match is where an order puts it (kind: changeIntent's, for a work word's nouns).
-// m is a match ({index, 0: the word}), or the word's index alone (netAsks: orderAt(sentence, at)).
+// Whether the change word at this match is where an order puts it (kind: changeIntent's, for a work word's nouns; null
+// from netAsks). m is a match ({index, 0: the word}), or the word's index alone (netAsks: orderAt(sentence, at)).
 function orderAt(sentence, m, kind = null) {
-  if (typeof m === 'number') m = { index: m, 0: /^\S*/.exec(sentence.slice(m))[0] };
-  const pre = sentence.slice(0, m.index), post = sentence.slice(m.index + m[0].length, m.index + m[0].length + 30);
-  if (!/\s/.test(m[0].trim()) && (ORDER_NOUN.test(post) || (kind === 'work' && (WORK_NOUN.test(post) || WORK_NOUN_MORE.test(post))))) return false;
-  const open = ORDER_OPEN.exec(sentence)[0].length;
-  if (ORDER_NOUN_START.test(m[0])) return !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
-  if (!pre.slice(open).trim()) return true;
-  return ORDER_JOIN.test(pre.slice(-80)) && !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
+  // (the word itself: "Add-on" is "Add" with "-on" after it)
+  if (typeof m === 'number') m = { index: m, 0: /^(?:[A-Za-z']+|\S*)/.exec(sentence.slice(m))[0] };
+  const pre = sentence.slice(0, m.index), rest = sentence.slice(m.index + m[0].length);
+  // (a noun or a report: one word, and what stands right after it)
+  const noun = (word, after, k) => !/\s/.test(word.trim()) && (ORDER_NOUN.test(after) || ORDER_REPORT.test(after) || ORDER_STATE.test(after) || ORDER_ADJ.test(after)
+    || (WORK_NOUN.test(after) && !(/^(?:fix|clean)/i.test(word) && /^\s+errors?\b/i.test(after)))
+    || ((k === 'work' || k === null) && /^\s+for\b/i.test(after)) || (k === 'work' && WORK_NOUN_MORE.test(after)));
+  const ahead = rest.slice(0, 200);
+  if (noun(m[0], ahead.slice(0, 80), kind) || ORDER_PAST.test(ahead.split(/[,;–—]|\b(?:and|but|then|so|because)\b/i)[0]) || ORDER_OUTCOME.test(ahead)) return false;
+  // (the sentence began as an order: after its openers, a plain command verb that is not itself a noun or a report;
+  // read once a sentence, with where its first quote mark is, so a long one stays short work)
+  if (orderAt.seen?.sentence !== sentence) {
+    const open = ORDER_OPEN.exec(sentence)[0].length, first = sentence.slice(open, open + 120), verb = /^\S*/.exec(first)[0], q = sentence.search(ORDER_QUOTE);
+    orderAt.seen = { sentence, open, quote: q < 0 ? Infinity : q, look: ORDER_LOOK_FIRST.test(first), began: ORDER_OPENERS.test(first) && !noun(verb, first.slice(verb.length, verb.length + 80), null) };
+  }
+  const { open, quote, look } = orderAt.seen, quoted = quote < m.index;
+  const began = orderAt.seen.began || (look && pre.length - open < 200 && !ORDER_TOLD_OF.test(pre.slice(open).replace(ORDER_LOOK_FIRST, '').replace(ORDER_JOIN, '')));
+  if (ORDER_NOUN_START.test(m[0])) return !quoted && began;
+  if (ORDER_OPEN.exec(pre)[0].length === pre.length) return true;
+  return (ORDER_JOIN.test(pre.slice(-80)) || (pre.length - open < 200 && ORDER_RUN_ON.test(pre.slice(open)))) && !quoted && began;
 }
 // A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
-// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
-// it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
-const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|scratch\s+that|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
-const OFF_FILL = String.raw`(?:oh|ok|okay|no|nope|sorry|hmm+|um+|uh+|actually|please)`;
-const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
-// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one after a comma or a dash.
+// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.", "nvm", "nah", "no", "jk") calls off
+// every kind asked before it in the message (C-6, C1). Read piece by piece from the end of the sentence's last 160
+// characters, so it stays short. After a comma, a dash or "…" any of them; after a space only one that can mean nothing
+// else (OFF_SURE: "stop gemma nvm", "… jk dont", "… actually dont").
+const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|dont(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|nvm|nah|nope|no|jk|j\/k|just\s+kidding|scratch\s+that|scrap\s+that|ignore\s+(?:that|this|it|me)|disregard(?:\s+(?:that|this|it))?|(?:i\s+)?changed\s+my\s+mind|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
+const OFF_FILL = String.raw`(?:oh|ok|okay|sorry|my\s+bad|oops|lol|haha|hmm+|um+|uh+|actually|please)`;
+const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!…–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:…–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
+const OFF_SURE = /^(?:don't|dont|do\s+not|never\s*mind|nevermind|nvm|nah|jk|j\/k|just\s+kidding|scratch\s+that|scrap\s+that|ignore\s+(?:that|this|it|me)|disregard(?:\s+(?:that|this|it))?|(?:i\s+)?changed\s+my\s+mind|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it))/i;
+// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one.
 function calledOff(sentence) {
-  let rest = sentence.slice(-160), word = false, sep = '';
+  let rest = sentence.slice(-160), word = false, sure = false, sep = '';
   // ("stop it now - don't wait" asks for it at once)
-  if (/\b(?:don't|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
-  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
+  if (/\b(?:don't|dont|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
+  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sure ||= OFF_SURE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
   if (!word) return null;
   if (!rest.trim()) return sentence.length <= 160 ? 'only' : null;
-  return /[,;:–—-]/.test(sep) ? 'tail' : null;
+  return /[,;:…–—-]/.test(sep) || sure ? 'tail' : null;
 }
+// A question though its words are an order's: it ends in "?" and no "can you" (or "could", "would", "will") asked it, or
+// it ends in "or not", "yes or no", "or what", ", right", "good idea", "which is better" (Q1).
+const ORDER_ASKED_BACK = /(?:\b(?:or\s+not|yes\s+or\s+no|or\s+what|good\s+idea|which\s+(?:is|one\s+is|would\s+be)\s+better)|,\s*right)\s*$/i;
+const ORDER_YOU_ANY = new RegExp(ORDER_YOU, 'gi');
+// A note's heading on its own, the rest of the message being the note: "Note to self;", "todo list", "reminders:".
+const ORDER_NOTE = /^\s*(?:note\s+to\s+self|notes?|to-?\s?do(?:\s+list)?|todos|reminders?|memo|checklist|agenda)\s*[:;,.!–—-]*\s*$/i;
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
+  let notes = false;
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    // (after a note's own heading, "Note to self;", "todo list", "reminder", the rest of the message is that note: W1)
+    if (notes) continue;
+    if (ORDER_NOTE.test(raw)) { notes = true; continue; }
+    // (the owner's own slash words are answered by code, 20-words.mjs: never a change asked of Sparkie)
+    if (/^\s*\/(?:status|pause|restart\s+sparkie|stop|undo(?:\s+update)?|allowed\b.*|putback|help)\s*$/i.test(raw)) continue;
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
+    // (asked of Sparkie: "can you …" first, or after other openers: "thanks, can you stop gemma?")
+    const asksYou = polite || /\b(?:can|could|would|will)\s+(?:you|u|ya)\b/i.test(ORDER_OPEN.exec(sentence)[0]);
     const callOff = calledOff(sentence);
     if (asked.size && callOff === 'only') { for (const k of asked) { negated.add(k); worded.add(k); } continue; }
     if (KEEP.test(sentence)) negated.add('stop');
-    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
+    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence) || (/\?\s*$/.test(raw) && !asksYou) || ORDER_ASKED_BACK.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
     const here = new Set();
     for (const [kind, re] of CHANGE_FORMS) for (const m of sentence.matchAll(re)) if (NEGATOR.test(sentence.slice(Math.max(0, m.index - 50), m.index))) { negated.add(kind); worded.add(kind); }
     for (const [kind, re] of CHANGE_WORDS) {
@@ -5659,7 +5745,8 @@ function changeIntent(text) {
         const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
         if (!NEGATOR.test(pre) && !off && !orderAt(sentence, m, kind)) continue;
         if (NEGATOR.test(pre) || off) { negated.add(kind); worded.add(kind); }
-        else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre)) here.add(kind);
+        // (whether, if, should, can … before it, but not in a request's own words: "thanks, can you stop gemma", "we should")
+        else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre.replace(ORDER_YOU_ANY, ' '))) here.add(kind);
       }
     }
     for (const k of here) asked.add(k);
@@ -5724,32 +5811,81 @@ const REFUSE = /^\s*(no|nope|nah|don't|dont|do not|cancel|never ?mind|wait|leave
 // Which of Spark Console's models on that Spark the words point to: the one with the most of its name's words, and no
 // tie ("stop qwen coder" picks sc-qwen3-coder over sc-qwen-vl; plain "stop qwen" picks neither, so it's a button).
 function pickContainer(name, spark, text) {
+  const [a, b] = containersSaid(spark, text);
+  return a && (!b || a.score > b.score || (name === 'stop_model' && a.running && !b.running)) ? a.name : null;
+}
+// Every container Spark Console started on that Spark that shares a word with the words (what the watcher last saw can
+// lag a start or restart by a minute; a stop of one that isn't running changes nothing): the best match first, and on a
+// tie the one running.
+function containersSaid(spark, text) {
   const said = [...tokensOf(text)].filter(t => !/^spark\d+$/.test(t));
   const near = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  // Every container Spark Console started there (what the watcher last saw can lag a start or restart by a minute; a
-  // stop of one that isn't running changes nothing): the best match, and on a tie the one running.
-  const scored = Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
+  return Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
     .map(w => ({ name: w.name, running: Boolean(w.running), score: [...tokensOf(String(w.name).replace(/^sc-/, ''))].filter(t => !/^part\d$/.test(t) && said.some(x => near(x, t))).length }))
     .filter(x => x.score > 0).sort((x, y) => y.score - x.score || y.running - x.running);
-  const [a, b] = scored;
-  return a && (!b || a.score > b.score || (name === 'stop_model' && a.running && !b.running)) ? a.name : null;
+}
+// Where this message puts a change (A-20; only this message, never the one before): each Spark it names, as a place
+// ("on Spark 4", "to 4", "onto", "at", "in", "for", "switch Spark 4 to …", or "Spark 4:" / "Spark 4 start …" first) or
+// not; ruled out ("not on Spark 3", "don't use Spark 3", "never … Spark 3", "without", "avoid": up to three words
+// before it in its own clause;
+// "but Spark 3", right before it; "except", "instead of", "rather than", "other than", "besides": before it or before
+// "on"); a source ("from Spark 3", "off Spark 3": ruled out for a start); one of "3 or 4" (either). Doubtful for a start:
+// any of those, one named but not as a place ("Spark 3 is full"), and a Spark said in a way no id fits ("the other
+// spark", "both sparks", "across both", "node 4", "the 4th one", "on #4", a sentence ending in "there"). `after`: the
+// Sparks a change of these kinds names after its own word, the nearest change word before them in the sentence (what
+// settles it: "stop qwen on Spark 3 and start gemma on Spark 4" settles Spark 3 for the stop, Spark 4 for the start; for
+// a start only as a place).
+const PLACE_BEFORE = /\b(?:on|onto|to|into|at|in|across|over|for|switch|swap|load|use)\s+(?:the\s+)?$/, PLACE_SOURCE = /\b(?:from|off)\s+(?:the\s+)?$/;
+const PLACE_RULED_OUT = /(?:\bbut\s+(?:the\s+)?|\b(?:except|instead\s+of|rather\s+than|other\s+than|besides|apart\s+from)\s+(?:(?:on|in|at|the)\s+){0,2}|(?:\b(?:not|never|without|avoid|dont|cant|wont|isnt|arent|didnt)\b|n't\b)(?:\s+[\w'#]+){0,3}\s+)$/;
+const PLACE_UNSURE = /\bsparks?\b(?![\s_-]*(?:console|\d))|\b(?:across|on)\s+both\b|\b(?:nodes?|box(?:es)?|machines?|servers?|hosts?)\s*#?\s*\d\b|\bthe\s+\d(?:st|nd|rd|th)\s+one\b|\b(?:on|to|onto)\s+#\d\b|(?<!\b(?:hi|hey|hello)\s+)\bthere\s*$/;
+function sparkPlaces(text, kinds = ['start']) {
+  const named = new Set(), places = new Set(), after = new Set(), out = new Set(), source = new Set(), either = new Set();
+  let doubt = false;
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    // (a host name's letters before it, "akspark4", are part of the name; a Spark's bare number after a word that rules
+    // it out, "on spark 4 not 3", is that Spark)
+    const typed = raw.replace(/\b[a-z]{1,6}(?=sparks?[\s_-]*\d)/gi, '').replace(/\b(not|but|except|instead\s+of|rather\s+than|other\s+than)\s+(?:on\s+)?(\d)\b(?!\s*(?:gpus?|hours?|mins?|minutes?|days?|times?|bits?|gb|%))/gi, (m, w, d) => (NODES.some(n => n.id === `spark${d}`) ? `${w} spark ${d}` : m));
+    const s = sparkNames(typed).replace(/\s+/g, ' ');
+    if (PLACE_UNSURE.test(s)) doubt = true;
+    // ("3 or 4": sparkNames reads both, so the "or" is looked for in the words as typed)
+    for (const m of raw.matchAll(/\b(?:on\s+|sparks?[\s_-]*)\d+(?:\s*(?:,|and|&|\+|or)\s*(?:sparks?[\s_-]*)?\d+)*\s*\bor\b\s*(?:sparks?[\s_-]*)?\d+\b/gi)) {
+      for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) { either.add(t); doubt = true; }
+    }
+    const words = CHANGE_WORDS.flatMap(([kind, re]) => [...s.matchAll(new RegExp(re.source, 'gi'))].map(m => ({ kind, at: m.index }))).sort((x, y) => x.at - y.at);
+    for (const g of s.matchAll(/\bspark\d+\b(?:\s*(?:,|and|&|\+|or)?\s*\bspark\d+\b)*/g)) {
+      const ids = g[0].match(/spark\d+/g), pre = s.slice(0, g.index), post = s.slice(g.index + g[0].length);
+      for (const id of ids) named.add(id);
+      const first = ORDER_OPEN.exec(pre)[0].length === pre.length && /^\s*(?:[:,–—-]|(?:start|run|launch|deploy|load|serve|spin|fire|boot|put|bring|use)\b)/.test(post);
+      const place = PLACE_BEFORE.test(pre) || first, ruled = PLACE_RULED_OUT.test(pre), from = PLACE_SOURCE.test(pre), or = /\bor\b/.test(g[0]);
+      for (const id of ids) { if (ruled) out.add(id); if (from) source.add(id); if (or) either.add(id); }
+      const near = words.filter(w => w.at < g.index).pop(), mine = near && kinds.includes(near.kind) && !ruled && !or && !ids.some(id => either.has(id)) && !(kinds.includes('start') && (from || !place));
+      for (const id of ids) if (mine) after.add(id);
+      if (!place || ruled || from || or) { doubt = true; continue; }
+      for (const id of ids) places.add(id);
+    }
+  }
+  return { named: [...named], places: [...places], after: [...after], out: [...out], source: [...source], either: [...either], doubt };
 }
 // Whether a change is exactly what the words named: every word of the model, the one container they point to (or
 // "everything on Spark N", said in this message), and only Sparks they named.
 function tracesToRequest(name, input, saidText, request = saidText) {
   const said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText))), has = t => said.has(t) || flat.includes(t.replace(/\./g, ''));
-  const namedSparks = [...said].filter(t => /^spark\d+$/.test(t));
+  // (the Sparks this message names, never the one before's, and not one it rules out or names as "3 or 4": "stop gemma
+  // on 4" after "gemma on Spark 3 is slow" names Spark 4 only; "stop gemma, not on Spark 3" names none it allows, A-20)
+  // (several named: the one the change's own words settle, "stop qwen on Spark 3 and start gemma on Spark 4")
+  const here = sparkPlaces(request, ACTION_KIND[name] || []), alone = here.named.filter(id => !here.out.includes(id) && !here.either.includes(id));
+  const allowed = here.after.length ? here.after : here.named.length === 1 && alone.length === 1 ? alone : [];
   if (input.model && ![...tokensOf(input.model)].every(has)) return false;
   if (input.container) {
-    const allOn = [...normQuotes(request).toLowerCase().matchAll(/\b(?:everything|all(?:\s+(?:of\s+)?(?:the\s+)?(?:models?|containers?))?)\s+(?:that's\s+|that\s+is\s+)?(?:running\s+)?on\s+spark[\s_-]*(\d+)\b|\b(?:free\s+up|clear(?:\s+out)?)\s+spark[\s_-]*(\d+)\b/g)].map(m => `spark${m[1] || m[2]}`);
+    const allOn = [...sparkNames(normQuotes(request)).matchAll(/\b(?:everything|all(?:\s+(?:of\s+)?(?:the\s+)?(?:models?|containers?))?)\s+(?:that's\s+|that\s+is\s+)?(?:running\s+)?on\s+spark(\d+)\b|\b(?:free\s+up|clear(?:\s+out)?)\s+spark(\d+)\b/g)].map(m => `spark${m[1] || m[2]}`);
     if (!allOn.includes(input.spark) && pickContainer(name, input.spark, saidText) !== input.container) return false;
   }
   for (const id of [input.spark, ...(input.sparks || [])].filter(Boolean)) {
-    if (name === 'start_model' ? !said.has(id) : namedSparks.length && !namedSparks.includes(id)) return false;
+    if (name === 'start_model' ? !said.has(id) : here.named.length && !allowed.includes(id)) return false;
   }
-  // (no Spark named: the container the words point to must be on the call's Spark alone, so the call's Spark never
-  // picks between two, A-20)
-  if (!namedSparks.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && pickContainer(name, n.id, saidText))) return false;
+  // (this message names no Spark: the container the words point to must be on the call's Spark alone, so the call's
+  // Spark never picks between two, A-20: no container of the console's on another Spark shares a word with them, T1)
+  if (!here.named.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && containersSaid(n.id, saidText).length)) return false;
   return true;
 }
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
@@ -5824,14 +5960,19 @@ async function sparkieCheck(name, input, ctx) {
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
   const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
-    // Where it lands is the owner's to say (A-20): one Spark named is where it starts, whatever the call says; with
-    // more named, the call has to pick one of them, else it is a button; with none named, Spark Console places it.
-    const named = [...said].filter(t => /^spark\d+$/.test(t));
-    if (out.sparks && !out.sparks.every(id => said.has(id))) delete out.sparks;
-    if (!out.sparks && named.length === 1) out.spark = named[0];
-    else if (out.spark && !said.has(out.spark)) delete out.spark;
-    const settled = out.sparks || out.spark || named.length < 2;
-    return { clear: asked && Boolean(settled) && await namesModel(out, saidText), input: out };
+    // Where it lands is the owner's to say (A-20), in this message only (sparkPlaces): one Spark named as a place and
+    // nothing else ("start gemma on Spark 4") is where it starts, whatever the call says; no Spark named at all, Spark
+    // Console places it (the call's Spark is dropped); the Sparks of a start across Sparks all named as places, as the
+    // call has them. Anything else (two Sparks, one ruled out or doubtful, "3 or 4", "the other spark") is a button,
+    // never at once: it shows the place the words settle after the start word, else the call's.
+    const p = sparkPlaces(ctx.request ?? saidText, ['start']), places = p.places;
+    const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+    let settled = false;
+    if (!p.named.length && !p.doubt) { delete out.spark; delete out.sparks; settled = true; }
+    else if (!p.doubt && places.length === 1) { out.spark = places[0]; delete out.sparks; settled = true; }
+    else if (!p.doubt && places.length > 1 && Array.isArray(out.sparks) && same(out.sparks, places)) { delete out.spark; settled = true; }
+    else if (p.after.length === 1) { out.spark = p.after[0]; delete out.sparks; }
+    return { clear: asked && settled && await namesModel(out, saidText), input: out };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).
   if (name === 'remember' || name === 'forget_memory') return { clear: memoryClear(name, out, ctx, asked), input: out };
@@ -5920,6 +6061,8 @@ function powerSparksSaid(re, text) {
   for (const m of normQuotes(text).matchAll(new RegExp(re.source, 'gi'))) for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) ids.add(t);
   return ids;
 }
+// The outcomes of a call that ran nothing on a Spark (no `ranOn` in its audit line, R25).
+const RAN_NOTHING = new Set(['already', 'already-starting', 'question', 'refused', 'declined', 'noroom', 'asked', 'look', 'needs-ok']);
 // ctx says who's asking (via: 'sparkie' | 'agent' | …, actor: a name, request: their words, canChange).
 // Agents (Sparkie, outside agents, auto-restart) pause themselves after many changes in an hour or three failed
 // operations in a row; the owner looks at Activity and resumes them. The owner's own failed work (POST /actions, their
@@ -6084,8 +6227,9 @@ async function runAction(name, viewer, args, ctx = {}) {
       ? { ...ctx.plan, workflow: out.workflow, title: workflowById(out.workflow).title, version: out.workflowVersion || ctx.plan.version,
         inputs: ctx.plan.inputs.map(i => (i.source === 'chosen' && i.name === 'spark' && Array.isArray(out.sparks) ? { name: 'sparks', value: out.sparks.join(' + '), source: 'chosen' } : i)) }
       : ctx.plan;
-    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20)
-    const ranOn = Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
+    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20;
+    // none for a call that ran nothing: already so, a question, refused)
+    const ranOn = RAN_NOTHING.has(out?.outcome) ? null : Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
     audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started, ...(ranOn ? { ranOn } : {}),
       ...(plan ? { plan } : {}) });
     journalCalled(jid, name, input, args, ctx, { out, ms: Date.now() - started });
@@ -11934,12 +12078,18 @@ function audit(entry) {
 // arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
 // same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
 // runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
-// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
-// once until its work truly ends, not when the door stops waiting for it.
+// arguments as the action's own check reads them (checkInput: "Spark 3" and "spark3" are one call; arguments it refuses
+// as sent, and the action refuses them), never on the JSON-RPC id, which restarts with each client session. A call
+// keeps its slot of the three at once until its work truly ends, not when the door stops waiting for it.
 const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
 const doorWork = new Map();
+// (the keys in any order, nested ones too: run_workflow's inputs)
 const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
-const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+function doorKey(agent, a, args) {
+  let read = args ?? {};
+  try { read = checkInput(a.input, args, a.name); } catch {}
+  return createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(read)])).digest('hex');
+}
 // (still going: the call itself, or the operation its answer names)
 const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
@@ -12042,7 +12192,7 @@ async function mcpDoor(req, res, viewer) {
       // when it lands; a call that can change something is never told to try again (R73).
       // (the timer is cleared once the work answers, so it never rejects later)
       let timer;
-      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. While it is still going, the same call with the same arguments, sent again, waits on it and answers with its result. Once it has ended, the same call runs again, so look first: recall {kind: "call"} shows how this one ended; an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
       let value;
       try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));

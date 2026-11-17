@@ -4,7 +4,10 @@
 // change sent again by the same agent (a fresh JSON-RPC id each time) while it, or the operation it started, still
 // runs gets the first's answer and does the work once: run_workflow (which has no check of its own), stop_model,
 // start_model and restart_model; once that work has ended (save_file and remember end as they answer), each change's
-// own check answers the repeat (already, a conflict). The stand-in fleet, with the root helper rehearsed for Spark 3 (test/rehearsal.mjs,
+// own check answers the repeat (already, a conflict). The same call is the arguments as the action reads them: the keys
+// in any order (nested ones too) and "Spark 3" for "spark3" join; the same call from a second agent runs on its own.
+// Past the 50 seconds a change is told a repeat runs again once it has ended, and recall {kind: "call"} shows how it
+// ended. The stand-in fleet, with the root helper rehearsed for Spark 3 (test/rehearsal.mjs,
 // run: true) and a look's and a box command's limit of 58 seconds. Linux only: run it on a Spark.
 // T58 (part): the same call twice runs the start once.
 import { test } from 'node:test';
@@ -21,9 +24,9 @@ useFleet({ watchMs: 60000, env: { SPARK_CONSOLE_LOOK_SECONDS: '58', SPARK_CONSOL
 async () => { keys.act = await createActKey('door-repeat'); });
 
 let rpcId = 7000;
-// One tools/call, each with an id of its own.
-async function send(name, args) {
-  const r = await post({ jsonrpc: '2.0', id: rpcId++, method: 'tools/call', params: { name, arguments: args } }, { token: keys.act.token, timeout: 90000 * SLOW });
+// One tools/call, each with an id of its own (this file's agent, or another agent's key).
+async function send(name, args, token = keys.act.token) {
+  const r = await post({ jsonrpc: '2.0', id: rpcId++, method: 'tools/call', params: { name, arguments: args } }, { token, timeout: 90000 * SLOW });
   const text = r.json?.result?.content?.[0]?.text;
   let value; try { value = JSON.parse(text); } catch { value = undefined; }
   return { isError: r.json?.result?.isError, text: String(text ?? r.text), value };
@@ -109,4 +112,83 @@ test('a change sent again while it, or its operation, still runs gets the first\
   const m1 = await send('remember', m), m2 = await send('remember', m);
   assert.equal(m1.value?.outcome, 'remembered', m1.text);
   assert.equal(m2.value?.outcome, 'already', m2.text);
+});
+
+// The looks of one command on one Spark, from the journal (one line each, written when the look ends).
+const looksOf = (command, spark = 'spark3') => journalLines().filter(x => x.k === 'cmd' && x.class === 'look' && x.args?.command === command && x.args?.spark === spark).length;
+
+test('the same change with its keys in another order, nested ones too, joins the first: one run (doorCanon)', { timeout: 240000 * SLOW }, async () => {
+  // (its one step reads a log on Spark 4 that takes 5 seconds, so its run is still going when the second call comes)
+  const slowLogs = join(T.fleet.root, 'spark4', '.mock', 'slow-container-logs'), container = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
+  const saved = await api('/actions/save_workflow', { method: 'POST', body: { title: 'door canon', inputs: { spark: 'the Spark', container: 'its container' },
+    steps: [{ action: 'container_logs', args: { spark: '{spark}', container: '{container}' } }] } });
+  assert.equal(saved.status, 200, saved.text);
+  const runs = async () => (await api('/jobs')).json.jobs.filter(j => j.type === 'workflow-run' && j.model === 'door canon');
+  const before = ran('run_workflow');
+  writeFileSync(slowLogs, '5');
+  try {
+    const one = await send('run_workflow', { name: 'door canon', inputs: { spark: 'spark4', container } });
+    assert.equal(one.value?.outcome, 'started', one.text);
+    const two = await send('run_workflow', { inputs: { container, spark: 'spark4' }, name: 'door canon' });
+    assert.equal(two.isError, false, two.text);
+    assert.equal(two.value?.operation, one.value.operation, two.text);
+    assert.equal((await finished(one.value.operation)).status, 'completed');
+  } finally { writeFileSync(slowLogs, '0'); }
+  assert.equal((await runs()).length, 1);
+  assert.equal(ran('run_workflow'), before + 1);
+  assert.ok(doorLines('run_workflow').some(l => l.joined && JSON.stringify(l.args).startsWith('{"inputs":{"container"')), 'the repeat’s line says joined');
+});
+
+test('the same call with "Spark 3" for "spark3" joins the first (the arguments as the action reads them); once the first has ended, the same call runs again', { timeout: 240000 * SLOW }, async () => {
+  const command = 'sleep 8';
+  const first = send('run', { on: 'spark3', command });
+  await sleep(1000);
+  const second = await send('run', { on: 'Spark 3', command });
+  const one = await first;
+  for (const r of [one, second]) {
+    assert.equal(r.isError, false, r.text);
+    assert.equal(r.value?.outcome, 'look', r.text);
+  }
+  await sleep(500);
+  assert.equal(looksOf(command), 1);
+  assert.ok(doorLines('run').some(l => l.joined && l.args?.command === command), 'the repeat’s line says joined');
+  // Once it has ended, the same call runs again (as the still_running words say).
+  const third = await send('run', { on: 'Spark 3', command });
+  assert.equal(third.isError, false, third.text);
+  await sleep(500);
+  assert.equal(looksOf(command), 2);
+});
+
+test('the same call from a second agent is that agent\'s own: it runs on its own and is never handed the first agent\'s answer', { timeout: 240000 * SLOW }, async () => {
+  const other = await createActKey('door-repeat-b'), command = 'sleep 9';
+  const first = send('run', { on: 'spark3', command });
+  await sleep(1000);
+  const second = await send('run', { on: 'spark3', command }, other.token);
+  const one = await first;
+  for (const r of [one, second]) {
+    assert.equal(r.isError, false, r.text);
+    assert.equal(r.value?.outcome, 'look', r.text);
+  }
+  assert.notEqual(second.value.record, one.value.record, 'a record of its own');
+  await sleep(500);
+  assert.equal(looksOf(command), 2);
+  const lines = auditLines().filter(l => [keys.act.id, other.id].includes(l.agent) && l.action === 'run' && l.args?.command === command);
+  assert.deepEqual(lines.map(l => [l.agent === other.id, Boolean(l.joined)]).sort(), [[false, false], [true, false]]);
+});
+
+test('a change past the door\'s 50 seconds is told a repeat waits on it only while it is going and runs again once it has ended, and recall {kind: "call"} shows how it ended', { timeout: 240000 * SLOW }, async () => {
+  const command = 'sleep 53';
+  const r = await send('run', { on: 'spark3', command });
+  assert.equal(r.isError, true, r.text);
+  assert.match(r.text, /^\[still_running\] run took over 50 seconds and is still going: nothing was started twice\. Don’t start it another way\./, r.text);
+  assert.match(r.text, / While it is still going, the same call with the same arguments, sent again, waits on it and answers with its result\./, r.text);
+  assert.match(r.text, / Once it has ended, the same call runs again, so look first: recall \{kind: "call"\} shows how this one ended;/, r.text);
+  assert.match(r.text, /an operation it started shows in recent_operations, and wait_operation follows it by its id\.$/, r.text);
+  assert.ok(!/doesn’t run it again/.test(r.text), r.text);
+  // What it points to is there: once the look has ended, recall {kind: "call"} shows the call and how it ended.
+  const seen = await waitFor(async () => {
+    const v = (await send('recall', { kind: 'call', about: command, limit: 20 })).value;
+    return (v?.records || []).find(x => x.act === 'run' && String(x.args || '').includes(command) && x.ok === true);
+  }, { timeout: 60000, every: 2000, what: 'recall to show how the call ended' });
+  assert.equal(seen.outcome, 'look', JSON.stringify(seen));
 });
