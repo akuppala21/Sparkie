@@ -1,15 +1,15 @@
 # Spark Console
 
-One place to run and watch the DGX Sparks. It's a static UI plus a small service on Spark 2 that does everything
+One place to run and watch the DGX Sparks. It's a static UI plus a small service on the hub (Spark 1) that does everything
 itself: sign-in, status, live metrics, the model library and deploys, Sparkie's model and chats, files in each Spark's
 shared folder, and logs. It replaced the original Spark Portal (see `docs/retire-portal.md`).
 
-- **UI:** https://akspark2.tailab9aa9.ts.net:8443/ (also at `:8443/console/`), the console's one address: on the
+- **UI:** https://akspark1.tailab9aa9.ts.net:8443/ (also at `:8443/console/`), the console's one address: on the
   tailnet, or from the internet behind the owner's passkey (`docs/sharing.md`).
-- **Install or update:** `bash spark-console/deploy/host-on-portal.sh` (asks for your Spark 2 password; sudo only the first time).
+- **Install or update:** `bash spark-console/deploy/host-on-portal.sh` (asks for your Spark 1 password; sudo only the first time).
   It keeps the update only if the new build answers, and puts the old one back by itself if not (R30). If the
-  console ever stops answering, on Spark 2: `bash ~/.local/share/spark-console/go-back.sh` (`deploy/RECOVERY.txt`).
-- **Sparkie's model from your own tools:** `https://akspark2.tailab9aa9.ts.net:8443/console/api/v1`, model `sparkie`
+  console ever stops answering, on the hub: `bash ~/.local/share/spark-console/go-back.sh` (`deploy/RECOVERY.txt`).
+- **Sparkie's model from your own tools:** `https://akspark1.tailab9aa9.ts.net:8443/console/api/v1`, model `sparkie`
   (contract 9.9). Qwen thinks before answering unless told not to: send
   `"chat_template_kwargs": {"enable_thinking": false}` for short direct answers, or allow enough `max_tokens` for the
   thinking.
@@ -21,7 +21,7 @@ shared folder, and logs. It replaced the original Spark Portal (see `docs/retire
 | change it (Sparkie, an agent or a person) | `AGENTS.md`, then one card in `docs/how/` |
 | know what it must do, and what is built | `docs/contract.md`, `docs/status.md` |
 | see how it fits together | `docs/architecture.md`, `docs/code-map.md`, `docs/registry.md` |
-| know what it keeps on Spark 2, and where | `docs/state.md`, `docs/state-outside.md` |
+| know what it keeps on the hub, and where | `docs/state.md`, `docs/state-outside.md` |
 | use it from your own agents and scripts | `docs/agent-door.md` |
 | use it from your phone, or from anywhere | `docs/sharing.md` |
 | add models and the setups people published | `docs/recipes.md` |
@@ -43,7 +43,7 @@ shared folder, and logs. It replaced the original Spark Portal (see `docs/retire
 ## Removing it
 
 ```bash
-ssh -t akuppala@100.79.155.126 'sudo tailscale serve --https=8443 --set-path=/console/ off; sudo tailscale serve --https=8443 --set-path=/console/api off; systemctl --user disable --now spark-console-api'
+ssh -t akuppala@100.119.233.101 'sudo tailscale serve --https=8443 --set-path=/console/ off; sudo tailscale serve --https=8443 --set-path=/console/api off; systemctl --user disable --now spark-console-api'
 ```
 
 Don't run the plain `tailscale serve --https=8443 off` that tailscale suggests: it removes every route on port 8443, not

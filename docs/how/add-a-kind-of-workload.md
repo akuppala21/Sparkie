@@ -26,7 +26,7 @@ Something that runs on a Spark and is not a model.
 
 - Label it `spark.console=1` (every model start stops other console containers there, `plan` in `05-library.mjs`).
 - Use port 8000.
-- Place it on Spark 2.
+- Place it on the hub.
 
 ## Rules
 

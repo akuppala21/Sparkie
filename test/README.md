@@ -50,8 +50,8 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 - **A compute Spark** (the fast way, before an install): `tools/test-on-spark.sh akuppala@<spark>` copies this folder
   there and runs `node test/lock.mjs` in a container with no network: about 46 minutes on a compute Spark (2026-11-15: 2,353 tests, the map
   recorded). The lock comes
-  back to `../spark-test-runs/`, naming the tree that was copied (`SPARK_TEST_TREE`), so `pull.sh` on Spark 2 can find
-  its commit on `main` (R58). Never on Spark 2.
+  back to `../spark-test-runs/`, naming the tree that was copied (`SPARK_TEST_TREE`), so `pull.sh` on the hub can find
+  its commit on `main` (R58). Never on the hub.
 - **GitHub, on every push to `main` and every pull request** (`.github/workflows/full-run.yml`): one job runs the build
   check and `node test/lock.mjs` two files at a time (`SPARK_TEST_SLOW=2`; the runner has 2 cores) and can only read.
   On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build

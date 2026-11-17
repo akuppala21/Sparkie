@@ -25,7 +25,7 @@ A line of the self-test (`self_test`): one more thing it proves on a compute Spa
 ## Rules
 
 - R1: its model, app and job on a compute Spark only, checked again by each step. The Walls line alone reaches every
-  Spark, Spark 2 too: the root helper's `prove` (`selfTestWalls`, `21-work.mjs`, R42).
+  Spark, the hub too: the root helper's `prove` (`selfTestWalls`, `21-work.mjs`, R42).
 - R11: every step through `runAction`; outside it are only the drill's kill and the fixed reads (direct `run` calls)
   and the Walls line's `helperCall`.
 - R13: the self-test job takes no claim; its steps do.

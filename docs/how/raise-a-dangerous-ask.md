@@ -20,7 +20,7 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
   net's time), `net` (code's own line for the net on a compute Spark, kept by its check from outside: 21-net.mjs),
   `lockWhy` (the sorter's why), `kept` (files copied first), `gone` (`{what, bytes}`: cannot be put back), `waysIn`
   (paths), `install` (`{tree, testedAt, differs, brainReads, proposal}`; `differs` null when what differs isn't known),
-  `outsideWall` (why), `hub` (on Spark 2: where it starts, how it runs and what is checked after, `21-hub.mjs`),
+  `outsideWall` (why), `hub` (on the hub: where it starts, how it runs and what is checked after, `21-hub.mjs`),
   `minutes` (how long a long command may run), `lines` (code's own sentences, one line each: what its wall lets it do,
   what it reaches),
   `whoApproves` (it changes passkeys, recovery codes, the pairing or the switch: page only), `switchBrain`, `wall`,

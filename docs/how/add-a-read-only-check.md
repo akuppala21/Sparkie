@@ -9,7 +9,7 @@ A look at a Spark that changes nothing: a probe script, its parsed output, share
 - Shared through `recent` (`16-actions.mjs`), a short-lived read cache.
 - A loop copies the watcher's start: `watchFleet` in `19-watcher.mjs` (a delayed first round, then `setInterval`),
   and goes on its part's `Timers:` line (R28).
-- A look at a way in on Spark 2 itself (Tailscale, linger, Funnel) needs no loop: it rides on `checkRoute` or
+- A look at a way in on the hub itself (Tailscale, linger, Funnel) needs no loop: it rides on `checkRoute` or
   `refreshBlocked` (`23-http.mjs`), keeps what it read in `20-ways-in.mjs`, and `waysInNeeds` puts it on the needs-you
   list, with "couldn't check" for an answer it can't read (R49).
 

@@ -1,6 +1,6 @@
 # Add a state file
 
-A JSON file the console keeps in its state folder (`~/.local/state/spark-console` on Spark 2).
+A JSON file the console keeps in its state folder (`~/.local/state/spark-console` on the hub).
 
 ## Touch
 
@@ -18,7 +18,7 @@ A JSON file the console keeps in its state folder (`~/.local/state/spark-console
 - Its part's header: `Owns: <file> (writers: …)`, naming every function that writes it, wherever it is (R22, R28).
   `node tools/make.mjs` lists it in `docs/registry.md` and fails on a writer the header doesn't name.
 - `WORDS` or `SIGNIN` in `deploy/spark-console-root` (then `HELPER_SHA256`, `docs/how/call-the-root-helper.md`), if it
-  holds what the owner or Sparkie said, or sign-in material: a look or a change on Spark 2 reads every other file in
+  holds what the owner or Sparkie said, or sign-in material: a look or a change on the hub reads every other file in
   the folder (`test/root-helper.test.mjs`, “a look and a change on the hub”).
 
 ## Never

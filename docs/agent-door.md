@@ -4,7 +4,7 @@ Your own AI agents (Claude Code, Cursor, anything that speaks MCP) and the `spar
 through one address, the **agent door**:
 
 ```
-https://akspark2.tailab9aa9.ts.net:8443/console/api/mcp
+https://akspark1.tailab9aa9.ts.net:8443/console/api/mcp
 ```
 
 Two ways in, through the same door:
@@ -39,7 +39,7 @@ Operations Sparkie starts post their result into the conversation when they fini
 2. Copy what the dialog shows. The key is shown once; the console keeps only its fingerprint.
    - **Claude Code** (once, in a terminal):
      ```bash
-     claude mcp add --transport http --scope user sparks https://akspark2.tailab9aa9.ts.net:8443/console/api/mcp --header "Authorization: Bearer <key>"
+     claude mcp add --transport http --scope user sparks https://akspark1.tailab9aa9.ts.net:8443/console/api/mcp --header "Authorization: Bearer <key>"
      ```
      Then ask Claude Code things like "ask Sparkie what's running" or "where would gpt-oss-120b fit?".
    - **Any other MCP client:** the address above, with the header `Authorization: Bearer <key>`.
@@ -106,9 +106,9 @@ Errors start with a code (`[not_found]`, `[invalid]`, `[unreachable, retry later
 | `start_model` | Starts a model you name any way (library name, repo, recipe id, or words like “qwen coder”): finds it, downloads it first if needed, picks a Spark or two linked Sparks with room, starts it with the best setup known, checks it answers. A Hugging Face repo that isn't in Recipes joins them after its download, and its setups (its own model card's too) are looked up before it starts. Asked again for a model already running where you name it, it answers `already` |
 | `stop_model` | Stops one of Spark Console's models (both parts of a two-Spark model) |
 | `restart_model` | Starts one of Spark Console's stopped or crashed models again |
-| `keep_running` | Keeps an app that isn't a model (Open WebUI, a database) running: one already on a Spark joins the list of what should be running and comes back after a crash or a power cycle; `do` restart or stop; with `image` and `port`, starts a new one (a memory cap, named volumes, opened on your tailnet only); `gpu` gives it the Spark's GPU (with `memoryGB`; only where no model or other GPU app runs), `command` the words it runs, and `once` makes a job that runs to its end, needs no port, writes into `jobs/<name>` in the shared folder and is told in the chat when it ends. From an agent (or Telegram), a new image, keeping, restarting or stopping a container Spark Console didn't start, running a job again, or starting a stopped app that uses the GPU is a question only the owner answers. Up means it keeps running; a link is given when it answers web requests (a database is up without one). A name that's there with another image, port, volumes or settings is refused (`[conflict]`, saying what differs); a port Docker doesn't publish for it, or above 65535, is refused; a stopped one starts only within its own memory limit (or a `memoryGB` you give when it has none); a stop while its Spark is off takes it off the list (`forgotten`). Never on Spark 2, never a model (by its image, Spark Console's model label or what the watcher saw), never by the start of a container's id |
+| `keep_running` | Keeps an app that isn't a model (Open WebUI, a database) running: one already on a Spark joins the list of what should be running and comes back after a crash or a power cycle; `do` restart or stop; with `image` and `port`, starts a new one (a memory cap, named volumes, opened on your tailnet only); `gpu` gives it the Spark's GPU (with `memoryGB`; only where no model or other GPU app runs), `command` the words it runs, and `once` makes a job that runs to its end, needs no port, writes into `jobs/<name>` in the shared folder and is told in the chat when it ends. From an agent (or Telegram), a new image, keeping, restarting or stopping a container Spark Console didn't start, running a job again, or starting a stopped app that uses the GPU is a question only the owner answers. Up means it keeps running; a link is given when it answers web requests (a database is up without one). A name that's there with another image, port, volumes or settings is refused (`[conflict]`, saying what differs); a port Docker doesn't publish for it, or above 65535, is refused; a stopped one starts only within its own memory limit (or a `memoryGB` you give when it has none); a stop while its Spark is off takes it off the list (`forgotten`). Never on the hub, never a model (by its image, Spark Console's model label or what the watcher saw), never by the start of a container's id |
 | `save_file` | Saves one new text file (at most 64 KB) in a Spark's shared folder; never replaces a file that's there, never makes a folder, never writes a hidden file or text holding a key shape (a known token format, a private key, `SECRET_KEY=<random>`, a password in an address: plain notes and code are fine). The name has no invisible or direction-changing characters |
-| `power_off`, `power_on`, `power_settings` | A Spark off (models parked; never Spark 2) or on; the idle minutes. Off and minutes wait for the owner |
+| `power_off`, `power_on`, `power_settings` | A Spark off (models parked; never the hub) or on; the idle minutes. Off and minutes wait for the owner |
 | `wait_operation` | Follows an operation (reads only) |
 
 **Who can:** Sparkie, in your chats and in conversations with agents you allowed. Your agents, once you turn on **Can
@@ -118,7 +118,7 @@ seconds answers `[still_running]`: the same call again, while it or its operatio
 
 **Checked inside, every time:** a fresh plan; only Spark Console's own containers stop (anything else is a question for
 you), never a model running across two Sparks as a side effect, never Sparkie's model or protected containers
-(`qwen-recipe-*`); 8 GB of memory always stays free, measured after the stops, so a Spark can't freeze; Spark 2 (where
+(`qwen-recipe-*`); 8 GB of memory always stays free, measured after the stops, so a Spark can't freeze; the hub (where
 Sparkie and the console run) is only used when you name it; two Sparks need a cable that passed the connection test;
 models that run their own code, or whose `spark.json` sets unsafe flags, environment or an unpinned image, are refused;
 only models from your recipes run across two Sparks (those parts run with more
@@ -152,7 +152,7 @@ still works; your own clicks always go through). Agents also pause themselves af
 of their operations failing within an hour, with a note in Activity; resuming that needs no passkey. **Restart crashed models automatically** (on by default): one of Spark
 Console's models that crashes is started again if there's room, at most twice an hour (counted across restarts);
 never one Spark Console stopped on purpose, one that ran out of memory, one that stopped within 10 minutes of starting,
-one on a Spark that lost power or was offline in the last half hour, or anything on Spark 2.
+one on a Spark that lost power or was offline in the last half hour, or anything on the hub.
 
 **Never, for anyone:** SSH, Tailscale, firewall and network, users, keys and sudo, people and access, turning Spark
 Console off. Every change is recorded in Activity (who, your words), `audit.jsonl` and `fleet_events`.
@@ -165,7 +165,7 @@ server someone starts by hand, from an image source the console trusts and with 
 kept as a recipe candidate (`workloads` shows it as `recipeCandidate`); it becomes one-click only once you approve it,
 since anyone who can start a container could otherwise create one. Everything else is still remembered and listed. Sparkie's chats include the same
 record, so when you ask Sparkie about the fleet it knows what's running and what just happened. Files:
-`knowledge.json` and `events.jsonl` in `~/.local/state/spark-console` on Spark 2.
+`knowledge.json` and `events.jsonl` in `~/.local/state/spark-console` on the hub.
 
 ## Rails
 
@@ -190,6 +190,6 @@ record, so when you ask Sparkie about the fleet it knows what's running and what
 ## Under the hood
 
 - MCP over HTTP (Streamable HTTP, JSON responses, stateless): `initialize`, `tools/list`, `tools/call`, `ping`.
-- Keys: `~/.local/state/spark-console/agents.json` on Spark 2 (fingerprints, names, last use).
+- Keys: `~/.local/state/spark-console/agents.json` on the hub (fingerprints, names, last use).
 - The action list: `ACTIONS` in `service/server.mjs`; `GET /console/api/actions` lists it (owner), each action with
   its group (R46). Sparkie is offered a few groups a round; an agent sees every action, and is told to call `guide` first.

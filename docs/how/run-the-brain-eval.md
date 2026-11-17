@@ -6,13 +6,13 @@ stand-in console and stand-in Sparks; only the brain is real.
 
 ## Touch
 
-Run it on a compute Spark that is on (never Spark 2, the hub: contract 6.23), from a copy of the tree, in a container
-that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`sparkie_setup`'s `savedSetups`, `current`).
+Run it on a compute Spark that is on (never the hub: contract 6.23), from a copy of the tree, in a container
+that can reach the tailnet (`--network host`), as the setup the hub runs (`sparkie_setup`'s `savedSetups`, `current`).
 A Spark that looks the console's name up on the internet reaches it through Funnel, and every request gets 401 ("Sign
-in to see more"): give the container Spark 2's tailnet address for that name, `--add-host <console name>:<Spark 2's
+in to see more"): give the container the hub's tailnet address for that name, `--add-host <console name>:<the hub's
 tailnet address>` (from `tailscale ip -4` there), as `eval-on-spark.sh` beside the repository does:
-1. The build about to go in, at its own cap: `node test/eval.mjs --brain-url https://<Spark 2>:8443/console/api
-   --setup <id>`. The relay sends only the brain's requests to the one model address. The run reads which setup Spark 2
+1. The build about to go in, at its own cap: `node test/eval.mjs --brain-url https://<the hub>:8443/console/api
+   --setup <id>`. The relay sends only the brain's requests to the one model address. The run reads which setup the hub
    serves and what it runs from its `GET /v1/models`, and refuses another `--setup` (R52).
 2. What the cap costs: the same with `--cap all` (its results file only; never kept in a profile).
 3. The installed build as it is: a copy of its tree beside this one, then from this tree `--tree <that copy>` with the

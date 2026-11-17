@@ -21,9 +21,9 @@ gates on page routes: `passkeyGate` (`22-passkey.mjs`).
 
 A command on a Spark (`run`, `write_file`) is kind `read` to `runAction`, which only checks its inputs and, once it
 ran, counts it toward the hour's changes (`hourCounted`). Its gates are the ladder's (R61), and the refusal or the
-button says which: “Not done: …”, “Not done on Spark 2: …”, “Asked because …”. In the code, in order: `rootChange` for
+button says which: “Not done: …”, “Not done on <the hub’s name>: …”, “Asked because …”. In the code, in order: `rootChange` for
 `root: true` (`21-root.mjs`, R70); `workChange` (`21-ladder.mjs`): who may run (`whoMayLook`, `21-work.mjs`); on
-Spark 2 `hubChange` and `hubRefuses` (`21-hub.mjs`); `runnerNever` (`21-runner.mjs`: a Spark holding the brain,
+the hub `hubChange` and `hubRefuses` (`21-hub.mjs`); `runnerNever` (`21-runner.mjs`: a Spark holding the brain,
 `sudo`, the pause); the sorter's answer (`sortCommand`, `20-sort.mjs`, R55: not done, or the lock-out class, which
 goes to `netChange`, `21-net.mjs`, R71: as the owner it is answered “set root”); why it isn't run at once
 (`hostClear`); a go-ahead that covers it (`aheadCover`, `21-ahead.mjs`, R65); the rail (`brainRail`). Tests:

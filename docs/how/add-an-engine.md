@@ -11,7 +11,7 @@ A model server program (vLLM, SGLang, llama.cpp, …) the console can start.
 - The watcher's image patterns (`MODEL_IMAGES`, `ENGINE_OF_IMAGE`, `learnedFrom` in `19-watcher.mjs`).
 - Its command in `service/dig.mjs` (`engineCommand`; its other names in `vetSetup`), or a command that starts it is
   read as no setup.
-- Its server program in `HUB_SERVERS` (`21-hub.mjs`), so a command that starts it on Spark 2 is refused (R1).
+- Its server program in `HUB_SERVERS` (`21-hub.mjs`), so a command that starts it on the hub is refused (R1).
 - Trusted image sources (`imageSources` in `CONFIG`, `01-setup.mjs`).
 - `pinImage`'s registries (`11-setups.mjs`).
 - A lock run, then validation runs: every workflow version changes.
