@@ -9,6 +9,8 @@
 //                 down: 502 on everything; slowDown: N sendMessage calls answer 429 with retry_after 1;
 //                 noDelete: deleteMessage answers 400, as Telegram does for a message it can't delete
 //                 blocked: sendMessage answers 403, as Telegram does when the owner blocked the bot
+//                 hold: N, sendMessage waits N ms before it answers (a slow Telegram), then as the rest says
+// A sendMessage that went (answered 200) is also written to $MOCK_DIR/telegram-delivered.jsonl: { at, chat_id, text }.
 import http from 'node:http';
 import { appendFileSync } from 'node:fs';
 
@@ -64,9 +66,11 @@ http.createServer(async (req, res) => {
     return ok(res, ready());
   }
   if (method === 'sendMessage') {
+    if (mode.hold > 0) await new Promise(r => setTimeout(r, Number(mode.hold)));
     if (mode.slowDown > 0) { mode.slowDown--; return fail(res, 429, 'Too Many Requests: retry after 1', { parameters: { retry_after: 1 } }); }
     if (mode.blocked) return fail(res, 403, 'Forbidden: bot was blocked by the user');
     if (typeof body.text !== 'string' || !body.text.length || body.text.length > 4096) return fail(res, 400, 'Bad Request: message is too long');
+    try { appendFileSync(`${DIR}/telegram-delivered.jsonl`, `${JSON.stringify({ at: new Date().toISOString(), chat_id: body.chat_id, text: body.text })}\n`); } catch {}
     return ok(res, { message_id: messageId++, chat: { id: body.chat_id, type: 'private' }, date: Math.floor(Date.now() / 1000), text: body.text });
   }
   if (method === 'sendChatAction' || method === 'answerCallbackQuery') return ok(res, true);

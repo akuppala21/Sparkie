@@ -44,6 +44,7 @@ umask 022
 HELPER=/usr/local/sbin/spark-console-root
 LINE=/etc/sudoers.d/spark-console-root
 HOLD=/run/spark-console
+PINS=/var/lib/spark-console/pins   # (--script's copies: root's, outside /run, which is often mounted noexec)
 MARK=/var/lib/spark-console/proved
 NEED_SYSTEMD=248
 LOOK_MAX=60        # seconds a look may take
@@ -224,7 +225,7 @@ init() {
 }
 
 # --- the call ---------------------------------------------------------------------------------------------------------
-VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 ASKED=0 PROTECT=() SCRIPTS=() CMD=() BAD='' ID_IN=''
+VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 ASKED=0 ASLEFT=0 PROTECT=() SCRIPTS=() CMD=() BAD='' ID_IN=''
 LOCKOUT=0 NAMED_PATHS=() NAMED_UNITS=()
 parse() {
   VERB=${1-}
@@ -244,11 +245,11 @@ parse() {
           case "$1" in --id) ID_IN=$2 ;; --sha256) SHA=$2 ;; --seconds) SECS=$2 ;; --dir) DIR=$2 ;; --memory) MEM=$2 ;; esac
         fi
         shift 2 ;;
-      --open|--stdin|--net|--fleet|--gpu|--home|--lockout|--asked)
+      --open|--stdin|--net|--fleet|--gpu|--home|--lockout|--asked|--as-left)
         if [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break; fi
         seen+="$1 "
         case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; --fleet) FLEET=1 ;; --gpu) GPU=1 ;; --home) HOMEW=1 ;;
-          --lockout) LOCKOUT=1 ;; --asked) ASKED=1 ;; esac
+          --lockout) LOCKOUT=1 ;; --asked) ASKED=1 ;; --as-left) ASLEFT=1 ;; esac
         shift ;;
       --) shift; CMD=("$@"); break ;;
       *) BAD="not understood: an option this helper does not know, or a command without -- before it"; break ;;
@@ -663,7 +664,7 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
     else mapfile -t held < <({ pins "${RO[@]}" "${PROTECT[@]}" "${place[@]}"; for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u); fi
     for p in "${held[@]}"; do PROPS+=(-p "BindPaths=$p"); done
     # (each pinned script: its copy in the held folder, read-only over its path, for the whole run: R63, R72)
-    for p in "${!SCRIPT_PATHS[@]}"; do PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID/script-$((p + 1)):${SCRIPT_PATHS[$p]}"); done
+    for p in "${!SCRIPT_PATHS[@]}"; do PROPS+=(-p "BindReadOnlyPaths=$PINS/$ID/script-$((p + 1)):${SCRIPT_PATHS[$p]}"); done
   fi
   PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
   if [ "$wall" = look ]; then PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$LOOK_MEMORY" -p "TasksMax=$LOOK_TASKS")
@@ -821,7 +822,17 @@ sweep_held() {
     [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
     if [ -n "$(find "$d" -maxdepth 0 -type d -mmin +$((RUN_MAX / 60 + 10)) 2>/dev/null)" ]; then rm -rf -- "$d"; fi
   done
+  for d in "$R$PINS"/*/; do   # (a killed call's script copies: the same age)
+    d=${d%/} n=${d##*/}
+    [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
+    if [ -n "$(find "$d" -maxdepth 0 -type d -mmin +$((RUN_MAX / 60 + 10)) 2>/dev/null)" ]; then rm -rf -- "$d"; fi
+  done
 }
+unhold() {   # the held folder and the script copies of this call, taken away (on every way out of a call)
+  rm -rf -- "$H"
+  [ -z "$PD" ] || rm -rf -- "$PD"
+}
+PD=''
 hold_folder() {
   H="$R$HOLD/$ID"
   mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
@@ -854,7 +865,7 @@ START
 }
 
 # --- verbs -----------------------------------------------------------------------------------------------------------
-only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT$ASKED" = 00000000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#SCRIPTS[@]} -eq 0 ] \
+only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT$ASKED$ASLEFT" = 000000000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#SCRIPTS[@]} -eq 0 ] \
   && [ ${#CMD[@]} -eq 0 ] && [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
@@ -894,22 +905,28 @@ do_check() {
     timer=$(systemctl show --property=ActiveState --value "sw-guard-$open.timer" 2>/dev/null) || timer=''
     if [ "$timer" = active ]; then timer='its timer waits'; else timer="its timer is not waiting (${timer:-gone})"; fi
     say "net open: guard $open goes back at $(guard_at "$R$GUARD/$open") unless it is kept; $timer"
-    # (left open with no timer, after a restart whose put-back failed, say: keep is refused then, so only a put-back ends
-    # it. The one-time command's --check shows this line, and its --undo stops on it)
-    case "$timer" in *'not waiting'*)
-      look=$(systemctl show --property=ActiveState --value "sw-guard-look-$open.timer" 2>/dev/null) || look=''
-      if [ "$look" = active ] && [ ! -e "$R$GUARD/$open/failures" ]; then say "net look: guard $open was put back after a restart; sw-guard-look-$open looks that the ways in run, and only then is it done"
-      elif [ -e "$R$GUARD/$open/failures" ]; then say "net left: guard $open waits for no timer; its put-back did not finish ($(tail -n 1 -- "$R$GUARD/$open/failures" | cut -c1-200)): putback --id $open tries again, keep --id $open keeps it as it stands"
-      else say "net left: guard $open waits for no timer: putback --id $open puts it back now (keep --id $open is refused while no timer waits)"; fi ;;
-    esac
+    # (what waits on it, first: the restart's look; then a put-back that failed, timer or not, which only putback or the
+    # owner's keep --as-left ends; then a guard left with no timer. The one-time command's --check shows these lines, and
+    # its --undo stops on each with what is true)
+    look=$(systemctl show --property=ActiveState --value "sw-guard-look-$open.timer" 2>/dev/null) || look=''
+    if [ "$look" = active ]; then say "net look: guard $open was put back after a restart; sw-guard-look-$open looks that the ways in run, and only then is it done"
+    elif [ -e "$R$GUARD/$open/failures" ]; then say "net failed: guard $open's put-back did not finish ($(tail -n 1 -- "$R$GUARD/$open/failures" | cut -c1-200)): putback --id $open tries again, keep --id $open --as-left keeps it as it stands"
+    else
+      case "$timer" in *'not waiting'*) say "net left: guard $open waits for no timer: putback --id $open puts it back now (keep --id $open is refused while no timer waits)" ;; esac
+    fi
   fi
   exit 0
 }
 
 # --script (R63, R72): a file the command runs, pinned by the SHA-256 the owner's press approved. Bash reads a script as
 # it runs, and a write shows through an open file, so only a copy the owner's account cannot reach binds the bytes: the
-# helper reads each as the owner (so it reads nothing the owner cannot), into the held folder (root's), hashes that
-# copy, and the unit gets the copy read-only over the path for its whole run. The copy goes with the held folder.
+# helper reads each as the owner (so it reads nothing the owner cannot) into a folder of root's, /var/lib/spark-console/
+# pins/<id> (not /run, often noexec: a file run by its path keeps the owner's execute bits), hashes that copy, and the
+# unit starts with the copy bound read-only over the path. What holds: the bytes the unit starts from are the hashed
+# ones, and a write into the file while it runs is never seen. What does not: a program outside the unit that replaces
+# the file, or a folder above it, by a rename or a removal lifts the bind (the kernel detaches a mount whose mount point
+# is renamed over or removed from another mount table, since Linux 3.18), and a later open there reads the new file;
+# nor is anything the script loads later pinned. The copies go when the call ends.
 SCRIPT_GIVEN=() SCRIPT_SHAS=() SCRIPT_PATHS=()
 script_form() {   # each --script's form: <sha256>:<path>, ~/ and a file or a whole path in the owner's home, each once
   local s p q hash given
@@ -933,21 +950,32 @@ script_files() {   # each a plain file that is there, with no link in its path, 
     real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
     [ -f "$R$p" ] && [ ! -L "$R$p" ] && [ "$real" = "$R$p" ] && real_here "$p" \
       || refuse "--script must name a plain file in the owner's home that is there, with no link in its path: ${SCRIPT_GIVEN[$n]}"
-    if [ "$OPEN" = 0 ] && under_any "$p" "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}"; then refuse "the script ${SCRIPT_GIVEN[$n]} is where the wall hides it"; fi
+    # (what the wall puts back read-only always lies in a folder it hides: .ssh, Ollama's, the state folder)
+    if [ "$OPEN" = 0 ] && under_any "$p" "${TMPFS[@]}" "${GONE[@]}"; then refuse "the script ${SCRIPT_GIVEN[$n]} is where the wall hides it"; fi
   done
 }
-script_copies() {   # each read as the owner into the held folder, held to its size, and hashed there
-  local n got headb timeb
+script_copies() {   # each read as the owner into root's own folder of copies, held to its size, and hashed there
+  local n got headb timeb c mode
   [ ${#SCRIPT_PATHS[@]} -gt 0 ] || return 0
-  headb=$(command -v head) && timeb=$(command -v timeout) || { rm -rf -- "$H"; refuse "head or timeout is not there, so no script can be copied"; }
+  headb=$(command -v head) && timeb=$(command -v timeout) || { unhold; refuse "head or timeout is not there, so no script can be copied"; }
+  mkdir -p -m 0755 -- "$R${PINS%/*}" "$R$PINS" 2> /dev/null
+  PD="$R$PINS/$ID"
+  mkdir -m 0750 -- "$PD" 2> /dev/null || { PD=''; unhold; refuse "the folder for the scripts' copies could not be made, so nothing ran"; }
+  if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$PD"; fi
   for n in "${!SCRIPT_PATHS[@]}"; do
+    c="$PD/script-$((n + 1))"
     if ! "$SETPRIV" "--reuid=$OWNER_UID" "--regid=$OWNER_GID" "--groups=$WALL_GIDS" "$timeb" 30 "$headb" -c $((SCRIPT_MAX + 1)) "$R${SCRIPT_PATHS[$n]}" \
-         > "$H/script-$((n + 1))" 2> /dev/null; then
-      rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} could not be read as the owner, so nothing ran"
+         > "$c" 2> /dev/null; then
+      unhold; refuse "the script ${SCRIPT_GIVEN[$n]} could not be read as the owner, so nothing ran"
     fi
-    if (( $(stat -c %s -- "$H/script-$((n + 1))") > SCRIPT_MAX )); then rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} is over 4 MB"; fi
-    read -r got _ < <(sha256sum -- "$H/script-$((n + 1))")
-    if [ "$got" != "${SCRIPT_SHAS[$n]}" ]; then rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} changed: its SHA-256 is not the one asked, so nothing ran"; fi
+    if (( $(stat -c %s -- "$c") > SCRIPT_MAX )); then unhold; refuse "the script ${SCRIPT_GIVEN[$n]} is over 4 MB"; fi
+    read -r got _ < <(sha256sum -- "$c")
+    if [ "$got" != "${SCRIPT_SHAS[$n]}" ]; then unhold; refuse "the script ${SCRIPT_GIVEN[$n]} changed: its SHA-256 is not the one asked, so nothing ran"; fi
+    # (root's, the owner's group may read it, and run it where the original's owner may: H2)
+    mode=0440
+    if (( 8#$(stat -c %a -- "$R${SCRIPT_PATHS[$n]}" 2> /dev/null || echo 0) & 8#100 )); then mode=0550; fi
+    chmod "$mode" -- "$c"
+    if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$c"; fi
   done
 }
 
@@ -963,6 +991,7 @@ do_unit() {
     [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] && [ "$LOCKOUT" = 0 ] || refuse "--path, --unit and --lockout are for root"
   fi
   [ "$VERB" = run ] || [ ${#SCRIPTS[@]} -eq 0 ] || refuse "--script is for run"
+  [ "$ASLEFT" = 0 ] || refuse "--as-left is for keep"
   if [ "$VERB" = root ]; then
     # (its switch was read first, in parse: root is on here)
     [ "$NET" = 1 ] || refuse "root runs only inside the net, armed in this same call: --net is missing"
@@ -1039,22 +1068,22 @@ do_unit() {
   hold_folder
   # A hang-up or an interrupt (the caller's connection dropped) before the unit is handed to systemd removes the held
   # folder and marks the call "never"; after it, the call waits for the unit (below).
-  trap 'mark never; rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; unhold; exit 129' HUP INT TERM
   if [ "$VERB" = root ] && [ "$STDIN" = 1 ]; then   # (a script as root: its bytes on input, read once, here)
     head -c $((STDIN_MAX + 1)) > "$H/command"
-    if (( $(stat -c %s -- "$H/command") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the command on input is over 16 MB"; fi
-    [ -s "$H/command" ] || { rm -rf -- "$H"; refuse "the command is empty"; }
+    if (( $(stat -c %s -- "$H/command") > STDIN_MAX )); then unhold; refuse "the command on input is over 16 MB"; fi
+    [ -s "$H/command" ] || { unhold; refuse "the command is empty"; }
   else
     printf '%s' "${CMD[0]}" > "$H/command"
   fi
   read -r got _ < <(sha256sum -- "$H/command")
-  if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
+  if [ "$got" != "$SHA" ]; then unhold; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
   [ "$VERB" != run ] || script_copies
   if [ "$VERB" = root ]; then
     p=$(root_named "$H/command" "${NAMED_PATHS[@]}")
     p=${p//[![:print:]]/?}
     if [ -n "$p" ]; then
-      rm -rf -- "$H"
+      unhold
       refuse "a root command never names the helper, its sudo line, sudo's settings, PAM, the helper's folders or the net's timer (it names ${p:0:120}): those change only by the owner's one-time command, deploy/root-for-sparkie.sh"
     fi
   fi
@@ -1064,13 +1093,13 @@ do_unit() {
   start_script > "$H/start"
   if [ "$STDIN" = 1 ] && [ "$VERB" != root ]; then
     head -c $((STDIN_MAX + 1)) > "$H/stdin"
-    if (( $(stat -c %s -- "$H/stdin") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the input is over 16 MB"; fi
+    if (( $(stat -c %s -- "$H/stdin") > STDIN_MAX )); then unhold; refuse "the input is over 16 MB"; fi
   fi
   seal
   # (the unit's input: one byte its start takes just before the command runs. Still there once the unit is gone, the
   # command never ran, whatever systemd answered; the command's own input is the held one, which the start opens)
   mkfifo -m 0600 -- "$H/go" && exec 6<> "$H/go" && rm -f -- "$H/go" && printf x >&6 \
-    || { rm -rf -- "$H"; refuse "the unit's input could not be made, so nothing ran"; }
+    || { unhold; refuse "the unit's input could not be made, so nothing ran"; }
   # The net, armed before anything changes: the copy, restore.sh, the timer. If it cannot be armed, nothing runs.
   [ "$NET" = 0 ] || net_arm
   # (the record: a root command is said as such, before anything of it runs)
@@ -1113,7 +1142,7 @@ do_unit() {
   elif (( quiet < 60 )); then mark ended "$rc"; CALL_MARK=ended; fi
   if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
   if [ -e "$H/disk-low" ]; then l=$(cat -- "$H/disk-low"); [[ $l =~ ^[0-9]{1,15}$ ]] || l=$DISK_FLOOR; tail+=("stopped: the disk's free space fell under $(bytes_said "$l")"); fi
-  rm -rf -- "$H"
+  unhold
   if [ "$VERB" = run ]; then l=$(home_back "$home_was"); [ -z "$l" ] || tail+=("$l"); fi
   # (inside the net its own line comes first, after the line break that ends what the command printed)
   local nl=$'\n'
@@ -1183,7 +1212,7 @@ net_unmake() {   # what this call made while arming, taken away again: never a g
 }
 net_refuse() {   # arming failed: what this call made is taken away again, the held folder too, and nothing runs
   net_unmake
-  rm -rf -- "$H"
+  unhold
   refuse "$1"
 }
 boot_unit() {   # after a restart inside the window, before the network and the ways in start: the same put-back
@@ -1208,7 +1237,7 @@ UNIT
 net_arm() {
   local other p f s n
   # (a hang-up while arming takes the half-made guard away; once armed, the guard stays and the timer does the rest)
-  trap 'mark never; net_unmake; rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; net_unmake; unhold; exit 129' HUP INT TERM
   mkdir -p -m 0755 -- "$R${GUARD%/*}" && mkdir -p -m 0700 -- "$R$GUARD" || net_refuse "the net could not be armed: no $GUARD, so nothing ran"
   exec 7> "$R$GUARD/.arming" || net_refuse "the net could not be armed: no lock, so nothing ran"
   flock -w 10 7 || net_refuse "another guard is being armed on this Spark, so nothing ran"
@@ -1253,7 +1282,7 @@ net_arm() {
   [ "$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null)" = active ] \
     || net_refuse "the net could not be armed: its timer is not waiting, so nothing ran"
   exec 7>&-
-  trap 'mark never; rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; unhold; exit 129' HUP INT TERM
   say "net armed: the ways in go back at $(guard_at "$G") unless they are kept"
 }
 net_words() {   # $1 what guard.py's differs said, $2 when the timer fires: what goes back by itself, what does not, and
@@ -1278,6 +1307,8 @@ net_after() {   # after the command: what differs, and when it goes back. It dis
   local out state bad=''
   exec 8> "$G/lock" && flock -w 120 8 || { say "net open: the ways in go back at $(guard_at "$G") unless they are kept"; return; }
   if [ -e "$G/result" ]; then guard_done "$G"; say "net: already put back"; exec 8>&-; return; fi
+  # (a put-back asked while the command ran, that failed: said as such, so nothing reads the guard as open and keeps it)
+  if [ -e "$G/failures" ]; then say "net: the put-back failed: $(tail -n 1 -- "$G/failures" | cut -c1-200)"; exec 8>&-; return; fi
   out=$("$PY" -I -S "$G/guard.py" differs 2>/dev/null) || out='? the ways in could not be compared'
   state=$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null) || state=''
   exec 8>&-
@@ -1342,7 +1373,8 @@ do_stop() {
   exit 0
 }
 do_keep() {   # the owner's yes, through the console: counts only while the timer waits and once it is stopped
-  local state
+  local state look asleft=$ASLEFT
+  ASLEFT=0
   only_id
   G="$R$GUARD/$ID"
   [ -d "$G" ] && [ ! -L "$G" ] && [ -f "$G/restore.sh" ] || refuse "there is no guard $ID on this Spark"
@@ -1351,9 +1383,14 @@ do_keep() {   # the owner's yes, through the console: counts only while the time
   if [ -e "$G/result" ]; then guard_done "$G"; say "already put back at $(sed -n '1s/^put back at //p' -- "$G/result")"; exit 0; fi
   if [ -e "$G/kept" ]; then guard_done "$G"; say "kept already: $(head -n 1 -- "$G/kept")"; exit 0; fi
   state=$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null) || state=''
-  # (a put-back that did not finish, whole or in part, is on record: the owner may keep it as it stands, knowingly,
-  # timer or not; it says what did not go back. Nothing else closes such a guard but a put-back that finishes)
+  # (after a restart everything went back and the look that the ways in run waits: nothing to keep before it has looked)
+  look=$(systemctl show --property=ActiveState --value "sw-guard-look-$ID.timer" 2>/dev/null) || look=''
+  [ "$look" != active ] || refuse "its look that the ways in run after the restart waits (sw-guard-look-$ID): ask again in two minutes, or putback --id $ID puts it back now"
+  # (a put-back that did not finish, whole or in part, is on record: the owner may keep it as it stands, knowingly, by
+  # --as-left, timer or not; it says what did not go back. The console's routine keep never closes it: the helper cannot
+  # tell callers apart, so the flag does. Nothing else closes such a guard but a put-back that finishes)
   if [ -e "$G/failures" ]; then
+    [ "$asleft" = 1 ] || refuse "its put-back did not finish ($(tail -n 1 -- "$G/failures" | cut -c1-200)): putback --id $ID tries again, or keep --id $ID --as-left keeps it as the put-back left it"
     printf 'kept %s, as the put-back that did not finish left it\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$G/kept"
     if [ "$state" = active ] && ! systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1; then
       rm -f -- "$G/kept"
@@ -1366,6 +1403,7 @@ do_keep() {   # the owner's yes, through the console: counts only while the time
     else say "kept: the change stays as it is: its put-back did not finish ($(tail -n 1 -- "$G/failures" | cut -c1-200)), so nothing of it is known to have gone back"; fi
     exit 0
   fi
+  [ "$asleft" = 0 ] || refuse "--as-left is only for a guard whose put-back failed"
   [ "$state" = active ] || refuse "its timer is not waiting (${state:-gone}), so keeping does not count: what was not kept goes back, by a put-back already started or at the Spark's next restart"
   # (written before the stop, under the lock: a put-back the timer starts now waits for the lock, then sees it)
   printf 'kept %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$G/kept"
@@ -1404,7 +1442,7 @@ stopped() {   # systemd says the command's unit is stopped: only inactive or fai
   case "$(systemctl show --property=ActiveState --value -- "$unit" 2>/dev/null)" in inactive|failed) return 0 ;; *) return 1 ;; esac
 }
 seen=seen
-if [ "$why" = boot ]; then
+if [ "$why" = boot ] || [ "$why" = look ]; then
   systemctl stop --no-block -- "$unit" > /dev/null 2>&1   # (after a restart it is not there: harmless)
 else
   systemctl stop -- "$unit" > /dev/null 2>&1
@@ -1417,7 +1455,8 @@ else
 fi
 for n in 1 2 3; do
   [ "$seen" = seen ] || ! stopped || seen=seen   # (looked at again before each try)
-  python3 -I -S "$here/guard.py" restore "$why" "$seen" 2> "$here/last-error" && exit 0
+  if [ "$why" = look ]; then python3 -I -S "$here/guard.py" look "$n" 2> "$here/last-error" && exit 0
+  else python3 -I -S "$here/guard.py" restore "$why" "$seen" "$n" 2> "$here/last-error" && exit 0; fi
   printf '%s attempt %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$n" "$(tail -n 1 -- "$here/last-error" | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-200)" >> "$here/failures"
   [ "$n" = 3 ] || sleep 20
 done
@@ -1442,7 +1481,7 @@ guard_py() {
 #   restore   (restore.sh, the command stopped) puts back exactly what differs, through folders opened one by one
 #             without following a link, and reloads what it put back; writes ./result. One that could not do all
 #             (A-14) writes ./part instead, leaves the guard open and fails, so it is tried again
-import hashlib, json, os, re, shutil, stat, subprocess, sys, time
+import atexit, errno, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ID = os.path.basename(HERE)
@@ -1762,7 +1801,10 @@ def folder(root, path, was, make, aboves):   # the folder at path, opened one pa
             except OSError as x:   # (this path only: the rest of the put-back goes on)
                 os.close(fd)
                 return None, f'{cur} could not be made again ({x.strerror})'
-        except OSError:   # a link, or a file, where a folder is: swapped back only for a copied folder of ways in
+        except OSError as x:   # a link, or a file, where a folder is: swapped back only for a copied folder of ways in
+            if x.errno not in (errno.ELOOP, errno.ENOTDIR):   # (any other error is no link: it could not be opened, H11)
+                os.close(fd)
+                return None, f'{cur} could not be opened ({x.strerror})'
             if not (mine and (cur in SWAP or cur not in aboves)):
                 why = f'{cur} is {stands(fd, part)} now'
                 os.close(fd)
@@ -1827,7 +1869,7 @@ def put(fd, name, p, e):
         raise
 
 
-def restore(why, seen='seen'):
+def restore(why, seen='seen', n='1'):
     was, found, diff, unsaid, aboves, _, lost, was_st, now0 = compare()
     aboves = set(aboves)
     root = os.open(R or '/', os.O_RDONLY | os.O_DIRECTORY)
@@ -1873,17 +1915,37 @@ def restore(why, seen='seen'):
             before = f.read().split()
     except OSError:
         before = []
+    # What this try stops, and what an earlier try stopped, is started again on every way out: at its place below, or,
+    # should the try end before it (an error, a full disk, a signal), on the way out (H4). The list is in memory first;
+    # ./stopped, for a try that is killed outright, is written second, and a failed write stops nothing from starting.
+    held, restarted = [], [False]
+
+    def again():
+        if restarted[0]:
+            return
+        restarted[0] = True
+        if 'tailscaled' in held:
+            call(['systemctl', 'start', 'tailscaled.service'])
+        if 'console' in held:
+            call(CONSOLE_UNIT + ['daemon-reload'])
+            call(CONSOLE_UNIT + ['start', 'spark-console-api.service'])
     if not boot:
-        if ts_files:
-            call(['systemctl', 'stop', 'tailscaled.service'])
         if console_files:
             console_ran = run_text(CONSOLE_UNIT + ['is-active', 'spark-console-api.service']).strip() == 'active'
-            if console_ran:
-                call(CONSOLE_UNIT + ['stop', 'spark-console-api.service'])
-        with open(os.path.join(HERE, 'stopped'), 'w') as f:
-            f.write(' '.join(sorted(set(before + (['tailscaled'] if ts_files else []) + (['console'] if console_ran else [])))))
-        ts_files = ts_files or 'tailscaled' in before
-        console_ran = console_ran or 'console' in before
+        held += sorted(set(before + (['tailscaled'] if ts_files else []) + (['console'] if console_ran else [])))
+        atexit.register(again)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit('the put-back was stopped by a signal'))
+        if ts_files:
+            call(['systemctl', 'stop', 'tailscaled.service'])
+        if console_ran:
+            call(CONSOLE_UNIT + ['stop', 'spark-console-api.service'])
+        try:
+            with open(os.path.join(HERE, 'stopped'), 'w') as f:
+                f.write(' '.join(held))
+        except OSError:
+            pass
+        ts_files = 'tailscaled' in held
+        console_ran = 'console' in held
     # First what is there now and should not be, deepest first: a link always; anything of another kind than the copy.
     # (Of the folders above: one the copy did not see goes only if it is empty once the rest went; the home and the
     # folders between are never taken away.)
@@ -1894,8 +1956,10 @@ def restore(why, seen='seen'):
             continue
         if p in aboves and p not in SWAP:
             continue
-        fd, _ = folder(root, os.path.dirname(p), was, False, aboves)
-        if fd is None:
+        fd, whynot = folder(root, os.path.dirname(p), was, False, aboves)
+        if fd is None:   # (gone with its folder, or under a link, is nothing to take away; a folder that could not be opened is)
+            if ' could not be ' in whynot:
+                could.append(f'not put back {p}: {whynot}')
             continue
         try:
             if found[p]['kind'] == 'dir':
@@ -1909,8 +1973,10 @@ def restore(why, seen='seen'):
         finally:
             os.close(fd)
     for p in sorted(empty, key=depth, reverse=True):
-        fd, _ = folder(root, os.path.dirname(p), was, False, aboves)
+        fd, whynot = folder(root, os.path.dirname(p), was, False, aboves)
         if fd is None:
+            if ' could not be ' in whynot:
+                could.append(f'not put back {p}: {whynot}')
             continue
         try:
             os.rmdir(os.path.basename(p), dir_fd=fd)
@@ -1979,11 +2045,7 @@ def restore(why, seen='seen'):
         if not boot:
             call(['systemctl', 'restart', 'ssh.socket'])
     if not boot:
-        if ts_files:
-            call(['systemctl', 'start', 'tailscaled.service'])
-        if console_ran:
-            call(CONSOLE_UNIT + ['daemon-reload'])
-            call(CONSOLE_UNIT + ['start', 'spark-console-api.service'])
+        again()
     # (a reload, or a start after the put-back's own stop, that was tried and failed is one more "could not")
     could += [f"not done: {' '.join(c)}: {r}" for c, r in ran if r not in ('ok', 'not there') and not moot(c)]
     # Then the ways in that are not files: each unit back to enabled, disabled or masked, and to running or not where
@@ -2037,14 +2099,18 @@ def restore(why, seen='seen'):
                 done.append('ufw')
             else:
                 could.append(f'not put back ufw: ufw said {r}')
-        # (a way-in unit that ran at the copy must run, or be starting, before the put-back is done; after a restart its
-        # start is queued and runs after this unit, which is ordered before it, so only a later try can see it)
+        # (a way-in unit that ran at the copy must run before the put-back is done; after a restart its start is queued
+        # and runs after this unit, which is ordered before it, so the restart's own look sees it)
         if not boot:
             for u in UNITS:
-                a, s = was_st.get(u) or {}, unit_state(u)
-                # (one whose package went is said apart, as what cannot be put back)
-                if a.get('load') == 'loaded' and a.get('active') in ON and s['load'] != 'not-found' and s['active'] not in NOW_ON:
-                    could.append(f'the unit {u} ran at the copy and does not run now')
+                a = was_st.get(u) or {}
+                if a.get('load') != 'loaded' or a.get('active') not in ON:
+                    continue
+                s = settled(u)
+                # (one whose package went is said apart, as what cannot be put back; one still starting is not yet
+                # running: the next try looks again, and one in systemd's restart loop never passes, H7)
+                if s['load'] != 'not-found' and s['active'] not in ON:
+                    could.append(f"the unit {u} ran at the copy and {'is still starting' if s['active'] == 'activating' and n != '3' else 'does not run now'}")
     # A put-back in part: no result, and pending, the restart unit, what it stopped and what it put stay, so the next
     # try (restore.sh's own, the timer, a restart, putback) starts, reloads and puts back again. What it did is kept in
     # ./part, which keep reads to say what did not go back.
@@ -2058,13 +2124,19 @@ def restore(why, seen='seen'):
     if look and not could:
         try:
             armed = subprocess.run(['systemd-run', f'--unit=sw-guard-look-{ID}', f'--description=Spark Console net {ID}: the ways in run after a restart',
-                                    '--on-active=90s', '--timer-property=AccuracySec=1s', '--collect', '--quiet', '-p', 'Type=oneshot', '--',
+                                    '--on-active=90s', '--timer-property=AccuracySec=1s', '--collect', '--quiet', '--no-block', '-p', 'Type=oneshot', '--',
                                     '/bin/bash', os.path.join(HERE, 'restore.sh'), 'look'],
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60, env=ENV).returncode == 0
         except (OSError, subprocess.SubprocessError):
             armed = False
-        if armed:
+        if armed:   # (an earlier try's ./part is no longer true: this one did all of it; the look says the rest)
             noted(done)
+            with open(os.path.join(HERE, 'noted'), 'w') as f:
+                f.write(''.join(x + '\n' for x in notes))
+            try:
+                os.unlink(os.path.join(HERE, 'part'))
+            except FileNotFoundError:
+                pass
             return
         could.append(f'its look that the ways in run after the restart (sw-guard-look-{ID}) could not be armed')
     if could:
@@ -2076,13 +2148,13 @@ def restore(why, seen='seen'):
         os.replace(tmp, os.path.join(HERE, 'part'))
         sys.exit(f'{len(done)} went back, {len(could)} could not: {could[0]}')
     # (what this try stopped is started again by the next, should this one fail before it started them)
-    for x in ('stopped', 'put', 'part'):
+    for x in ('stopped', 'put', 'part', 'noted'):
         try:
             os.unlink(os.path.join(HERE, x))
-        except FileNotFoundError:
+        except OSError:
             pass
     head = f'put back at {now()}: ' + (f'{len(done)} went back, {len(notes)} did not' if done or notes else 'nothing differed')
-    lines = [head, {'timer': 'by its timer', 'boot': 'after a restart inside the window', 'look': 'after a restart inside the window, once the ways in ran'}.get(why, "on the console's word")]
+    lines = [head, {'timer': 'by its timer', 'boot': 'after a restart inside the window'}.get(why, "on the console's word")]
     lines += [f'put back {p}' for p in done] + notes + [f"reload {' '.join(c)}: {res}" for c, res in ran]
     tmp = os.path.join(HERE, 'result.new')
     with open(tmp, 'w') as f:
@@ -2091,8 +2163,73 @@ def restore(why, seen='seen'):
     done_()
 
 
+def look(n):
+    # The restart's own look (sw-guard-look-<id>, 90 s after the restart's put-back armed it): it puts nothing back and
+    # reloads nothing (the restart did that, and the units read their files as they start). Each way-in unit that ran at
+    # the copy and does not run now is started; each must then run: active, not only starting (one still starting is
+    # looked at again 20 s on, and at the last look counts as not running: H7). Only then is the put-back done; else it
+    # failed, as a put-back in part does. What it found is said.
+    with open(os.path.join(HERE, 'manifest.json')) as f:
+        was_st = json.load(f).get('running') or {}
+    seen_on, started, could = [], [], []
+    for u in UNITS:
+        a = was_st.get(u) or {}
+        if a.get('load') != 'loaded' or a.get('active') not in ON:
+            continue
+        s = settled(u)
+        if s['load'] == 'not-found':   # (its package went: said by the restart's put-back, as what cannot be put back)
+            continue
+        if s['active'] in ON:
+            seen_on.append(u)
+            continue
+        if s['active'] == 'activating' and n != '3':   # (still starting: not started again; the next look sees it)
+            could.append(f'the unit {u} ran at the copy and is still starting after the restart')
+            continue
+        try:
+            r = subprocess.run(['systemctl', 'start', u], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=120, env=ENV).returncode
+        except (OSError, subprocess.SubprocessError):
+            r = 'no answer'
+        if settled(u)['active'] in ON:
+            started.append(u)
+        else:
+            could.append(f'the unit {u} ran at the copy and does not run after the restart' + (f' (systemctl start said exit {r})' if r else ''))
+    try:
+        with open(os.path.join(HERE, 'put')) as f:
+            done = [x for x in f.read().splitlines() if x]
+    except OSError:
+        done = []
+    try:
+        with open(os.path.join(HERE, 'noted')) as f:
+            notes = [x for x in f.read().splitlines() if x]
+    except OSError:
+        notes = []
+    if could:
+        lines = [f'{len(done)} went back, {len(could)} could not, at {now()}'] + [f'could not: {x}' for x in could] + [f'put back {p}' for p in done] + notes
+        tmp = os.path.join(HERE, 'part.new')
+        with open(tmp, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        os.replace(tmp, os.path.join(HERE, 'part'))
+        sys.exit(f'{len(done)} went back, {len(could)} could not: {could[0]}')
+    for x in ('stopped', 'put', 'part', 'noted'):
+        try:
+            os.unlink(os.path.join(HERE, x))
+        except OSError:
+            pass
+    head = f'put back at {now()}: ' + (f'{len(done)} went back, {len(notes)} did not' if done or notes else 'nothing differed')
+    lines = [head, 'after a restart inside the window, once the ways in ran'] + [f'put back {p}' for p in done] + notes
+    lines += [f'running after the restart: {u}' for u in seen_on] + [f'started after the restart: {u}' for u in started]
+    tmp = os.path.join(HERE, 'result.new')
+    with open(tmp, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    os.replace(tmp, os.path.join(HERE, 'result'))
+    done_()
+
+
 if __name__ == '__main__':
-    {'copy': copy, 'differs': differs, 'done': done_}.get(sys.argv[1], lambda: restore(sys.argv[2] if len(sys.argv) > 2 else 'timer', sys.argv[3] if len(sys.argv) > 3 else 'seen'))()
+    a = sys.argv + ['', '', '', '']
+    {'copy': copy, 'differs': differs, 'done': done_, 'look': lambda: look(a[2] or '1')}.get(
+        sys.argv[1], lambda: restore(a[2] or 'timer', a[3] or 'seen', a[4] or '1'))()
 GUARDPY
 }
 
