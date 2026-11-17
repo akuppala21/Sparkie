@@ -11,10 +11,11 @@
 #                               folder empty, a hidden file gone, what is put back there), for a command to look in:
 #                               each file a hard link to the real one, so a write to it from outside shows there, as
 #                               with no wall. A file bound over a path (BindReadOnlyPaths=<copy>:<path>, a pinned
-#                               script's copy in the held folder; any path, as systemd binds it) stands at that path
-#                               itself while the unit runs, read-only, the file under it set aside and put back when the
-#                               unit ends: nothing here has a mount namespace, so a writer outside the unit is refused
-#                               where on a Spark it would write the real file, which the unit never sees
+#                               script's copy in /var/lib/spark-console/pins/<id>; any path, as systemd binds it) stands
+#                               at that path itself while the unit runs, read-only, with its execute bits, the file
+#                               under it set aside and put back when the unit ends: nothing here has a mount namespace,
+#                               so a writer into it from outside is refused where on a Spark it would write the real
+#                               file the unit never sees; a rename over it from outside replaces it, as on a Spark
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
 #                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
@@ -174,23 +175,33 @@ if unit.startswith(('sw-look-', 'sw-run-', 'sw-root-')) and cmd:
     uid = unit.split('-', 2)[2]
     held = os.path.join(R, 'run', 'spark-console', uid)
     shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
-    # (each file bound over a path from the held folder: the copy stands there, read-only, while the unit runs)
+    pins = os.path.join(R, 'var', 'lib', 'spark-console', 'pins', uid)   # (the helper's script copies, kept beside it)
+    if os.path.isdir(pins):
+        shutil.copytree(pins, os.path.join(R, 'standin', 'ran', unit, 'pins'))
+    # (each file bound over a path from the helper's copies: the copy stands there, read-only, with the execute bits it
+    # has, while the unit runs. A write into it is refused here, where on a Spark the writer writes the real file the unit
+    # never sees. A rename over the path, or a removal, from outside replaces it here, as on a Spark, where the kernel
+    # lifts the bind (since Linux 3.18): a later open of the path reads the new file. When the unit ends, the file set
+    # aside goes back only where the copy still stands; one that replaced it from outside stays)
     bound = []
     for prop in [args[k + 1] for k, a in enumerate(args) if a in ('-p', '--property') and k + 1 < len(args)]:
         kind, _, path = prop.partition('=')
         src, _, dest = path.removeprefix('-').partition(':')
-        if kind == 'BindReadOnlyPaths' and dest.startswith('/') and src.startswith('/run/spark-console/') and os.path.isfile(R + src) \
-                and os.path.isfile(R + dest) and not os.path.islink(R + dest):
+        if kind == 'BindReadOnlyPaths' and dest.startswith('/') and src.startswith(('/run/spark-console/', '/var/lib/spark-console/pins/')) \
+                and os.path.isfile(R + src) and os.path.isfile(R + dest) and not os.path.islink(R + dest):
             aside = f'{R}{dest}.sw-under-{unit}'
             os.rename(R + dest, aside)
             shutil.copyfile(R + src, R + dest)
-            os.chmod(R + dest, 0o444)
-            bound.append((aside, R + dest))
+            os.chmod(R + dest, 0o555 if os.stat(R + src).st_mode & 0o111 else 0o444)
+            bound.append((aside, R + dest, os.stat(R + dest).st_ino))
 
     def unbind():
-        for aside, at in bound:
+        for aside, at, ino in bound:
             try:
-                os.replace(aside, at)
+                if os.lstat(at).st_ino == ino:
+                    os.replace(aside, at)
+                else:
+                    os.unlink(aside)   # (replaced from outside: the file under it was replaced, as on a Spark)
             except OSError:
                 pass
     os.environ['WALL_VIEW'] = wall_view()

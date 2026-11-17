@@ -726,7 +726,8 @@ test('a2: a script reached through a link is said not pinned on the ask, and its
   const p = await choose(chat, yes.id);
   assert.equal(p.status, 200, p.text);
   assert.equal(text('notes/a2l-out.txt'), 'linked\n', 'it ran');
-  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-/.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
+  // (step-f2's H2: the helper's script copies are in /var/lib/spark-console/pins/<id>; no copy there, nor the old place)
+  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/(run\/spark-console|var\/lib\/spark-console\/pins)\/[0-9a-f]+\/script-/.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
 });
 
 // P-5 (A-16 beside it): a key went to code no hash pins: a module, a build, a one-liner's file. It is refused now,
@@ -814,7 +815,9 @@ test('a2 P-5: a script written to while its unit runs: what ran is what was hash
   assert.equal(wrote, 'EACCES', 'on the stand-in the script’s path holds the helper’s read-only copy while the unit runs');
   assert.equal(text('notes/p5-out.txt'), 'first\nsecond\n', 'the line written while it ran was not run');
   assert.equal(text('notes/p5.sh'), 'echo first > notes/p5-out.txt\nsleep 3\necho second >> notes/p5-out.txt\n', 'the owner’s file is back as it was');
-  assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
+  // (step-f2's H2 moved the helper's copies. Old: /run/spark-console/<id>/script-1, often noexec. New: root's own
+  // /var/lib/spark-console/pins/<id>/script-1, so a pinned file run by its path runs)
+  assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/var\/lib\/spark-console\/pins\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
 });
 
 // P-5, "the message before": what a request read from outside used to count only for that request, so a file read for a
@@ -1017,7 +1020,8 @@ test('f2 R-3: a key for a loop over a named script and for each launcher is aske
     assert.ok(q.includes(`\nIt runs ~/${script} (SHA-256 `), `${command}: asked with the script pinned: ${JSON.stringify(sentBack(words)).slice(0, 600)}`);
     const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
     assert.equal(p.status, 200, p.text);
-    const bind = new RegExp(`^BindReadOnlyPaths=/run/spark-console/[0-9a-f]+/script-1:/.*/${script.replace(/[.]/g, '\\.')}$`);
+    // (step-f2's H2: the helper's script copies are in /var/lib/spark-console/pins/<id>, not /run/spark-console/<id>)
+    const bind = new RegExp(`^BindReadOnlyPaths=/var/lib/spark-console/pins/[0-9a-f]+/script-1:/.*/${script.replace(/[.]/g, '\\.')}$`);
     assert.ok(propsOf(command).some(a => bind.test(a)), `${command}: handed to --script: ${JSON.stringify(propsOf(command))}`);
   };
   await pinned('for i in 1; do bash notes/f2loop.sh; done', 'notes/f2loop.sh');
