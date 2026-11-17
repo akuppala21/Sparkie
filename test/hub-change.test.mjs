@@ -307,6 +307,21 @@ test('a command the sorter can\'t read ($ for a program, python -c, a script) is
   assert.equal(starts().filter(r => /stop/.test(r.args?.command || '')).length, 0, 'none ran');
 });
 
+// The final read of round two, F12: with a change still open on Spark 2 (its put-back unfinished, on record), a new change
+// there was asked and its press then refused. It is refused before it is asked, with both ways on.
+test('with a change on Spark 2 whose put-back did not finish still open, a new change there is refused before it is asked, with both ways on', { timeout: 120000 * SLOW }, async () => {
+  const file = join(T.fleet.stateDir, 'net.json'), was = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  const g = { id: 'f12f12f12f12f12f12f12f12', spark: 'spark2', state: 'part', unfinished: true, went: 0, could: 1, record: 'j_f12', at: new Date(Date.now() - 3600000).toISOString(), goesBackAt: new Date(Date.now() - 1800000).toISOString() };
+  const guards = was ? JSON.parse(was).guards : [];
+  writeFileSync(file, JSON.stringify({ guards: [...guards, g] }), { mode: 0o600 });
+  try {
+    const chat = await newChat(), c = await inChat(chat, 'tidy the f12 notes on spark 2', 'touch notes/f12.txt');
+    assert.equal(c.error, `A change that can lock you out of Spark 2 is still open there (record j_f12): its put-back did not finish, so it waits for you. /putback tries the put-back again. Or, to keep it as it stands, run this on Spark 2 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id ${g.id} --as-left (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept). Nothing was asked or run.`, JSON.stringify(c));
+    assert.ok(!(await chatMessages(chat)).some(m => (m.choices || []).length), 'no button');
+    assert.ok(!existsSync(at2('notes/f12.txt')), 'nothing ran');
+  } finally { if (was === null) writeFileSync(file, JSON.stringify({ guards })); else writeFileSync(file, was); }
+});
+
 test('off (SPARK_CONSOLE_HUB=0, its own fleet): a change on Spark 2 is not done, as before, and nothing is asked', { timeout: 120000 * SLOW }, async () => {
   const off = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_HUB: '0' } });
   later.push(off);

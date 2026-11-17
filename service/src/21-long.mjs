@@ -129,7 +129,7 @@ function longCutOff(r, conv) {
     if (!conv) return;
     const words = { stopped: 'It was stopped there by id after the restart, with everything it started.', gone: 'It had ended there by then.',
       limit: `It couldn’t be stopped there (${at} didn’t answer), so it ended at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC.`,
-      unknown: `Whether it was stopped there isn’t known: systemd on ${at} didn’t answer for its unit, so it ends at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC at the latest.` }[how];
+      unknown: `Whether it was stopped there isn’t known: systemd on ${at} didn’t answer for its unit until its limit, ${new Date(until).toISOString().slice(11, 16)} UTC, had passed.` }[how];
     const t = new Date().toISOString();
     conv.messages.push({ role: 'assistant', createdAt: t, notice: true, content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC, with up to ${r.minutes} minute${r.minutes === 1 ? '' : 's'}). ${words} What it did until then stays, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`) });
     conv.updatedAt = t;
