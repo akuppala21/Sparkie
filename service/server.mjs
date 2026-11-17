@@ -19282,7 +19282,8 @@ if A['mode'] == 'restore':
                     finally:
                         os.close(fd)
                 # The put-back can't lose another program's edit made since the look above (A-19, beside): nothing at
-                # the name, by a link, which fails when anything is there by then; else the two names are exchanged in
+                # the name, by a link (or an exclusive create where the disk has no hard links), which fails when
+                # anything is there by then; else the two names are exchanged in
                 # one step and what that displaced is checked: not what was looked at, it goes back and is left as it
                 # is. Where this libc or filesystem has no exchange, a second look just before one replace.
                 hold()
@@ -19294,6 +19295,30 @@ if A['mode'] == 'restore':
                         except FileExistsError:
                             missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
                             continue
+                        except OSError:
+                            # (a disk with no hard links, FAT or exFAT: made only where nothing is, then filled; any
+                            # other failure is said with its reason, below)
+                            try:
+                                if e['kind'] == 'link':
+                                    os.symlink(e['target'], p)
+                                else:
+                                    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+                                    try:
+                                        os.write(fd, data)
+                                        try:
+                                            os.fchmod(fd, e['mode'])
+                                        except OSError:
+                                            pass
+                                        os.fsync(fd)
+                                    except OSError:
+                                        # (made here and not filled: it goes, and why is said)
+                                        os.unlink(p)
+                                        raise
+                                    finally:
+                                        os.close(fd)
+                            except FileExistsError:
+                                missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                                continue
                     elif swap(tmp, p):
                         if fp(tmp) != now:
                             if not swap(tmp, p):
@@ -26218,10 +26243,11 @@ function writeKey(text) {
 // whether its owner may write it), a link, something else, nothing. Its text only through the helper's look, the same
 // wall run's looks go through, so its one hidden list decides: a key, or a file that wall hides, is "hidden" and its
 // text is never read; then the program compares it by what code sees without reading it (sig: its inode, size and
-// modification time, from the same look at the name). A helper that can't look there: its own answer (helperNeeds).
+// modification time in epoch seconds and nanoseconds, from the same look at the name: no time zone in it). A helper
+// that can't look there: its own answer (helperNeeds).
 async function writeOld(node, place) {
   const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
-  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %.9Y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
   if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `${sparkName(node)} couldn’t be asked what is at ${place.shown}, so nothing was asked or written.`);
   const [kind, ...rest] = String(r.out).trim().split('\n')[0].split(' '), sig = rest.join(' ');
   if (kind !== 'file') return { kind: ['link', 'other', 'readonly'].includes(kind) ? kind : 'none' };
@@ -26238,44 +26264,62 @@ async function writeOld(node, place) {
 }
 
 // Code's own program for the unit: the whole new text comes on its input. It writes only while the file is as it was
-// read here (a hidden file, whose text is never read: its inode, size and modification time) and its owner may write it,
-// with the old permission bits only (0644 for a new file); the temporary file never stays behind, the unit ended or not.
-// It compares at the start, stages the text beside the file, then publishes in one step that can't lose another
-// program's edit made in between (A-19): a new file by a link, which fails when anything is at the name by then; a
-// replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through python3), then checking what it
-// displaced: not the file as read, it is exchanged back and nothing is written. Where this libc or filesystem has no
-// exchange (or no python3, in a box), it compares once more just before one move. old.hold, a folder (tests only, never
-// set by code): the program waits there between staging and publishing, as a test's second writer needs it to.
+// read here (a hidden file, whose text is never read: its inode, size and modification time in epoch seconds and
+// nanoseconds, which no time zone changes) and its owner may write it, with the old permission bits only (0644 for a
+// new file); its own temporary file never stays behind. It compares at the start, stages the text beside the file,
+// then publishes in one step that can't lose another program's edit made in between (A-19): a new file by a link,
+// which fails when anything is at the name by then (where the disk has no hard links, a FAT or exFAT one, a create that
+// fails the same way, then the text); a replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through
+// python3), then checking what it displaced: not the file as read, it is exchanged back, "changed since it was read".
+// From the exchange on, what was displaced is never removed unchecked: ended before the check (its time, a cancel, a
+// stop), the program exchanges back, and if that fails says where it is; an exchange back that fails is said the same
+// way, exit 5. Where this libc or filesystem has no exchange (or no python3, in a box), it compares once more just
+// before one move. old.hold and old.late, folders (tests only, never set by code): the program waits in the first
+// after staging, in the second just before the publishing call itself, after its last compare, as a test's second
+// writer needs it to.
 function writeProgram(rel, old) {
   // (the exchange: 0 done, 4 where this libc or filesystem has none, 1 on any other failure; all inside this function,
   // which tests lift on its own)
-  const swap = `python3 -I -c 'import ctypes, errno, os, sys
+  const swap = `xchg() { python3 -I -c 'import ctypes, errno, os, sys
 try:
     f = ctypes.CDLL(None, use_errno=True).renameat2
 except AttributeError:
     sys.exit(4)
 if f(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2) == 0:
     sys.exit(0)
-sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)'`;
+sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)' "$1" "$2"; }`;
+  // (a hidden file's signature: inode, size, and its time as epoch seconds with nanoseconds, the same as writeOld's)
   const same = x => (old.kind === 'file' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(sha256sum < "${x}" | cut -d' ' -f1)" = ${old.sha} ]`
-    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
+    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %.9Y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
   const changed = "{ echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }";
-  const hold = typeof old.hold === 'string' ? [`: > ${q(`${old.hold}/at`)}; n=0; until [ -e ${q(`${old.hold}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : [];
+  const wait = h => (typeof h === 'string' ? [`: > ${q(`${h}/at`)}; n=0; until [ -e ${q(`${h}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : []);
+  // (where a kept file is, as a whole path: the temporary name is beside the file, from where the change starts)
+  const at = '$(case $d in /*) echo "$d" ;; *) echo "$PWD/${d#./}" ;; esac)', late = wait(old.late).join('; ') || ':';
   const publish = old.kind === 'none'
-    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name)
-    ? [`ln -T -- "$t" "$p" 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; exit 1; }`]
-    : [`${swap} "$t" "$p"; r=$?`,
-      // (exchanged: the temporary name holds what was at the name; not the file as read, it goes back)
-      `if [ $r = 0 ]; then ${same('$t')} || { ${swap} "$t" "$p" || { k=$t; t=; echo "write_file: the file changed since it was read here and couldn’t be put back: its newer text is kept as $k." >&2; exit 3; }; ${changed}; }`,
-      `elif [ $r = 4 ] || [ $r = 127 ]; then ${same('$p')} || ${changed}; mv -fT -- "$t" "$p" || exit 1; t=`,
-      'else exit 1; fi'];
-  return [`p=${q(rel)}; t=`, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'exit 143' TERM INT HUP",
+    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name. Where the disk
+    // has no hard links: made only if nothing is at the name (set -C, an exclusive create), then filled; the reason said)
+    ? [late, `if ! e=$(ln -T -- "$t" "$p" 2>&1); then`,
+      `  if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi`,
+      `  ( set -C; : > "$p" ) 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; echo "write_file: it couldn’t be made there, so nothing was written: $e" >&2; exit 1; }`,
+      '  cat -- "$t" > "$p" && chmod 0644 -- "$p" 2>/dev/null; [ "$(wc -c < "$p")" = "$(wc -c < "$t")" ] || { rm -f -- "$p"; echo "write_file: it couldn’t be written there in full, so nothing was written: $e" >&2; exit 1; }',
+      'fi']
+    // (from here what was displaced is held as d, never t: the exit trap never removes it. ti, the staged file's inode,
+    // says at an end whether the exchange happened)
+    : ['ti=$(stat -c %i -- "$t") || exit 1', 'd=$t; t=', late, 'xchg "$d" "$p"; r=$?',
+      // (exchanged: d holds what was at the name; the file as read goes, anything else goes back)
+      `if [ $r = 0 ]; then if ${same('$d')}; then k=$d; d=; rm -f -- "$k"; else xchg "$d" "$p" || { echo "write_file: the file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as ${at}." >&2; d=; exit 5; }; k=$d; d=; rm -f -- "$k"; ${changed}; fi`,
+      `elif [ $r = 4 ] || [ $r = 127 ]; then t=$d; d=; ${same('$p')} || ${changed}; ${late}; mv -fT -- "$t" "$p" || exit 1; t=`,
+      'else t=$d; d=; exit 1; fi'];
+  // (ended between the exchange and its check: exchanged back, so what was at the name is there again; if that fails,
+  // where it is kept is said. No exchange yet: d is only the staged text)
+  const ended = `gone() { [ -n "$d" ] || return 0; if [ "$(stat -c %i -- "$p" 2>/dev/null)" = "$ti" ]; then xchg "$d" "$p" && { rm -f -- "$d"; return 0; }; echo "write_file: ended just after the exchange, which couldn’t be undone: the name holds the new text, and what was there is kept as ${at}." >&2; else rm -f -- "$d"; fi; }`;
+  return [`p=${q(rel)}; t=; d=; ti=`, swap, ended, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'gone; exit 143' TERM INT HUP",
     `${same('$p')} || ${changed}`,
     `[ ! -e "$p" ] || [ -w "$p" ] || { echo 'write_file: the file is read-only, so nothing was written.' >&2; exit 3; }`,
     't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
     'cat > "$t" || exit 1',
     `if [ -f "$p" ]; then m=$(stat -c %a -- "$p") && chmod "$(printf '%o' $(( 8#$m & 8#777 )))" -- "$t" || exit 1; else chmod 0644 -- "$t" || exit 1; fi`,
-    ...hold, ...publish].join('\n');
+    ...wait(old.hold), ...publish].join('\n');
 }
 
 // A text's lines, without the empty one after its last line break.
