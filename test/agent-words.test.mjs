@@ -33,6 +33,7 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000'
     // sentence, and a model on Spark 4 whose start fails with one in its log)
     appendFileSync(join(h, '.mock', 'containers'), 'c3web|running|Up 2 hours||||||\n');
     put('.mock/cmd-c3web', JSON.stringify(['sh', '-c', PLANT.cmd]));
+    put('.mock/image-c3web', 'nginx:1.27');
     writeFileSync(join(root, 'spark4', '.mock', 'logs-sc-gemma-3-12b-it'), `INFO: loading\n${PLANT.log}\n`);
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
