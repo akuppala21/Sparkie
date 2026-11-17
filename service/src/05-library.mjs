@@ -73,8 +73,15 @@ function ggufOnDisk(b64) {
 // an outside read (R26, R53), and nothing the brain reads as the console's own carries it.
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
 // A name from a Spark (a container, a model, a link) as an inside read or the record ahead of the owner's words may carry
-// it (R26, A-17): one word of letters, digits and ._-/:@+, at most 100 signs, no space; anything else is no name (null).
-const bareName = v => (typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._\-/:@+]{0,99}$/.test(v) ? v : null);
+// it (R26, A-17): one word of letters, digits and ._-/:@+, at most NAME_SHOWN signs, no space; anything else is no name
+// (null). A word can still be a sentence with hyphens for spaces, which no shape tells from a name, so a name shown is
+// kept as short as real ones are (F2, C6): 64 signs hold every name in config.json and the tests, every app container
+// keep_running takes (63 at most), Linux link names (15) and addresses, and 211 of the catalog's 213 models as the
+// console names their containers (sc-<org>--<repo>-part2; the longest is 82). A longer word is said, never shown
+// (nameShown): "(a long name: <the outside read that has it> has it)".
+const NAME_SHOWN = 64, NAME_WORD = /^[A-Za-z0-9][A-Za-z0-9._\-/:@+]*$/;
+const bareName = v => (typeof v === 'string' && v.length <= NAME_SHOWN && NAME_WORD.test(v) ? v : null);
+const nameShown = (v, where) => bareName(v) ?? (typeof v === 'string' && NAME_WORD.test(v) ? `(a long name: ${where} has it)` : null);
 // The same for spark.json's image and setting names: a setting name not shaped like one is left out; an image not
 // shaped like an image reference is never shown (plainImage: the plans' steps), though a start still tries it as named
 // and fails there. True when either was found; the plans say so (PLAIN_NOTE), never what it was.

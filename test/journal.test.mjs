@@ -8,7 +8,9 @@
 // full disk under the journal only), and nothing runs, while a look, /stop and stop_model still work. A console killed
 // between a start line and its end leaves, after the restart, one "cut off" notice in the chat that asked and one
 // needs-you line, and a second restart adds neither. Past its limit (shortened with SPARK_CONSOLE_JOURNAL_MAX_BYTES) a
-// record's text stops and the record says so.
+// record's text stops and the record says so. A write the disk takes only in part is written to its end; a line only
+// partly written isn't counted (a change written down first is refused), readers skip it, and the next record starts
+// a line of its own.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, cpSync, rmSync } from 'node:fs';
@@ -240,6 +242,45 @@ test('a start line written but not synced: the change is refused and its end is 
   const start = records().find(r => r.start && r.args?.path === 'fsync-fail.md');
   refusedId = start?.id;
   assert.deepEqual(records().filter(r => r.id === refusedId).map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'refused']]);
+});
+
+// A nearly full disk can take part of a write and say so (mock/disk-full.mjs, journal-short: the first write to each
+// journal file takes half). The line and a record's text are written on to their end, so every line stays whole.
+const cutLines = (dir = T.fleet.journalDir) => readdirSync(dir).filter(f => f.endsWith('.jsonl')).sort()
+  .flatMap(f => readFileSync(join(dir, f), 'utf8').split('\n').filter(Boolean)).filter(l => { try { JSON.parse(l); return false; } catch { return true; } });
+test('a write the disk takes only in part, with room left: the line and the record’s text are written to their end', { timeout: 120000 * SLOW }, async () => {
+  const words = `short-once ${'the disk took only half at first. '.repeat(30)}and then the rest.`;
+  writeFileSync(join(T.fleet.dir, 'journal-short'), '');
+  try {
+    await ok('find_recipes', { query: 'short-once' }, keys.look.token);
+    await say(await newChat(), words);
+  } finally { rmSync(join(T.fleet.dir, 'journal-short'), { force: true }); }
+  assert.deepEqual(cutLines(), [], 'every line is whole');
+  assert.equal(records().filter(r => r.act === 'find_recipes' && r.args?.query === 'short-once').length, 1, 'the look’s line');
+  const said = records().find(r => r.k === 'said' && r.o && String(r.words || '').startsWith('short-once'));
+  assert.ok(said, 'the words, with their text');
+  assert.equal(textOf(said), words, 'the text reads back whole');
+});
+
+// Part of a line fits, then the disk is full (journal-short and disk-full): the line isn't counted as written, so a change
+// written down first is refused as on a full disk and nothing runs. The cut line stays; every reader skips it, and the
+// next record is a line of its own (the restart below reads past it too).
+test('only part of a line fits, then the disk is full: the change is refused as on a full disk; the next record is a line of its own, and recall reads past the cut one', { timeout: 120000 * SLOW }, async () => {
+  const file = join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'cut-line.md');
+  for (const f of ['journal-short', 'disk-full']) writeFileSync(join(T.fleet.dir, f), '');
+  try {
+    const s = await call(keys.act.token, 'save_file', { spark: 'spark3', path: 'cut-line.md', text: 'not written\n' });
+    assert.match(s.text, /^\[failed\] Couldn[’']t write the record of this change.*so nothing was changed/);
+    assert.ok(!existsSync(file), 'the file wasn’t written');
+  } finally { for (const f of ['journal-short', 'disk-full']) rmSync(join(T.fleet.dir, f), { force: true }); }
+  const cut = cutLines().length;
+  assert.ok(cut >= 1, 'the cut line is in the journal');
+  await ok('find_recipes', { query: 'after-the-cut' }, keys.look.token);
+  assert.equal(cutLines().length, cut, 'no new cut line');
+  const after = records().filter(r => r.act === 'find_recipes' && r.args?.query === 'after-the-cut');
+  assert.equal(after.length, 1, 'the next record is a line of its own');
+  assert.equal((await ok('recall', { id: after[0].id }, keys.look.token)).record?.id, after[0].id, 'read back by its id');
+  assert.ok((await ok('recall', { about: 'after-the-cut' }, keys.look.token)).records.some(r => r.id === after[0].id), 'and found by its words');
 });
 
 // The console killed between the start line of save_file (its worker stalled) and its end; then started again on the
