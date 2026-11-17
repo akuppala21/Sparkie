@@ -839,12 +839,12 @@ async function followNewJobs() {
 function route() {
   const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
-  return { view: parts[0] || 'sparkie', a: parts[1], b: parts[2], params: new URLSearchParams(query) };
+  return { view: parts[0] || 'fleet', a: parts[1], b: parts[2], params: new URLSearchParams(query) };
 }
 // Going to the page that's already open draws it again (no hashchange fires for the same address).
 const go = path => { const to = `#/${path}`; if (location.hash === to) render(); else location.hash = to; };
-// Old addresses still work: they're replaced by where that page lives now. Home, Models, Files and Access are off the
-// page (the owner uses chat and the APIs), so their addresses open the chat.
+// Old addresses still work: they're replaced by where that page lives now. Home is the page's start (the owner asked
+// for it back, 2026-11-16); Models, Files and Access are off the page, so their addresses open Home.
 const MOVED = {
   chat: hash => hash.replace(/^#\/?chat/, '#/sparkie'),
   recipes: () => '#/',
@@ -852,7 +852,6 @@ const MOVED = {
   overview: () => '#/',
   home: () => '#/',
   sharing: () => '#/',
-  fleet: () => '#/',
   models: () => '#/',
   files: () => '#/',
   access: () => '#/',
@@ -882,6 +881,7 @@ function notFoundPage(view) {
 /* ───────── shell ───────── */
 // The main places: path, view, label, icon, who sees it.
 const NAV = [
+  ['', 'fleet', 'Home', 'grid', () => true],
   ['sparkie', 'sparkie', ASSISTANT, 'chat', canChat],
 ];
 const THEMES = [['dark', 'Dark'], ['light', 'Light'], ['system', 'Match my system']];
@@ -1219,6 +1219,240 @@ function sparkActions(n, onPage = false) {
 }
 
 /* ───────── activity ───────── */
+// Something Spark Console wants you to know (agents paused by themselves, an operation a restart cut off).
+// One about agents pausing leads to where they're resumed.
+function roomFor(ids) {
+  const free = ids.map(id => node(id)?.memoryFreeGiB).filter(num);
+  return free.length === ids.length ? Math.floor((Math.min(...free) * GB_PER_GIB * ids.length) / 1.15) : null;
+}
+
+// A small map of the Sparks and the direct cables that work between them.
+function linkMap() {
+  const ids = nodes().map(n => n.id), size = 112, r = 11;
+  const spots = [[0.22, 0.22], [0.78, 0.22], [0.78, 0.78], [0.22, 0.78]];
+  const at = id => spots[ids.indexOf(id) % spots.length].map(v => v * size);
+  const map = svg('svg', { viewBox: `0 0 ${size} ${size}`, class: 'link-map', role: 'img' });
+  const lines = [];
+  for (const p of linkedPairs()) {
+    const [x1, y1] = at(p.a), [x2, y2] = at(p.b);
+    map.append(svg('line', { x1, y1, x2, y2, class: `link ${p.tested ? 'ok' : 'untested'}` }));
+    lines.push(`${nodeName(p.a)}–${nodeName(p.b)}`);
+  }
+  for (const id of ids) {
+    const [cx, cy] = at(id), t = svg('text', { x: cx, y: cy + 4 });
+    t.textContent = String(id).replace(/^spark/, '');
+    map.append(svg('circle', { cx, cy, r, class: `spark-dot ${isUp(node(id)) ? 'on' : 'off'}` }), t);
+  }
+  map.setAttribute('aria-label', lines.length ? `Direct cables that work: ${lines.join(', ')}` : 'No working direct cables');
+  return map;
+}
+
+// One line per pair of linked Sparks: how big a model they could share, whether either is busy, and Start a model.
+function pairRow(p) {
+  const room = roomFor([p.a, p.b]), busy = [p.a, p.b].filter(id => workloads(node(id)).length);
+  return h('div', { class: 'row' },
+    h('div', { class: 'row-main' }, h('span', { class: 'row-icon ok' }, icon('link')),
+      h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, `${nodeName(p.a)} + ${nodeName(p.b)}`),
+        h('div', { class: 'row-sub' }, [room ? `fits a model up to about ${room} GB` : null,
+          busy.length === 2 ? 'both busy now' : busy.length ? `${nodeName(busy[0])} busy now` : 'both free',
+          p.tested ? null : 'cable not tested yet'].filter(Boolean).join(' · ')))),
+    null);
+}
+
+/* ───────── home ───────── */
+PAGES.fleet = function fleetPage(view) {
+  const headline = h('h1', {}, 'Home');
+  const sub = h('div', { class: 'page-sub' });
+  const alerts = h('div');
+  const stats = h('div', { class: 'card stats' });
+  const grid = h('div', { class: 'fleet' });
+  const activity = h('div', { class: 'rows' });
+  const clustersBox = h('div');
+
+  put(view,
+    h('div', { class: 'page-head' },
+      h('div', {}, headline, sub),
+      h('div', { class: 'btn-row' },
+        canChat() ? h('a', { class: 'btn', href: '#/sparkie/new', title: `Ask ${ASSISTANT} about all your Sparks` }, icon('chat'), `Ask ${ASSISTANT}`) : null)),
+    alerts, stats, grid, clustersBox,
+    h('div', { style: { 'margin-top': '16px' } },
+      panel('Recent activity', activity, { tight: true, actions: [h('button', { class: 'btn ghost sm', type: 'button', onclick: () => openActivity() }, 'All activity', icon('chevronRight'))] })));
+
+  live(() => {
+    const list = nodes();
+    if (!state.status) { redraw(sub, h('span', {}, 'Checking your Sparks…')); return; }
+    const jobs = [...state.svcJobs.values()].filter(underWay).length;
+    const m = state.main.data, chat = m?.routes?.chat;
+    redraw(sub, ...joinDots([
+      jobs ? h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity() }, `${plural(jobs, 'job')} in progress`) : null,
+      // Which model answers (the owner changes it in the chat: Models is off the page).
+      m?.configured || chat ? h('span', {}, `${ASSISTANT}: ${chat?.title || m.title} on ${nodeName(chat?.node || m.node)}`) : null,
+    ]));
+  });
+
+  // Linked Sparks: which two could run one model together right now. Only when there's something to show.
+  live(() => {
+    const pairs = linkedPairs();
+    if (!pairs.length) { redraw(clustersBox); return; }
+    redraw(clustersBox, panel('Linked Sparks', h('div', { class: 'cluster-strip' }, linkMap(), h('div', { class: 'rows' }, pairs.map(p => pairRow(p)))),
+      { tight: true, sub: 'Two Sparks joined by a direct cable can run one model together', cls: 'cluster-panel' }));
+  });
+  if (!state.fabric.loading && (!state.fabric.sparks || Date.now() - (state.fabric.at || 0) > 300000)) loadFabric();
+  // What each Spark runs is named after its model, which comes from the library.
+  if (!state.lib.loading && (!state.lib.data || Date.now() - state.lib.at > 60000)) loadLibrary();
+
+  live(() => redraw(alerts, ...attentionBanners()));
+
+  const stat = (label, ic) => {
+    const value = h('span'), unit = h('small'), foot = h('div', { class: 'stat-foot' });
+    put(stats, h('div', { class: 'stat' }, h('div', { class: 'stat-label' }, icon(ic), label), h('div', { class: 'stat-value' }, value, unit), foot));
+    return { value, unit, foot };
+  };
+  const sOnline = stat('Sparks online', 'server'), sWork = stat('Models running', 'box'), sMem = stat('Memory', 'layers');
+  const sPower = stat('GPU power', 'zap');
+  fast(() => {
+    const list = nodes(), up = list.filter(isUp), busySparks = up.filter(n => workloads(n).length);
+    const running = busySparks.reduce((t, n) => t + workloads(n).length, 0);
+    const total = sum(up, 'memoryTotalGiB'), used = total - sum(up, 'memoryFreeGiB');
+    sOnline.value.textContent = state.status ? up.length : '—';
+    sOnline.unit.textContent = `/ ${list.length}`;
+    sOnline.foot.textContent = !state.status ? 'Checking…' : list.length - up.length ? `${list.length - up.length} offline` : 'All online';
+    sWork.value.textContent = state.status ? running : '—';
+    sWork.foot.textContent = !state.status ? 'Checking…' : busySparks.length ? `on ${plural(busySparks.length, 'Spark')}` : 'Nothing running';
+    glide(sMem.value, total ? used * GB_PER_GIB : null, used * GB_PER_GIB >= 100 ? 0 : 1);
+    sMem.unit.textContent = `/ ${fmt.gib(total)} GB`;
+    sMem.foot.textContent = total ? `${Math.round((used / total) * 100)}% in use across ${plural(up.length, 'Spark')}` : '—';
+    glide(sPower.value, state.status ? sum(up, 'gpuPowerWatts') : null, 1);
+    sPower.unit.textContent = 'W';
+    sPower.foot.textContent = state.status ? `across ${plural(up.length, 'Spark')}` : '—';
+  });
+
+  // Cards follow the Spark list: new Sparks get a card, removed ones drop out, without a reload.
+  const cards = new Map();
+  let cardIds = '';
+  live(() => {
+    const ids = nodes().map(n => n.id);
+    if (ids.join() === cardIds) return;
+    cardIds = ids.join();
+    for (const id of ids) if (!cards.has(id)) cards.set(id, sparkCard(id));
+    redraw(grid, ...ids.map(id => cards.get(id)));
+  });
+
+  live(() => {
+    const jobs = activityJobs().slice(0, 5);
+    // Spark Console's notices from the last day come first here too (all of them are in Activity).
+    const notes = (state.notices || []).filter(n => Date.now() - Date.parse(n.at) < 86400000).slice(0, 2).map(noticeRow);
+    if (state.recentJobs === null && !jobs.length) redraw(activity, h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
+    else if (!jobs.length && !notes.length) redraw(activity, empty('activity', 'Nothing yet', 'Models started and stopped, downloads and setup searches show up here, with their progress.'));
+    else redraw(activity, ...notes, ...jobs.map(j => jobRow(j, { onOpen: () => openActivity(j.id) })));
+  });
+
+  if (state.recentJobs === null) loadJobs();
+};
+
+function attentionBanners() {
+  if (!state.status) return [];
+  if (isStale()) {
+    return [h('div', { class: 'banner warn' }, icon('clock'),
+      h('div', { class: 'banner-text' }, h('strong', {}, 'Status is out of date'), h('p', {}, `The last status check was ${fmt.ago(Date.parse(state.status.updatedAt))}.`)),
+      h('button', { class: 'btn sm', type: 'button', onclick: e => busy(e.currentTarget, () => loadStatus(true)) }, icon('refresh'), 'Refresh'))];
+  }
+  return [];
+}
+const issueText = n => (n.issues?.length ? n.issues.join(' · ') : 'Something on this Spark needs attention.');
+
+function sparkCard(id) {
+  const card = h('article', { class: 'spark-card' });
+  const body = h('a', { class: 'sc-link', href: `#/spark/${id}` });
+  const foot = h('div', { class: 'sc-foot' });
+  card.append(body, foot);
+  let footKey = null, bodyKey = null, refs = null;
+  const metric = (label, unit) => {
+    const value = h('span');
+    return [value, h('div', { class: 'sc-metric' }, h('div', { class: 'k' }, label), h('div', { class: 'v' }, value, h('small', {}, unit)))];
+  };
+
+  // Structure: rebuilt only when what the card shows changes (reachability, workloads, warnings).
+  live(() => {
+    const n = node(id);
+    if (!n) return;
+    const cond = condition(n), up = isUp(n), work = workloads(n), portalHost = portalHostId() === n.id;
+    const key = [up, up ? cond === 'degraded' : cond, work.join('\n'), portalHost, cond === 'degraded' ? issueText(n) : ''].join('|');
+    if (key !== bodyKey) {
+      bodyKey = key;
+      const pillEl = condPill(cond);
+      const head = h('div', { class: 'sc-head' },
+        h('div', { class: 'sc-title' },
+          h('span', { class: 'sc-chip' }, icon('chip')),
+          h('div', { style: { 'min-width': '0' } },
+            h('h3', {}, n.name, portalHost ? h('span', { class: 'tag', title: 'This Spark runs Spark Console. Keep it on.' }, 'Host') : null),
+            h('div', { class: 'sc-sub' }, hardware(n)))),
+        pillEl);
+      if (!up) {
+        set(body, head, h('div', { class: 'sc-offline' },
+          icon(cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
+          cond === 'offline' ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
+          h('span', {}, cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
+        refs = { pill: pillEl };
+      } else {
+        const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric('Power', 'W'), [temp, tempBox] = metric('Temp', '°F');
+        const memUsed = h('span'), memTotal = h('span'), barFill = h('span'), graph = h('div', { class: 'sc-spark' }), span = h('span');
+        set(body, head,
+          cond === 'degraded' ? h('div', { class: 'sc-issue' }, icon('alert'), h('span', {}, issueText(n))) : null,
+          h('div', { class: 'sc-work' },
+            h('div', { class: 'sc-work-head' }, h('span', {}, 'Workloads'), h('strong', {}, work.length)),
+            h('div', { class: 'sc-work-list' }, work.length
+              ? [...work.slice(0, 2).map(w => h('div', { class: 'sc-work-item', title: w }, led('running'), h('span', {}, w))),
+                work.length > 2 ? h('div', { class: 'sc-work-more' }, `+${work.length - 2} more`) : null]
+              : h('div', { class: 'sc-work-empty' }, 'Nothing running'))),
+          h('div', { class: 'meter-row' }, h('span', {}, 'Memory'), h('strong', {}, memUsed, ' / ', memTotal, ' GB')),
+          h('div', { class: 'bar' }, barFill),
+          h('div', { class: 'sc-metrics' }, gpuBox, powerBox, tempBox),
+          graph,
+          h('div', { class: 'sc-caption' }, h('span', {}, 'GPU use'), span));
+        refs = { pill: pillEl, gpu, power, temp, memUsed, memTotal, barFill, graph, span };
+      }
+    }
+    const fkey = `${cond === 'offline'}|${up}|${n.model?.running}|${owner()}|${Boolean(conn(id))}|${canSparkChat(n)}`;
+    if (fkey === footKey) return;
+    footKey = fkey;
+    const ssh = owner() && cond === 'offline' ? sshDirect(id) : null;
+    // Each button names its Spark, so a screen reader's list of buttons tells the cards apart.
+    set(foot,
+      up ? openButton(n) : owner() && cond === 'offline'
+        ? h('button', { class: 'btn sm', type: 'button', 'aria-label': `Run checks on ${n.name}`, onclick: () => go(`spark/${id}/diagnostics?run=1`) }, icon('clipboard'), 'Run checks')
+        : null,
+      ssh ? h('button', { class: 'btn sm', type: 'button', title: ssh, 'aria-label': `Copy SSH command for ${n.name}`, onclick: () => copy(ssh, `Copied: ${ssh}`) }, icon('terminal'), 'Copy SSH') : null,
+      canSparkChat(n) ? h('a', { class: 'btn sm', href: sparkChatHref(id), title: `Ask ${ASSISTANT} about ${n.name}`, 'aria-label': `Chat about ${n.name}` }, icon('chat'), 'Chat') : null,
+      h('span', { class: 'grow' }),
+      owner() ? menuButton(() => sparkActions(node(id)), { label: `More actions for ${n.name}` }) : h('a', { class: 'btn ghost sm', href: `#/spark/${id}`, 'aria-label': `Details for ${n.name}` }, 'Details'));
+  });
+
+  // Numbers, bar, status and graph: updated in place on every live tick.
+  fast(() => {
+    const n = node(id);
+    if (!n || !refs) return;
+    const cond = condition(n), [label, kind] = COND[cond];
+    card.dataset.cond = cond;
+    body.setAttribute('aria-label', `${n.name}: ${label}`);
+    refs.pill.className = `pill ${kind}`;
+    refs.pill.textContent = label;
+    if (!refs.gpu) return;
+    const total = n.memoryTotalGiB, used = num(total) && num(n.memoryFreeGiB) ? total - n.memoryFreeGiB : null;
+    const share = num(used) && total ? Math.max(0, Math.min(1, used / total)) : 0;
+    glide(refs.memUsed, num(used) ? used * GB_PER_GIB : null, Math.abs(used * GB_PER_GIB) >= 100 ? 0 : 1);
+    refs.memTotal.textContent = fmt.gib(total);
+    refs.barFill.style.width = `${(share * 100).toFixed(1)}%`;
+    refs.barFill.parentElement.classList.toggle('bad', share > 0.95);
+    glide(refs.gpu, n.gpuUtilization, 0);
+    glide(refs.power, n.gpuPowerWatts, 1);
+    glide(refs.temp, toF(n.temperature), 0);
+    set(refs.graph, sparkline(series(id, 'gpu'), { max: 100, label: `${n.name} GPU use, ${windowLabel(id)}` }));
+    refs.span.textContent = windowLabel(id);
+  });
+  return card;
+}
+
 // Something Spark Console wants you to know (agents paused by themselves, an operation a restart cut off).
 // One about agents pausing leads to where they're resumed.
 const noticeRow = n => h('div', { class: 'notice-row' }, icon('alert'),

@@ -1,5 +1,5 @@
-// Covers: The page is chat, sign-in and status (the one page, milestone 4; E10b). Home, Models, Files and Access are
-// off it, with the page code only they used; only Home's and Models' routes stay in the service. File reads only, like
+// Covers: The page is Home, chat, sign-in and status (the one page, milestone 4; E10b; Home back on the owner's word,
+// 2026-11-16, without its start dialog). Models, Files and Access are off it, with the page code only they used; only Home's and Models' routes stay in the service. File reads only, like
 // install.test.mjs's reads of the installer: no server, no browser. The page's files still parse, and every file the
 // installer ships (UI_FILES) is still there.
 import { test } from 'node:test';
@@ -26,28 +26,32 @@ const ACCOUNT_MENU = (() => {
 })();
 const has = name => new RegExp(`^(?:async )?function ${name}\\(|^const ${name} = `, 'm').test(APP);
 
-test('Home, Models, Files and Access are off the page: no view, no nav entry, no link to one', () => {
-  for (const view of ['fleet', 'models', 'files', 'access']) {
+test('Models, Files and Access are off the page: no view, no nav entry, no link to one', () => {
+  for (const view of ['models', 'files', 'access']) {
     assert.doesNotMatch(APP, new RegExp(`^PAGES\\.${view}\\s*=`, 'm'), `no ${view} view`);
     assert.doesNotMatch(APP, new RegExp(`#/${view}\\b`), `no link to #/${view}`);
     assert.doesNotMatch(APP, new RegExp(`\\bgo\\(['\`]${view}\\b`), `nothing goes to ${view}`);
   }
-  for (const label of ['Home', 'Models', 'Files', 'Access']) assert.doesNotMatch(NAV, new RegExp(`'${label}'`), `${label} is not in the nav`);
+  for (const label of ['Models', 'Files', 'Access']) assert.doesNotMatch(NAV, new RegExp(`'${label}'`), `${label} is not in the nav`);
   // The code only they used, and the three late-answer faults it held (A-10 in the start dialog's pick, A-11 in the
   // file browser, A-12 in its uploads).
-  for (const name of ['sparkCard', 'runningTab', 'libraryTab', 'findMoreTab', 'openDeploy', 'openDeployPicker', 'filesBrowser', 'peopleTab', 'memberAccess', 'personDialog']) {
+  for (const name of ['runningTab', 'libraryTab', 'findMoreTab', 'openDeploy', 'openDeployPicker', 'filesBrowser', 'peopleTab', 'memberAccess', 'personDialog']) {
     assert.ok(!has(name), `${name} is gone`);
   }
   assert.doesNotMatch(APP, /function uploadFiles\(/, 'no uploads from the page');
   // Their styles went with them.
-  for (const cls of ['spark-card', 'sc-work', 'rc-options', 'lib-table', 'invite-panel', 'cap-table', 'segmented', 'dropzone']) {
+  for (const cls of ['rc-options', 'lib-table', 'invite-panel', 'cap-table', 'segmented', 'dropzone']) {
     assert.doesNotMatch(CSS, new RegExp(`\\.${cls}\\b`), `no .${cls} in styles.css`);
   }
 });
 
-test('old addresses of the four views open the chat, which is where the page starts', () => {
-  assert.match(APP, /view: parts\[0\] \|\| 'sparkie'/, 'an empty address is the chat');
-  for (const view of ['fleet', 'home', 'models', 'recipes', 'files', 'access', 'sharing']) {
+test('the page starts on Home; old addresses of the views that are off it open Home', () => {
+  assert.match(APP, /view: parts\[0\] \|\| 'fleet'/, 'an empty address is Home');
+  assert.match(APP, /^PAGES\.fleet = function fleetPage\(/m, 'Home is a view');
+  assert.match(NAV, /\['', 'fleet', 'Home', 'grid', \(\) => true\]/, 'Home is first in the nav');
+  for (const name of ['sparkCard', 'attentionBanners', 'linkMap', 'pairRow']) assert.ok(has(name), `${name} is there`);
+  assert.doesNotMatch(APP, /openDeployPicker/, 'no start dialog: models start through the chat');
+  for (const view of ['home', 'models', 'recipes', 'files', 'access', 'sharing']) {
     assert.match(APP, new RegExp(`^  ${view}: \\(\\) => '#/',$`, 'm'), `#/${view} is sent to #/`);
   }
 });
