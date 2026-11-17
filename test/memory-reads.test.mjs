@@ -1,7 +1,6 @@
 // Covers: Who is handed which words of memory (R59, R43; the review of the memory steps, 2026-11-15). From the paired
-// Telegram chat, recall gives back no words of a line the owner forgot and erased, and no words said on the page; and
-// forget_memory with the id of a line no longer live (forgotten, replaced, past its day, or asked to erase) says none
-// of its words there, to the brain, in the reply or on a button. An agent that may change things, through ask_sparkie,
+// Telegram chat, the owner reads retired memory and journal records from either channel; truly erased memory
+// stays absent from memory and its history. Retired forget responses stay terse; erase asks show the exact owner line. An agent that may change things, through ask_sparkie,
 // gets none of them either, nor does its own direct call. In a chat an agent started, the owner typing there gets no
 // retired line from recall or memory {past}, and the agent reads none back. A value kept as a key is hidden in the
 // memory block of the system prompt, in the picks and in a lesson card made before it was kept. Memory, its history and a kept key are seeded before the console
@@ -39,7 +38,7 @@ function seed({ dir, stateDir }) {
   writeFileSync(join(stateDir, 'memory-past.json'), JSON.stringify({ past: PAST }), { mode: 0o600 });
   writeFileSync(join(stateDir, 'lessons.json'), JSON.stringify({ lessons: [LESSON] }), { mode: 0o600 });
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() },
+  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString(), approve: true },
     keys: { NAS: { value: NAS, at: at(1) } } }), { mode: 0o600 });
 }
 useFleet({ telegram: true, watchMs: 60000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' }, prepare: seed },
@@ -70,7 +69,7 @@ const phone = async words => {
   return { sent, out };
 };
 
-test('Telegram: recall there gives back no words of a line the owner forgot and erased, and no words said on the page; words said there it does', { timeout: 240000 * SLOW }, async () => {
+test('Telegram: owner recall reads retired lines and immutable journal words from both channels; erased memory stays absent', { timeout: 240000 * SLOW }, async () => {
   const kept = await owner('remember', { text: 'my garage code is 9182', kind: 'fact' });
   assert.equal(kept.json?.outcome, 'remembered', kept.text);
   assert.equal((await owner('forget_memory', { id: kept.json.id })).json?.outcome, 'forgotten');
@@ -78,20 +77,25 @@ test('Telegram: recall there gives back no words of a line the owner forgot and 
   script([{ match: '^the side gate opens with 7731', calls: [] }]);
   await say(await newChat(), 'the side gate opens with 7731 and that is all for now');
   const words = 'reads phone asks about the garage and the gate';
-  script([{ match: '^reads phone asks', calls: [{ name: 'recall', arguments: { about: 'garage code', kind: 'call' } }, { name: 'recall', arguments: { about: 'side gate', kind: 'said' } },
+  script([{ match: '^reads phone asks', answer: 'The journal still holds the garage code 9182 and the page’s gate code 7731. Forgotten memory: my door code is vextrum.', calls: [{ name: 'recall', arguments: { about: 'garage code', kind: 'call' } }, { name: 'recall', arguments: { about: 'side gate', kind: 'said' } },
     { name: 'recall', arguments: { about: 'reads phone asks', kind: 'said' } }, { name: 'recall', arguments: { id: DOOR } }] }]);
   try {
     const { sent, out } = await phone(words);
-    assert.match(sent, /There’s no line d00d0001 in memory \(the lines that were replaced or forgotten are shown to the owner only/);
+    assert.match(sent, /my door code is vextrum/);
+    assert.match(sent, /"retired":\{"at":/);
+    const erased = await owner('recall', { id: kept.json.id });
+    assert.match(erased.text, /There’s no line/);
+    assert.ok(!(await owner('memory', { past: true })).json.past.some(x => x.id === kept.json.id), 'erased words cannot return as memory');
     const around = n => { const i = sent.indexOf(n); return i < 0 ? null : sent.slice(Math.max(0, i - 260), i + 40); };
-    assert.deepEqual({ erasedLine: around('9182'), saidOnThePage: around('7731') }, { erasedLine: null, saidOnThePage: null }, 'the brain answering on Telegram was sent these from the journal');
-    assert.ok(!/9182|7731/.test(out), out.slice(0, 800));
+    assert.ok(around('9182'), 'the owner can read the immutable journal record, which erasing memory cannot rewrite');
+    assert.ok(around('7731'), 'the paired owner can read their page journal words');
+    assert.match(out, /9182/); assert.match(out, /7731/);
     // (what the owner said in that chat itself stays readable there)
     assert.match(sent, /"kind":"said"[^}]*"via":"telegram"[^}]*"said":"reads phone asks about the garage and the gate"/);
   } finally { script([]); }
 });
 
-test('Telegram: forget_memory with the id of a line no longer live (forgotten, replaced, past its day, or asked to erase) says none of its words there', { timeout: 240000 * SLOW }, async () => {
+test('Telegram: retired forget replies stay terse; an erase ask shows the exact owner line without erasing before confirmation', { timeout: 240000 * SLOW }, async () => {
   const got = {};
   try {
     for (const [name, id, word, erase] of [['forgotten', DOOR, 'vextrum', false], ['replaced', WIFI, 'quartz', false], ['ended', ENDED, 'zircon', false], ['forgotten, asked to erase', DOOR, 'vextrum', true]]) {
@@ -102,7 +106,9 @@ test('Telegram: forget_memory with the id of a line no longer live (forgotten, r
     }
   } finally { script([]); }
   const none = { toTheBrain: null, toTelegram: null };
-  assert.deepEqual(got, { forgotten: none, replaced: none, ended: none, 'forgotten, asked to erase': none });
+  assert.deepEqual({ forgotten: got.forgotten, replaced: got.replaced, ended: got.ended }, { forgotten: none, replaced: none, ended: none });
+  assert.ok(got['forgotten, asked to erase'].toTheBrain && got['forgotten, asked to erase'].toTelegram, 'the owner sees the exact line on the erase confirmation');
+  assert.ok((await owner('memory', { past: true })).json.past.some(x => x.id === DOOR), 'delivery alone never erases the line');
 });
 
 test('an agent that may change things, through ask_sparkie or its own call: forget_memory with the id of a forgotten or a replaced line gives it no word of it', { timeout: 240000 * SLOW }, async () => {

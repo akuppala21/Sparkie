@@ -69,6 +69,8 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
     // (the watcher's first look comes 15 s after the service starts: only after it does a Spark going dark make an event)
     await waitFor(async () => (await look('workloads')).workloads?.some(w => w.spark === 'spark4'), { timeout: 90000, what: 'the watcher’s first look' });
     await done(await act('power_off', { spark: 'spark4' }));
+    const parked = JSON.parse(readFileSync(join(T.fleet.stateDir, 'desired.json'), 'utf8')).running.find(x => x.spark === 'spark4' && x.container === RADIX);
+    assert.ok(parked?.parked, 'power-off preserved the parked model on disk');
     const row = (await look('fleet_status')).sparks.find(x => x.id === 'spark4');
     assert.equal(row.state, 'off', JSON.stringify(row));
     assert.match(row.offOnPurpose.asleep, ASLEEP);
@@ -88,8 +90,29 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
     const online = await waitFor(() => eventLines().findLast(e => e.type === 'spark-online' && e.spark === 'spark4'), { timeout: 60000, what: 'Spark 4 seen online' });
     assert.equal(online.planned, true, JSON.stringify(online));
     assert.equal(eventLines().findLast(e => e.type === 'spark-offline' && e.spark === 'spark4')?.planned, true);
-    await done(await act('start_model', { model: 'RadixArk/Qwen3.8-27B-NVFP4', spark: 'spark4' }));
+    // The wake must restore what shutdown parked, before a repeated start can hide a failed restore.
+    const restored = await waitFor(async () => (await look('should_be_running')).running.find(x => x.spark === 'spark4' && x.container === RADIX && x.state === 'running'),
+      { timeout: 60000, what: 'the parked model restored after power-on' });
+    assert.equal(restored.parked, undefined, 'the restored model is no longer parked');
+    const saved = JSON.parse(readFileSync(join(T.fleet.stateDir, 'desired.json'), 'utf8')).running.find(x => x.spark === 'spark4' && x.container === RADIX);
+    assert.ok(saved, 'the restored model stays on the saved list');
+    assert.equal(saved.parked, undefined, 'the cleared parked mark was saved');
+    assert.equal(readFileSync(mock('spark4', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${RADIX}|`))?.split('|')[1], 'running', 'the wake restored the actual container');
+    assert.equal(power().off.spark4, undefined, 'power-on cleared the off record');
+    const workloadOperations = async () => {
+      const r = await api('/jobs');
+      assert.equal(r.status, 200, r.text);
+      return r.json.jobs.filter(j => (j.node === 'spark4' || j.nodes?.includes('spark4'))
+        && (j.container === RADIX || [RADIX.slice(3), RADIX.slice(3).replace('--', '/')].includes(j.model))).map(j => j.id).sort();
+    };
+    const beforeStart = await workloadOperations();
+    assert.ok(beforeStart.length, 'the restored workload has an operation on record');
+    const again = await act('start_model', { model: 'RadixArk/Qwen3.8-27B-NVFP4', spark: 'spark4' });
+    assert.equal(again.status, 200, again.text);
+    assert.equal(again.json.outcome, 'already', again.text);
+    assert.equal(again.json.operation, undefined, 'an already-running model starts no operation');
     await new Promise(res => setTimeout(res, 3000));
+    assert.deepEqual(await workloadOperations(), beforeStart, 'the repeated start created no workload operation');
     // (it crashes: exited with 1, as heal.test.mjs crashes one)
     const since = new Date().toISOString(), f = mock('spark4', 'containers');
     const before = readFileSync(f, 'utf8'), crashed = before.replace(new RegExp(`^${RADIX.replace(/[.+]/g, '\\$&')}\\|running\\|[^|]*\\|`, 'm'), `${RADIX}|exited|Exited (1) just now|`);

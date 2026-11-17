@@ -1,6 +1,6 @@
 // Covers: “What can you do?” (A3): `sparkie_setup {about: "abilities"}` lists every action by its title straight from
 // the registry (the same set as `TOOLS` and `CHANGE_TOOLS`), with the limits (what Sparkie never changes, when a change
-// asks first, Sparkie's own Spark, what waits in the console from Telegram); the same text through `POST /actions` and
+// asks first, Sparkie's own Spark, the paired Telegram owner's confirmation controls); the same text through `POST /actions` and
 // the agent door (masking changes nothing); without `about` the answer is as before; in chat the stand-in brain makes
 // one lookup, no change and no button, and Sparkie's prompt carries the same never-list and the line that says to call
 // it.
@@ -31,11 +31,10 @@ test('sparkie_setup {about: "abilities"}: every action by its title, from the li
   assert.ok(x.canChange.includes('Run a command on a Spark') && x.canChange.includes('Write a file on a Spark'), JSON.stringify(x.canChange));
   assert.equal(x.limits.length, 6, JSON.stringify(x.limits));
   assert.equal(x.limits[5], 'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.');
-  assert.equal(x.limits[0], `Sparkie never changes ${NEVER}, and never turns Spark Console off. The owner does those by hand.`);
+  assert.equal(x.limits[0], `Sparkie never changes ${NEVER}, and never turns Spark Console off. For account changes, use your own account controls or /admin.`);
   assert.equal(x.limits[1], 'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.');
   assert.equal(x.limits[2], 'Spark 2 is Sparkie’s own, so no other model or workload starts there.');
-  assert.match(x.limits[3], /^From Telegram, these wait in Spark Console, pressed there with the passkey: /);
-  for (const n of ['undo_update', 'remember', 'forget_memory', 'save_workflow', 'forget_workflow']) assert.ok(x.limits[3].includes(titleOf[n]), n);
+  assert.equal(x.limits[3], 'Your paired Telegram chat has the same owner controls as the page. Changes that need your confirmation show their exact action and wait for your own button; dangerous changes also ask for two digits.');
   assert.equal(x.says, 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.');
   assert.ok(JSON.stringify(x).length < 3500, String(JSON.stringify(x).length));
   // The agent door masks and POST /actions doesn't: the same text, so masking changes nothing.
@@ -63,6 +62,7 @@ test('asked in chat: one lookup, no change, no button; Sparkie reads the same li
     assert.deepEqual({ ...seen, observedAt: 0 }, { ...(await viaApi()), observedAt: 0 });
     assert.ok(asked[0].system.includes('When asked what you can do, call sparkie_setup with about "abilities"'), asked[0].system);
     assert.ok(asked[0].system.includes(`You never change ${NEVER}, and never turn Spark Console off.`), asked[0].system);
+    assert.ok(asked[0].system.includes('For account changes, direct the owner to /admin in their paired Telegram chat or the page’s account controls. These are direct owner commands, never model tools.'), asked[0].system);
   } finally {
     rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
   }

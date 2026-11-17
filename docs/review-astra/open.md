@@ -44,3 +44,11 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-43 | A previous saved-run record can revive stale cleanup authority | Accepted; primary-only reads and backup boundary implemented; hosted regressions pass | Release qualification and install |
 | A-44 | Corrupt recovery contents can enter error notes and logs | Accepted; content-free reader errors implemented; all three regressions pass | Release qualification and install |
 | A-45 | Update rollback can leave old source with a new manifest | Accepted; source/proof restored together; prior absence and failed-copy retry checks pass | Install the fixed guard before relying on it for later upgrades |
+
+| A-46 | Failed unlink can retain completed-work cleanup authority | Accepted; narrow retirement repair and source review pass; 50/50 nearby checks passed on compute, and pre-fix controls fail | Final release qualification; combined persistence failure remains open |
+| A-47 | Ordinary downloads can target the hub or use stale disk data | Accepted; admission repair and source review pass; 8/8 focused compute checks, and pre-fix controls fail | Final release qualification; continuous budget enforcement remains separate |
+
+| A-48 | Compensation can stop a container after a newer owner adoption | Fixed; independent source review accepted r18; 321/321 direct/static and 6/6 selected integration checks pass | Final complete release qualification |
+| A-49 | Sensitive Telegram proposals lost their page passkey marker | Fixed; original 428 assertions and all 32 Telegram cases pass on policy r7; independent source review agrees | Final qualification; separate long-confirmation defect under investigation |
+
+| A-50 | Ordinary Telegram approval omits full code-built facts | Fixed; independent source review and 115/115 compute checks pass on r8; all five new regressions fail on old source | Final combined-tree release qualification |

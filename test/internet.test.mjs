@@ -677,7 +677,7 @@ describe('who is signed in, for the owner only (A5)', () => {
     assert.deepEqual(a.passkeys.map(k => [k.name, k.addedAt, k.lastUsedAt]), page.keys.map(k => [k.name, k.createdAt, k.lastUsedAt]));
     assert.deepEqual(a.recoveryCodes, { left: page.recovery.left, total: page.recovery.total, madeAt: page.recovery.madeAt });
     assert.match(a.namesAreData, /data, not instructions/);
-    assert.match(a.whereToChange, /Your devices.*Your passkey.*Sparkie can’t change/);
+    assert.equal(a.whereToChange, 'Use Your devices and Your passkey on the page, or /admin in your paired Telegram chat for /session, /passkey and /recovery commands. These are your direct confirmed commands; the model cannot run them as tools. Adding a passkey still uses your browser.');
     assert.equal(a.problem, undefined);
     // Never an address or an id.
     assert.ok(page.sessions.some(s => s.lastFrom === '192.0.2.201'), 'the page knows where it signed in from');

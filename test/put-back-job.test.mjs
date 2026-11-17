@@ -18,14 +18,14 @@
 // stopped; that limit moves only on the stand-in fleet, and on any other console the variable is ignored (pure, from the
 // limit's own line). A stand-in docker in front of the fleet's (PATH) holds a stop or a run of the one container a test
 // names.
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, renameSync, symlinkSync, existsSync, mkdtempSync, chmodSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { T, useFleet, api, waitFor, newChat, say, chatMessages, auditLines, SLOW, REPO } from './lib.mjs';
+import { T, useFleet, resetFleet, api, waitFor, newChat, say, chatMessages, auditLines, SLOW, REPO } from './lib.mjs';
 
 // A stop of the container named in ~/.mock/stop-hangs never comes back (putBack gives a stop 90 s), and of the one in
 // ~/.mock/stop-hangs-once only the first time; one named in ~/.mock/stop-fails is refused at once and keeps running; a
@@ -46,7 +46,7 @@ exec "$real" "$@"
 chmodSync(join(WRAP, 'docker'), 0o755);
 
 const JOB = 'gpu-hold', MODEL = 'gemma-3-12b-it';
-useFleet({ env: { PATH: `${WRAP}:${BIN}:${process.env.PATH}`, SPARK_CONSOLE_READY_MS: String(30000 * SLOW) },
+const FLEET_OPTIONS = { env: { PATH: `${WRAP}:${BIN}:${process.env.PATH}`, SPARK_CONSOLE_READY_MS: String(30000 * SLOW) },
   prepare: ({ root }) => {
     // (Spark 4 with nothing running: no hand-started benchmark, none of Spark Console's models; a GPU job starts only
     // where no model runs)
@@ -54,7 +54,18 @@ useFleet({ env: { PATH: `${WRAP}:${BIN}:${process.env.PATH}`, SPARK_CONSOLE_READ
     writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter(l => l && !l.startsWith('qwen-recipe-aphex3k|'))
       .map(l => (/^sc-[^|]*\|running\|/.test(l) ? l.replace(/\|running\|[^|]*\|/, '|exited|Exited (0) just now|') : l)).join('\n') + '\n');
   },
-});
+};
+useFleet(FLEET_OPTIONS);
+beforeEach(async t => {
+  if (t.name.startsWith('its folder swapped for a link') || t.name.startsWith('the limit moves only')) return;
+  // Every independent fault case owns a fresh world. Its predecessor's unanswered commands remain unproved
+  // until that whole fake fleet is stopped; no recovery state is edited or skipped in a surviving service.
+  await resetFleet(FLEET_OPTIONS);
+  const made = await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container: JOB,
+    image: 'nvcr.io/nvidia/pytorch:25.10-py3', command: ['sleep', 'infinity'], once: true, gpu: true, memoryGB: 8 } });
+  assert.equal(made.json?.outcome, 'started', made.text);
+  assert.equal((await opEnd(made.json.operation)).status, 'completed');
+}, { timeout: 180000 * SLOW });
 
 const mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
 const stateOf = (spark, name) => readFileSync(mock(spark, 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];

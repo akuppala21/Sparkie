@@ -1,7 +1,7 @@
 /* ───────── the public page ───────── */
 // Area: ways in
 // Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
-// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
@@ -76,9 +76,10 @@ const handler = async (req, res) => {
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
       // code that can be read. Yes or no only, never how many. The sign-in page shows "Use a recovery code" from it (F18).
       const recovery = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && recoveryView().left > 0;
+      const deviceSignin = !viewer && !tailnetLogin && telegramDeviceSignInAvailable();
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
-      return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
+      return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, deviceSignin, session: viewer?.session?.kind || null,
         via: funnel ? 'internet' : 'tailnet', ...(!viewer && putBackHeld() ? { held: PUTBACK_LINE } : {}) });
     }
     // Signing a device in (a passkey, or a code the owner lets in), and signing out.
@@ -142,12 +143,7 @@ const handler = async (req, res) => {
       if (path === '/auth/recovery') {
         if (req.method === 'GET') return send(res, 200, recoveryView());
         if (req.method !== 'POST') throw new HttpError(405, 'Use GET or POST.');
-        if (viewer.session && !passkeys().length) throw new HttpError(403, 'Set up a passkey first; then make recovery codes.');
-        if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets, so it has no recovery codes.');
-        const codes = makeRecoveryCodes();
-        audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'recovery-codes-made', args: { count: codes.length }, ok: true });
-        fleetEvent({ type: 'notice', text: 'You made 10 new recovery codes. The old ones no longer work.' });
-        return send(res, 200, { ...recoveryView(), codes });
+        return send(res, 200, ownerRecoveryCodes(viewer, { via: viewer.session ? 'internet' : 'page' }));
       }
       if (req.method === 'GET' && path === '/auth/passkeys') {
         return send(res, 200, { keys: passkeys().map(k => ({ id: k.id, name: k.name, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt || null, domain: k.rpId })), rpIds: passkeyRpIds() });
@@ -192,13 +188,7 @@ const handler = async (req, res) => {
       }
       const gone = path.match(/^\/auth\/passkeys\/([A-Za-z0-9_-]{16,1400})$/);
       if (req.method === 'DELETE' && gone) {
-        const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
-        if (!k) throw new HttpError(404, 'That passkey was already removed.');
-        // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
-        const unnoted = putBackRemoval({ kind: 'passkey', id: k.id, name: k.name }, () => savePasskeys(keys.filter(x => x !== k)));
-        for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
-        audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
-        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
+        return send(res, 200, ownerPasskeyRemove(gone[1], { via: 'page' }));
       }
       throw new HttpError(404, 'Not found.');
     }
@@ -224,64 +214,23 @@ const handler = async (req, res) => {
       if (req.method === 'GET' && path === '/agents') return send(res, 200, { url: mcpUrl(), keys: agentKeys().map(agentView), settings: agentSettings() });
       // The owner's switches: pause every agent's changes (Sparkie's too); restart crashed models automatically.
       if (req.method === 'PUT' && path === '/agents/settings') {
-        const body = await readBody(req, 2000), change = {};
-        for (const k of ['halted', 'selfHeal']) if (body[k] !== undefined) { if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} should be true or false.`); change[k] = body[k]; }
-        // The owner's own pause or resume replaces an automatic one.
-        if (change.halted !== undefined) change.autoPaused = false;
-        let next;
-        const unnoted = change.halted !== undefined ? putBackRemoval({ kind: change.halted ? 'paused' : 'resumed' }, () => { next = setAgentSettings(change); }) : ((next = setAgentSettings(change)), null);
-        audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
-        // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
-        if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
-        if (change.halted !== undefined) fleetEvent({ type: 'operation', operation: change.halted ? 'agents paused' : 'agents resumed', status: 'completed', by: 'owner' });
-        return send(res, 200, { settings: next, ...(unnoted ? { noted: false, note: unnoted } : {}) });
+        return send(res, 200, ownerSettingsChange(await readBody(req, 2000), { via: 'page' }));
       }
       if (req.method === 'POST' && path === '/agents') {
-        const name = clean((await readBody(req, 4000)).name, 60);
-        if (!name) throw new HttpError(400, 'Name the agent, like “Claude Code on my MacBook”.');
-        const keys = agentKeys();
-        if (keys.length >= 20) throw new HttpError(409, 'Remove an agent before adding another (20 at most).');
-        if (keys.some(k => k.name.toLowerCase() === name.toLowerCase())) throw new HttpError(409, `There’s already an agent called ${name}.`);
-        const token = `sck_${randomBytes(32).toString('base64url')}`;
-        const key = { id: randomBytes(6).toString('hex'), name, login: viewer.login, hash: keyHash(token).toString('hex'), scopes: ['fleet:read'], internet: false, createdAt: new Date().toISOString(), lastUsedAt: null, lastAction: null };
-        writePrivate(AGENTS_FILE, { keys: [...keys, key] });
-        putBackSeed();
-        audit({ via: 'page', actor: 'owner', action: 'agent-added', args: { agent: name }, ok: true });
-        return send(res, 201, { ...agentView(key), token, url: mcpUrl() });
+        return send(res, 201, ownerAgentCreate(await readBody(req, 4000), viewer, { via: 'page' }));
       }
       const agentId = path.slice('/agents/'.length);
       // Whether one agent may change things (start and stop models), or only look; and whether its key also works from
       // the internet without Tailscale (internet: true), or only on the tailnet.
       if (req.method === 'PUT' && AGENT_ID.test(agentId)) {
-        const { act, internet } = await readBody(req, 2000);
-        if ((act !== undefined && typeof act !== 'boolean') || (internet !== undefined && typeof internet !== 'boolean') || (act === undefined && internet === undefined)) {
-          throw new HttpError(400, 'Say whether it can change things (act: true or false), and/or whether its key works from anywhere (internet: true or false).');
-        }
-        const keys = agentKeys(), key = keys.find(k => k.id === agentId);
-        if (!key) throw new HttpError(404, 'That agent was removed.');
-        const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
-        if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
-        if (internet !== undefined) key.internet = internet;
-        // A right taken away counts as a removal (R23): a state put back from before takes it away again.
-        const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
-        const unnoted = Object.keys(took).length ? putBackRemoval({ kind: 'narrowed', id: key.id, name: key.name, extra: took }, () => writePrivate(AGENTS_FILE, { keys }))
-          : (writePrivate(AGENTS_FILE, { keys }), null);
-        if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
-        if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
-        return send(res, 200, { ...agentView(key), ...(unnoted ? { noted: false, note: unnoted } : {}) });
+        return send(res, 200, ownerAgentRights(agentId, await readBody(req, 2000), { via: 'page' }));
       }
       // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
       // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
       // owner cancels one in Activity. A reply of Sparkie's to it that is still under way changes nothing more: runAction
       // reads the key again before each change (ctx.agentId, R9).
       if (req.method === 'DELETE' && AGENT_ID.test(agentId)) {
-        const keys = agentKeys();
-        const gone = keys.find(k => k.id === agentId);
-        if (!gone) throw new HttpError(404, 'That agent was already removed.');
-        const unnoted = putBackRemoval({ kind: 'agent', id: gone.id, name: gone.name }, () => writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) }));
-        agentUse.delete(agentId);
-        audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
-        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
+        return send(res, 200, ownerAgentRemove(agentId, { via: 'page' }));
       }
       throw new HttpError(404, 'Not found.');
     }
@@ -418,6 +367,7 @@ const handler = async (req, res) => {
       if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s model isn’t stopped here: the owner starts and stops it with /main/start and /main/stop.');
       mustUse(viewer);
       const wf = pageWorkflow(req, 'stop_model', owner);
+      rollbackSupersede([`${node}/${container}`], 'the owner stopped it');
       if (owner) await cancelRunningOn(dep.cluster ? dep.cluster.split('+') : [node], 'the owner');
       const job = claimed(dep.cluster ? dep.cluster.split('+') : [node], `stopping ${container}`, () => newJob('stop', { node, container, by: viewer.login, ...wf }));
       return send(res, 202, publicJob(runJob(job, async j => { await stopContainer(j, node, container, viewer); await stoppedForSure(j, node, container); })));
@@ -431,6 +381,11 @@ const handler = async (req, res) => {
       const { spark, container } = await readBody(req, 4000);
       // (read strictly: a list that can't be read just now is "try again", never "not on the list", and never saved over)
       const d = desired(true), x = d.running.find(y => y.spark === spark && y.container === container);
+      if (path === '/desired/forget' && nodeById(spark) && NAME_RE.test(container || '')) {
+        const known = rollbackKnown(spark, container);
+        rollbackSupersede([`${spark}/${container}`], 'the owner forgot it');
+        if (!x && known) return send(res, 200, { ok: true });
+      }
       if (!x) throw new HttpError(404, 'That isn’t on the list of what should be running.');
       if (path === '/desired/forget') {
         const before = d.running.map(y => ({ ...y }));
@@ -498,21 +453,10 @@ const handler = async (req, res) => {
       return send(res, 200, { running, presets, library, sparkieSpark: MAIN?.node || CONFIG.modelsHost });
     }
     if (req.method === 'POST' && path === '/main/route') {
-      if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Try again when it’s done.');
-      const { role, choice } = await readBody(req);
-      if (!['chat', 'agents'].includes(role) || typeof choice !== 'string' || choice.length > 200) throw new HttpError(400, 'Choose what Sparkie or agents should use.');
-      await setRoute(role, choice);
-      return send(res, 200, { chat: await routeView(ROUTES.chat), agents: ROUTES.agents.kind === 'same' ? { same: true } : await routeView(ROUTES.agents) });
+      return send(res, 200, await ownerBrainRoute(await readBody(req)));
     }
     if (req.method === 'POST' && path === '/main/use') {
-      if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already changing.');
-      const { preset, model, keep = [] } = await readBody(req);
-      if ((model && !NAME_RE.test(String(model))) || !Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Choose a model.');
-      const target = model ? await setupFromLibrary(String(model)) : mainSetup(String(preset || ''), mainPresets()[preset]);
-      if (!target) throw new HttpError(404, 'Unknown setup.');
-      if (target.id === MAIN?.id) throw new HttpError(409, `${target.title} is already Sparkie’s model.`);
-      const job = claimed([...new Set([target.node, MAIN?.node].filter(Boolean))], `switching Sparkie’s model`, () => newJob('main-switch', { node: target.node, model: target.title, from: MAIN?.title || null }));
-      return send(res, 202, publicJob(runJob(job, j => switchMain(j, target, keep.map(String)))));
+      return send(res, 202, await ownerBrainUse(await readBody(req)));
     }
     // The brain check (21-brain-check.mjs): a few requests to Sparkie's model with a toy tool; it changes nothing. It
     // runs after this answers, and sparkie_setup shows the result.
@@ -535,14 +479,7 @@ const handler = async (req, res) => {
     }
     if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, { ...viewer, from: clientAddress(req) }); return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
-      if (!MAIN) throw new HttpError(404, 'No main model is configured.');
-      if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');
-      const { keep = [] } = await readBody(req);
-      if (!Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Invalid list of containers to keep.');
-      const starting = path === '/main/start';
-      const job = claimed([MAIN.node], `${starting ? 'starting' : 'stopping'} Sparkie’s model`, () => newJob(starting ? 'main-start' : 'main-stop', { node: MAIN.node, model: MAIN.title || MAIN.served }));
-      // (the owner's Stop: the brain keeper never starts it again by itself, 20-heal.mjs)
-      return send(res, 202, publicJob(runJob(job, async j => { markBrainDesired(starting); return starting ? startMain(j, keep.map(String)) : stopMain(j); })));
+      return send(res, 202, ownerBrainPower(path === '/main/start', await readBody(req)));
     }
     if (req.method === 'GET' && path === '/chats') {
       const mine = chatData().conversations.filter(c => c.login === viewer.login);
@@ -647,11 +584,12 @@ const handler = async (req, res) => {
       const option = quant != null ? version.quants.find(x => x.file === quant) : null;
       if (quant != null && !option) throw new HttpError(400, 'Pick one of that version’s files.');
       if ([...jobs.values()].some(j => j.status === 'running' && j.type === 'download' && sameRepo(j.repo, version.repo))) throw new HttpError(409, 'That download is already running.');
-      const target = node ? nodeById(node) : nodeById((await downloadTargets(viewer)).defaultTarget);
+      const target = node === undefined ? nodeById((await downloadTargets(viewer)).defaultTarget) : nodeById(node);
       if (!target) throw new HttpError(409, 'No online Spark to download to.');
       mustUse(viewer);
-      const gb = option?.sizeGB || version.sizeGB;
-      const job = newJob('download', { repo: version.repo, model: quant ? `${version.repo} (${quant})` : version.repo, node: target.id, by: viewer.login, total: gb ? Math.round(gb * 1e9) : null });
+      const gb = option?.sizeGB ?? version.sizeGB, bytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1e9) : null;
+      await downloadAdmission(target, bytes);
+      const job = newJob('download', { repo: version.repo, model: quant ? `${version.repo} (${quant})` : version.repo, node: target.id, by: viewer.login, total: bytes });
       return send(res, 202, publicJob(runJob(job, async j => { await downloadVersion(j, version.repo, target, quant); await refreshSetups(viewer, version.repo, { job: j }); })));
     }
     throw new HttpError(404, 'Not found.');

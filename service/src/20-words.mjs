@@ -9,12 +9,14 @@
 // setup; never another model), end Sparkie's answer in that chat (/stop), put back its last change (/undo) or go back a
 // build, or put back the newest change made inside the lock-out net (/putback, 21-net.mjs). /undo and /undo update are
 // the words that run an action (undo_last_change, also while changes are paused;
-// undo_update, through runAction as the page, so that action's own guard decides, R31). In the paired Telegram chat
-// (21-telegram.mjs) /status, /pause, /restart sparkie, /stop, /undo and /help work too; /undo update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
+// undo_update, through runAction with the actual channel, so that action's own guard decides, R31).
+// Both owner chats also offer /admin and confirmed /resume. On the page each answer
 // is saved as one Spark Console notice quoting the word, so Sparkie later reads it as data.
 const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/putback', '/help'];
 // The whole message, trimmed and lowercased ("/restart_sparkie" too); "/pause now" or "please /pause" is not a word.
 function ownerWord(text) {
+  const raw = String(text).trim();
+  if (isOwnerAdminWord(raw)) return raw;
   const t = String(text).trim().toLowerCase().replace(/_/g, ' ');
   // (/allowed off 2, /allowed off all: 21-ahead.mjs)
   return t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)) ? t : null;
@@ -70,9 +72,9 @@ function pauseWord(via) {
   dangerPaused();
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
-  // (on Telegram: no file path, and it's never resumed from there, R32)
+  // The same confirmed resume is available in both owner chats.
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}${unnoted ? `\n${unnoted}` : ''}`;
+To resume: send /resume and confirm the change, or use Agents and Telegram in your account menu.${unnoted ? `\n${unnoted}` : ''}`;
 }
 
 async function restartWord(via) {
@@ -134,11 +136,13 @@ async function stopWord(conv) {
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
-// owner-only button, pressed here with the passkey. It is not a word on Telegram.
-async function undoWord(viewer, conv) {
+// owner-only button. The paired Telegram chat uses the same exact-build confirmation.
+async function undoWord(viewer, conv, via = 'page') {
   let asked = null;
   try {
-    const out = await runAction('undo_update', viewer, {}, { via: 'page', actor: 'owner', request: '/undo update', chat: conv.id, conv: conv.id, canChange: true, onQuestion: q => { asked = q; } });
+    let ctx = { via, actor: 'owner', request: '/undo update', chat: conv.id, conv: conv.id, canChange: true, ownerWord: true, onQuestion: q => { asked = q; } };
+    if (via === 'telegram') ctx = tgOwnerContext({ ...ctx, channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` }, viewer);
+    const out = await runAction('undo_update', viewer, {}, ctx);
     if (asked) return { reply: asked.question, choices: sparkieMessageChoices(asked) };
     return { reply: out?.note || 'Going back a build. Spark Console restarts in a moment.' };
   } catch (e) { return { reply: e.message }; }
@@ -150,8 +154,10 @@ async function undoWord(viewer, conv) {
 async function undoChangeWord(viewer, conv, via) {
   let asked = null;
   try {
-    const out = await runAction('undo_last_change', viewer, {}, { via, actor: 'owner', request: '/undo', chat: conv.id, conv: conv.id, canChange: true, ownerWord: true,
-      ...(via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}), onQuestion: q => { asked = q; } });
+    let ctx = { via, actor: 'owner', request: '/undo', chat: conv.id, conv: conv.id, canChange: true, ownerWord: true,
+      ...(via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}), onQuestion: q => { asked = q; } };
+    if (via === 'telegram') ctx = tgOwnerContext(ctx, viewer);
+    const out = await runAction('undo_last_change', viewer, {}, ctx);
     if (asked) return { reply: asked.question, choices: sparkieMessageChoices(asked) };
     return { reply: out?.note || 'Undoing the last change.' };
   } catch (e) { return { reply: e.message }; }
@@ -160,7 +166,9 @@ async function undoChangeWord(viewer, conv, via) {
 function helpWord() {
   const lines = ['These work even when Sparkie can’t answer. Type the word alone:',
     '/status: where things stand, from Spark Console’s own record',
-    '/pause: pause agents’ changes (resume in your account menu → Agents and Telegram, with your passkey)',
+    '/pause: pause agents’ changes',
+    '/resume: ask to resume agents’ changes',
+    '/admin: owner controls, including agents, access and Sparkie’s model',
     '/restart sparkie: restart Sparkie’s model when it’s stuck, or start it again when it’s stopped',
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo: put back this chat’s last change (works while changes are paused)',
@@ -180,7 +188,7 @@ function helpWord() {
 // The page's chat route calls this for the owner's own chat (never one that carries `agent`). The answer comes back in
 // the same event stream as Sparkie's, so the page needs nothing new.
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
-  const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
+  const undo = isOwnerAdminWord(word) ? await ownerAdminWord(viewer, conv, word, via) : word === '/undo update' ? await undoWord(viewer, conv, via) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
     : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word.startsWith('/allowed') ? allowedWord(word, via) : word === '/putback' ? await netPutbackWord() : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;

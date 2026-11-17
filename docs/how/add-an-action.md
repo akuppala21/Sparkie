@@ -14,8 +14,7 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
   `changes: true` (`run`, `write_file`) can change files: its gates are the ladder's (`21-ladder.mjs`). Scope is
   `fleet:read` or `fleet:act` (keys hold nothing else). Every action says `who: 'owner'`.
 - A plain-words `title`: `sparkie_setup {about: "abilities"}` tells the owner what Sparkie can do by listing every
-  action's title straight from the registry (nothing to edit there), and an action added to `PAGE_ONLY` shows in its
-  Telegram line by itself.
+  action's title straight from the registry (nothing to edit there), and owner capabilities are shared by the page and paired Telegram chat.
 - Limits it inherits. Agent door (`mcpDoor` in `20-mcp.mjs`): 120 requests a minute per key, 3 tools at once, 6
   open-world calls a minute, an answer within 50 seconds, results cut at 60,000 characters. Sparkie (`turnBudgets`,
   `roundCalls` and `runOne` in `14-rounds.mjs`): its setup's rounds and changes a message (else 6 and 4), 4 calls a round, a result

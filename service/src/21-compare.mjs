@@ -1,5 +1,5 @@
 /* ───────── compare_models: a saved workload run with each candidate model, and the winner kept (D8) ───────── */
-// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs, compare-brain.test.mjs
+// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs, compare-brain.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: none (saved-workflows.json's `compared` and `best`, through writeSaved in 18-workflows.mjs)
 // Timers: none        Wakes: none
 // "Run my workload on whatever is best, keep the winner" (contract 9.27, T141; design D 2.5's first block, as cut).
@@ -28,7 +28,7 @@
 // score when it leads the next by more than 0.05 and every one has a score; then it is kept on the saved workflow (best:
 // model, score, items, seconds, sample, at) and a later run with no model uses it. Closer, or with no score: the owner
 // picks, from buttons in the chat it was asked in (compare_models {workflow, keep}), or by saying it. From Telegram the
-// keeping waits for the owner in Spark Console, as other changes to saved workflows do (an owner-only button). Every
+// keeping follows the same verified-owner rules as on the page. Every
 // run's results are kept too (compared), for the keep. One hour in all (COMPARE_MS): at the hour the run under way is
 // cancelled, which stops what it started, and the best so far is kept or offered. A candidate that won't start is listed
 // with why and the loop goes on.
@@ -164,7 +164,7 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
   const lines = results.map(compareLine);
   if (!passed.length) { compareKeepOn(w, null, compared); j.report = [...lines, 'No candidate ended well, so nothing was kept.']; return; }
   const winner = clear ? scored[0] : null;
-  // From Telegram the keeping waits for the owner in Spark Console, as other changes to saved workflows do.
+  // The current paired Telegram owner picks under the same owner rules as on the page.
   if (winner && !ctx.channel) {
     compareKeepOn(w, compareBest(winner, sample), compared);
     j.report = [...lines, `Kept ${winner.model} for “${w.title}”: a run of it with no model given uses it.`];
@@ -184,9 +184,9 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
 function compareKeep(w, keep, viewer, ctx) {
   const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false), named = savedNamed(w, viewer, ctx);
   if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of ${named}, so nothing was kept.`);
-  if (ctx.channel && !ctx.ownerConfirmed) {
+  if (ctx.channel && !isOwnerCall(ctx) && !isOwnerPress(ctx)) {
     const label = `Keep ${r.model} for ${named}`;
-    return question(viewer, ctx, `${label}? That one waits for you in Spark Console.`, [{ label, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+    return question(viewer, ctx, `${label}? This needs the owner’s approval.`, [{ label, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
   }
   compareKeepOn(w, compareBest(r, w.compared.sample), null);
   return { outcome: 'kept', workflow: savedOwnCall(viewer, ctx) ? w.title : w.id, model: r.model, note: `${r.model} is kept for ${named}: a run of it with no model given uses it.` };

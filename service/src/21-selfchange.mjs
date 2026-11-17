@@ -1,5 +1,5 @@
 /* ───────── Sparkie's own code: a proposal, as a pull request (design C 2.5, step 8; the build map's C8c) ───────── */
-// Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs
+// Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: tmp (writers: selfTree; a folder: each send's work, removed on every exit)        Timers: none        Wakes: none
 // propose_update {do: start|send|drop|install, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
 // as a pull request, all by code. start fills this chat's box with main's tree from the hub's copy of the repository and
@@ -77,7 +77,7 @@ function selfGate(viewer, ctx) {
   if (!(SELF_CHANGE_ON || selfTestFile()?.on === true)) throw new HttpError(403, 'Proposing changes to Spark Console’s own code isn’t turned on yet, so nothing was done.');
   const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
   const own = viewer?.role === 'owner' && !ctx.agent && !ctx.agentId && conv && !conv.agent
-    && (ctx.via === 'sparkie' || (ctx.via === 'page' && ctx.button));
+    && !viewer?.agentKey && ((ctx.via === 'sparkie' && isOwnerCall(ctx)) || isOwnerButton(ctx));
   if (!own) throw new HttpError(403, 'A change to Spark Console’s own code is proposed only in your own chat with Sparkie: never by an agent’s key, ask_sparkie, the API or a saved workflow. Nothing was done.');
 }
 
@@ -403,7 +403,7 @@ async function selfSend(viewer, ctx, input) {
   let pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr) {
     const body = [`Sparkie’s words (its reason, as it wrote it):`, '', ...why.split('\n').map(l => `> ${l}`), '',
-      protectedPaths.length ? `Protected paths (the owner’s passkey, on the page): ${protectedPaths.join(', ')}` : 'No protected path.',
+      protectedPaths.length ? `Protected paths (${ctx.channel === 'telegram' || ctx.via === 'telegram' ? 'owner confirmation required' : 'the owner’s passkey, on the page'}): ${protectedPaths.join(', ')}` : 'No protected path.',
       testLines.length ? `Removed or edited lines in existing tests: ${testLines.length}` : 'No line of an existing test removed or edited.',
       testLines.files.length ? `Existing test files changed: ${testLines.files.map(f => `${f.file} (${f.added} lines added${f.flags.length ? `; ${f.flags.join(', ')}` : ''})`).join(', ')}` : '', '',
       'Built by Spark Console’s code from the box: the diff, the generated files and these lists. Proposed from the owner’s own chat.'].join('\n');
@@ -415,7 +415,7 @@ async function selfSend(viewer, ctx, input) {
     title: { note: 'Sparkie’s words.', text: title },
     note: [`${again ? 'Nothing changed in the box since the last send, so that commit was sent again as it was' : 'Sent'}: ${open.branch} (commit ${commit.slice(0, 12)}, push ${sent} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}: ${paths.length} file${paths.length === 1 ? '' : 's'} changed.`,
       t.generated.length ? `Rebuilt by the installed build’s own generator: ${t.generated.join(', ')}.` : '',
-      protectedPaths.length ? `Protected paths (your passkey, on the page): ${protectedPaths.slice(0, 20).join(', ')}${protectedPaths.length > 20 ? ` and ${protectedPaths.length - 20} more` : ''}.` : 'No protected path.',
+      protectedPaths.length ? `Protected paths (${ctx.channel === 'telegram' || ctx.via === 'telegram' ? 'owner confirmation required' : 'your passkey, on the page'}): ${protectedPaths.slice(0, 20).join(', ')}${protectedPaths.length > 20 ? ` and ${protectedPaths.length - 20} more` : ''}.` : 'No protected path.',
       testLines.length ? `Removed or edited lines in existing tests: ${testLines.slice(0, 5).map(l => `${l.file}:${l.line} “${l.was.slice(0, 80)}”`).join('; ')}${testLines.length > 5 ? ` and ${testLines.length - 5} more` : ''}.` : 'No line of an existing test removed or edited.',
       testLines.files.length ? `This existing test file changed: ${testLines.files.slice(0, 5).map(f => `${f.file} (${f.added} line${f.added === 1 ? '' : 's'} added${f.flags.length ? `; ${f.flags.join(', ')}` : ''})`).join('; ')}.` : '',
       'GitHub runs its tests; check_update says how it is doing.'].filter(Boolean).join(' ') };
@@ -478,7 +478,7 @@ async function selfInstallFacts(viewer, ctx) {
 // That is all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
 // install_update with its own ask, once that tree is marked.
 async function selfInstall(viewer, ctx, input) {
-  if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
+  if (!isOwnerPress(ctx) || viewer?.agentKey || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
     throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
   }
   const open = await selfOpen();

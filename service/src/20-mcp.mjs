@@ -1,6 +1,6 @@
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39, R73        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs, door-repeat.test.mjs
-// Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
+// Owns: agents.json (writers: ownerAgentCreate, ownerAgentRights, ownerAgentRemove, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
 //   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,

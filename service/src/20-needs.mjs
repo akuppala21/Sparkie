@@ -1,5 +1,5 @@
 /* ───────── what is waiting on the owner (H4) ───────── */
-// Area: safety        Rules: R21, R26        Tests: needs.test.mjs, workloads-record.test.mjs
+// Area: safety        Rules: R21, R26        Tests: needs.test.mjs, workloads-record.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model
@@ -23,6 +23,7 @@ function openProblems() {
     () => { if (SECRETS_FILE && secretsRead() === null) add('secrets', `The secrets file on ${here} can’t be read, so Telegram and recovery codes are off. Fix or remove ${tilde(SECRETS_FILE)} there; Spark Console never writes over it.`); },
     // A change made inside the lock-out net whose put-back did not finish: it waits for the owner (21-net.mjs).
     () => netNeeds(add),
+    () => rollbackNeeds(add),
     // State put back from a copy, held until the owner looks on the tailnet (22-putback.mjs).
     () => putBackNeeds(add),
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.

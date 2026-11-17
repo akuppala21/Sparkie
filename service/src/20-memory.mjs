@@ -1,5 +1,5 @@
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
-// Area: record        Rules: R20, R22, R25, R26, R45        Tests: sparkie-more.test.mjs, memory.test.mjs
+// Area: record        Rules: R20, R22, R25, R26, R45        Tests: sparkie-more.test.mjs, memory.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
 // Timers: none        Wakes: none
 // What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I
@@ -93,9 +93,9 @@ function memoryPrompt(chosen = null) {
 // memory {past: true}: the live lines, and the retired ones in the order they left, each with the line that replaced it.
 // A line in both files (a stop between saveMemory's two saves) is live. The retired lines are the owner's own, read in
 // Spark Console (their page chat, their own call): what they asked to be rid of is never handed to an agent (over the
-// agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14). recall keeps the same
+// agent door, or Sparkie in an agent's chat). The paired owner on Telegram has the same access. recall keeps the same
 // rule (memoryPastShown). Nor in a chat an agent started, when the owner types there: the agent reads the reply (R59).
-const memoryPastShown = ctx => !(ctx.via === 'agent' || ctx.agent || ctx.channel || (ctx.conv && chatData().conversations.find(c => c.id === ctx.conv)?.agent));
+const memoryPastShown = ctx => isOwnerCall(ctx) && !(ctx.conv && chatData().conversations.find(c => c.id === ctx.conv)?.agent);
 function memoryWithPast(ctx) {
   if (!memoryPastShown(ctx)) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const all = memoryEntries(), live = new Set(all.map(e => e.id)), entries = all.filter(memoryLive);
@@ -164,20 +164,20 @@ action({
   },
 });
 // Erasing a line for good (contract 5.5, 8.2): the owner's alone, by their own call on the tailnet (POST /actions) or a
-// button pressed in Spark Console (with the passkey once one is set up). Anything else, Sparkie whatever the owner's
-// words and Telegram included, gets that button and nothing is changed; an agent is refused, for its own lines too. Every
+// approved owner button on the page or in the paired Telegram chat. Anything else, Sparkie whatever the owner's
+// words included, gets that button and nothing is changed; an agent is refused, for its own lines too. Every
 // record of the line leaves both files and their copies from before the last save (saveMemory), and a copy of either
 // file set aside as unreadable, or left half-written by a stop, has the words blanked.
 const ERASE_LEAVES = 'What it can’t reach: the chat (your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there), Spark Console’s journal and its record of changes (audit.jsonl), daily copies already sent to another Spark, and install snapshots already taken.';
 function eraseLine(id, viewer, ctx) {
-  if (ctx.via === 'agent' || ctx.agent) throw new HttpError(403, 'Only the owner erases a memory line for good, in Spark Console. Nothing was changed.');
+  if (ctx.via === 'agent' || ctx.agent || ctx.agentId || viewer?.agentKey) throw new HttpError(403, 'Only the owner erases a memory line for good, in Spark Console. Nothing was changed.');
   const all = memoryEntries(), line = all.find(e => e.id === id) || memoryPast().find(p => p.id === id);
   if (!line) return { outcome: 'already', note: 'There’s no such line in memory or its history.' };
-  if (!(ctx.via === 'api' && !viewer.session && !viewer.agentKey) && !ctx.ownerConfirmed) {
+  if (!(ctx.via === 'api' && isOwnerCall(ctx) && !viewer.session && !viewer.agentKey) && !isOwnerPress(ctx)) {
     // (a retired line's words on its button only for a caller who may see the history, R59; an agent's line's words never:
     // the brain reads the button's label, R26, F2 C1)
     const label = memoryPastShown(ctx) && line.by === 'owner' ? `Erase for good: “${String(line.text).slice(0, 200)}”` : changeLabel('forget_memory', { id, erase: true });
-    return question(viewer, ctx, `${label}? Its words leave memory and its history for good. That one waits for you in Spark Console: press it there, with your passkey.`,
+    return question(viewer, ctx, `${label}? Its words leave memory and its history for good. Approve that button on the page or in your paired Telegram chat.`,
       [{ label, call: { action: 'forget_memory', args: { id, erase: true } } }, { label: 'No, keep it', call: null }], 'question', { ownerOnly: true });
   }
   saveMemory(all.filter(e => e.id !== id), [], id);

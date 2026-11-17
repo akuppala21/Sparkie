@@ -11,7 +11,7 @@
 // Telegram took counted exactly). The final read of the chat: a chat's reports are sent one tick at a time, so two that
 // meet while a send waits are both kept and each sent once (C8c); each report keeps its own schedule (C9); one owed
 // across a restart is sent once at its next try (C8c); one owed to a pairing is never sent to the chat paired since,
-// nor is a result tried again in memory (C4); a result counts toward the hour's six only when it went (C7).
+// nor is a result tried again in memory (C4); send accounting never imposes an owner result quota (C7).
 // Job ends, saved-run and self-test recovery, install results and both carry-on paths use the same bounded retry;
 // behavioral checks exercise later delivery, unchanged caller return/state effects, disconnect and re-pair cancellation.
 import { test, after } from 'node:test';
@@ -350,20 +350,21 @@ test('C4: a report owed to one pairing, when someone else pairs before its next 
 const TELL_SRC = () => readFileSync(join(REPO, 'service', 'src', '20-tell.mjs'), 'utf8');
 const fnOf = (src, name) => new RegExp(`^(?:async )?function ${name}\\(.*\\) \\{\\n[\\s\\S]*?\\n\\}$`, 'm').exec(src)?.[0];
 
-// C7: a result counts toward the hour's results (6; 1 here) only when it went: a try that failed uses none.
-test('C7: a result counts toward the hour’s results only when it went: a try that failed uses none of them', async () => {
+// C7: failed transport tries remain retryable; successful deliveries never exhaust an owner result quota.
+test('C7: transport failures are retryable and successive owner results are delivered without a quota', async () => {
   const src = TELL_SRC(), never = /^const TELL_NEVER = [^\n]*$/m.exec(src)?.[0], sent = [], audits = [], answers = [];
   assert.ok(never && fnOf(src, 'tellTry'), 'TELL_NEVER and tellTry are in 20-tell.mjs');
-  const tellTry = new Function('TELL_WHY', 'tgPaired', 'tellParts', 'tellClean', 'tellBlock', 'tgSend', 'audit', 'TELL_LIMITS', 'tellSends', 'tellResults', 'TELL_QUIET_MS',
+  const tellTry = new Function('TELL_WHY', 'tgPaired', 'tellParts', 'tellClean', 'tellBlock', 'tgSend', 'audit', 'TELL_LIMITS', 'tellSends', 'tellResults', 'TELL_QUIET_MS', 'TELL_SECRET', 'tgPairingMark', 'pendingChoices', 'tgAskCurrent', 'tgAskDelivered', 'tgAskDrop',
     `let tellOwnerAt = 0;\n${never}\n${fnOf(src, 'tellTry')}\nreturn tellTry;`)(new Set(['result']), () => ({ token: 't', chatId: 1 }), t => [t], t => t, () => [],
-    async (b, text) => { sent.push(text); return answers.shift(); }, a => audits.push(a.action), { in: 20, out: 20, results: 1 }, [], [], 1800000);
+    async (b, text) => { sent.push(text); return answers.shift(); }, a => audits.push(a.action), { in: 20, out: 20, results: 1 }, [], [], 1800000, Symbol('private'), () => 'paired', new Map(), () => { throw new Error('no buttons were sent'); }, () => { throw new Error('no buttons were sent'); }, () => { throw new Error('no bindings were created'); });
   answers.push('slow-down');
   assert.equal(await tellTry('result', 'first'), 'later');
   answers.push(true);
-  assert.equal(await tellTry('result', 'second'), 'sent', 'the failed try used none of the hour’s one result');
-  assert.equal(await tellTry('result', 'third'), 'later', 'the one that went used it');
-  assert.deepEqual(sent, ['first', 'second']);
-  assert.deepEqual(audits, ['telegram-send', 'telegram-send', 'telegram-held']);
+  assert.equal(await tellTry('result', 'second'), 'sent', 'the failed transport remains retryable');
+  answers.push(true);
+  assert.equal(await tellTry('result', 'third'), 'sent', 'a successful result grants no quota-based refusal');
+  assert.deepEqual(sent, ['first', 'second', 'third']);
+  assert.deepEqual(audits, ['telegram-send', 'telegram-send', 'telegram-send']);
 });
 
 // C4: a result tried again in memory (an operation's line, a press's late result) goes only to the pairing it was meant
@@ -386,12 +387,13 @@ test('C4: a result tried again goes only to the pairing it was meant for: paired
 const RESULT_ENTRIES = ['job end', 'saved-run recovery', 'self-test recovery', 'install result', 'carry reply', 'held carry result'];
 function resultEntry(entry, tellAgain) {
   const conv = { id: 'sc_0123456789abcdef', login: 'owner', channel: 'telegram', messages: [], task: { jobs: [{ spark: 'spark3', container: 'test-job' }] } };
-  const held = new Map([[conv.id, ['Held result.']]]), state = { saved: 0, woke: 0, removed: 0 };
+  const held = new Map([[conv.id, ['Held result.']]]), state = { saved: 0, woke: 0, removed: 0, rollbackPasses: 0 };
   const ctx = {
     tellAgain, tell: async () => false, chatData: () => ({ conversations: [conv] }), accessList: () => ({ owner: 'owner' }),
     saveChats: () => { state.saved++; }, fleetEvent: () => {}, maskSecrets: text => text,
     consoleStopped: new Set(), sparkName: node => node.id, wakeWork: () => { state.woke++; },
     jobs: new Map(), nodeById: id => ({ id }), NAME_RE: /^[\w-]+$/, healOwner: () => ({}), stopWhatRan: async () => '',
+    rollbackPass: async () => { state.rollbackPasses++; },
     savedRunsNow: () => ({ runs: { op: { operation: 'op', title: 'Test run', chat: conv.id } } }), savedRunWords: String,
     SAVED_RUNS_FILE: 'saved-runs.json', SELF_TEST_FILE: 'self-test.json',
     unlinkSync: () => { state.removed++; }, writePrivate: () => {},
@@ -436,6 +438,7 @@ for (const entry of RESULT_ENTRIES) {
     }
     if (entry === 'job end') { assert.equal(run.state.woke, 1); assert.deepEqual(run.conv.task.jobs, []); }
     if (entry.includes('recovery')) assert.equal(run.state.removed, 1, 'cleanup does not wait for Telegram');
+    if (entry === 'saved-run recovery') assert.equal(run.state.rollbackPasses, 1, 'the saved-workflow-only fixture still visits rollback recovery once');
     await pending.shift().fn();
     assert.equal(calls.length, 2);
     assert.equal(delivered.length, 1);
@@ -458,6 +461,7 @@ for (const entry of RESULT_ENTRIES) {
         fn => { pending.push(fn); return { unref() {} }; });
       const run = resultEntry(entry, tellAgain);
       await run.invoke();
+      if (entry === 'saved-run recovery') assert.equal(run.state.rollbackPasses, 1);
       for (let i = 0; i < 4; i++) await Promise.resolve();
       assert.equal(pending.length, 1);
       mark = next;

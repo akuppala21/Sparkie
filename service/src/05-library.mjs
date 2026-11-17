@@ -1,5 +1,5 @@
 /* ───────── model library and deployments ───────── */
-// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs, context-start.test.mjs
+// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 const INVENTORY_SCRIPT = `dir=${MODELS}
@@ -198,6 +198,26 @@ printf 'tsip\\t%s\\n' "$(tailscale ip -4 2>/dev/null | head -1)"`;
 // `probes` shares one GPU check per Spark and image across many plans (the deploy picker plans every model at once).
 // How a model runs, when a deploy names a setup (from Recipes) or a verified run: engine, image, flags and env.
 const withHow = (model, how) => (model && how?.contextOnly ? { ...model, manifest: { ...(model.manifest || {}), args: how.args } } : model && how ? { ...model, manifest: { ...(model.manifest || {}), engine: how.engine, image: how.image, args: how.args, env: how.env, cluster: { env: how.env }, ...(how.file ? { file: how.file } : {}) } } : model);
+// Ordinary model downloads use compute Sparks only. Read the cache's actual filesystem (or its nearest existing
+// parent on a first download), without making a folder. This is a fresh admission estimate, never byte accounting.
+async function downloadAdmission(target, sizeBytes) {
+  const node = nodeById(typeof target === 'string' ? target : target?.id);
+  if (!node) throw new HttpError(409, 'Choose a known compute Spark to download to.');
+  notBrainsSpark([node.id]);
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) throw new HttpError(409, 'The download size is not known. Check its files and size before trying again.');
+  const required = Math.ceil(sizeBytes * 1.1) + 20 * 1e9;
+  if (!Number.isSafeInteger(required)) throw new HttpError(409, 'The download size is too large to check safely.');
+  const check = await run(node, `d=${HF_HUB}
+while [ ! -e "$d" ] && [ ! -L "$d" ]; do [ "$d" != / ] || exit 1; d=\${d%/*}; [ -n "$d" ] || d=/; done
+free=$(df -B1 --output=avail "$d" 2>/dev/null) || exit 1
+printf 'download-disk\\t%s\\n' "$(printf '%s\\n' "$free" | tail -n 1)"`, { timeout: 20000 });
+  const raw = fields(check.out, 'download-disk');
+  const text = raw.length === 1 && raw[0].length === 1 ? raw[0][0].trim() : '';
+  const free = /^\d+$/.test(text) ? Number(text) : NaN;
+  if (check.code || !Number.isSafeInteger(free) || free < 0) throw new HttpError(409, `Free disk on ${sparkName(node)} can’t be checked right now. Nothing was downloaded.`);
+  if (free < required) throw new HttpError(409, `${sparkName(node)} doesn’t have enough free disk for this download and the 20 GB kept free. Nothing was downloaded.`);
+  return { node, free, required };
+}
 async function plan(modelName, nodeId, viewer, known = null, probes = null, how = null) {
   if (!NAME_RE.test(modelName || '')) throw new HttpError(400, 'Unknown model.');
   const node = nodeById(nodeId);
@@ -403,13 +423,14 @@ const engineCacheDir = image => `"$HOME/.cache/spark-console/engines/"${q(String
 const engineCache = image => ({ prelude: `mkdir -p ${engineCacheDir(image)}/b12x 2>/dev/null\n`,
   mount: ['-v', `${engineCacheDir(image)}:/spark-cache`, '-v', `${engineCacheDir(image)}/b12x:/root/.cache/b12x`] });
 
-function dockerRunCommand(model, tsip, store = 'models', extra = []) {
+function dockerRunCommand(model, tsip, store = 'models', extra = [], receipt = null) {
   const name = model.name, args = [...(Array.isArray(model.manifest?.args) ? model.manifest.args.map(String) : []), ...extra];
   const fromCache = store === 'hf', served = fromCache ? model.repo || name : name, eng = ENGINES[engineOf(model)];
   const [head, tail] = [['--entrypoint', eng.entry, imageOf(model), ...eng.head], eng.tail(served)];
   const binds = ['-p', `127.0.0.1:${CONFIG.servePort}:8000`, ...(tsip ? ['-p', `${tsip}:${CONFIG.servePort}:8000`] : [])];
   const env = Object.entries({ ...ENGINE_CACHE_ENV, ...(model.manifest?.env || {}) }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const parts = ['docker', 'run', '-d', '--name', containerName(name), '--label', 'spark.console=1', '--label', `spark.model=${name}`,
+    ...(receipt ? Object.entries(receipt).flatMap(([k, v]) => ['--label', `spark.${k}=${v}`]) : []),
     '--gpus', 'all', '--ipc', 'host', '--ulimit', 'memlock=-1', '--ulimit', 'stack=67108864', ...binds, ...env].map(q);
   const mount = fromCache ? `${HF_HUB}/models--${name}:/hf:ro` : `"$HOME/${CONFIG.modelsDir}/${name}":/model:ro`;
   let prelude = fromCache

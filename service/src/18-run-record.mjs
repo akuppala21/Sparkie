@@ -1,14 +1,14 @@
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, workloads-record-errors.test.mjs, tasks-telegram.test.mjs
-// Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, workloads-record-errors.test.mjs, workloads-retirement.test.mjs, tasks-telegram.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-owner-wish.test.mjs
+// Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover, rollbackSave)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
 // of itself in saved-runs.json (R20: writePrivate; primary-only read, names, Spark ids and the chat id, no secret), rewritten as
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
-// known only once its operation has ended, so a start under way is kept as its operation, `starting`), and the Sparks
-// it keeps awake. `awaiting` names a pending start whose resource identity has not been captured yet: recovery leaves
+// normally known at its end, so it is kept as `starting`; an owner-adopted start saves its exact pending receipt
+// before retiring its recovery note), and the Sparks it keeps awake. `awaiting` has no captured identity: recovery leaves
 // it alone and reports uncertainty. The operation moves it to `pending` with its own receipt while still holding its
 // claim (savedRunReceipts). The record goes when the run ends, however it
 // ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
@@ -33,6 +33,7 @@ function savedRunsShape(f) {
       && (x.seen.id === undefined || (typeof x.seen.id === 'string' && /^[0-9a-f]{12,64}$/.test(x.seen.id)))
       && ['since', 'startedAt'].every(k => x.seen[k] === undefined || x.seen[k] === null || text(x.seen[k]))));
   return object(f) && object(f.runs) && Object.entries(f.runs).every(([id, r]) => object(r) && op(id) && r.operation === id
+    && (r.kind === 'start-rollback' ? rollbackShape(r) : r.kind === undefined)
     && ['title', 'since'].every(k => r[k] === undefined || text(r[k]))
     && (r.chat === undefined || r.chat === null || (typeof r.chat === 'string' && /^sc_[0-9a-f]{16}$/.test(r.chat)))
     && ['step', 'steps'].every(k => r[k] === undefined || (Number.isInteger(r[k]) && r[k] >= 0))
@@ -57,12 +58,13 @@ function savedRunsNow() {
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 // Merges `fields` into run j's record. A record that can't be written is said once in the run's log: then a restart
 // would leave what it started running, as before this record existed.
-function savedRunKeep(j, fields) {
+function savedRunKeep(j, fields, strict = false) {
   try {
     const f = savedRunsNow();
     f.runs[j.id] = { ...(f.runs[j.id] || { operation: j.id, since: j.createdAt }), ...fields };
     writePrivate(SAVED_RUNS_FILE, f);
   } catch (e) {
+    if (strict) throw e;
     if (j.runRecordLost) return;
     j.runRecordLost = true;
     note(j, `Couldn’t keep a note of what this run starts (${savedRunWords(e)}); a restart of Spark Console now would leave it running.`);
@@ -73,9 +75,16 @@ function savedRunDone(j) {
     const f = savedRunsNow();
     if (!f.runs[j.id]) return;
     delete f.runs[j.id];
-    if (Object.keys(f.runs).length) writePrivate(SAVED_RUNS_FILE, f); else unlinkSync(SAVED_RUNS_FILE);
-  } catch (e) {
-    note(j, `Couldn’t clear the note of this saved workflow (${savedRunWords(e)}); its file was left alone. Check saved-runs.json before restarting Spark Console.`);
+    // Revoke this run's cleanup authority durably before removing an empty file. A failed unlink must never leave
+    // a valid completed run on disk for startup to mistake for interrupted work. Other active runs stay recorded.
+    writePrivate(SAVED_RUNS_FILE, f);
+    if (!Object.keys(f.runs).length) {
+      try { unlinkSync(SAVED_RUNS_FILE); }
+      catch { note(j, 'The completed run was cleared from its note, but the empty file couldn’t be removed. It no longer lets a restart stop this run’s work.'); }
+    }
+  } catch {
+    // No fallback unlink after a failed write: the file may still hold another run. Do not claim durable retirement.
+    note(j, 'Couldn’t clear the note of this saved workflow. Its old instructions to stop work may still be on disk. A restart could stop work this run already finished with. Check saved-runs.json before restarting Spark Console.');
   }
 }
 // What a step that answered `started` is still bringing up, while its own operation runs.
@@ -88,11 +97,12 @@ function savedRunPending(action, args, out, keep) {
 }
 // A step not yet known to have made a resource is awaiting its own operation's receipt. Once captured under that
 // operation's claim it joins pending with its id/start time, so a restart can clean up even while the app is loading.
-function savedRunReceipts(op) {
+function savedRunReceipts(op, strict = false) {
   if (!op.startedReceipts || !Object.keys(op.startedReceipts).length) return;
   let f;
   try { f = savedRunsNow(); }
   catch (e) {
+    if (strict) throw e;
     if (!op.runRecordLost) {
       op.runRecordLost = true;
       note(op, `Couldn’t keep this start’s receipt with its saved workflow (${savedRunWords(e)}); the note was left alone. A restart now would leave its work running.`);
@@ -102,7 +112,17 @@ function savedRunReceipts(op) {
   for (const r of Object.values(f.runs)) {
     const matching = (r.awaiting || []).filter(x => x.operation === op.id);
     const pending = (r.pending || []).map(x => x.operation === op.id && op.ownersWish ? { ...x, wish: true } : x);
-    const wished = pending.some((x, i) => x !== r.pending[i]);
+    let wished = pending.some((x, i) => x !== r.pending[i]);
+    // A model start can finish before its parent step has copied the receipt. Its exact newer owner wish must
+    // survive a console restart before the source recovery record can be retired.
+    if (strict && op.ownersWish && r.starting === op.id) for (const [key, seen] of Object.entries(op.startedReceipts)) {
+      if (!seen?.id || !seen.startedAt) throw new Error('The owner’s wish has no exact start receipt yet.');
+      const [spark, container] = key.split('/');
+      if (!pending.some(x => x.operation === op.id && x.spark === spark && x.container === container)) {
+        pending.push({ kind: 'model', spark, container, operation: op.id, wish: true, seen: { id: seen.id, startedAt: seen.startedAt } });
+        wished = true;
+      }
+    }
     if (!matching.length && !wished) continue;
     const awaiting = [...(r.awaiting || [])];
     for (const x of matching) {
@@ -112,7 +132,8 @@ function savedRunReceipts(op) {
       awaiting.splice(awaiting.indexOf(x), 1);
     }
     const j = jobs.get(r.operation);
-    if (j && (wished || pending.length !== (r.pending || []).length)) savedRunKeep(j, { pending, awaiting });
+    if (strict && !j) throw new Error('The saved workflow’s owner wish could not be kept.');
+    if (j && (wished || pending.length !== (r.pending || []).length)) savedRunKeep(j, { pending, awaiting }, strict);
   }
 }
 // An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
@@ -128,8 +149,8 @@ function savedRunCutOff(e) {
 async function savedRunsRecover() {
   let f;
   try { f = savedRunsNow(); } catch (e) { console.error(`The note of saved workflows under way can't be read: ${e.message}`); return; }
-  const cut = Object.values(f.runs).filter(r => r && typeof r === 'object' && typeof r.operation === 'string' && !jobs.has(r.operation));
-  if (!cut.length) return;
+  const cut = Object.values(f.runs).filter(r => r && r.kind !== 'start-rollback' && typeof r === 'object' && typeof r.operation === 'string' && !jobs.has(r.operation));
+  if (!cut.length) { await rollbackPass(); return; }
   for (const r of cut) {
     const title = String(r.title || 'a saved workflow').slice(0, 80);
     const items = [...(Array.isArray(r.started) ? r.started : []), ...(Array.isArray(r.pending) ? r.pending : []), ...(Array.isArray(r.awaiting) ? r.awaiting : [])]
@@ -156,4 +177,5 @@ async function savedRunsRecover() {
     for (const r of cut) delete now.runs[r.operation];
     if (Object.keys(now.runs).length) writePrivate(SAVED_RUNS_FILE, now); else unlinkSync(SAVED_RUNS_FILE);
   } catch (e) { console.error(`The note of saved workflows under way couldn't be cleared: ${e.message}`); }
+  await rollbackPass();
 }

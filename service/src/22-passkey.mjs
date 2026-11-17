@@ -67,7 +67,7 @@ function describeChange(method, path, body = {}) {
   if (method === 'PUT' && path === '/telegram') return 'Connect a Telegram bot, so you can talk to Sparkie from Telegram once you pair your chat';
   if (method === 'POST' && path === '/telegram/pair') return 'Show a new code to pair your Telegram chat with Spark Console';
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true ? 'Let Spark Console send you one Telegram line when something new needs you (at most 3 a day)' : 'Stop the “needs you” lines on Telegram';
-  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true ? 'Let your yes come from your paired Telegram chat: a press there on a change Spark Console asks about (at most 3 an hour and 10 a day; /lock there turns it off)' : 'Stop approving changes from Telegram';
+  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true ? 'Let your yes come from your paired Telegram chat: confirm the exact change shown there; /lock turns approvals off' : 'Stop approving changes from Telegram';
   if (method === 'PUT' && path === '/heartbeat') return 'Save your outside check’s address, so Spark Console sends it an empty request at hc-ping.com every 5 minutes';
   const chatGone = path.match(/^\/chats\/([^/]+)$/);
   if (method === 'DELETE' && chatGone) return `Delete the chat “${clean(chatData().conversations.find(c => c.id === chatGone[1])?.title || chatGone[1], 80)}”`;

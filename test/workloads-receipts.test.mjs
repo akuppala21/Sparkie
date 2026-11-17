@@ -362,10 +362,11 @@ test('A-22: a loading app receipt is kept on the pending restart record; an unkn
 });
 test('A-22: an owner’s wish during loading is persisted with the pending operation immediately', () => {
   const source = readFileSync(new URL('../service/src/20-desired.mjs', import.meta.url), 'utf8');
-  const fn = /^function desiredWish\([^]*?^\}/m.exec(source)[0], operation = { id: 'loading', node: 'spark4', container: 'rc-web' }, persisted = [];
-  const wish = new Function('jobs', 'savedRunReceipts', 'readKept', 'DESIRED_FILE', 'console', `${fn}\nreturn desiredWish;`)(
-    new Map([[operation.id, operation]]), j => persisted.push({ id: j.id, wish: j.ownersWish }), () => null, '/not-read', console);
+  const fn = /^function desiredWish\([^]*?^\}/m.exec(source)[0], operation = { id: 'loading', node: 'spark4', container: 'rc-web' }, persisted = [], superseded = [];
+  const wish = new Function('jobs', 'savedRunReceipts', 'readKept', 'DESIRED_FILE', 'console', 'rollbackSupersede', `${fn}\nreturn desiredWish;`)(
+    new Map([[operation.id, operation]]), j => persisted.push({ id: j.id, wish: j.ownersWish }), () => null, '/not-read', console, (...args) => superseded.push(args));
   wish(['spark4/rc-web']);
   assert.equal(operation.ownersWish, true);
   assert.deepEqual(persisted, [{ id: operation.id, wish: true }]);
+  assert.deepEqual(superseded, [[['spark4/rc-web'], 'the owner asked for it again', null, false]]);
 });

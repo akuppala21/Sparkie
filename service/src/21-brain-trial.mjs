@@ -1,5 +1,5 @@
 /* ───────── the coding trial: can the brain in use change Spark Console's own code (C8a; design C 2.5) ───────── */
-// Area: features        Rules: R67, R52        Tests: trial.test.mjs
+// Area: features        Rules: R67, R52        Tests: trial.test.mjs, telegram-result-approvals.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // agentbar/trial.mjs gives the brain small, real tasks on a copy of this repository and scores each by code; its one
@@ -10,7 +10,7 @@
 // (10.4, T100): every task of the set passes at least 2 of 3 runs. Each run's result of each task is kept, so a stricter
 // line can be read from a record later without a new run. POST /main/trial is the owner's alone; a result that meets
 // the bar, posted once a passkey is set up, is not kept but waits for the owner's press of one button in their chat, on
-// the page with the passkey, for that very record (its sha256 on the button and in the press). trialPassed() is the one
+// the page or paired Telegram chat, for that very record (its sha256 on the button and in the press). trialPassed() is the one
 // read (propose_update asks it, C8): yes only for a sealed full run that met the bar, for this brain, this build and
 // this task set (the newest full run decides; a partial run neither gives nor takes); no for no record, another brain,
 // build or set, only a partial run, or a newest full run that missed the bar. Nothing here is offered to the brain.
@@ -87,7 +87,7 @@ function storeBrainTrial(r, viewer = null) {
   return keepTrialRecord(p, { ...rec, keptWith: rec.score.met ? 'no passkey set up' : 'owner' }, now.setup);
 }
 // Keeps one record in the profile p, sealed: the store above, and the owner's press for a waiting result.
-function keepTrialRecord(p, rec, setupId) {
+function keepTrialRecord(p, rec, setupId, ctx = {}) {
   if (!MAIN || p.key !== brainKey(MAIN)) throw new HttpError(409, 'Kept nothing: the brain check on record isn’t this brain’s.');
   const kept = (Array.isArray(p.trial) ? p.trial : []).filter(x => x && typeof x === 'object');
   if (kept.some(x => x.hash === rec.hash)) return { stored: false, passed: rec.score.met === true, setup: setupId, says: 'Already kept: this same result is on record. Nothing changed.' };
@@ -95,7 +95,7 @@ function keepTrialRecord(p, rec, setupId) {
   if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
   const trial = [rec, ...kept].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, TRIAL_KEEP), stored = trial.includes(rec);
   if (stored) saveBrainProfile(p, null, trial);
-  audit({ via: 'page', actor: 'owner', action: 'brain-trial-kept', args: { reads: rec.reads, tasks: rec.tasks.version, build: rec.build, setup: setupId, met: rec.score.met, hash: rec.hash, keptWith: rec.keptWith }, ok: stored });
+  audit({ via: ctx.via || 'page', actor: 'owner', action: 'brain-trial-kept', args: { reads: rec.reads, tasks: rec.tasks.version, build: rec.build, setup: setupId, met: rec.score.met, hash: rec.hash, keptWith: rec.keptWith }, ok: stored });
   return { stored, passed: rec.score.met === true, setup: setupId,
     says: stored ? `Kept with the profile of ${setupId}: ${trialLine(rec)}.` : `${TRIAL_KEEP} newer trial results are kept for this brain, so this older one wasn’t kept.` };
 }
@@ -104,7 +104,7 @@ function keepTrialRecord(p, rec, setupId) {
 // this build's mark, its task set and the brain serving now; a newer post replaces it and voids the old button. The
 // button is owner-only, in the owner's chat "The coding trial’s result", built here from the record, with the record's
 // sha256; the press carries it, and keeps only the record held here with that sha256. Its call, TRIAL_YES, is no
-// action: runAction hands it to trialYes, which takes only that button's press on the page. In PAGE_ONLY.
+// action: runAction hands it to trialYes, which takes only that button's verified owner press.
 let trialWaiting = null;
 function trialWait(rec, p, now, viewer) {
   const reads = brainReadsNow(), set = trialSetNow();
@@ -132,7 +132,7 @@ function trialWait(rec, p, now, viewer) {
   trialWaiting = { token, rec, profileKey: p.key, conv: conv.id, group: asked.group, setup: now.setup };
   audit({ via: 'page', actor: 'owner', action: 'brain-trial-waiting', args: { reads: rec.reads, tasks: rec.tasks.version, build: rec.build, setup: now.setup, hash: rec.hash }, ok: true });
   return { stored: false, waiting: true, passed: false, hash: rec.hash, setup: now.setup, chat: conv.id,
-    says: `Waiting for the owner’s yes: a button in the chat “${TRIAL_CHAT}” in Spark Console, pressed with the passkey; it names sha256 ${rec.hash}.` };
+    says: `Waiting for the owner’s yes: a button in the chat “${TRIAL_CHAT}” on the page or in your paired Telegram chat; it names sha256 ${rec.hash}.` };
 }
 function trialWaitingGone() {
   if (!trialWaiting) return;
@@ -142,21 +142,24 @@ function trialWaitingGone() {
   trialWaiting = null;
   saveChats();
 }
-// The press (runAction hands TRIAL_YES here): only its own owner-only button, pressed by the owner on the page, for the
+// The press (runAction hands TRIAL_YES here): only its own owner-only button, approved by the verified owner, for the
 // record with that sha256.
 async function trialYes(args, viewer, ctx) {
-  if (!(ctx.button && ctx.trusted && ctx.ownerConfirmed && ctx.via === 'page' && viewer?.role === 'owner')) throw new HttpError(404, `No action called ${TRIAL_YES}.`);
+  if (!(isOwnerPress(ctx) && viewer?.role === 'owner' && !viewer?.agentKey)) throw new HttpError(404, `No action called ${TRIAL_YES}.`);
   const w = trialWaiting, token = String(args?.token || ''), same = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
   if (!w || !same(token, w.token) || !same(String(args?.hash || ''), w.rec.hash)) throw new HttpError(409, 'That result isn’t waiting any more: a newer one came, it was answered, or Spark Console restarted. Nothing was kept.');
   trialWaiting = null;
   if (args.keep !== true) {
-    audit({ via: 'page', actor: 'owner', action: 'brain-trial-dropped', args: { reads: w.rec.reads, build: w.rec.build, hash: w.rec.hash }, ok: true });
+    audit({ via: ctx.via, actor: 'owner', action: 'brain-trial-dropped', args: { reads: w.rec.reads, build: w.rec.build, hash: w.rec.hash }, ok: true });
     return { outcome: 'dropped', note: 'Dropped: that coding trial result wasn’t kept.' };
   }
   await brainRanLook();
   const p = MAIN && !mainBusy() ? brainProfileOf(MAIN) : null;
   if (!p || p.key !== w.profileKey || brainReadsNow() !== w.rec.reads || trialSetNow()?.version !== w.rec.tasks.version) throw new HttpError(409, 'Kept nothing: Sparkie’s model or this build changed since that result was posted. Run the trial again.');
-  const out = keepTrialRecord(p, { ...w.rec, keptWith: 'passkey' }, w.setup);
+  let keys = 1;
+  try { keys = passkeys().length; } catch {}
+  if (!isOwnerPress(ctx) || viewer?.agentKey) throw new HttpError(409, 'That owner approval is no longer current. Nothing was kept.');
+  const out = keepTrialRecord(p, { ...w.rec, keptWith: ctx.via === 'telegram' ? 'telegram' : keys ? 'passkey' : 'the owner’s press' }, w.setup, ctx);
   return { outcome: 'kept', note: out.stored ? `Kept: ${trialLine(w.rec)}.` : out.says };
 }
 

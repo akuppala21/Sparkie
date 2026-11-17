@@ -1,15 +1,13 @@
 // Covers: what a pressed change says it did (K2, the final read: R66, R32, R61): the press's line on the page and the
-// fixed line in the paired Telegram chat are built from the result's own fields (`pressRan`, 14-chats.mjs; `tgRanLine`,
+// complete masked line in the paired Telegram chat are built from the result's own fields (`pressRan`, 14-chats.mjs; `tgRanLine`,
 // 21-telegram.mjs), "done" only for a command that ran and ended with exit 0. A press on a Spark with no root helper says
-// nothing ran and why, and shows the owner's one-time command where the result carries it (on the page; Telegram says
-// where it is); one that exits 1 says so, with its exit code and last line; a write_file into a folder that isn't there
+// nothing ran and why, and shows the owner's one-time command where the result carries it (on either channel); one that exits 1 says so, with its exit code and last line; a write_file into a folder that isn't there
 // says nothing was written; one ended at its time limit says so. A task parked at the button and woken by a failed press
 // reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
 // them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
-// only for a task begun there, without the failure lines (C-8, R32). In the paired chat a /key message past the
+// only for a task begun there, with the same masked failure details (C-8, R32). In the paired chat a /key message past the
 // minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one. A reply
-// there that broke off part-way says so (C-9). A follow-up to a yes there for a page chat's ask carries no buttons
-// that only answer "expired" (C-15). A press
+// there that broke off part-way says so (C-9). Follow-up choices retain their exact IDs from either origin (C-15). A press
 // whose command outlasts the press's time (50 seconds; 3 in a fleet of its own) says it is still running, never that it
 // failed, and its end is posted in the chat, and told on Telegram for a press made there (press-50s).
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
@@ -96,13 +94,13 @@ const NONE4 = 'The root helper isn’t set up on Spark 4 yet (the owner’s one-
 const FAILED = 'it ran and failed, with exit code 1. Its last line: “no such package: k2-demo”.';
 const MORE = 'The details are in Spark Console.';
 
-// (Telegram first: at most 3 approvals from there an hour, and the first press on Spark 4 is the one that carries the
+// (Telegram first: the first press on Spark 4 is the one that carries the
 // owner's one-time command, which is given once per Spark while the console runs)
 test('pressed in the paired chat, on a Spark with no root helper: "Nothing ran" there; on the page why, and the one-time command', { timeout: 180000 * SLOW }, async () => {
   const { chat, yes } = await asked('make the k2 note on the other one', RUN('spark4', 'touch notes/k2-none.txt'));
   const { line, page, sent } = await pressedThere(chat, yes);
-  assert.equal(line, 'Nothing ran: Spark 4 needs your one-time set-up command first. It is in your chat in Spark Console.');
-  assert.ok(!sent.some(c => /root-for-sparkie/.test(JSON.stringify(c.body || {}))), 'the command, which names Spark 2’s address, is not sent to Telegram');
+  assert.equal(line, page);
+  assert.ok(sent.some(c => /root-for-sparkie/.test(String(c.body?.text || ''))), 'the complete owner setup command reaches the paired owner');
   const [head, how, cmd, ...rest] = page.split('\n');
   assert.equal(head, `Approved from Telegram: Run it: ${NONE4}`);
   assert.equal(how, 'Run this once in your own terminal (it asks Spark 4’s password once), then ask again:');
@@ -118,14 +116,14 @@ test('pressed in the paired chat, on a Spark with no root helper: "Nothing ran" 
 test('pressed in the paired chat: a command that exits 1 says so there and on the page', { timeout: 180000 * SLOW }, async () => {
   const { chat, yes } = await asked('fix the failing note', RUN('spark3', 'bash notes/fail.sh'));
   const { line, page } = await pressedThere(chat, yes);
-  assert.equal(line, `It ran and failed, with exit code 1. ${MORE}`);
+  assert.equal(line, page);
   assert.equal(page, `Approved from Telegram: Run it: ${FAILED}`);
 });
 
 test('pressed in the paired chat: a write_file into a folder that isn’t there says nothing was written', { timeout: 180000 * SLOW }, async () => {
   const { chat, yes } = await asked('write the new project file', WRITE('~/notes/newproj/app.py', 'print("hi")\n'));
   const { line, page } = await pressedThere(chat, yes);
-  assert.equal(line, `Nothing was written. ${MORE}`);
+  assert.equal(line, page);
   assert.match(page, /^Approved from Telegram: Run it: Nothing was written: \S/);
   assert.ok(!existsSync(join(T.fleet.root, 'spark3', 'notes', 'newproj')), 'nothing was written');
 });
@@ -195,15 +193,15 @@ test('a task’s change that never ran (no root helper on Spark 4) is no change 
 });
 
 // C-8 (R32): a task begun in the paired chat is reported there once, without the failure lines (no error text there).
-test('a task begun in the paired chat: its report there says how many failed and where to look, with no error line; the page’s has it', { timeout: 120000 * SLOW }, async () => {
+test('a task begun in the paired chat: its report carries the same complete masked failure as the page', { timeout: 120000 * SLOW }, async () => {
   const stop = await api(`/chats/${TGSEED.chat}/messages`, { method: 'POST', body: { text: '/stop' } });
   assert.equal(stop.status, 200, stop.text);
   const page = await waitFor(async () => (await chatMessages(TGSEED.chat)).find(m => m.report), { timeout: 60000, what: 'the report in its chat' });
   assert.match(page.content.split('\n')[1], /^Operations: 1 \(1 failed\)\. Failed: Starting c8-model: pull failed at /, page.content);
   const there = await waitFor(() => tgSent().map(x => x.body.text).find(t => t.startsWith('Report on your request')), { timeout: 60000, what: 'the report on Telegram' });
   assert.equal(there.split('\n')[0], `Report on your request “${TGSEED.words}”: stopped by you.`);
-  assert.equal(there.split('\n')[1], 'Operations: 1 (1 failed). What failed is in Spark Console.');
-  assert.ok(!there.includes('pull failed') && !there.includes('100.64.0.7') && !there.includes('/home/owner'), there);
+  assert.equal(there, page.content);
+  assert.ok(there.includes(TGSEED.err), there);
 });
 
 // C-9 (R32): a reply in the paired chat that broke off part-way (the stand-in brain's "cut-off-200": a 200 that starts,
@@ -218,44 +216,41 @@ test('in the paired chat, a reply that broke off part-way says so', { timeout: 1
   } finally { rmSync(fail, { force: true }); }
 });
 
-// The two functions, cut from their parts, for every kind of result (Telegram's approvals allow 3 presses an hour, so
-// the time limit, an unknown end and the net's outcomes are read here).
+// The real formatters, read from their parts, cover exact masked results, unknown ends and every net outcome.
 test('the words from each kind of result: the page’s pressRan and Telegram’s tgRanLine', () => {
   const cut = (file, re) => { const m = re.exec(readFileSync(join(REPO, 'service', 'src', file), 'utf8')); assert.ok(m, `${file}: ${re}`); return m[0]; };
   const stubs = 'const maskSecrets = s => String(s).replace(/hf_[A-Za-z0-9]{20,}/g, "[hidden]"); const nodeById = id => (["spark3", "spark4"].includes(id) ? { id } : undefined); const sparkName = n => `Spark ${n.id.slice(5)}`;';
   const page = new Function(`${stubs}\n${cut('14-chats.mjs', /^function pressRan\(label, out, agentChat = false\) \{[\s\S]*?\n\}$/m)}\nreturn pressRan;`)();
-  const tg = new Function(`${stubs}\n${cut('21-telegram.mjs', /^function tgRanLine\(r\) \{[\s\S]*?\n\}$/m)}\nreturn tgRanLine;`)();
+  const tg = new Function('pressRan', `${stubs}\n${cut('21-telegram.mjs', /^function tgRanLine\(r\) \{.*\}$/m)}\nreturn tgRanLine;`)(page);
   const OVER = 'The file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as /home/owner/notes/a.txt.write_file.k1.';
   const ended = 'It ran past its 30 seconds and was ended, with everything it started.', unknown = 'Spark 3 didn’t answer within 45 seconds, so whether it finished is unknown.';
   const rows = [
-    [{ spark: 'spark3', ran: true, exit: 0, tail: 'ok\nexit 0' }, 'Run it: done.', 'Done.'],
-    [{ spark: 'spark3', ran: true, exit: 2, tail: 'key hf_abcdefghijklmnopqrstuvwxyz\nexit 2' }, 'Run it: it ran and failed, with exit code 2. Its last line: “key [hidden]”.', `It ran and failed, with exit code 2. ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: 1, tail: 'exit 1' }, 'Run it: it ran and failed, with exit code 1.', `It ran and failed, with exit code 1. ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: null, ended }, `Run it: ${ended}`, `${ended} ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: null, ended: unknown }, `Run it: ${unknown}`, `${unknown} ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: null, cut: 'Its output passed 16 MB, so it was ended there.' }, 'Run it: Its output passed 16 MB, so it was ended there.', `Its output passed 16 MB, so it was ended there. ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: 1, notWritten: 'Nothing was written: no such folder' }, 'Run it: Nothing was written: no such folder', `Nothing was written. ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: null, notWritten: 'Whether it was written isn’t known: it was ended before it finished.' }, 'Run it: Whether it was written isn’t known: it was ended before it finished.', `Whether it was written isn’t known: it was ended before it finished. ${MORE}`],
-    [{ box: 'open', spark: 'spark3', notWritten: { path: '/work/a.py', why: 'it ended with code 1' } }, 'Run it: Nothing was written to /work/a.py: it ended with code 1.', `Nothing was written. ${MORE}`],
-    [{ box: 'open', spark: 'spark3', wrote: { path: '/work/a.py', bytes: 3 } }, 'Run it: done.', 'Done.'],
-    [{ spark: 'spark4', ran: false, why: `${NONE4}`, ownerCommand: 'bash x.sh 4' }, `Run it: ${NONE4}\nRun this once in your own terminal (it asks Spark 4’s password once), then ask again:\nbash x.sh 4`, 'Nothing ran: Spark 4 needs your one-time set-up command first. It is in your chat in Spark Console.'],
-    [{ spark: 'spark4', ran: false, why: NONE4, next: 'given earlier' }, `Run it: ${NONE4}`, `Nothing ran. ${MORE}`],
-    [{ spark: 'spark3', ran: true, exit: 0, notes: ['It was stopped: the disk’s free space fell under 5 GB (the root helper\'s floor).'] }, 'Run it: done. It was stopped: the disk’s free space fell under 5 GB (the root helper\'s floor).', 'Done.'],
-    // (write_file's exit 5, wroteOver: written over another program's edit, never "it ran and failed")
-    [{ spark: 'spark3', ran: true, exit: 5, wroteOver: OVER }, `Run it: ${OVER}`, `It was written over another program’s edit made after it was read: the name holds the new text, and what was there is kept beside it. ${MORE}`],
-    [{ outcome: 'saved', title: 'x' }, null, 'Done.'],
+    [{ spark: 'spark3', ran: true, exit: 0, tail: 'ok\nexit 0' }, 'Run it: done.'],
+    [{ spark: 'spark3', ran: true, exit: 2, tail: 'key hf_abcdefghijklmnopqrstuvwxyz\nexit 2' }, 'Run it: it ran and failed, with exit code 2. Its last line: “key [hidden]”.'],
+    [{ spark: 'spark3', ran: true, exit: 1, tail: 'exit 1' }, 'Run it: it ran and failed, with exit code 1.'],
+    [{ spark: 'spark3', ran: true, exit: null, ended }, `Run it: ${ended}`],
+    [{ spark: 'spark3', ran: true, exit: null, ended: unknown }, `Run it: ${unknown}`],
+    [{ spark: 'spark3', ran: true, exit: null, cut: 'Its output passed 16 MB, so it was ended there.' }, 'Run it: Its output passed 16 MB, so it was ended there.'],
+    [{ spark: 'spark3', ran: true, exit: 1, notWritten: 'Nothing was written: no such folder' }, 'Run it: Nothing was written: no such folder'],
+    [{ spark: 'spark3', ran: true, exit: null, notWritten: 'Whether it was written isn’t known: it was ended before it finished.' }, 'Run it: Whether it was written isn’t known: it was ended before it finished.'],
+    [{ box: 'open', spark: 'spark3', notWritten: { path: '/work/a.py', why: 'it ended with code 1' } }, 'Run it: Nothing was written to /work/a.py: it ended with code 1.'],
+    [{ box: 'open', spark: 'spark3', wrote: { path: '/work/a.py', bytes: 3 } }, 'Run it: done.'],
+    [{ spark: 'spark4', ran: false, why: NONE4, ownerCommand: 'bash x.sh 4' }, `Run it: ${NONE4}\nRun this once in your own terminal (it asks Spark 4’s password once), then ask again:\nbash x.sh 4`],
+    [{ spark: 'spark4', ran: false, why: NONE4, next: 'given earlier' }, `Run it: ${NONE4}`],
+    [{ spark: 'spark3', ran: true, exit: 0, notes: ['It was stopped: the disk’s free space fell under 5 GB (the root helper’s floor).'] }, 'Run it: done. It was stopped: the disk’s free space fell under 5 GB (the root helper’s floor).'],
+    [{ spark: 'spark3', ran: true, exit: 5, wroteOver: OVER }, `Run it: ${OVER}`],
+    [{ outcome: 'saved', title: 'x', note: 'Saved x.' }, null],
   ];
-  for (const [out, onPage, there] of rows) {
+  for (const [out, onPage] of rows) {
     assert.equal(page('Run it', out), onPage, JSON.stringify(out));
-    assert.equal(tg(out), there, JSON.stringify(out));
+    assert.equal(tg(out), onPage === null ? 'Saved x.' : onPage.replace(/^Run it:/, 'Result:'), JSON.stringify(out));
   }
   assert.equal(page('Run it', rows[10][0], true).split('\n')[1], 'The owner runs this once, in their own terminal (it asks Spark 4’s password once), then ask again:');
-  // (the net's, Spark 2's and root's: their note on the page, as before; on Telegram a fixed line by the net's outcome)
+  // The full net note takes priority on Telegram, including unknown or partial outcomes.
   const net = (outcome, exit) => ({ spark: 'spark3', ran: true, exit, net: { id: 'x', outcome }, note: 'the net’s own words' });
-  assert.deepEqual([tg(net('kept', 0)), tg(net('kept', 3)), tg(net('kept', null)), tg(net('put back', 0)), tg(net('timer', null))], [
-    'Done: it ran inside the lock-out net and is kept.', `It ran inside the lock-out net and is kept, but the command itself ended with exit code 3. ${MORE}`,
-    `It ran inside the lock-out net and is kept, but the command itself was ended before it finished. ${MORE}`, `It ran inside the lock-out net and was put back. ${MORE}`,
-    `It wasn’t kept: if it ran, Spark 3’s own timer puts it back. ${MORE}`]);
+  assert.deepEqual([tg(net('kept', 0)), tg(net('kept', 3)), tg(net('kept', null)), tg(net('put back', 0)), tg(net('timer', null))], Array(5).fill('the net’s own words'));
+  assert.equal(tg({ message: { content: 'Full result: hf_abcdefghijklmnopqrstuvwxyz' }, note: 'older note' }), 'Full result: [hidden]');
+
 });
 
 // press-50s (the net's final read, 11): a command that outlasts the press's time, pressed on the page and in the paired
@@ -287,27 +282,27 @@ test('a press whose command outlasts the press’s time says it is still running
     assert.equal(there.line, 'It is still running. I’ll tell you here when it ends.');
     assert.equal(there.page, `Approved from Telegram: ${RUNNING}`);
     await later(b.chat);
-    await waitFor(() => tgSent().some(x => x.body.text === `Result of your earlier press: It ran past its 8 seconds and was ended, with everything it started. ${MORE}`), { timeout: 30000, what: 'its result in the paired chat' });
+    await waitFor(() => tgSent().some(x => x.body.text === `Result of your earlier press: ${ENDED}`), { timeout: 30000, what: 'its result in the paired chat' });
     // Nothing said it failed.
     for (const chat of [a.chat, b.chat]) assert.ok(!(await chatMessages(chat)).some(m => /^(?:Approved from Telegram: )?Couldn’t do/.test(m.content)), chat);
     assert.ok(!tgSent().some(x => /didn’t work/.test(x.body.text)));
   } finally { Object.assign(T, was); await G.stop(); }
 });
 
-// C-15: after a yes in the paired chat to a page chat's ask, a follow-up question goes there with no buttons (a page
-// chat's plain buttons are pressed on the page) and says where to answer; in a chat of Telegram's its buttons go too.
+// C-15: after a yes in the paired chat, a follow-up question carries the same plain choices from either chat origin.
+// Delivery and execution remain bound to the verified current owner pairing.
 // (Read from the part: no action on the stand-in fleet asks a plain follow-up after an owner-only yes.)
-test('a follow-up to a yes in the paired chat: its buttons only for a Telegram chat; for a page chat, where to answer', () => {
+test('a follow-up to a yes in the paired chat carries the same choices for page and Telegram conversations', () => {
   const m = /^function tgFollowUp\(conv, message\) \{[\s\S]*?\n\}$/m.exec(readFileSync(join(REPO, 'service', 'src', '21-telegram.mjs'), 'utf8'));
   assert.ok(m, 'tgFollowUp in 21-telegram.mjs');
   const stubs = 'const tellReplyText = m => m.content; const tellButtons = m => m.choices.map(c => ({ id: c.id, label: c.label }));';
   const f = new Function(`${stubs}\n${m[0]}\nreturn tgFollowUp;`)();
   const q = { content: 'Which one?', choices: [{ id: 'a1b2c3d4e5', label: 'The first' }] };
-  assert.deepEqual(f({ channel: null }, q), { text: 'Which one?\n\nAnswer it in Spark Console.', buttons: [] });
+  assert.deepEqual(f({ channel: null }, q), { text: 'Which one?', buttons: [{ id: 'a1b2c3d4e5', label: 'The first' }] });
   assert.deepEqual(f({ channel: 'telegram' }, q), { text: 'Which one?', buttons: [{ id: 'a1b2c3d4e5', label: 'The first' }] });
   assert.deepEqual(f({ channel: null }, { content: 'Stop it?\n\nThat one waits for you in Spark Console.', choices: [] }).text, 'Stop it?\n\nThat one waits for you in Spark Console.');
   // (tgRun sends what it gives)
-  assert.match(readFileSync(join(REPO, 'service', 'src', '21-telegram.mjs'), 'utf8'), /const f = tgFollowUp\(conv, r\.message\); return await tell\('reply', f\.text, \{ buttons: f\.buttons \}\);/);
+  assert.match(readFileSync(join(REPO, 'service', 'src', '21-telegram.mjs'), 'utf8'), /const f = tgFollowUp\(conv, r\.message\); return await tgOwnerTell\(viewer, 'reply', f\.text, \{ buttons: f\.buttons \}\);/);
 });
 
 // K6 (R51): tgKeys first, before the minute's limit, as /lock is: a message holding a key is always taken and deleted.

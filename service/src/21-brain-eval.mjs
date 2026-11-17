@@ -1,5 +1,5 @@
 /* ───────── the brain eval's results, kept with what they ran against (the one page, milestone 1 and 10; P-4) ───────── */
-// Area: features        Rules: R47        Tests: brain-eval.test.mjs
+// Area: features        Rules: R47        Tests: brain-eval.test.mjs, telegram-result-approvals.test.mjs
 // Owns: cases.json (writers: none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it)
 // Timers: none        Wakes: none
 // test/eval.mjs runs the eval's cases on a stand-in console with the real brain and writes one record of the run (R47).
@@ -123,7 +123,7 @@ const evalOrder = (a, b, score = x => x?.score || {}) => String(b?.at).localeCom
   || (score(a).met === false ? -1 : 0) - (score(b).met === false ? -1 : 0);
 // Keeps one record in the profile p, sealed (21-brain-rail.mjs: the rail counts only a sealed record): the store above,
 // and the owner's yes to a waiting result.
-function keepEvalRecord(p, rec, setupId) {
+function keepEvalRecord(p, rec, setupId, ctx = {}) {
   const slot = `${rec.reads}:${rec.set}`, set = evalSetToday();
   // (the brain's own key, never only the file's; and a kept record is never replaced: R52)
   if (!MAIN || p.key !== brainKey(MAIN)) throw new HttpError(409, 'Kept nothing: the brain check on record isn’t this brain’s.');
@@ -143,7 +143,7 @@ function keepEvalRecord(p, rec, setupId) {
   const evals = Object.fromEntries(Object.entries(kept).sort(([ka, a], [kb, b]) => (kb === ours) - (ka === ours) || String(b[0]?.at).localeCompare(String(a[0]?.at))).slice(0, EVAL_SLOTS));
   const stored = Boolean(evals[slot]?.includes(rec));
   if (stored) saveBrainProfile(p, evals);
-  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
+  audit({ via: ctx.via || 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
   return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
     says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.${sealKey ? '' : ' It isn’t sealed (the eval seal’s key, eval-seal.json beside the secrets file, can’t be read or made), so it counts for nothing.'}`
       : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };

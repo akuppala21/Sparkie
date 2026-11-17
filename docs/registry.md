@@ -39,26 +39,26 @@ Sparkie is offered it in (R46; the core is in every round).
 | `find_setups` | change | `17-changes` | find | find | — | yes | — |
 | `save_file` | change | `17-changes` | reading | file | — | no | — |
 | `workflows` | read | `18-workflows` | routines | — | — | yes | outside |
-| `save_workflow` | change | `18-workflows` | routines | save | yes | no | — |
+| `save_workflow` | change | `18-workflows` | routines | save | — | no | — |
 | `run_workflow` | change | `18-workflows` | routines | start | — | no | — |
-| `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
+| `forget_workflow` | change | `18-workflows` | routines | forget | — | no | — |
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
-| `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
+| `undo_update` | change | `18-workflows` | control | undo | — | yes | — |
 | `should_be_running` | read | `20-desired` | control | — | — | yes | outside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
 | `recall` | read | `20-journal` | past | — | — | yes | outside |
 | `memory` | read | `20-memory` | memory | — | — | yes | outside |
-| `remember` | change | `20-memory` | core | remember | yes | no | — |
-| `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
+| `remember` | change | `20-memory` | core | remember | — | no | — |
+| `forget_memory` | change | `20-memory` | memory | remember | — | no | — |
 | `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
 | `compare_models` | change | `21-compare` | routines | compare | — | no | — |
 | `guide` | read | `21-guide` | core | — | — | yes | inside |
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
-| `propose_update` | change | `21-selfchange` | updates | code, cancel | yes | no | — |
+| `propose_update` | change | `21-selfchange` | updates | code, cancel | — | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `install_update` | change | `21-updates` | updates | install | — | no | — |
 | `check_update` | read | `21-updates` | updates | — | — | yes | outside |
@@ -79,16 +79,16 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `access.json.good` | `03-identity` | `ownAccess`; a copy of the last good access.json; `ownAccess` is called by `accessList`, `openProblems` | yes | no |
 | `added-models.json` | `10-recipes` | `addModel` | yes | yes |
 | `agent-settings.json` | `17-changes` | `setAgentSettings` | yes | no |
-| `agents.json` | `20-mcp` | `top level`, `putBackAtStart` (22-putback), `handler` (24-handler); the top-level one is the last-use timer | yes | no |
+| `agents.json` | `20-mcp` | `top level`, `ownerAgentCreate` (21-owner-admin), `ownerAgentRights` (21-owner-admin), `ownerAgentRemove` (21-owner-admin), `putBackAtStart` (22-putback); the top-level one is the last-use timer; `ownerAgentCreate` is called by `ownerAdminSecret`, `handler`; `ownerAgentRights` is called by `ownerAdmin`, `handler`; `ownerAgentRemove` is called by `ownerAdmin`, `ownerAdminSecret`, `handler` | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
-| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoval`, `putBackSeed`, `putBackRoute` | yes | no |
+| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoval`, `putBackSeed`, `ownerRestoreAccess` | yes | no |
 | `auth-unnoted.json` | `22-putback` | `putBackUnnotedSave`; `putBackUnnotedSave` is called by `putBackKeep` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `seedDesired`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`, `START_CODE`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan`; `seedDesired` is called by `watchHeld`, `powerOffJob` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `seedDesired`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`, `START_CODE`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan`; `seedDesired` is called by `watchHeld`, `powerOffJob` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
@@ -103,10 +103,10 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `net.json` | `21-net` | `netSave`; `netSave` is called by `netMark`, `netGuarded` | yes | yes |
-| `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `putBackAtStart`, `signinRoute`, `handler` | yes | no |
+| `passkeys.json` | `22-passkey` | `savePasskeys` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
-| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunDone` is called by `run_workflow` | no | no |
+| `saved-runs.json` | `18-run-record` | `rollbackSave` (17-rollback), `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunDone` is called by `run_workflow` | no | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
@@ -157,6 +157,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 
 | Part | May wake |
 |---|---|
+| `21-owner-admin` | the brain's configured Spark, through startMain or switchMain |
 | `21-power` | a compute Spark it powered off, or one shut down with a switchable plug, never the hub: power_on, a start or call that needs it (powerThen), power.wake |
 
 ## Events and operation types
@@ -176,10 +177,10 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `spark-powered-off` | `waitAndCut` (21-power) |
 | `spark-powered-on` | `powerOnSparks` (21-power), `powerTick` (21-power) |
 | `learned` | `done` (19-watcher) |
-| `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
+| `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `ownerSettingsChange` (21-owner-admin) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
 | `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `netTell` (21-net), `sayIdleActive` (21-power), `unparkStranded` (21-power), `wayCheck` (21-runner), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updTell` (21-updates), `updInstallStart` (21-updates), `counterNote` (22-passkey), `putBackAtStart` (22-putback), `putBackRoute` (22-putback), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `netTell` (21-net), `ownerRecoveryCodes` (21-owner-admin), `sayIdleActive` (21-power), `unparkStranded` (21-power), `wayCheck` (21-runner), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updTell` (21-updates), `updInstallStart` (21-updates), `counterNote` (22-passkey), `putBackAtStart` (22-putback), `ownerRestoreAccess` (22-putback), `ownerDeviceDecision` (22-sessions), `signinRoute` (22-sessions), `handler` (24-handler) |
 
 | Operation | Started by |
 |---|---|
@@ -189,15 +190,16 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `deploy-cluster` | `launch` (17-changes), `handler` (24-handler) |
 | `dig` | `startDig` (11-setups) |
 | `download` | `handler` (24-handler) |
-| `main-start` | `keepBrain` (20-heal), `restartWord` (20-words), `handler` (24-handler) |
-| `main-stop` | `handler` (24-handler) |
-| `main-switch` | `handler` (24-handler) |
+| `main-start` | `keepBrain` (20-heal), `restartWord` (20-words), `ownerBrainPower` (21-owner-admin) |
+| `main-stop` | `ownerBrainPower` (21-owner-admin) |
+| `main-switch` | `ownerBrainUse` (21-owner-admin) |
 | `power-off` | `power_off` (21-power) |
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
 | `run` | `longStart` (21-long) |
 | `self-test` | `self_test` (21-selftest) |
 | `start-model` | `startModel` (17-changes) |
+| `start-rollback` | `rollbackContinue` (17-rollback) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |
 | `undo` | `undo_last_change` (20-desired) |
 | `validate-workflows` | `startTestChanges` (18-workflows) |

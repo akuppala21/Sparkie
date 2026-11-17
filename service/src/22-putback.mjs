@@ -30,9 +30,9 @@
 // Console is live until then (R23's Today). A right the owner gave back to a key
 // after taking it is taken again at a put-back (the owner gives it back again).
 const PUTBACK_FILE = `${STATE_DIR}/auth-serial.json`;
-const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
-const PUTBACK_AGENTS = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
-const PUTBACK_TG = 'Spark Console’s state was put back from a copy, so this waits until you have looked at what came back: open Spark Console once on your tailnet.';
+const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Review what came back on your tailnet page, or with /review access in your already paired Telegram chat; after you confirm, sign-in from the internet works again.';
+const PUTBACK_AGENTS = 'Spark Console’s state was put back from a copy. Agents wait until the owner reviews and confirms what came back on the tailnet page or with /review access in the already paired Telegram chat.';
+const PUTBACK_TG = 'Spark Console’s state was put back from a copy. This waits until you review what came back: use /review access in your already paired Telegram chat, or open Spark Console on your tailnet.';
 const PUTBACK_KEPT_MAX = 500;
 // The state's own number: 0 when there is none.
 function putBackSerial() {
@@ -263,7 +263,7 @@ function putBackAtStart() {
         const request = String(conv.task.request || '').slice(0, 200), was = conv.task;
         conv.task = null;
         taskEnded(conv, was, 'put-back');
-        conv.messages.push({ role: 'assistant', content: maskSecrets(`Spark Console’s state was put back from a copy, so “${request}” isn’t carried on. Once you have looked at what came back (open Spark Console on your tailnet), say “carry on” if it’s still wanted.`), createdAt: at, notice: true });
+        conv.messages.push({ role: 'assistant', content: maskSecrets(`Spark Console’s state was put back from a copy, so “${request}” isn’t carried on. Once you have reviewed what came back (the tailnet page or /review access in your already paired Telegram chat), say “carry on” if it’s still wanted.`), createdAt: at, notice: true });
         conv.updatedAt = at;
         parked++;
       }
@@ -278,7 +278,7 @@ function putBackAtStart() {
     putBackSeen.at = 0;
     audit({ via: 'start', actor: 'Spark Console', action: 'state-put-back', args: { state: t, secrets: n || null, removedAgain: again.length, signedOut, parked }, ok: true });
     // (names typed by whoever set each one up: masked, as every notice that names what someone typed)
-    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.${kept ? '' : ' The hold couldn’t be saved in the secrets file, so it lasts only until Spark Console next starts.'}`) });
+    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Review what came back on your tailnet page or with /review access in your already paired Telegram chat; until you confirm, sign-in from the internet is refused and agents can’t change anything.${kept ? '' : ' The hold couldn’t be saved in the secrets file, so it lasts only until Spark Console next starts.'}`) });
   } catch (e) { console.error(`Looking for a state put back from a copy: ${e.message}`); }
 }
 
@@ -300,20 +300,23 @@ async function putBackRoute(req, res, path, viewer) {
   if (req.method === 'GET' && path === '/auth/putback') return send(res, 200, putBackList());
   if (req.method !== 'POST' || path !== '/auth/putback/keep') throw new HttpError(405, 'Use GET for the list, POST to keep it.');
   if (viewer.session || req.headers['tailscale-funnel-request']) throw new HttpError(403, 'Keep these works on your tailnet only: open Spark Console there.');
-  if (!putBackHeld()) return send(res, 200, { kept: false, words: 'Nothing is held: there was nothing to keep.' });
+  return send(res, 200, ownerRestoreAccess({ via: 'page' }));
+}
+function ownerRestoreAccess(ctx) {
+  if (!putBackHeld()) return { kept: false, words: 'Nothing is held: there was nothing to keep.' };
   const n = Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0);
   putBackSerialWrite(n);
   secretsWrite(x => { const b = { ...(x.auth || {}), serial: n }; delete b.hold; return { ...x, auth: b }; });
   putBackMemHold = null;
   putBackSeen.at = 0;
-  audit({ via: 'page', actor: 'owner', action: 'state-put-back-kept', args: { serial: n }, ok: true });
+  audit({ via: ctx.via, actor: 'owner', action: 'state-put-back-kept', args: { serial: n }, ok: true });
   fleetEvent({ type: 'notice', text: 'You looked at what came back with the copy and kept it. Sign-in from the internet and agents work again.' });
-  return send(res, 200, { kept: true, words: 'Kept. Sign-in from the internet and agents work again.' });
+  return { kept: true, words: 'Kept. Sign-in from the internet and agents work again.' };
 }
 // The needs-you line while it holds (20-needs.mjs).
 function putBackNeeds(add) {
   const h = putBackHold();
-  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
+  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Review what came back on your tailnet page or with /review access in your already paired Telegram chat; until you confirm, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
   // (removals not yet noted outside the state, from memory and the state folder: said until the retry writes them)
   const waiting = putBackWaiting().notes;
   if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.${putBackUnnoted.kept ? '' : ` ${waiting.length === 1 ? 'It' : 'They'} couldn’t be kept in the state folder either, so if Spark Console stops before then, ${waiting.length === 1 ? 'it is' : 'they are'} forgotten.`}`);

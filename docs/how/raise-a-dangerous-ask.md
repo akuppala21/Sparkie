@@ -23,7 +23,7 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
   `outsideWall` (why), `hub` (on the hub: where it starts, how it runs and what is checked after, `21-hub.mjs`),
   `minutes` (how long a long command may run), `lines` (code's own sentences, one line each: what its wall lets it do,
   what it reaches),
-  `whoApproves` (it changes passkeys, recovery codes, the pairing or the switch: page only), `switchBrain`, `wall`,
+  `whoApproves` (it changes passkeys, recovery codes, the pairing or the switch: exact strong owner confirmation), `switchBrain`, `wall`,
   `recheck` (a function giving the script's bytes again at the press).
 - `ctx.reads`: what this request read, oldest first, the newest last (`{id, label, at}`: a journal id and a label
   built by code; `workRead`, `21-ladder.mjs`).
@@ -41,7 +41,7 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
 
 ## Rules
 
-- R54: the dangerous ask. R32: Telegram, its switch and its caps. R6: the passkey on the page.
+- R54: the dangerous ask. R32: Telegram, its pairing, complete delivery and switch. R6: the passkey on the page.
 
 ## Tests
 

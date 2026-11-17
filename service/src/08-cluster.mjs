@@ -1,5 +1,5 @@
 /* ───────── one model across two linked Sparks ───────── */
-// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs, context-start.test.mjs
+// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs, context-start.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-engine-boundary.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // NVIDIA's two-Spark method (build.nvidia.com/spark/vllm-cluster, advanced): native vLLM multi-node, one tensor-parallel
@@ -219,14 +219,35 @@ async function engineCheck(job, { cp, model, net, nodeIds, fix }) {
   const secs = ALL_LOCAL ? 5 : 45, [hn, wn] = nodeIds.map(id => sparkName(nodeById(id)));
   const roce = Boolean(net.headHca && net.workerHca && !fix.sockets);
   step(job, `Checking that the engines on ${hn} and ${wn} can connect over the cable (a short test in the model’s image)`);
-  const results = await Promise.all(cp.members.map((m, rank) => {
+  const settled = await Promise.allSettled(cp.members.map(async (m, rank) => {
     const env = clusterEnv(model, rank, net, fix);
-    const runIt = ['docker', 'run', '-d', '--name', ENGINE_CHECK_NAME, '--label', 'spark.check=1', '--privileged', '--gpus', 'all', '--ipc', 'host', '--network', 'host',
+    const runIt = receipt => ['docker', 'run', '-d', '--name', ENGINE_CHECK_NAME, '--label', 'spark.check=1',
+      ...Object.entries(receipt || {}).flatMap(([k, v]) => ['--label', `spark.${k}=${v}`]), '--privileged', '--gpus', 'all', '--ipc', 'host', '--network', 'host',
       '--ulimit', 'memlock=-1', ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), '--entrypoint', 'python3', imageOf(model),
       '-c', ENGINE_CHECK_PY, ALL_LOCAL ? '127.0.0.1' : net.headIp, String(CLUSTER_PORT), String(rank), String(secs)].map(q).join(' ');
     const n = q(ENGINE_CHECK_NAME);
-    return run(nodeById(m.node), `docker rm -f ${n} >/dev/null 2>&1; ${runIt} >/dev/null || exit 1\ntimeout ${secs + 60} docker wait ${n} >/dev/null 2>&1; docker logs ${n} 2>&1 | grep -oE 'engine (start|none|gloo|nccl) .*'; docker logs ${n} 2>&1 | grep -v '^engine ' | tail -60; echo "engine exit $(docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${n} 2>/dev/null)"; docker rm -f ${n} >/dev/null 2>&1; true`, { timeout: (secs + 120) * 1000 });
+    if (!job.rollbackOperation) throw new Error('The engine check has no recorded start to run for.');
+    const old = await rollbackLook(m.node, ENGINE_CHECK_NAME);
+    if (old) throw new Error(`The earlier engine check on ${m.node} is still there. It was left alone.`);
+    try {
+      const started = await rollbackRun(job, m.node, ENGINE_CHECK_NAME, runIt);
+      if (started.code) throw new Error(`The engine check on ${m.node} didn’t start: ${started.err || started.out}`);
+    }
+    catch (e) {
+      const command = rollbackRead(job.rollbackOperation).attempts.flatMap(a => a.commands).filter(c => c.spark === m.node && c.name === ENGINE_CHECK_NAME && c.action === 'run').pop();
+      if (!command?.result?.terminal) throw e;
+      if (await rollbackStopNew(job, m.node, ENGINE_CHECK_NAME) !== 'stopped') throw e;
+      await rollbackRemove(job, m.node, ENGINE_CHECK_NAME);
+      return { code: 1, out: '', err: command.result.failure || e.message }; // the former shell used runIt || exit 1; the receipt keeps Docker’s actual code
+    }
+    const looked = await run(nodeById(m.node), `timeout ${secs + 60} docker wait ${n} >/dev/null 2>&1; docker logs ${n} 2>&1 | grep -oE 'engine (start|none|gloo|nccl) .*'; docker logs ${n} 2>&1 | grep -v '^engine ' | tail -60; echo "engine exit $(docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${n} 2>/dev/null)"`, { timeout: (secs + 120) * 1000 });
+    if (await rollbackStopNew(job, m.node, ENGINE_CHECK_NAME) !== 'stopped') throw new Error(`The engine check on ${m.node} has not stopped.`);
+    await rollbackRemove(job, m.node, ENGINE_CHECK_NAME);
+    return looked;
   }));
+  const failed = settled.find(r => r.status === 'rejected');
+  if (failed) throw failed.reason;
+  const results = settled.map(r => r.value);
   const said = results.map(r => String(r.out || ''));
   // A result line, wherever it starts on its line (see say() in ENGINE_CHECK_PY).
   const said1 = (i, what) => said[i].split('\n').map(l => l.match(new RegExp(`(engine ${what}\\b.*)$`))?.[1]?.trim()).find(Boolean) || null;
@@ -305,12 +326,13 @@ function clusterEnv(model, rank, net, fix = {}) {
   return env;
 }
 
-function clusterRunCommand(model, { rank, nodes, net, store, tsip, extra = [], fix = {} }) {
+function clusterRunCommand(model, { rank, nodes, net, store, tsip, extra = [], fix = {}, receipt = null }) {
   const name = model.name, args = [...(Array.isArray(model.manifest?.args) ? model.manifest.args.map(String) : []), ...extra];
   const fromCache = store === 'hf', served = fromCache ? model.repo || name : name;
   const sglang = engineOf(model) === 'sglang', env = clusterEnv(model, rank, net, fix);
   const parts = ['docker', 'run', '-d', '--name', rank === 0 ? containerName(name) : workerName(name),
     '--label', 'spark.console=1', '--label', `spark.model=${name}`, '--label', `spark.cluster=${clusterName(nodes)}`, '--label', `spark.rank=${rank}`,
+    ...(receipt ? Object.entries(receipt).flatMap(([k, v]) => ['--label', `spark.${k}=${v}`]) : []),
     '--privileged', '--gpus', 'all', '--ipc', 'host', '--network', 'host', '--shm-size', '16g',
     '--ulimit', 'nofile=1048576:1048576', '--ulimit', 'memlock=-1', '--ulimit', 'stack=67108864',
     ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`])].map(q);
@@ -349,6 +371,9 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
   const headStops = cp.members[0].steps.filter(s => s.kind === 'stop' && !keep.includes(s.container)).map(s => s.container);
   await cableCheck(job, nodeIds, net, Boolean(inv.sparks.find(sp => sp.id === cp.head)?.deployments.some(d => d.cluster && headStops.includes(d.container))));
   job.checkPause?.();
+  const stopKeys = cp.members.flatMap(m => m.steps.filter(s => s.kind === 'stop' && !keep.includes(s.container)).map(s => `${m.node}/${s.container}`));
+  for (const m of cp.members) for (const name of names) if (inv.sparks.find(s => s.id === m.node)?.deployments.some(d => d.container === name)) stopKeys.push(`${m.node}/${name}`);
+  await rollbackPrepare(job, nodeIds, stopKeys, inv);
   try {
     // Clear the way on both Sparks: what has to stop (except what you kept), then copies and images.
     for (const m of cp.members) {
@@ -360,19 +385,20 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
       // A container this start stopped that has a part's name (the same model on one Spark) is set aside under another
       // name, not removed, so it can start again if this doesn't (2026-11-10: removing it left nothing to put back).
       for (const n of names) {
-        if (!(job.stoppedHere || []).includes(`${m.node}/${n}`) || (job.asideHere || []).some(a => a.node === m.node && a.name === n)) continue;
+        if (!(await rollbackOriginal(job, m.node, n)) || (job.asideHere || []).some(a => a.node === m.node && a.name === n)) continue;
         const aside = `${n}-before-${job.id}`;
-        const r = await run(node, `docker rename ${q(n)} ${q(aside)}`, { timeout: 30000 });
+        const r = (await rollbackAside(job, m.node, n), { code: 0 });
         if (r.code) throw new Error(`Couldn’t set ${n} on ${m.node} aside to make room for this part: ${(r.err || r.out).trim().slice(-300)}`);
-        (job.asideHere ||= []).push({ node: m.node, name: n, aside });
+        if (!(job.asideHere || []).some(a => a.node === m.node && a.name === n)) (job.asideHere ||= []).push({ node: m.node, name: n, aside });
       }
-      await run(node, `docker rm -f ${names.map(q).join(' ')} >/dev/null 2>&1; true`);
+      for (const name of names) await rollbackRemove(job, m.node, name);
     }
     await clusterParts(job, { cp, net, model, modelName, names, nodeIds, viewer, keep, how, fix });
   } catch (e) {
     await asideBack(job);
     throw e;
   }
+  await rollbackCommit(job);
   // It runs: what was set aside for it (the same model on one Spark) goes, as it always did.
   for (const a of job.asideHere || []) {
     const r = await run(nodeById(a.node), `docker rm ${q(a.aside)} >/dev/null 2>&1`, { timeout: 30000 });
@@ -388,6 +414,7 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 // aside goes back whole or not at all (W-7). After putBack's own stops (`afterStops`) it only looks.
 // One whose start again failed stays on `stoppedHere` and is said (W-3, job.notBack).
 async function asideBack(job, afterStops = false) {
+  if (job.rollbackOperation) return; // The shared durable put-back owns these exact originals, after attempts settle.
   const ready = new Map();
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
@@ -447,7 +474,7 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   await engineCheck(job, { cp, model, net, nodeIds, fix });
   // (each stop looked at, A-23: a Spark that didn't answer, and a stop that didn't take there, are both said)
   const stopAll = async () => {
-    const r = await Promise.all(cp.members.map((m, i) => stopChecked(nodeById(m.node), names[i])));
+    const r = await Promise.all(cp.members.map((m, i) => job.rollbackOperation ? rollbackStopNew(job, m.node, names[i]).catch(() => 'unknown') : stopChecked(nodeById(m.node), names[i])));
     const missed = cp.members.filter((m, i) => r[i] !== 'stopped');
     for (const m of missed) {
       const i = cp.members.indexOf(m);
@@ -468,7 +495,7 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
     contextCheck(job); // Each rank must still be inside the approved retry's shared deadline.
-    const r = await run(nodeById(m.node), clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix }), { timeout: 120000 });
+    const r = await rollbackRun(job, m.node, names[rank], receipt => clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix, receipt }));
     // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
     if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     if (r.code) { await stopAll(); throw new Error(`Docker couldn’t start the part on ${m.node}: ${r.err || r.out}`); }

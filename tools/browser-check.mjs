@@ -21,7 +21,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, ...(process.env.SPARK_BROWSER_CHANNEL ? { channel: process.env.SPARK_BROWSER_CHANNEL } : {}) });
+  browser = await chromium.launch({ headless: true, ...(process.env.SPARK_BROWSER_CHANNEL ? { channel: process.env.SPARK_BROWSER_CHANNEL } : {}), ...(process.env.SPARK_BROWSER_EXECUTABLE ? { executablePath: process.env.SPARK_BROWSER_EXECUTABLE } : {}) });
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage(), errors = [];
@@ -56,7 +56,7 @@ try {
       if (path === 'main') return send({ configured: true, healthy: true, title: 'Test brain', node: 'spark1' });
       if (path.startsWith('status')) return send({ updatedAt: now(), nodes: nodes.map(n => ({ ...n, reachable: true, state: 'online', memoryTotalGiB: 120, memoryFreeGiB: 100, runningContainers: n.id === 'spark1' ? ['sparkie-main', 'plug-controller'] : n.id === 'spark3' ? ['sc-example'] : [] })) });
       if (path === 'connections') return send({ portalUrl: 'https://custom.example/', nodes: [] });
-      if (path === 'fabric') return send({ sparks: [], pairs: [] });
+      if (path === 'fabric') return send({ sparks: [], links: [] });
       if (path === 'models') return send({ library: [], sparks: [] });
       if (path === `chats/${retryChat}`) return send({ id: retryChat, title: 'Start Example', replying: false,
         messages: [{ role: 'assistant', content: 'Try again with 32,768 tokens?', createdAt: now(),
@@ -123,6 +123,39 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'retry question fits the viewport');
     assert.deepEqual(errors, []);
     await context.close();
+    // The paired owner can sign this browser in without a registered passkey. The page only requests a code;
+    // approval must happen in Telegram, never as a side effect of opening or polling this dialog.
+    const visitor = await browser.newContext({ viewport }), phone = await visitor.newPage(), visitorErrors = [];
+    phone.on('pageerror', e => visitorErrors.push(e.message));
+    const requested = [], code = 'BCDF-2345';
+    await phone.route('**/console/api/**', async route => {
+      const path = new URL(route.request().url()).pathname.replace('/console/api/', '');
+      const method = route.request().method();
+      const send = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      if (method !== 'GET') requested.push({ path, body: route.request().postDataJSON() });
+      if (path === 'bootstrap') return send({ error: 'Sign in first.' }, 401);
+      if (path === 'whoami') return send({ access: 'none', login: null, signin: false, recovery: false, deviceSignin: true, via: 'internet' });
+      if (path === 'public/fleet') return send({ sparks: [], links: [] });
+      if (path === 'auth/device/start') return send({ code, deviceCode: 'private-browser-request', expiresIn: 600, interval: 1 });
+      if (path === 'auth/device/poll') return send({ waiting: true }, 202);
+      return send({});
+    });
+    await phone.goto(base);
+    await phone.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await phone.getByRole('button', { name: 'Get a sign-in code', exact: true }).click();
+    const codeDialog = phone.getByRole('dialog', { name: 'Sign in with a code', exact: true });
+    await codeDialog.getByText(code, { exact: true }).waitFor();
+    assert.match(await codeDialog.innerText(), /In your paired Telegram chat, send \/device BCDF-2345 allow/);
+    assert.match(await codeDialog.innerText(), /Approve only a sign-in you started/);
+    await phone.waitForResponse(response => response.url().endsWith('/auth/device/poll'));
+    assert.equal(requested.filter(x => x.path === 'auth/device/start').length, 1);
+    assert.equal(requested.find(x => x.path === 'auth/device/start').body.kind, 'browser');
+    assert.ok(requested.every(x => ['auth/device/start', 'auth/device/poll'].includes(x.path)), 'the webpage never approves itself');
+    assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'sign-in code fits the viewport');
+    assert.doesNotMatch(await phone.locator('.outside-status').innerText(), /Couldn’t load the fleet/, 'the public fleet fixture renders without an error');
+    assert.deepEqual(visitorErrors, []);
+    await codeDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await visitor.close();
     console.log(`Browser smoke passed: ${viewport.width}x${viewport.height}`);
   }
 } finally {

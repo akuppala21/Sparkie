@@ -22,6 +22,15 @@ export const SERVICE_FILE = join(REPO, 'service', 'server.mjs');
 export const T = {};
 // A file that runs past its limit (file-limit.mjs) stops its fleet before it ends.
 atFileLimit(() => T.fleet?.stop());
+// Destroy the entire old stand-in world before an independent destructive case. No recovery note is cleared
+// inside a surviving fleet, and no missing reply is turned into terminal proof.
+export async function resetFleet(opts = {}, setup = null) {
+  await cleanupKeys();
+  await T.fleet?.stop();
+  T.fleet = await startMock(opts);
+  Object.assign(T, { base: T.fleet.base, mcp: T.fleet.mcp, origin: T.fleet.origin });
+  await setup?.();
+}
 export function useFleet(opts = {}, setup = null) {
   before(async () => {
     T.fleet = await startMock(opts);

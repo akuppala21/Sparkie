@@ -1,5 +1,5 @@
 /* ───────── the journal: what was said, called, run and seen here, kept on the hub (B1, R43) ───────── */
-// Area: record        Rules: R7, R22, R26, R43        Tests: journal.test.mjs, door.test.mjs, fuzz.test.mjs
+// Area: record        Rules: R7, R22, R26, R43        Tests: journal.test.mjs, door.test.mjs, fuzz.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: none (its own files, journal-YYYY-MM.jsonl and .out in JOURNAL_DIR, are outside the state folder; one writer,
 //   journal)
 // Timers: none        Wakes: none
@@ -258,10 +258,9 @@ const jMerge = (start, end) => (end ? { ...start, ...end, id: start.id, at: star
 // Words said in a chat, and the text of a chat's tool results, come back only on the owner's own call: POST /actions,
 // or Sparkie in the owner's own page chat. The same test as sparkie_setup's (A5). Never an agent's key, ask_sparkie or
 // a chat an agent started: until keys are taken out at the door, a secret said in plain words is in the journal, and an
-// agent reads operations, attempts, calls and events only. Nor a channel (Telegram): there the journal reads as an
-// agent's does, but for the words said in that same channel (a `said` record with its `via`), so a line forgotten or
-// erased, or words said on the page, never go out there (review of the memory steps, 2026-11-15; R43).
-const jOwnCall = (viewer, ctx) => !viewer?.agentKey && !ctx.channel && (ctx.via === 'api' || (ctx.via === 'sparkie' && !ctx.agent && !chatData().conversations.find(c => c.id === ctx.conv)?.agent));
+// agent reads operations, attempts, calls and events only. The verified owner in the current paired Telegram chat
+// reads the same record as on the page; a channel name alone grants no access.
+const jOwnCall = (viewer, ctx) => !viewer?.agentKey && isOwnerCall(ctx) && !chatData().conversations.find(c => c.id === ctx.conv)?.agent;
 // (a said record that a caller who isn't the owner's own call still reads: words said in the channel it calls from)
 const jSaidHere = (r, channel) => Boolean(channel) && r.k === 'said' && r.via === channel;
 const J_OWNER_ONLY = 'Words said in a chat, and a chat’s tool results, are read back only on the owner’s own call.';

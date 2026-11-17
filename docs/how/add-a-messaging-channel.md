@@ -8,10 +8,16 @@ A way for the owner to talk to Sparkie from another app, like Telegram.
   the owner's words through `sparkieTurn` with `channel`, presses through `runChoice` with its own `via`, every send
   through `tell()` (`20-tell.mjs`).
 - Its door takes a key out before anything reads the words, as `tgKeys` does (`20-keys.mjs`): `keysGiven`, delete the
-  message there if it can, then `giveKey` in the owner's chat of that channel.
+  message there if it can, then `giveKey` in the owner's chat of that channel. Capture its authenticated owner and chat
+  before waiting for deletion; recheck that owner before saving and bind the reply to that request. A save already
+  started may finish; a replacement pairing receives none of its result.
 - The owner's yes from it: an owner-only ask goes out through `tgAsk` and its press comes back through
-  `tgApproving` (`20-tg-approve.mjs`), with the switch, the caps and `/lock`; `runChoice` takes it as the owner's yes
+  `tgApproving` (`20-tg-approve.mjs`), with current pairing proof, complete delivery and `/lock`; `runChoice` takes it as the owner's yes
   only after `tgAskOpen`.
+- Plain choices retain the full server question in `pendingChoices`. Send that question and complete labels through
+  `tellReplyText`, including pressed follow-ups and choices beyond the page’s eight-ask display limit. A50 closes the
+  gap where a model summary and shortened button hid the facts. Mask every part before activation; retries keep the
+  same exact question and call. Owner-only and dangerous asks retain their separate sender.
 
 Completion results use `tellAgain` (20-tell.mjs), including job ends, saved-run and self-test recovery, install
 results and carry-on replies. Keep each caller's return value and page updates; `tellAgain` returns `sent`, `later`
@@ -23,7 +29,7 @@ send can repeat a message. Task reports keep their own retry record in the chat;
 ## Also update
 
 - R32; R51 (keys given once).
-- `PAGE_ONLY` (`16-actions.mjs`).
+- The shared owner predicates in `16-actions.mjs`; never derive owner authority from a channel string.
 - `sparkie_setup` and `fleetNotes` for its state.
 - A mock in `test/mock` started by `startMock` (`test/start-mock.mjs`).
 - The diagram in `docs/architecture.md`.
@@ -33,7 +39,7 @@ send can repeat a message. Task reports keep their own retry record in the chat;
 - A route the internet can call.
 - A new `via` for its tool calls (the intent gate keys on `sparkie`).
 - A second sender.
-- A second way for a channel's press to count as the owner's yes, or one for a `PAGE_ONLY` action.
+- A second way for a channel's press to count as the owner's yes. Use the existing pending choice and confirmation path.
 - Its token anywhere but the secrets file.
 - The owner's words to `sparkieTurn` before the key door has seen them.
 

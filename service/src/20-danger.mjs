@@ -115,7 +115,7 @@ function dangerOwnerWords(conv) {
 // Returns what the caller (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
-  if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
+  if (!ks.length || !call?.action || (!ACTIONS.has(call.action) && call.action !== OWNER_ADMIN)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
   const install = ks.includes('install'), code = install ? null : dangerCodeOf(shown || {});
   if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
     throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
@@ -227,7 +227,7 @@ const dangerGone = id => (dangerGoneIds.has(String(id)) ? 'That ask is no longer
 // What an approval of it from Telegram is echoed as on the page (tgApproved): its first line, not its yes words.
 const dangerHeadOf = id => (dangerRecent?.id === id ? dangerRecent.head : dangerOpen?.id === id ? dangerOpen.head : null);
 // /stop in the chat that asked; /pause; a new pairing: closed. /lock and the switch off: its Telegram side only.
-function dangerStopped(conv) { const a = conv && dangerLive(); if (!a || a.conv !== conv.id) return false; dangerClose(a, 'stopped'); return true; }
+function dangerStopped(conv) { const a = conv && dangerOpen; if (!a || a.closedAt || a.conv !== conv.id) return false; dangerClose(a, 'stopped'); return true; }
 function dangerPaused() { if (dangerOpen) dangerClose(dangerOpen, 'paused'); }
 function dangerTelegramGone(everywhere) {
   if (!dangerOpen) return;
@@ -241,21 +241,19 @@ const dangerShown = messages => (dangerLive() && dangerOpen && !dangerOpen.taken
   ? messages.map(m => (m.danger?.ask !== dangerOpen.id ? m : Date.now() < dangerOpen.opensAt ? { ...m, opensAt: new Date(dangerOpen.opensAt).toISOString() } : { ...m, pair: dangerOpen.digits }))
   : messages);
 
-// Sends it to the paired chat while approvals from there are on: its facts, the command as a fixed-width block, then the
-// digits, with its two buttons. Over 3,500 characters, or when it changes who may approve: the facts, and that it waits
-// in Spark Console, with no button.
+// The full facts and command go through the one sender. The same current-pair and exact-choice binding becomes
+// actionable only after every part is acknowledged. Only the explicit approvals-on admin ask can unlock a lock.
 async function dangerTell(a) {
-  const p = tgPaired();
-  if (!p || !tgApproveOn() || dangerOpen !== a || a.taken) return false;
-  const head = a.lines.join('\n'), end = `To run it: press ${a.yesWords}, then type ${a.digits}.`;
-  if (a.whoApproves || (a.code !== null && a.code.length > TG_ASK_MAX) || head.length + (a.code?.length || 0) + 200 > TELL_PART) return tell('ask', `${head}\n\nThis one waits for you in Spark Console.`);
-  const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: a.group, conv: a.conv };
-  for (const id of [a.yes, a.no]) tgAsks.set(id, sent);
+  if (!tgPaired() || dangerOpen !== a || a.taken) return false;
+  const sent = tgAskBinding([a.yes, a.no], a.group, a.conv);
+  if (!sent) return false;
   a.telegram = sent;
-  const buttons = [{ id: a.yes, label: a.yesWords }, { id: a.no, label: 'No' }];
-  const ok = a.code === null ? await tell('ask', `${head}\n\n${end}`, { buttons }) : await tell('ask', `${head}${a.longLine ? `\n${a.longLine}` : ''}`, { buttons, pre: a.code, tail: end });
-  if (!ok) { for (const id of [a.yes, a.no]) if (tgAsks.get(id) === sent) tgAsks.delete(id); if (a.telegram === sent) a.telegram = null; }
-  return ok;
+  const head = a.lines.join('\n'), end = `To run it: press ${a.yesWords}, then type ${a.digits}.`;
+  const options = { buttons: [{ id: a.yes, label: a.yesWords }, { id: a.no, label: 'No' }],
+    isCurrent: () => dangerOpen === a && !a.taken && tgAskCurrent(sent), onSent: () => tgAskDelivered(sent),
+    onDropped: () => { tgAskDrop(sent); if (a.telegram === sent) a.telegram = null; },
+    ...(a.code === null ? {} : { pre: a.code, tail: end }) };
+  return (await tellAgain('ask', a.code === null ? `${head}\n\n${end}` : `${head}${a.longLine ? `\n${a.longLine}` : ''}`, options, 'danger-confirmation', { chat: a.conv })) === 'sent';
 }
 // Its yes pressed in the paired chat (tgApproving, once A10a's checks pass): answered, and the next message is compared.
 function dangerPressedHere(choice) {
@@ -279,11 +277,12 @@ const dangerPairInChat = text => dangerHolds(dangerLive(), text);
 // allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
 // ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
 // or the journal). null: not about an ask (it goes on to Sparkie).
-function dangerTypedHere(text) {
+function dangerTypedHere(text, viewer) {
+  if (!tgOwnerValid(viewer)) return Promise.resolve(false);
   const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
   const holds = !pair && dangerHolds(a, t);
   if (!a || !a.telegram) {
-    if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
+    if (a && (pair || holds)) return tell('system', 'That confirmation is not open here. Ask again.');
     return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;
   }
   if (!a.pressedAt) return pair ? tell('system', `Press ${a.yesWords} first.`) : holds ? tell('system', `Press ${a.yesWords} first, then type only the two digits.`) : null;
@@ -291,12 +290,10 @@ function dangerTypedHere(text) {
   if (!pair) { a.pressedAt = 0; return null; }
   if (!dangerSame(pair, a.digits)) return tell('system', dangerWrong(a));
   const c = pendingChoices.get(a.yes), conv = chatData().conversations.find(x => x.id === a.conv);
-  if (!c || !conv || !tgAskOpen(a.yes, c)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
-  const held = tgApprovalsHeld();
-  if (held) return tell('system', held);
-  if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Type the two digits again when I’m done.');
+  if (!c || !conv || !tgAskOpen(a.yes, c)) return tell('system', 'That confirmation is not open here. Ask again.');
+  if (tg.pressing) return tgOwnerTell(viewer, 'system', 'Another button is still being handled. Type the two digits again in a moment.');
   a.pairOk = true;
-  return tgRun(conv, a.yes, { c, conv });
+  return tgRun(conv, a.yes, { c, conv }, viewer);
 }
 // runChoice's check of any press on a dangerous ask, before anything runs: open, the owner's own press with its pair,
 // and what it shows still what would run. A refusal throws (it says why) and runs nothing.
@@ -317,6 +314,9 @@ async function dangerPress(id, c, by) {
   let same = dangerBound(a, c.action, c.args) === a.sha;
   try { if (same && a.recheck) same = dangerSha(String(await a.recheck())) === a.bytesSha; } catch { same = false; }
   if (!same) { dangerClose(a, 'changed'); throw no(409, 'What that ask showed is no longer what would run, so nothing was run. Ask again: a new ask shows the new text.'); }
+  if (dangerOpen !== a || a.closedAt || Date.now() - a.opensAt > DANGER_MS || !pendingChoices.has(id) || by.via === 'telegram' && (!a.telegram || !tgAskOpen(id, c) || !a.pairOk || !a.pressedAt)) {
+    dangerClose(a, 'revoked'); throw no(409, 'That confirmation was stopped, locked or expired while it was being checked. Nothing ran.');
+  }
   dangerClose(a, 'answered', { gate: `asked:${by.via}` });
 }
 

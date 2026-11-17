@@ -1,5 +1,5 @@
 /* ───────── a stop that is looked at, and what a put-back still owes when one isn't known to have worked (A-23) ───────── */
-// Area: core        Rules: R16, R15        Tests: put-back-job.test.mjs, across.test.mjs, restart-limit.test.mjs
+// Area: core        Rules: R16, R15        Tests: put-back-job.test.mjs, across.test.mjs, restart-limit.test.mjs, t45-recovery-words.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The put-back after a failed start (putBack, asideBack), an app that didn't come up (appPutBack), a restart that didn't

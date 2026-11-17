@@ -239,6 +239,8 @@ ${m.draft ? build(m.draft, '$draft', 'draft') : ''}`;
 const MAIN_SLOW = 'It didn’t answer within 45 minutes';
 async function startMain(job, keep = [], m = MAIN) {
   const p = await mainPlan(m), node = mainNode(m);
+  // An account command confirms a fixed stop list. A new arrival never widens that approval.
+  if (Array.isArray(job.ownerBrainStops) && p.steps.some(s => s.kind === 'stop' && !keep.includes(s.container) && !job.ownerBrainStops.includes(s.container))) throw new Error('Another model would now need to stop. Nothing was stopped; ask for a new brain plan.');
   // (the brain keeper's start: self-healing never stops, copies or downloads anything to bring the brain back)
   if (job.noStops && p.steps.some(s => s.kind !== 'start')) throw new Error('Starting it now would stop, copy or download something, and self-healing never does that.');
   for (const s of p.steps.filter(s => s.kind === 'stop' && keep.includes(s.container))) note(job, `Keeping ${s.container} running, as asked`);
@@ -322,7 +324,10 @@ const unconfirmedWords = (look, why = '') => `Spark Console asked Docker to remo
 // is started again, and the error says whether it came back.
 async function switchMain(job, target, keep) {
   const previous = MAIN;
-  try { await mainPlan(target); } catch (e) { throw new Error(`${target.title} can’t start, and nothing was stopped: ${e.message}`); }
+  try {
+    const planned = await mainPlan(target);
+    if (Array.isArray(job.ownerBrainStops) && planned.steps.some(s => s.kind === 'stop' && !keep.includes(s.container) && !job.ownerBrainStops.includes(s.container))) throw new Error('Another model would now need to stop. Ask for a new brain plan.');
+  } catch (e) { throw new Error(`${target.title} can’t start, and nothing was stopped: ${e.message}`); }
   markBrainDesired(true);
   if (previous) { markBrainLeftDown(true); await stopMain(job, previous); }
   try {

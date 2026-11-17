@@ -5,6 +5,10 @@ Anything the console fetches from outside the Sparks.
 ## Touch
 
 - A fetcher with a fixed host, like `webGet` (`11-setups.mjs`).
+- Ordinary model downloads pass `downloadAdmission` before creating page work and again before transfer: a
+  configured compute Spark, known selected-file size and fresh free space on the cache’s filesystem.
+  Use `downloadResume` in `11-downloads.mjs` for bounded stall recovery; never retry an unconfirmed stop.
+  See [ordinary model downloads](../download-admission.md).
 - The one fetcher whose host isn't fixed is `read_page` (`21-web.mjs`, R39): only an address in the owner's own words
   or one `search_web` returned in the last hour, only public addresses, checked by the lookup each hop connects
   through (3 redirects at most), no credentials, 15 s and 2 MB.
@@ -30,7 +34,7 @@ Anything the console fetches from outside the Sparks.
 
 ## Tests
 
-- `web.test.mjs`, `dig.test.mjs`, `beat.test.mjs`.
+- `web.test.mjs`, `dig.test.mjs`, `beat.test.mjs`, `download-admission.test.mjs`, `download-stall.test.mjs`.
 
 ## Copy from
 

@@ -43,7 +43,7 @@ import { Authenticator, passkeyHeader } from './authenticator.mjs';
 const ORIGIN = serviceConfig().origin, TAILNET = new URL(ORIGIN).hostname.split('.').slice(1).join('.');
 const K1 = new Authenticator(TAILNET, ORIGIN), K2 = new Authenticator(TAILNET, ORIGIN);
 const FUNNEL = { 'tailscale-funnel-request': '?1' };
-const LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
+const LINE = 'Spark Console’s state was put back from a copy. Review what came back on your tailnet page, or with /review access in your already paired Telegram chat; after you confirm, sign-in from the internet works again.';
 const parse = t => { try { return JSON.parse(t || 'null'); } catch { return null; } };
 const ask = (F, path, { method = 'GET', body, headers = {} } = {}) => request(`${F.base}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
   headers: { ...(method === 'GET' ? {} : { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }), ...headers } }).then(r => ({ ...r, json: parse(r.text) }));
@@ -187,7 +187,7 @@ describe('state put back from a copy', { concurrency: 1 }, () => {
     assert.equal(look.isError, false, look.text);
     const change = await call(a1.token, 'stop_model', { spark: 'spark4', container: 'sc-RadixArk--Qwen3.8-27B-NVFP4' });
     assert.equal(change.isError, true);
-    assert.match(change.text, /state was put back from a copy, so agents can’t change anything/);
+    assert.match(change.text, /state was put back from a copy\. Agents wait until the owner reviews and confirms what came back/);
     const needs = (await ask(G, '/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner;
     assert.ok(needs.some(l => /^Spark Console’s state was put back from a copy/.test(l)), JSON.stringify(needs));
     const l = (await ask(G, '/auth/putback')).json;
@@ -462,12 +462,11 @@ describe('go-back.sh and an update’s way back never trip the hold', () => {
 });
 
 // The paired Telegram chat under the hold (the pairing is in the secrets file: it never came back). The owner's own
-// everyday requests there are answered and run; a press on an approval there is refused with its line; an agent's
+// everyday requests and verified ordinary approvals run; access remains held; an agent's
 // change asked through its chat with Sparkie is refused. Held from the start: a state number below the secrets file's.
 describe('under the hold, the paired Telegram chat', { concurrency: 1 }, () => {
   const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
   const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
-  const TG_LINE = 'Spark Console’s state was put back from a copy, so this waits until you have looked at what came back: open Spark Console once on your tailnet.';
   let P, agent, msgId = 1;
   before(async () => {
     P = await startMock({ telegram: true, knowledge: true, watchMs: 60000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' }, prepare: ({ dir, stateDir }) => {
@@ -500,25 +499,31 @@ describe('under the hold, the paired Telegram chat', { concurrency: 1 }, () => {
     assert.ok((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the reply on Telegram' })).body.text.length > 0);
   });
 
-  test('an approval pressed there is refused with its line, and nothing runs', { timeout: 180000 * SLOW }, async () => {
+  test('the paired owner can confirm an ordinary stop while restored access stays held', { timeout: 180000 * SLOW }, async () => {
     is(await ask(P, '/main/route', { method: 'POST', body: { role: 'agents', choice: `deploy:spark3:${TESTORG}` } }), 200, 'the model answers agents: its stop is the owner’s call');
     let from = tgCount();
     const r = await say(await newChat(), `stop ${TESTORG} on spark 3`);
     const yes = (r.message.choices || []).find(c => c.label === `Yes, stop ${TESTORG}`);
     assert.ok(yes, JSON.stringify(r.message));
     await waitFor(() => tgSent(from).find(m => m.body.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === yes.id))), { timeout: 30000, every: 200, what: 'the ask on Telegram' });
+    assert.equal(stateOf('spark3', TESTORG), 'running', 'nothing stops before the owner confirms');
     from = tgCount();
     await tgPress(yes.id);
-    assert.equal((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the answer to the press' })).body.text, TG_LINE);
-    await sleep(1000);
-    assert.equal(stateOf('spark3', TESTORG), 'running', 'nothing stopped');
+    assert.ok((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the answer to the press' })).body.text.length > 0);
+    await waitFor(() => stateOf('spark3', TESTORG) === 'exited', { timeout: 60000, what: 'the confirmed owner stop' });
+    assert.equal((await net(P, '/whoami')).json.held, LINE, 'ordinary work does not lift restored access');
+    assert.equal((await net(P, '/whoami')).json.deviceSignin, false, 'new device approval remains held');
+    from = tgCount();
+    await tgPress(yes.id);
+    assert.equal((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the replay refusal' })).body.text, 'That button has expired. Ask again.');
+    assert.equal(stateOf('spark3', TESTORG), 'exited');
   });
 
   test('an agent’s change asked through its chat with Sparkie is refused, and nothing runs', { timeout: 180000 * SLOW }, async () => {
     // (the owner's stop above left it exited: a restart is a change)
     const was = stateOf('spark4', RADIX);
     const r = await call(agent.token, ASK, { message: `restart ${RADIX} on spark 4` });
-    assert.match(r.raw, /state was put back from a copy, so agents can’t change anything/, r.raw);
+    assert.match(r.raw, /state was put back from a copy\. Agents wait until the owner reviews and confirms what came back/, r.raw);
     await sleep(1000);
     assert.equal(stateOf('spark4', RADIX), was, 'nothing changed there');
   });

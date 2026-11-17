@@ -1,7 +1,7 @@
 /* ───────── jobs ───────── */
 // Area: ground
 // Rules: R7, R9, R13, R14, R15, R16, R21
-// Tests: change.test.mjs, state.test.mjs, pause.test.mjs, workloads-receipts.test.mjs, context-start.test.mjs
+// Tests: change.test.mjs, state.test.mjs, pause.test.mjs, workloads-receipts.test.mjs, context-start.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 const jobs = new Map();
@@ -175,19 +175,23 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
   const kept = p.steps.filter(s => s.kind === 'stop' && keep.includes(s.container));
   for (const s of kept) note(job, `Keeping ${s.container} running, as asked`);
   const node = nodeById(nodeId), cname = containerName(modelName);
-  const model = withoutRejected(withHow((await inventory(null)).library.find(m => m.name === modelName), how), fix);
+  const snapshot = await inventory(null);
+  const model = withoutRejected(withHow(snapshot.library.find(m => m.name === modelName), how), fix);
+  const stopKeys = p.steps.filter(s => s.kind === 'stop' && !keep.includes(s.container)).map(s => `${nodeId}/${s.container}`);
+  if (snapshot.sparks.find(s => s.id === nodeId)?.deployments.some(d => d.container === cname)) stopKeys.push(`${nodeId}/${cname}`);
+  await rollbackPrepare(job, [nodeId], stopKeys, snapshot);
   for (const s of p.steps.filter(s => s.kind === 'stop' && !keep.includes(s.container))) await stopContainer(job, nodeId, s.container, viewer);
   // A running copy of this model that this start stopped is set aside under another name, not removed, so it can
   // start again if this doesn't (as a start across two Sparks does, 08-cluster.mjs). Before, a failed start left nothing
   // to put back (F9).
-  if ((job.stoppedHere || []).includes(`${nodeId}/${cname}`) && !(job.asideHere || []).some(a => a.node === nodeId && a.name === cname)) {
+  if (await rollbackOriginal(job, nodeId, cname) && !(job.asideHere || []).some(a => a.node === nodeId && a.name === cname)) {
     const aside = `${cname}-before-${job.id}`;
-    const r = await run(node, `docker rename ${q(cname)} ${q(aside)}`, { timeout: 30000 });
+    const r = (await rollbackAside(job, nodeId, cname), { code: 0 });
     if (r.code) throw new Error(`Couldn’t set ${cname} on ${nodeId} aside to make room for the new start: ${(r.err || r.out).trim().slice(-300)}`);
-    (job.asideHere ||= []).push({ node: nodeId, name: cname, aside });
+    if (!(job.asideHere || []).some(a => a.node === nodeId && a.name === cname)) (job.asideHere ||= []).push({ node: nodeId, name: cname, aside });
   }
   try {
-    await run(node, `docker rm -f ${q(cname)} >/dev/null 2>&1; true`);
+    await rollbackRemove(job, nodeId, cname);
     const copy = p.steps.find(s => s.kind === 'copy');
     job.checkPause?.();
     if (copy) {
@@ -207,7 +211,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     const share = [...memoryShare(model, [measured ? { node: nodeId, steps: [], memory: { ...p.memory, ...measured } } : { ...p, node: nodeId }], keep), ...fixFlags(model, fix)];
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     contextCheck(job); // Copies, image pulls and fresh planning may have used the remaining retry time.
-    const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
+    const started = await rollbackRun(job, nodeId, cname, receipt => dockerRunCommand(model, p.tsip, p.store, share, receipt));
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
     if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
@@ -231,6 +235,7 @@ docker logs --tail 1 ${q(cname)} 2>&1 | tail -1`, { timeout: 20000 });
           env: model.manifest?.env || {}, nodes: [nodeId], host: node.host === 'local' || ALL_LOCAL ? '127.0.0.1' : p.tsip, port: CONFIG.servePort, viewer, how });
         // It runs: the copy it replaced goes, as it always did. (run never throws, so nothing here can put back a model
         // that works.)
+        await rollbackCommit(job);
         for (const a of job.asideHere || []) {
           const gone = await run(nodeById(a.node), `docker rm ${q(a.aside)} >/dev/null 2>&1`, { timeout: 30000 });
           if (gone.code) note(job, `Couldn’t remove ${a.aside} on ${a.node} (the earlier copy this start replaced); remove it there with docker rm ${a.aside}`);
@@ -264,7 +269,7 @@ async function stopContainer(job, nodeId, container, viewer = null) {
   for (const [id, name] of parts.sort((a, b) => b[0].localeCompare(a[0]))) {
     consoleStopped.set(`${id}/${name}`, Date.now());
     step(job, `Stopping ${name} on ${id}`);
-    const r = await run(nodeById(id), `docker stop --time 30 ${q(name)}`, { timeout: 120000 });
+    const r = job.rollbackOperation ? (await rollbackStopOriginal(job, id, name), { code: 0 }) : await run(nodeById(id), `docker stop --time 30 ${q(name)}`, { timeout: 120000 });
     if (r.code && !/No such container/.test(r.err)) throw new Error(r.err || r.out || 'docker stop failed');
     // What this operation stopped, so a put-back starts exactly these again.
     if (!r.code) (job.stoppedHere ||= []).push(`${id}/${name}`);

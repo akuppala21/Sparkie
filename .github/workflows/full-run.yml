@@ -76,7 +76,7 @@ jobs:
           retention-days: 7
 
   qualify:
-    needs: suite
+    needs: [suite, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

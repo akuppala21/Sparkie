@@ -2091,7 +2091,7 @@ async function signInWithRecovery() {
   });
   if (ok) location.reload();
 }
-async function signInWithCode() {
+async function signInWithCode(telegram = false) {
   const start = await capi('auth/device/start', 'POST', { kind: 'browser', name: deviceName() });
   const status = h('p', { class: 'signin-wait', 'aria-live': 'polite' }, h('span', { class: 'spinner sm' }), 'Waiting for you to let it in…');
   const shown = h('div', { class: 'signin' });
@@ -2118,7 +2118,7 @@ async function signInWithCode() {
     h('p', { class: 'muted signin-fine' }, 'The code works for 10 minutes.'));
   await dialog({
     title: 'Sign in with a code', confirm: 'Close', cancel: null, dismissable: false,
-    description: 'On a device that’s signed in: account menu › Let a device in, then type this code.',
+    description: telegram ? `In your paired Telegram chat, send /device ${start.code} allow. Check the device shown and confirm. Approve only a sign-in you started.` : 'On a device that’s signed in: account menu › Let a device in, then type this code.',
     body: h('div', { class: 'signin' }, shown, status),
   });
   stop = true;
@@ -3452,12 +3452,12 @@ function telegramPanel() {
   const problem = ['token-refused', 'in-use', 'unreachable', 'secrets-unreadable'].includes(t.state);
   if (problem) put(body, note(t.whatToDo, true));
   if (t.paired) {
-    put(body, note(`Paired with ${t.name || 'your Telegram'} (@${t.bot})${t.pairedAt ? `, ${fmt.when(t.pairedAt)}` : ''}.${t.lastMessageAt ? ` Last message ${fmt.ago(Date.parse(t.lastMessageAt))}.` : ''} Going back a build, ${ASSISTANT}’s memory and saved workflows still wait for you here.`),
+    put(body, note(`Paired with ${t.name || 'your Telegram'} (@${t.bot})${t.pairedAt ? `, ${fmt.when(t.pairedAt)}` : ''}.${t.lastMessageAt ? ` Last message ${fmt.ago(Date.parse(t.lastMessageAt))}.` : ''} Work, memory, saved workflows and confirmations are available in your paired chat. Send /admin for owner controls.`),
       // The needs-me line (H5): off until switched on here, with the passkey; off never needs it.
       h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.needsMe), onchange: e => telegramNeedsMe(e.target) }),
         'Tell me on Telegram when something new needs me (at most 3 a day)'));
     put(body, h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.approve), onchange: e => telegramApprove(e.target) }),
-      'Let me approve changes from Telegram (at most 3 an hour, 10 a day; /lock there turns this off)'));
+      'Let me approve changes from Telegram (/lock there turns this off)'));
   } else if (t.code) {
     watchPairing();
     put(body, note(`Open this on the device with your Telegram and press Start. It works once, until ${fmt.when(t.code.expiresAt)}.`),
@@ -3803,26 +3803,25 @@ function outsidePage(who) {
   setInterval(() => { if (!document.hidden) load(); }, 10000);
 
   // The owner, from the internet (4.10): their passkey, or a code they let in from a signed-in device. Tailscale still works.
-  // With no passkey on file the Tailscale steps show, with the recovery code beside them when whoami says one would work
-  // (who.recovery, F18).
+  // An already paired Telegram owner can approve a browser code without a passkey. Other sign-in methods keep their own checks.
   async function openSignIn() {
-    // (state put back from a copy: nothing signs in from here until the owner has looked on the tailnet)
+    // A restored state waits for owner review before this browser can sign in.
     if (who.held) return dialog({ title: 'Sign in', description: who.held, cancel: null });
-    if (!who.signin) return openTailscaleSignIn();
+    if (!who.signin && !who.deviceSignin) return openTailscaleSignIn();
     let other = null, dlg = null;
     const pick = what => { if (dlg?.querySelector('[aria-busy]')) return; other = what; dlg?.close(); };
     const ok = await dialog({
-      title: 'Sign in', confirm: 'Use passkey',
-      description: 'Owner: use your passkey (Face ID, Touch ID or screen lock), and this device stays signed in.',
+      title: 'Sign in', confirm: who.signin ? 'Use passkey' : 'Get a sign-in code',
+      description: who.signin ? 'Owner: use your passkey (Face ID, Touch ID or screen lock), and this device stays signed in.' : 'Use your paired Telegram chat to confirm this browser’s sign-in.',
       body: h('div', { class: 'signin-other' },
-        h('button', { class: 'btn sm', type: 'button', onclick: () => pick('code') }, 'No passkey here? Get a code'),
+        who.signin ? h('button', { class: 'btn sm', type: 'button', onclick: () => pick('code') }, 'No passkey here? Get a code') : null,
         h('button', { class: 'btn sm', type: 'button', onclick: () => pick('recovery') }, 'Use a recovery code'),
         h('button', { class: 'btn sm', type: 'button', onclick: () => pick('tailscale') }, 'Sign in with Tailscale')),
       setup: ({ dlg: d }) => { dlg = d; },
-      onConfirm: () => signInWithPasskey(),
+      onConfirm: () => who.signin ? signInWithPasskey() : true,
     });
-    if (ok) { location.reload(); return; }
-    if (other === 'code') { try { await signInWithCode(); } catch (e) { toast(e.message, { kind: 'bad' }); } }
+    if (ok && who.signin) { location.reload(); return; }
+    if (other === 'code' || ok) { try { await signInWithCode(Boolean(who.deviceSignin)); } catch (e) { toast(e.message, { kind: 'bad' }); } }
     if (other === 'recovery') { try { await signInWithRecovery(); } catch (e) { toast(e.message, { kind: 'bad' }); } }
     if (other === 'tailscale') openTailscaleSignIn();
   }
@@ -3831,10 +3830,10 @@ function outsidePage(who) {
   async function openTailscaleSignIn() {
     let dlg = null, useRecovery = false;
     const note = h('div', { 'aria-live': 'polite' });
-    const show = () => redraw(note, !who.login && who.via === 'internet' && who.signin
+    const show = () => redraw(note, !who.login && who.via === 'internet' && (who.signin || who.deviceSignin)
       ? h('div', { class: 'banner info signin-note' }, icon('alert'),
         h('div', { class: 'banner-text' }, h('p', {}, 'This browser reaches Spark Console over the internet, not through Tailscale, even with Tailscale on: it looks addresses up its own way (iCloud Private Relay in Safari, or secure DNS in Chrome). Sign in with your passkey or a code instead, or turn those off and reload.')),
-        h('button', { class: 'btn sm', type: 'button', onclick: () => { dlg?.close(); openSignIn(); } }, 'Passkey or code'))
+        h('button', { class: 'btn sm', type: 'button', onclick: () => { dlg?.close(); openSignIn(); } }, who.signin ? 'Passkey or code' : 'Sign-in code'))
       : who.login && who.access === 'none'
       ? h('div', { class: 'banner info signin-note' }, icon('key'),
         h('div', { class: 'banner-text' }, h('p', {}, `You’re on Tailscale as ${who.login}, which isn’t the owner’s account.`)))

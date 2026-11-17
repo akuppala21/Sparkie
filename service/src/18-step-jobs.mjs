@@ -1,5 +1,5 @@
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
-// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs, workloads-receipts.test.mjs
+// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs, workloads-receipts.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-owner-wish.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A step that runs a job (keep_running with once true, or one whose answer says it is a job: run again, or already
@@ -107,16 +107,17 @@ async function receiptOf(spark, container) {
   return /^[0-9a-f]{12,64}$/.test(id || '') && at ? { id, startedAt: at } : null;
 }
 // Captured before the start's claim is released (runJob), never by sampling a later owner's container.
-async function captureStartedReceipts(job) {
+async function captureStartedReceipts(job, save = true) {
   const keys = [...new Set([...(job.ranHere || []), ...((job.type === 'restart' || job.app) && job.node && job.container ? [`${job.node}/${job.container}`] : [])])];
-  job.startedReceipts = {};
+  const receipts = {};
   for (const key of keys.filter(k => !/-part2$/.test(k))) {
     const [spark, container] = key.split('/');
     const seen = await receiptOf(spark, container);
     const entry = desired().running.find(x => keyOf(x) === key);
-    job.startedReceipts[key] = seen ? { ...seen, since: entry?.since || null } : null;
+    receipts[key] = seen ? { ...seen, since: entry?.since || null } : null;
   }
-  savedRunReceipts(job);
+  if (save) { job.startedReceipts = receipts; savedRunReceipts(job); }
+  return receipts;
 }
 async function startedReceipts(items) {
   return items.map(x => {
@@ -196,6 +197,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
       const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       // (only what this run started: its receipt is looked at again inside the stop's own claim, A-22)
       if (!x.seen?.id || (!x.seen.startedAt && !x.seen.since)) throw new Error('the record of what this run started is missing');
+      rollbackSupersede([`${x.spark}/${x.container}`], 'its saved workflow finished with it', x.seen);
       const cx = { ...c, onlyIf: x.seen };
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, cx)
         : await stopAppStarted(viewer, x, cx);

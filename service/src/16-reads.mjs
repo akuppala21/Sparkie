@@ -520,14 +520,13 @@ action({
 // (run and write_file are reads to runAction but change things, `changes: true`: they are listed with the changes, TR-4)
 function abilities() {
   const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read' && !a.changes) === read).map(a => a.title);
-  const pageOnly = [...PAGE_ONLY].map(n => ACTIONS.get(n)?.title).filter(Boolean).join(', ');
   return {
     observedAt: new Date().toISOString(), canLookUp: titles(true), canChange: titles(false),
     limits: [
-      `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. The owner does those by hand.`,
+      `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. For account changes, use your own account controls or /admin.`,
       'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.',
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
-      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
+      'Your paired Telegram chat has the same owner controls as the page. Changes that need your confirmation show their exact action and wait for your own button; dangerous changes also ask for two digits.',
       CHANGES_ASKED,
       'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.',
     ],

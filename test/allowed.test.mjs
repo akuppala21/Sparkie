@@ -1,5 +1,5 @@
 // Covers: "Always allow" (A9b, R65; 21-ahead.mjs): no such answer until a passkey is set up; then a change's button
-// on the page offers it, never the paired Telegram chat; its press (with the passkey) runs the command and keeps the kind
+// on the page and in the paired Telegram chat offers it; its press (with the passkey) runs the command and keeps the kind
 // in agent-settings.json; in a later request in another chat a command of that kind runs at once (its record says
 // always:<id>) when the words ask for a change, while another kind, words that ask for none, or what came from a read
 // are asked; /allowed lists the kinds, /allowed off takes one away; after a state put-back they wait for "Keep these".
@@ -48,7 +48,7 @@ async function turn(chat, words, rounds) {
 }
 const asks = choices => [...new Set(choices.map(c => c.group))].map(g => choices.filter(c => c.group === g).map(c => c.label));
 const TOUCH = '“touch” in ~/notes on Spark 3';
-const GA = `Run it, and don’t ask again for this task: ${TOUCH}`, ALWAYS = `Always allow ${TOUCH} (on this page, with your passkey)`;
+const GA = `Run it, and don’t ask again for this task: ${TOUCH}`, ALWAYS = `Always allow ${TOUCH} (with your confirmation)`;
 const allowed = () => JSON.parse(readFileSync(join(T.fleet.stateDir, 'agent-settings.json'), 'utf8')).allowed || [];
 async function confirmed(method, path, body) {
   const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method, path, body } });
@@ -63,7 +63,7 @@ test('with no passkey set up, a change\'s button offers no "Always allow"', { ti
   assert.deepEqual(asks(r.choices), [['Run it', GA, 'No']]);
 });
 
-test('"Always allow" is the page\'s, with the passkey: not in the paired chat; its press runs it and keeps the kind; a later request runs that kind at once (always:<id>) when its words ask for a change; another kind, words that ask for none and what came from a read are asked', { timeout: 240000 * SLOW }, async () => {
+test('"Always allow" is offered to the paired owner too; the page still needs its passkey; its press runs it and keeps the kind; a later request runs that kind at once (always:<id>) when its words ask for a change; another kind, words that ask for none and what came from a read are asked', { timeout: 240000 * SLOW }, async () => {
   const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
   assert.equal((await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) })).status, 201, 'a passkey');
   await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
@@ -71,7 +71,10 @@ test('"Always allow" is the page\'s, with the passkey: not in the paired chat; i
   assert.deepEqual(asks(r.choices), [['Run it', GA, ALWAYS, 'No']]);
   const always = r.choices.find(c => c.label === ALWAYS);
   const sent = await waitFor(() => tgCalls().slice(from).find(c => c.method === 'sendMessage' && c.body?.reply_markup), { what: 'the ask in the paired chat' });
-  assert.ok(!JSON.stringify(sent.body).includes(always.id) && !sent.body.text.includes('Always allow'), JSON.stringify(sent.body));
+  const buttons = sent.body.reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b => b.callback_data === always.id && b.text === ALWAYS.slice(0, 60)), JSON.stringify(sent.body));
+  assert.ok(sent.body.text.includes(ALWAYS), sent.body.text);
+  assert.deepEqual(existsSync(join(T.fleet.stateDir, 'agent-settings.json')) ? allowed() : [], [], 'showing the Telegram choice grants no standing permission');
   // (pressed without the passkey: refused, nothing run, nothing kept)
   const bare = await choose(chat, always.id);
   assert.equal(bare.status, 428, bare.text);

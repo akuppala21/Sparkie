@@ -24,7 +24,7 @@ const TG_BRAIN_DOWN = 'Sparkie’s model isn’t answering. /status shows where 
 // Code's own line after a reply that broke off before it ended (the model cut off, a time-out after tools ran).
 const TG_BROKE_OFF = 'This answer broke off before it ended. The details are in Spark Console.';
 // The pairing line, also the answer to /start and /help.
-const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /lock stops approvals from here, /unpair disconnects this chat.';
+const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /resume asks to resume them, /admin shows owner controls, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /lock stops approvals from here, /unpair disconnects this chat.';
 
 // The token and the paired chat live in the secrets file (03-secrets.mjs), never in the state folder.
 // Disconnecting turns Telegram off in memory at once, even if the file can't be changed (until a new token is pasted).
@@ -98,11 +98,12 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
 }
 // One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once. true when sent, else why not (tgCall's
 // code: refused and bad-request, a 401, 403 or 400 from Telegram, will never succeed; the rest may later).
-async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
+async function tgSend(b, text, { silent = false, buttons = null, entities = null, mark = null } = {}) {
   const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
   let why = 'unreachable';
   for (let i = 0, waited = false; i < 3; i++) {
+    if (mark !== null && mark !== tgPairingMark()) return 'off';
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
       why = e.code || 'unreachable';
       if (e.code === 'slow-down' && !waited) { waited = true; await sleep(e.retryAfter * 1000); continue; }
@@ -174,7 +175,34 @@ function tgStop() { tg.abort?.abort(); }
 function tgRestart() { tgStop(); setTimeout(() => tgLoop().catch(e => console.error(`Telegram: ${e.message}`)), 50); }
 
 // The owner, as Sparkie's turns from Telegram see them.
-const tgOwner = () => ({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), chat: true });
+const TG_OWNER_PROOF = Symbol('the authenticated paired owner');
+function tgOwner(binding = tgPaired()) {
+  const viewer = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), chat: true };
+  Object.defineProperty(viewer, TG_OWNER_PROOF, { value: tgPairingMark(binding) });
+  return viewer;
+}
+function tgOwnerContext(ctx, viewer) {
+  const out = { ...ctx }; delete out[TG_OWNER_PROOF];
+  const mark = tgPairingMark();
+  if (mark && viewer?.[TG_OWNER_PROOF] === mark && viewer.role === 'owner' && !viewer.agentKey && String(viewer.login).toLowerCase() === String(accessList().owner).toLowerCase()) out[TG_OWNER_PROOF] = mark;
+  return out;
+}
+function tgOwnerContextValid(ctx) {
+  const mark = tgPairingMark();
+  return Boolean(mark && ctx?.[TG_OWNER_PROOF] === mark && !ctx.agent && !ctx.agentId
+    && (ctx.via === 'telegram' || ctx.via === 'sparkie' && ctx.channel === 'telegram') && (!ctx.channel || ctx.channel === 'telegram'));
+}
+const tgOwnerValid = viewer => tgOwnerContextValid(tgOwnerContext({ via: 'telegram', channel: 'telegram' }, viewer));
+const tgOwnerTell = (viewer, why, text, opts = {}) => tell(why, text, { ...opts, isCurrent: () => tgOwnerValid(viewer) && (!opts.isCurrent || opts.isCurrent()) });
+async function tgOwnerWordReply(viewer, conv, text, result) {
+  if (!tgOwnerValid(viewer)) return false;
+  const message = { role: 'assistant', content: maskSecrets(`${text}\n${result.reply || ''}`), createdAt: new Date().toISOString(), notice: true, word: true,
+    ...(result.choices?.length ? { choices: result.choices } : {}) };
+  const recorded = message.choices?.some(c => conv.messages.some(m => m.choices?.some(x => x.group === c.group)));
+  if (!recorded && conv.messages.length < LIMITS.messages) { conv.messages.push(message); conv.updatedAt = message.createdAt; saveChats(); }
+  if (tgAskedThere(message)) return true;
+  return tgOwnerTell(viewer, 'system', result.reply || '', { buttons: tellButtons(message) });
+}
 
 async function tgUpdate(u) {
   const id = Number(u?.update_id);
@@ -193,6 +221,7 @@ async function tgUpdate(u) {
     tgSaveSoon();
     return;
   }
+  const ownerViewer = tgOwner(paired); // captured before the first await: a re-pair cannot upgrade this update
   // The owner's: the offset is saved before acting, so a restart never runs "stop X" twice.
   tgSave();
   tg.lastMessageAt = new Date().toISOString();
@@ -202,43 +231,45 @@ async function tgUpdate(u) {
   if (m && tgApproveOn() && typeof m.text === 'string' && /^\/lock(?:@\w+)?(?:\s|$)/i.test(m.text.trim())) return tell('system', tgLock());
   // A key in the owner's words is taken out first, an old message's too and one past the minute's limit: it is kept and
   // the message deleted, never left in the chat (20-keys.mjs, R51).
-  if (m && await tgKeys(m)) return;
-  // At most 20 messages a minute from the owner's chat; then one line and silence until the minute frees.
-  tg.inHits = tg.inHits.filter(t => Date.now() - t < 60000);
-  if (tg.inHits.length >= TELL_LIMITS.in) { if (!tg.toldTooMany) { tg.toldTooMany = true; await tell('system', 'Too many messages. Wait a minute.'); } return; }
-  tg.inHits.push(Date.now());
-  tg.toldTooMany = false;
-  if (cq) return tgPress(cq);
+  if (m && await tgKeys(m, ownerViewer)) return;
+  if (!tgOwnerValid(ownerViewer)) return;
+  if (cq) return tgPress(cq, ownerViewer);
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot) return tell('system', 'Type it in your own words: forwarded messages aren’t read here.');
   if (typeof m.text !== 'string' || !m.text.trim()) return tell('system', 'I only read text here.');
-  const text = m.text.slice(0, 4000).trim();
+  const text = m.text.trim();
   if (TG_TOKEN_IN.test(text)) return tell('system', 'That looks like a bot token. Revoke it in @BotFather and paste the new one in Spark Console.');
   // The two digits of a dangerous ask pressed here, or why not; never sent on to Sparkie (20-danger.mjs).
-  const pair = dangerTypedHere(text);
+  const pair = dangerTypedHere(text, ownerViewer);
   if (pair) return pair;
   // The owner's words (R34) are answered by code before the one-turn check, so they work while Sparkie answers. Never
-  // resume or /undo update here (R32): /undo update goes to Sparkie, whose undo_update waits for the page.
+  // Owner controls run here too, without waiting for the brain or its turn budget.
+  if (isOwnerAdminWord(text)) { const conv = tgConv(); return tgOwnerWordReply(ownerViewer, conv, text, await ownerAdminWord(ownerViewer, conv, text, 'telegram')); }
   const word = ownerWord(text);
-  if (word === '/pause') return tell('system', pauseWord('telegram'));
-  if (word === '/restart sparkie') return tell('system', await restartWord('telegram'));
-  if (word === '/stop') return tell('system', await stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram')));
+  if (word === '/pause') return tgOwnerTell(ownerViewer, 'system', pauseWord('telegram', ownerViewer));
+  if (word === '/restart sparkie') return tgOwnerTell(ownerViewer, 'system', await restartWord('telegram', ownerViewer));
+  if (word === '/stop') return tgOwnerTell(ownerViewer, 'system', await stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram'), ownerViewer));
   // (/undo: this chat's last change put back, also while changes are paused, 20-words.mjs)
-  if (word === '/undo') return tell('system', (await undoChangeWord(tgOwner(), tgConv(), 'telegram')).reply);
-  // (/allowed lists what is always allowed and takes it away; adding one is the page's: 21-ahead.mjs)
-  if (word?.startsWith('/allowed')) return tell('system', allowedWord(word, 'telegram'));
+  if (word === '/undo') { const conv = tgConv(); return tgOwnerWordReply(ownerViewer, conv, text, await undoChangeWord(ownerViewer, conv, 'telegram')); }
+  if (word === '/undo update') { const conv = tgConv(); return tgOwnerWordReply(ownerViewer, conv, text, await undoWord(ownerViewer, conv, 'telegram')); }
+  // (/allowed lists standing permissions and takes them away.)
+  if (word?.startsWith('/allowed')) return tell('system', allowedWord(word, 'telegram', ownerViewer));
   // (/putback: the newest change made inside the lock-out net put back, by code, with no brain, 21-net.mjs)
-  if (word === '/putback') return tell('system', await netPutbackWord());
+  if (word === '/putback') return tell('system', await netPutbackWord(ownerViewer));
   const cmd = /^\/(new|status|unpair|start|help|lock)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
   if (cmd === 'unpair') { tgForget(); return; }
   // (approvals from here off at once, also while Sparkie answers: 20-tg-approve.mjs)
   if (cmd === 'lock') return tell('system', tgLock());
   if (cmd === 'start' || cmd === 'help') return tell('system', TG_HELLO);
   if (cmd === 'status') return tell('system', await tgStatusText());
-  if (tg.busy) { if (!tg.toldBusy) { tg.toldBusy = true; await tell('system', 'Still answering the last one. Send that again when I’m done.'); } return; }
+  if (tg.busy || tg.pressing) { if (!tg.toldBusy) { tg.toldBusy = true; await tell('system', 'Still answering the last one. Send that again when I’m done.'); } return; }
   if (cmd === 'new') { st.conv = null; tgSave(); tgConv(); return tell('system', 'New chat. What do you need?'); }
-  tgTurn(text).catch(e => console.error(`Telegram turn: ${e.message}`));
+  // Transport flood control applies only to brain-bound turns, never owner controls or callbacks.
+  tg.inHits = tg.inHits.filter(t => Date.now() - t < 60000);
+  if (tg.inHits.length >= TELL_LIMITS.in) { if (!tg.toldTooMany) { tg.toldTooMany = true; await tgOwnerTell(ownerViewer, 'system', 'Too many messages. Wait a minute.'); } return; }
+  tg.inHits.push(Date.now()); tg.toldTooMany = false;
+  tgTurn(text, ownerViewer).catch(e => console.error(`Telegram turn: ${e.message}`));
 }
 
 // Pairing: "/start <code>" from a person in a private chat. Wrong codes count per sender (3 a code), never against the
@@ -309,7 +340,8 @@ function tgConv() {
   tgSave();
   return conv;
 }
-async function tgTurn(text) {
+async function tgTurn(text, viewer) {
+  if (!tgOwnerValid(viewer)) return false;
   tg.busy = true;
   tg.toldBusy = false;
   const st = tgSaved();
@@ -318,17 +350,17 @@ async function tgTurn(text) {
   const typing = tgTyping();
   try {
     let message;
-    try { message = await sparkieTurn({ viewer: tgOwner(), conv: tgConv(), text, channel: 'telegram' }); } catch (e) {
-      return await tell('reply', e.status === 429 ? 'Sparkie is busy with other chats. Try again in a minute.'
+    try { message = await sparkieTurn({ viewer, conv: tgConv(), text, channel: 'telegram' }); } catch (e) {
+      return await tgOwnerTell(viewer, 'reply', e.status === 429 ? 'Sparkie is busy with other chats. Try again in a minute.'
         : /still answering/i.test(e.message) ? 'Still answering in Spark Console. Send that again when it’s done.'
           : /expired/i.test(e.message) ? 'That button has expired. Ask again.'
             : /No model is set up|can only reach a model/i.test(e.message) ? TG_BRAIN_DOWN : 'That didn’t work. The details are in Spark Console.');
     }
     // (stopped with /stop: its line was the answer)
     if (message.error === TURN_STOPPED) return;
-    if (message.error && !String(message.content || '').trim()) return await tell('reply', TG_BRAIN_DOWN);
+    if (message.error && !String(message.content || '').trim()) return await tgOwnerTell(viewer, 'reply', TG_BRAIN_DOWN);
     // (a reply that broke off part-way says so, as the page shows its error under it, C-9)
-    await tell('reply', `${tellReplyText(message)}${message.error ? `\n\n${TG_BROKE_OFF}` : ''}`, { buttons: tellButtons(message) });
+    await tgOwnerTell(viewer, 'reply', `${tellReplyText(message)}${message.error ? `\n\n${TG_BROKE_OFF}` : ''}`, { buttons: tellButtons(message) });
   } finally {
     typing.stop();
     tg.busy = false;
@@ -339,62 +371,45 @@ async function tgTurn(text) {
 // A button pressed in Telegram: a plain button of the owner's Telegram chat; or an owner-only one this console asked
 // here, which counts as the owner's yes only within 20-tg-approve.mjs's limits (runChoice refuses every other owner-only
 // press but the page's). The answer is a fixed line.
-async function tgPress(cq) {
+async function tgPress(cq, viewer) {
+  if (!tgOwnerValid(viewer)) return false;
   const b = tgPaired();
   tgCall(b.token, 'answerCallbackQuery', { callback_query_id: String(cq.id || '') }, { timeoutMs: 5000 }).catch(() => {});
   const choice = String(cq.data || '');
   const ask = tgApproving(choice);
   if (ask?.answer) return tell('system', ask.answer);
-  const conv = ask ? ask.conv : /^[a-f0-9]{10}$/.test(choice) ? chatData().conversations.find(c => c.channel === 'telegram' && c.login === accessList().owner && c.messages.some(m => (m.choices || []).some(x => x.id === choice))) : null;
-  if (!conv) return tell('system', 'That button has expired. Ask again.');
-  return tgRun(conv, choice, ask);
+  if (!ask) return tgOwnerTell(viewer, 'system', 'That button has expired. Ask again.');
+  return tgRun(ask.conv, choice, ask, viewer);
 }
 // A press that may run, or a dangerous ask's right pair (20-danger.mjs): one at a time, answered with a fixed line.
-async function tgRun(conv, choice, ask) {
-  if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Press it again when I’m done.');
-  tg.busy = true;
+async function tgRun(conv, choice, ask, viewer) {
+  if (!tgOwnerValid(viewer)) return false;
+  if (tg.pressing) return tgOwnerTell(viewer, 'system', 'Another button is still being handled. Try again in a moment.');
+  if (!ask?.c?.ownerOnly && (tg.busy || replying.has(conv.id))) return tgOwnerTell(viewer, 'system', 'Still answering the last one. Press it again when I’m done.');
+  tg.pressing = true;
   try {
     if (ask) tgApprovalCounted(ask);
-    const r = await runChoice(tgOwner(), conv, choice, { via: 'telegram', actor: 'owner on Telegram', ...(ask ? { approved: true } : {}) });
+    const r = await runChoice(viewer, conv, choice, { via: 'telegram', actor: 'owner on Telegram', ...(ask ? { approved: true } : {}) });
     if (ask) tgApproved(ask, conv, r);
     // (a question that went here as its own ask isn't said again)
-    if (r.outcome === 'question' || r.outcome === 'needs-ok') { if (tgAskedThere(r.message)) return true; const f = tgFollowUp(conv, r.message); return await tell('reply', f.text, { buttons: f.buttons }); }
-    if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
-    if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
-    if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
+    if (r.outcome === 'question' || r.outcome === 'needs-ok') { if (tgAskedThere(r.message)) return true; const f = tgFollowUp(conv, r.message); return await tgOwnerTell(viewer, 'reply', f.text, { buttons: f.buttons }); }
+    if (r.outcome === 'declined') return await tgOwnerTell(viewer, 'system', 'Okay, left as it is.');
+    if (r.outcome === 'error') return await tgOwnerTell(viewer, 'system', maskSecrets(r.error || r.message?.content || 'That didn’t work. Ask for its operation log.'));
+    if (r.operation) return await tgOwnerTell(viewer, 'system', 'Under way. I’ll tell you here when it’s done.');
     // (still running at the press's time: its end is told here when it comes, pressLate in 14-chats.mjs)
-    if (r.outcome === 'running') return await tell('system', 'It is still running. I’ll tell you here when it ends.');
-    return await tell('system', tgRanLine(r));
+    if (r.outcome === 'running') return await tgOwnerTell(viewer, 'system', 'It is still running. I’ll tell you here when it ends.');
+    return await tgOwnerTell(viewer, 'system', tgRanLine(r));
   } catch (e) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
-    return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
-  } finally { tg.busy = false; }
+    return tgOwnerTell(viewer, 'system', maskSecrets(e.message || 'That didn’t work. Ask for its operation log.'));
+  } finally { tg.pressing = false; }
 }
-// A question that came back from a press here (a follow-up): its words, and its plain buttons only for a chat of this
-// one's; a page chat's are pressed on the page (tgPress finds only Telegram chats' plain buttons), so it says where (C-15).
+// A pressed follow-up uses the same full code-built questions and pairing-bound buttons from either chat origin.
 function tgFollowUp(conv, message) {
-  const words = tellReplyText(message);
-  if (conv?.channel === 'telegram') return { text: words, buttons: tellButtons(message) };
-  return { text: /That one waits for you in Spark Console\.$/.test(words) ? words : `${words}\n\nAnswer it in Spark Console.`, buttons: [] };
+  return { text: tellReplyText(message), buttons: tellButtons(message) };
 }
-// What a press that ran answers here, from its result's own fields (K2, as the page's line, pressRan in 14-chats.mjs):
-// "Done." only for a command that ran and ended with exit 0, and for a result that is no command's, as before. Fixed
-// lines with no output, error or address (R32): the page's line in that chat says the rest, the one-time command too.
-function tgRanLine(r) {
-  const more = 'The details are in Spark Console.', node = nodeById(String(r?.spark || '')), at = node ? sparkName(node) : 'that Spark';
-  if (r?.net) {
-    if (r.net.outcome === 'put back') return `It ran inside the lock-out net and was put back. ${more}`;
-    if (r.net.outcome !== 'kept') return `It wasn’t kept: if it ran, ${at}’s own timer puts it back. ${more}`;
-    return r.exit === 0 ? 'Done: it ran inside the lock-out net and is kept.' : `It ran inside the lock-out net and is kept, but the command itself ${Number.isInteger(r.exit) ? `ended with exit code ${r.exit}` : 'was ended before it finished'}. ${more}`;
-  }
-  if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
-  if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
-  // (write_file's exit 5: written, over another program's edit; where the other text is kept is said in Spark Console)
-  if (r?.wroteOver) return `It was written over another program’s edit made after it was read: the name holds the new text, and what was there is kept beside it. ${more}`;
-  if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
-  if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
-  return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;
-}
+// Use the page's own result formatter, including setup commands and truthful partial/failed outcomes.
+function tgRanLine(r) { return maskSecrets(r?.message?.content || r?.note || r?.error || pressRan('Result', r)); }
 // /status: from Spark Console's own record, no brain.
 async function tgStatusText() { return `${await statusText()}\n${tgApprovalsLine()}`; }
 // After a restart: a turn that was cut off, and operations started from Telegram that didn't report, get one line each.

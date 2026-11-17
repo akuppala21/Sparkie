@@ -20,6 +20,11 @@ Look in this order, each a read through Sparkie, `POST /console/api/actions/<nam
 Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFailure`, `causeLines` and `putBack`
 (`17-changes.mjs`); `deploy` (`07-jobs.mjs`); across two Sparks, `clusterDeploy` and `asideBack` (`08-cluster.mjs`).
 
+A timeout is not proof that Docker stopped working on the request. `17-rollback-target.mjs` waits briefly for a
+late receipt and a free fence before restoration. An uncertain stop of a proved new container can be settled only
+by a successful removal of that exact ID; an original container or other unanswered command stays held. The source
+operation keeps its timeout even when compensation succeeds. See `docs/t45-return-recovery.md`.
+
 ## Also update
 
 - A cause seen before that has a fix: a new entry in `START_FAILURES` (`docs/how/add-a-known-failure.md`).

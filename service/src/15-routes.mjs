@@ -41,7 +41,8 @@ function servedModel(url) {
   });
 }
 
-async function setRoute(role, choice) {
+async function setRoute(role, choice, guard = null) {
+  if (guard) guard();
   if (role === 'agents' && choice === 'same') ROUTES.agents = { kind: 'same' };
   else if (choice === 'main') {
     if (!MAIN) throw new HttpError(409, 'Sparkie has no model of its own set up.');
@@ -52,6 +53,7 @@ async function setRoute(role, choice) {
     if (!c.reachable) throw new HttpError(409, `${c.title} ${c.reason || 'can’t be reached from here'}.`);
     let model;
     try { model = await servedModel(c.url); } catch (e) { throw new HttpError(409, `${c.title} on ${c.node}: ${e.message}`); }
+    if (guard) guard(c);
     ROUTES[role] = { kind: 'endpoint', url: c.url, model, title: c.title, node: c.node };
   }
   saveRoutes();

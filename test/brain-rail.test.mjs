@@ -5,7 +5,7 @@
 // call and press, a saved workflow's step, self-healing and the self-test are never affected; sparkie_setup says why.
 // Once a passkey is set up, a passing result posted to POST /main/eval waits for the owner's yes: nothing kept, one
 // owner-only button in their chat "The brain eval’s result" built from the record, said in sparkie_setup and /status,
-// never asked on Telegram; pressed on the page with the passkey it is kept and changes run at once; "No" drops it. Against
+// also offered to the paired owner on Telegram; pressed on the page with the passkey it is kept and changes run at once; "No" drops it. Against
 // an agent's key, a stranger, a forged seal, another build, a record's own score, two at once, a replayed or stale press,
 // an agent's press and a restart; the ask names the brain from the console's own record, never the poster's words. A
 // kept record is never replaced (the same record again: already kept; another with its at and build is kept beside it,
@@ -188,13 +188,13 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.ok(auditLines().some(l => l.via === 'workflow' && l.action === 'stop_model' && l.ok), 'the step ran as the workflow');
   });
 
-  test('once a passkey is set up a passing result waits for the owner’s yes: nothing kept, one button in their chat built from the record, said in sparkie_setup and /status, never asked on Telegram; pressed with the passkey it is kept and changes run at once; a second press is refused', { timeout: 180000 * SLOW }, async () => {
+  test('once a passkey is set up a passing result waits for the owner’s yes: nothing kept, one button in their chat built from the record, said in sparkie_setup and /status, also offered to the paired owner on Telegram; pressed with the passkey it is kept and changes run at once; a second press is refused', { timeout: 180000 * SLOW }, async () => {
     const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     assert.equal((await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) })).status, 201);
     const before = readFileSync(PROFILES(), 'utf8'), rec = await record(), tgFrom = tgSent().length;
     const posted = await keep(rec);
     assert.deepEqual([posted.status, posted.json.stored, posted.json.waiting], [202, false, true], posted.text);
-    assert.match(posted.json.says, /^Waiting for the owner’s yes: a button in the chat “The brain eval’s result” in Spark Console/);
+    assert.match(posted.json.says, /^Waiting for the owner’s yes: a button in the chat “The brain eval’s result” on the page or in your paired Telegram chat/);
     assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing kept');
     await aButton('waiting for the yes', /An eval result for this build is waiting for your yes in the chat “The brain eval’s result”\.$/);
     const w = await waiting(), lock = LOCK(), total = lock.evalSet.cases.length * 3;
@@ -205,9 +205,14 @@ describe('the rail', { concurrency: 1 }, () => {
       'Spark Console can’t check that this run happened, or that it ran on this brain: it has only the post, sent over the tailnet as you. Keep it only for a run you started.',
       'Keeping it means Sparkie makes the changes your words clearly ask for at once again, as before this install. Until then it asks before every change.'].join('\n\n'));
     const status = await say(await newChat(), '/status');
-    assert.match(status.text, /Needs you:\n(?:- .*\n)*- A brain eval result for this build is waiting for your yes: press its button in the chat “The brain eval’s result” in Spark Console\./);
-    await sleep(3000);
-    assert.ok(!tgSent().slice(tgFrom).some(c => /eval/i.test(c.body.text)), 'nothing asked on Telegram');
+    assert.match(status.text, /Needs you:\n(?:- .*\n)*- A brain eval result for this build is waiting for your yes: approve its button in the chat “The brain eval’s result” on the page or in your paired Telegram chat\. Until then Sparkie asks before every change\./);
+    const phone = await waitFor(() => tgSent().slice(tgFrom).find(c =>
+      c.body.reply_markup?.inline_keyboard?.flat().some(b => b.callback_data === w.keep.id)),
+      { timeout: 60000 * SLOW, what: 'the exact result confirmation in the paired owner chat' });
+    const phoneIds = phone.body.reply_markup.inline_keyboard.flat().map(b => b.callback_data);
+    assert.deepEqual(phoneIds, w.open.map(c => c.id), 'both channels offer the same one-use choices');
+    assert.ok(tgSent().slice(tgFrom).map(c => c.body.text).join('').includes(w.message.content), 'the full result and its cautions reached the phone');
+    assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'delivery alone keeps no result');
     const bare = await api(`/chats/${w.conv}/choose`, { method: 'POST', body: { choice: w.keep.id } });
     assert.deepEqual([bare.status, bare.json.passkey], [428, 'confirm'], bare.text);
     assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing kept without the passkey');

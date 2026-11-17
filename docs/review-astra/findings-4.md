@@ -58,9 +58,90 @@ All three cases passed on `7bbed38f` in run `44074814751`. They cover prior proo
 the actual guard with a stand-in service manager. Real systemd behavior remains a separate check. The installed guard
 judges the next update, so an older installed guard retains its old behavior until this fixed guard is installed.
 
+## A-46: failed removal can leave completed-work cleanup authority
+
+**Accepted and repaired for unlink failure.** `savedRunDone` now persists the primary without the completed entry
+before trying to remove an empty file. An unlink failure leaves an empty primary; other active entries remain.
+A failed retirement write never falls through to unlink and warns that restart could stop already-completed work.
+That combined write failure is still unresolved. File fsync does not establish sudden-power-loss durability.
+
+Independent source review accepted the narrow repair. `workloads-retirement.test.mjs` checks normal deletion, failed
+unlink plus actual service restart, failed persistence with no unlink attempt, and another active record. On frozen
+source tree `d5f45ee1a4c9135c4bf32e09fb660233b6bd97b8`, these and four nearby recovery files passed **50/50** on
+Spark 2 in six minutes. Source is `99488c8e` plus the retirement repair and explicitly approved asleep correction;
+it is not the full moving candidate. The pre-fix negative control failed the three affected retirement cases as expected. Final release qualification remains separate.
+
+## A-47: ordinary downloads can target the hub or use stale disk information
+
+**Accepted; implementation and focused compute-Spark checks passed.** The recipe page rejects an explicit hub or unknown
+target before creating a download operation. The shared transfer path checks a configured compute target, known
+file size and fresh free space on the cache filesystem. GGUF checks include its projector and never shrink a larger
+catalog estimate. Hub inventory stays visible. The brain's separate start path is unchanged.
+
+`download-admission.test.mjs` exercises the real stand-in service, both downloader paths and the download-first
+start. Independent source review found no blocker. All eight admission cases passed on frozen tree
+`a79dea6f944c6854cd25e08d5abed97ef50b8979`; six relevant cases failed against pre-fix source. This is admission, not transferred-byte accounting, a continuous
+disk floor or completed T46 stall recovery; those claims remain separate.
+
+## A-48: compensation can stop work after a newer owner adoption
+
+**Accepted; repaired and independently reviewed, with focused compute checks passed.** Independent Astra review of the candidate captured as recovery r15
+(tree `b05e2ef735bc0609f32132b7cb141ebc1e117aab`) found that `rollbackOwned` reads `record.wishes` from a
+snapshot held across Docker awaits. During that wait, `startModel` can answer an owner that the model already runs
+and durably record `desiredWish`. `rollbackReturn` can then stop the exact container using its older snapshot.
+`rollbackStopCancelled` similarly holds a member's older `stopReturn` intent across its container look.
+
+The repair must check current owner intent at compensation stop/remove dispatch, after `rollbackAttempt` yields.
+It must protect positive adoption of a failed attempt's new container and a newer original-member adoption while
+preserving legitimate preflight stops. Regression injection is required during enumeration and immediately before
+dispatch. A passing commit handoff test alone does not establish this compensation boundary.
+
+
+The implementation now checks fresh intent at every compensation stop/remove dispatch. Adoption refuses pending
+cleanup and known-stopped stale observations; a returning start is never called “already starting”. Explicit job
+reruns check unanswered commands before Docker, under their existing claim; only a successful exact rerun can
+supersede terminal cleanup history. Independent review accepted frozen r18 tree
+`073dae15cc366f7cdb7b2834d56bb8f3931946c5`. Its direct/static batch passed **321/321**, including the new
+coordinator races and rerun callbacks. Six targeted unchanged integration cases passed on Spark 2, including the
+repaired job folder, delayed stop and restoration, owner intent during loading, and a job rerun surviving later
+workflow failure. Final complete qualification remains required.
+
+## A-49: a sensitive Telegram proposal can lose its page confirmation marker
+
+**Accepted; scoped compute checks passed.** Removing the old channel-only gate exposed generic proposals for
+workflow saves and update rollback without the `ownerOnly` marker. The r6 Telegram integration tests received
+HTTP 200 from a bare page press where the retained passkey assertion required 428.
+
+`propose` now retains the marker for Telegram-originated workflow save/forget, update rollback and code-change
+proposals. The verified Telegram owner can still confirm; the page uses its existing passkey gate. Page-origin
+behavior and ordinary memory choices are unchanged. Independent source review found no bypass. Both original
+428 assertions and all 32 Telegram integration cases passed at policy r7 tree
+`214a6fad15ab557bbda9b1db1454c470e5601412`; three direct proposal/proof cases passed too. That five-file run
+was 89/91 overall: unrelated danger/long-ask checks remain open, so it is not release qualification.
+
+
+## A-50: ordinary Telegram approvals can omit the complete confirmation facts
+
+**Accepted; repair, independent source review and focused compute checks passed.** On immutable policy r7 tree
+`214a6fad15ab557bbda9b1db1454c470e5601412`, a valid ordinary app proposal produced a 4,293-character
+code-built question and a 4,292-character choice label. Telegram delivered 330 characters plus an active
+60-character button; neither complete question nor label was present. The app had not started.
+
+`chatAsks` captures only `needs-ok` and clips questions; `tellReplyText` relies on the model's reply and short button
+labels. A choice's full question can differ from its label, and a follow-up may have no saved chat ask. The repair
+must deliver the complete code-built question and choices through the existing multipart sender, with secret
+masking, before activating approval. Partial delivery must leave no usable button. Owner-only and dangerous asks
+retain their separate delivery paths. No new service or persistent store is needed.
+
+Diagnostic evidence: `/tmp/sparkie-plainfacts-r7-observed.json`. Policy r8 tree
+`24f0a841578365b72f5c5d665aca8bea2df0c1a1` passed **115/115** checks on Spark 3, including all 24
+transport checks and five policy files. All five added full-facts regressions fail against the old r7 source;
+the original 19 transport checks still pass there. Independent review pinned the accepted source to r8.
+Final combined-tree and release qualification remain separate gates.
+
 ## Release limits
 
 These scoped repairs do not establish a finished product. The complete strict hosted suite and browser release gate,
 actual Spark 1 brain, power/workload paths and remaining contract work still need qualification. See
-[finish-status.md](finish-status.md). The asleep test correction remains unapplied pending the explicit test-edit
-exception; no partial pass is a release lock or tested tag.
+[finish-status.md](finish-status.md). The owner explicitly approved the reviewed asleep test correction on
+2026-11-17; it is applied and its compute-Spark checks passed. No partial pass is a release lock or tested tag.

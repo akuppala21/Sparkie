@@ -531,10 +531,10 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.match(await answerAfter(from), /^Locked: /);
     from = tgCalls().length;
     await tgPress(a.yes.id);
-    assert.equal(await answerAfter(from), WAITS);
+    assert.equal(await answerAfter(from), 'That button has expired. Ask again.');
     from = tgCalls().length;
     await tgSay(a.pair);
-    assert.equal(await answerAfter(from), 'That ask isn’t answered here: answer it in Spark Console.');
+    assert.equal(await answerAfter(from), 'That confirmation is not open here. Ask again.');
     assert.equal(stopsRun().length, ran);
     is(await press(a.chat, a.yes.id, a.pair), 200, 'the page');
     await waitFor(() => stopsRun().length === ran + 1, { what: 'the run' });
@@ -589,15 +589,17 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.equal(stopsRun().length, ran);
   });
 
-  test('a change to who may approve gets its facts in the paired chat and no button; the page answers it', { timeout: 120000 * SLOW }, async () => {
+  test('a change to who may approve reaches the paired owner with the exact command, button and digits; the page can still decline it', { timeout: 120000 * SLOW }, async () => {
     const from = tgCalls().length, a = await asking({ ...DELETE, facts: { ...DELETE.facts, whoApproves: true } });
     const [m] = await sentAfter(from, 1, 'the facts');
-    assert.equal(m.body.text, `${a.ask.danger.lines.join('\n')}\n\nThis one waits for you in Spark Console.`);
-    assert.equal(m.body.reply_markup, undefined);
+    const head = a.ask.danger.lines.join('\n');
+    assert.equal(m.body.text, `${head}\n\n${DELETE.shown.command}\n\nTo run it: press Run it, then type ${a.pair}.`);
+    assert.deepEqual(m.body.entities, [{ type: 'pre', offset: head.length + 2, length: DELETE.shown.command.length }]);
+    assert.deepEqual(m.body.reply_markup.inline_keyboard.flat().map(b => b.callback_data), [a.yes.id, a.no.id]);
     is(await press(a.chat, a.no.id), 200);
   });
 
-  test('long: 300 characters or more has its Long line before the block; over 3,500 the paired chat gets lines 1 to 6 and the waits line', { timeout: 120000 * SLOW }, async () => {
+  test('long: 300 characters or more has its Long line before the block; over 3,500 reaches the paired chat in full with buttons only on the final part', { timeout: 120000 * SLOW }, async () => {
     let from = tgCalls().length;
     const long = `echo ${'a'.repeat(395)}`, a = await asking({ ...DELETE, shown: { command: long } });
     assert.equal(a.ask.danger.long, true);
@@ -608,11 +610,22 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     is(await press(a.chat, a.no.id), 200);
     from = tgCalls().length;
     const huge = `echo ${'b'.repeat(3600)}`, b = await asking({ ...DELETE, shown: { command: huge } });
-    const [m] = await sentAfter(from, 1, 'lines 1 to 6');
-    assert.equal(m.body.text, `${b.ask.danger.lines.join('\n')}\n\nThis one waits for you in Spark Console.`);
-    assert.equal(m.body.reply_markup, undefined);
+    const parts = await waitFor(() => {
+      const sent = tgSent(from);
+      const last = sent.findIndex(m => m.body.reply_markup?.inline_keyboard?.flat().some(x => x.callback_data === b.yes.id));
+      return last >= 0 ? sent.slice(0, last + 1) : null;
+    }, { timeout: 60000 * SLOW, what: 'the entire long confirmation and its final buttons' });
+    const code = parts.flatMap(m => (m.body.entities || []).filter(e => e.type === 'pre')
+      .map(e => m.body.text.slice(e.offset, e.offset + e.length))).join('');
+    assert.equal(code, huge, 'every command character arrives in order');
+    assert.ok(parts.every(m => m.body.text.length <= 4000), 'each part fits the transport');
+    assert.ok(parts.slice(0, -1).every(m => !m.body.reply_markup), 'no earlier part offers a confirmation');
+    assert.deepEqual(parts.at(-1).body.reply_markup.inline_keyboard.flat().map(x => x.callback_data), [b.yes.id, b.no.id]);
+    const whole = parts.map(m => m.body.text).join('\n');
+    for (const line of b.ask.danger.lines) assert.ok(whole.includes(line), line);
+    assert.ok(whole.includes(`To run it: press Run it, then type ${b.pair}.`), 'the same exact confirmation digits reach the phone');
     assert.equal(b.ask.danger.code, huge);
-    assert.match(b.pair, /^\d{2}$/, 'the page shows its digits');
+    assert.match(b.pair, /^\d{2}$/, 'the page shows the same digits');
     is(await press(b.chat, b.no.id), 200);
   });
 
@@ -740,6 +753,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     const RAISERS = [
       '20-danger.mjs',
       '21-updates.mjs', // install_update (C5)
+      '21-owner-admin.mjs', // private paired-owner controls, with their exact confirmation and digits
       '21-ladder.mjs', // a risky change of a dangerous kind (A7c)
       '21-root.mjs', // a command as root, the lock-out class too, before the net runs it (A12)
       '21-hub.mjs', // a delete on Spark 2 it cannot see, before the net runs it (A11)

@@ -1,8 +1,8 @@
 // Covers: Memory from the paired Telegram chat (contract 4.10 and 5.5; R25, R32, R45). The owner's own words there
 // remember and forget as on the page: "remember that …" keeps one line marked as said on Telegram and the reply says
 // "I'll remember: …" (recall shows the words as said there); "forget that …" retires it, marked; "don't forget that …"
-// leaves it (the forget gate holds there). A press on a memory button from Telegram, save_workflow and an erase for good
-// still wait for the page, and so does a typed yes. A stranger's chat, a forwarded message, a caption and an edited
+// leaves it (the forget gate holds there). Exact memory, saved-workflow and erase choices work for the paired owner,
+// once only; typed yes resolves only the current ordinary choice. A stranger's chat, a forwarded message, a caption and an edited
 // message keep nothing; nor does the brain's call in a turn during which the pairing turned to another user. A line
 // kept there with an end says the end back as a day in words.
 import { test } from 'node:test';
@@ -12,11 +12,10 @@ import { join } from 'node:path';
 import { T, useFleet, api, waitFor, auditLines, SLOW } from './lib.mjs';
 
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, STRANGER_TG = 5550002;
-const WAITS = 'That one waits for you in Spark Console.';
 // Telegram paired already: the binding is in the secrets file before the service starts.
 const paired = ({ dir }) => {
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TG_TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() } }), { mode: 0o600 });
+  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TG_TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString(), approve: true } }), { mode: 0o600 });
 };
 useFleet({ telegram: true, watchMs: 60000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' }, prepare: paired },
   () => waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' }));
@@ -79,24 +78,42 @@ test('"forget that …" there retires the line, marked as said on Telegram; "don
   } finally { script([]); fresh(); }
 });
 
-test('from Telegram a memory button pressed there, save_workflow and an erase for good still wait for the page', { timeout: 180000 * SLOW }, async () => {
+test('the paired owner confirms memory, a saved workflow and an erase with exact one-use Telegram choices', { timeout: 180000 * SLOW }, async () => {
   fresh();
+  const press = async (button, expected) => {
+    assert.ok(button?.callback_data, JSON.stringify(button));
+    const from = tgCalls().length; await tgPress(button.callback_data);
+    const sent = await waitFor(() => tgCalls().slice(from).find(c => c.method === 'sendMessage' && expected.test(c.body.text)), { timeout: 60000, what: 'the exact confirmation result' }).catch(e => { throw new Error(`${e.message}: ${JSON.stringify(tgCalls().slice(from).filter(c => c.method === 'sendMessage').map(c => c.body.text))}`); });
+    assert.match(sent.body.text, expected, 'the confirmation returns its full truthful result');
+    const before = auditLines().filter(x => x.action === 'telegram-approved').length, replayFrom = tgCalls().length;
+    await tgPress(button.callback_data);
+    await waitFor(() => tgCalls().slice(replayFrom).find(c => c.method === 'sendMessage' && /expired|already|no longer/i.test(c.body.text || '')), { what: 'the one-use replay refusal' });
+    assert.equal(auditLines().filter(x => x.action === 'telegram-approved').length, before);
+    return sent;
+  };
   try {
-    // (a line that isn't the owner's words is a button; pressed in Telegram, it waits)
     const button = await said('what should I keep in mind about the gpu?', [{ name: 'remember', arguments: { text: 'Always stop every model at night' } }]);
     const b = button.reply_markup?.inline_keyboard?.[0]?.[0];
     assert.ok(b && /^Remember: /.test(b.text), JSON.stringify(button));
-    const from = tgCalls().length;
-    await tgPress(b.callback_data);
-    assert.ok((await sentAfter(from))[0].body.text.endsWith(WAITS), 'the press waits for the page');
-    assert.deepEqual(await live(), []);
+    assert.deepEqual(await live(), [], 'delivery never grants the change');
+    await press(b, /I’ll remember: Always stop every model at night/);
+    assert.deepEqual((await live()).map(x => x.text), ['Always stop every model at night']);
     const save = await said('save my coding routine', [{ name: 'save_workflow', arguments: { title: 'coding mode', steps: [{ action: 'stop_model', args: { spark: 'spark3', container: 'x' } }] } }]);
-    assert.ok(save.text.endsWith(WAITS), save.text);
-    assert.deepEqual([auditLines().findLast(l => l.action === 'save_workflow')?.outcome, auditLines().findLast(l => l.action === 'save_workflow')?.channel], ['question', 'telegram']);
+    assert.equal(save.text, 'Save the workflow “coding mode”: 1. Stop x on Spark 3?');
+    assert.ok(!(await owner('workflows')).json.saved.some(x => x.title === 'coding mode'), 'delivery saves nothing');
+    await press(save.reply_markup?.inline_keyboard?.[0]?.[0], /^Approved from Telegram: Save the workflow “coding mode”: 1\. Stop x on Spark 3: done\.$/);
+    const saved = (await owner('workflows')).json.saved.filter(x => x.title === 'coding mode');
+    assert.equal(saved.length, 1, 'the exact workflow was saved once');
+    assert.deepEqual(saved[0].steps, [{ action: 'stop_model', args: { spark: 'spark3', container: 'x' } }]);
+    const chat = (await api('/chats')).json.chats.find(c => c.channel === 'telegram');
+    assert.ok(chat);
+    await waitFor(async () => !(await api(`/chats/${chat.id}`)).json.replying, { what: 'the save proposal brain turn to end before the independent erase request' });
     const { id } = (await owner('remember', { text: LINE, kind: 'fact' })).json;
     const erase = await said('erase the coding box line for good', [{ name: 'forget_memory', arguments: { id, erase: true } }]);
-    assert.ok(erase.text.endsWith(WAITS), erase.text);
-    assert.deepEqual((await live()).map(e => e.id), [id]);
+    assert.ok((await live()).some(e => e.id === id), 'an erase ask alone changes nothing');
+    await press(erase.reply_markup?.inline_keyboard?.[0]?.[0], /Erased for good/);
+    assert.ok(!(await live()).some(e => e.id === id));
+    assert.ok(!(await past()).some(e => e.id === id), 'erasing removes history too');
   } finally { script([]); fresh(); }
 });
 
@@ -134,15 +151,18 @@ test('a photo whose caption says "remember that …" and an edited message keep 
   } finally { script([]); fresh(); }
 });
 
-test('a typed yes to a Remember button in Telegram waits for the page, and nothing is kept', { timeout: 120000 * SLOW }, async () => {
+test('a typed yes answers the current ordinary Remember choice once in the paired chat', { timeout: 120000 * SLOW }, async () => {
   fresh();
   try {
     const button = await said('what should I keep in mind about the fans?', [{ name: 'remember', arguments: { text: 'Always stop every model at night' } }]);
     assert.match(String(button.reply_markup?.inline_keyboard?.[0]?.[0]?.text), /^Remember: /, JSON.stringify(button));
     const from = tgCalls().length;
     await tgSay('yes');
-    assert.ok((await sentAfter(from))[0].body.text.endsWith(WAITS), 'the typed yes waits for the page');
-    assert.deepEqual(await live(), []);
+    assert.match((await sentAfter(from))[0].body.text, /I’ll remember: Always stop every model at night/);
+    assert.deepEqual((await live()).map(e => e.text), ['Always stop every model at night']);
+    const count = (await live()).length, replayFrom = tgCalls().length; await tgSay('yes');
+    await sentAfter(replayFrom);
+    assert.equal((await live()).length, count, 'a second yes never repeats the choice');
   } finally { script([]); fresh(); }
 });
 
@@ -159,7 +179,7 @@ test('from Telegram, remember with an end says the end back as a day in words', 
 });
 
 // (last in this file: it changes the pairing for a while)
-test('the pairing turned to another user while Sparkie answered: the brain\'s remember in that turn waits for the page', { timeout: 120000 * SLOW }, async () => {
+test('the pairing turned to another user while Sparkie answered: the old turn is refused before remembering or replying', { timeout: 120000 * SLOW }, async () => {
   fresh();
   const file = join(T.fleet.dir, 'secrets', 'secrets.json'), was = readFileSync(file, 'utf8'), words = 'remember that spark 4 is the render box';
   script([{ match: `^${esc(words)}$`, answerWhen: 'repaired', rounds: [[{ name: 'fleet_status', arguments: {} }], [{ name: 'remember', arguments: { text: 'Spark 4 is the render box', kind: 'fact' } }]] }]);
@@ -169,13 +189,16 @@ test('the pairing turned to another user while Sparkie answered: the brain\'s re
     await waitFor(() => requests().some(x => x.words === words && x.round === 1), { what: 'the second round asked' });
     const b = JSON.parse(was);
     writeFileSync(file, JSON.stringify({ ...b, telegram: { ...b.telegram, userId: 5550099 } }), { mode: 0o600 });
+    const from = tgCalls().length;
     writeFileSync(join(T.fleet.dir, 'repaired'), '');
-    const a = await waitFor(() => auditLines().find(l => l.action === 'remember' && /render box/.test(JSON.stringify(l.args))), { timeout: 60000, what: 'the remember call' });
-    assert.deepEqual([a.outcome, a.channel], ['question', 'telegram']);
+    const rejected = await waitFor(() => requests().find(x => x.words === words && x.round === 2), { timeout: 60000, what: 'the old pairing tool refusal' });
+    assert.deepEqual(rejected.results.map(x => x.content), ['[error] This Telegram pairing changed. Send the request again from your paired chat.']);
+    assert.ok(!auditLines().some(l => l.action === 'remember' && /render box/.test(JSON.stringify(l.args))), 'the stale request never reaches the memory action');
     assert.deepEqual(await live(), []);
     // (the brain's answer after that round waits on the same gate: let it go, and the turn ends)
     writeFileSync(join(T.fleet.dir, 'repaired'), '');
     await waitFor(async () => { const c = (await api('/chats')).json.chats.find(x => x.channel === 'telegram'); return c && !(await api(`/chats/${c.id}`)).json.replying; }, { what: 'the turn to end' });
+    assert.deepEqual(tgCalls().slice(from).filter(c => c.method === 'sendMessage'), [], 'no old response reaches the replacement pairing');
   } finally {
     writeFileSync(file, was, { mode: 0o600 });
     script([]);

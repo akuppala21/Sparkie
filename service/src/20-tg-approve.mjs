@@ -1,111 +1,85 @@
-/* ───────── approving from Telegram: the owner's yes from the paired chat (A10a) ───────── */
-// Area: safety        Rules: R32, R06        Tests: tg-approve.test.mjs
+/* ───────── the paired owner’s confirmations on Telegram ───────── */
+// Area: safety        Rules: R32, R06        Tests: tg-approve.test.mjs, telegram-parity-transport.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// The owner's yes may come from Telegram (owner decisions 20 and 22; contract 8.7, 8.17). A question only the owner
-// answers (`question(…, { ownerOnly: true })`, 17-changes.mjs: today's owner-only buttons, and whatever a later step
-// calls risky) asked in one of the owner's own chats is also sent to the paired chat as one ask, built by code: the
-// question and each yes in full, with the page's own buttons. A press there is the owner's yes only when all hold:
-// - "Approve from Telegram" is on: `approve` beside the pairing in the secrets file. On needs the passkey, off never
-//   does; a new pairing turns it on; a pairing made before the switch existed reads as off. `/lock` in the paired chat
-//   turns it off at once, and only the page turns it on again;
-// - this console sent that ask to the chat paired now, and it is still open (one press; 15 minutes, as every button);
-// - its action may run from a channel (never one in PAGE_ONLY: going back a build, memory, saved workflows);
-// - fewer than 3 approvals from Telegram in the last hour and 10 in the last 24 hours. Their times are kept in
-//   telegram.json, so a restart forgets none; over either, the ask waits for the page.
-// A typed "ok" never answers one (sparkieTurn's typed yes skips owner-only buttons). Every approval is echoed on the
-// page: a line in the chat that asked, and a notice. An ask's Telegram side is void after /lock or the switch off; the
-// whole ask is void after a new pairing, and after a restart (asks live in memory only). Over 3,500 characters an ask
-// is answered on the page only. An agent's conversation is not asked here (that is the dangerous ask's, A10b).
-const TG_ASK_MAX = 3500;
-const TG_APPROVALS = { hour: 3, day: 10 };
-// Each button of an ask sent to the paired chat: the pairing it went to, its group, and the chat it belongs to here.
+// The current paired owner has the same choices as the page. A confirmation becomes usable only after every part
+// is acknowledged. Its group, action, arguments and pairing stay bound; a lock, expiry or re-pair revokes it.
 const tgAsks = new Map();
-// Off at once (/lock, the switch off), whatever happens to the secrets file.
 let tgApproveOff = false;
 const tgApproveOn = () => { const p = tgPaired(); return Boolean(p && p.approve === true && !tgApproveOff); };
-// Whether approvals from Telegram are on, in one plain line (sparkie_setup, and /status in the paired chat).
 const tgApprovalsLine = () => (!tgPaired() ? 'Approvals from Telegram: off (no Telegram chat is paired).'
-  : tgApproveOn() ? `Approvals from Telegram: on. A press in your paired chat counts as your yes for a change Spark Console asks about, at most ${TG_APPROVALS.hour} an hour and ${TG_APPROVALS.day} a day; /lock there turns it off.`
-    : 'Approvals from Telegram: off. What needs your yes waits for you in Spark Console; turn it on there (your account menu → Agents and Telegram), with your passkey.');
-// A pending choice whose answer may come from Telegram: owner-only, and not an action that never runs from a channel.
-const tgAskable = c => Boolean(c?.ownerOnly && !(c.action && PAGE_ONLY.has(c.action)));
-
-// The ask's words, all built by code: the question, then each yes it doesn't already hold, whole.
+  : tgApproveOn() ? 'Approvals from Telegram: on. Your paired chat has the same owner controls as the page; /lock turns approvals off.'
+    : 'Approvals from Telegram: off. Turn them on again in your owner controls.');
+const tgAskable = c => Boolean(c && typeof c.ownerOnly === 'boolean');
+const tgUnlockChoice = c => c?.action === OWNER_ADMIN && c.args?.op === 'telegram_approvals' && c.args?.on === true;
+const tgAskFingerprint = c => createHash('sha256').update(JSON.stringify([c.group, c.action, c.args, c.label, c.question ?? null, c.always || null, c.covers || null, c.ahead || null, c.danger || null])).digest('hex');
+function tgAskBinding(ids, group, conv) {
+  const p = tgPaired(), choices = ids.map(id => pendingChoices.get(id));
+  if (!p || !ids.length || choices.some(c => !tgAskable(c))) return null;
+  const unlock = choices.some(tgUnlockChoice) && choices.every(c => !c.action || tgUnlockChoice(c));
+  const plain = choices.every(c => !c.ownerOnly);
+  if (!tgApproveOn() && !unlock && !plain) return null;
+  const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group, conv, ids, unlock, plain, ready: false,
+    fingerprints: Object.fromEntries(ids.map((id, i) => [id, tgAskFingerprint(choices[i])])) };
+  for (const id of ids) tgAsks.set(id, sent);
+  return sent;
+}
+function tgAskCurrent(sent) {
+  const p = tgPaired();
+  return Boolean(sent && p && sent.chatId === p.chatId && sent.userId === p.userId && sent.pairedAt === (p.pairedAt || null)
+    && (tgApproveOn() || sent.unlock || sent.plain) && sent.ids.every(id => {
+      const c = pendingChoices.get(id);
+      return tgAsks.get(id) === sent && c && c.group === sent.group && Date.now() - c.at <= 15 * 60000 && tgAskFingerprint(c) === sent.fingerprints[id];
+    }));
+}
+function tgAskDrop(sent) { for (const id of sent?.ids || []) if (tgAsks.get(id) === sent) tgAsks.delete(id); }
+function tgAskDelivered(sent) {
+  if (!tgAskCurrent(sent)) { tgAskDrop(sent); return; }
+  sent.ready = true;
+}
 function tgAskText(q) {
   const question = String(q.question || '');
-  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action && !pendingChoices.get(c.choice)?.always).map(c => String(c.label)).filter(l => !question.includes(l));
+  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action).map(c => String(c.label)).filter(l => !question.includes(l));
   return [question, ...yes].join('\n\n');
 }
-// question() calls this for an owner-only question with buttons. It sends one ask, or nothing: approvals off, a chat
-// that isn't the owner's own, a page-only action, or more than 3,500 characters. text: a later step's own words for it.
 function tgAsk(viewer, ctx, q, text = null) {
   try {
-    const p = tgPaired(), owner = String(accessList().owner || '').toLowerCase();
+    const owner = String(accessList().owner || '').toLowerCase();
     const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
-    if (!p || !tgApproveOn() || !conv || conv.agent || ctx.agent || String(conv.login || '').toLowerCase() !== owner || viewer?.role !== 'owner') return false;
-    // ("Always allow …" is the page's only, with the passkey: 21-ahead.mjs)
-    const shown = (q.choices || []).filter(c => c.choice && !pendingChoices.get(c.choice)?.always);
-    if (!shown.length || !shown.every(c => tgAskable(pendingChoices.get(c.choice)))) return false;
-    const words = text ?? tgAskText(q);
-    // Nobody approves what they can't read.
-    if (words.length > TG_ASK_MAX) return false;
-    for (const id of tgAsks.keys()) if (!pendingChoices.has(id)) tgAsks.delete(id);
-    // (kept before it is sent, so a press that comes back at once finds it; dropped if it never went)
-    const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: q.group, conv: conv.id };
-    for (const c of shown) tgAsks.set(c.choice, sent);
-    const drop = () => { for (const c of shown) if (tgAsks.get(c.choice) === sent) tgAsks.delete(c.choice); };
-    // (lines the button shows whole go as they are: question()'s whole, write_file's)
-    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [] }).then(ok => { if (!ok) drop(); }, drop);
+    if (!conv || String(conv.login || '').toLowerCase() !== owner || viewer?.role !== 'owner') return false;
+    const shown = (q.choices || []).filter(c => c.choice);
+    const sent = tgAskBinding(shown.map(c => c.choice), q.group, conv.id);
+    if (!sent) return false;
+    const name = maskSecrets(String(conv.agent?.name || ctx.actor || 'An agent')).replace(/\s+/g, ' ').slice(0, 80);
+    const words = `${conv.agent || ctx.agent || ctx.agentId || viewer.agentKey ? `Agent “${name}” asked. Only your confirmation runs it.\n\n` : ''}${text ?? tgAskText(q)}`;
+    tellAgain('ask', words, {
+      buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [],
+      isCurrent: () => tgAskCurrent(sent), onSent: () => tgAskDelivered(sent), onDropped: () => tgAskDrop(sent),
+    }, 'owner-confirmation', { chat: conv.id }).catch(() => tgAskDrop(sent));
     return true;
   } catch (e) { console.error(`Asking on Telegram: ${e.message}`); return false; }
 }
-// runChoice's check of a press from Telegram: an ask sent to the chat paired now, approvals on, its action allowed there.
 function tgAskOpen(id, c) {
-  const sent = tgAsks.get(id), p = tgPaired();
-  return Boolean(sent && p && c && sent.chatId === p.chatId && sent.userId === p.userId && sent.pairedAt === (p.pairedAt || null)
-    && sent.group === c.group && tgApproveOn() && tgAskable(c));
+  const sent = tgAsks.get(id);
+  return Boolean(sent?.ready && c && tgAskCurrent(sent) && sent.fingerprints[id] === tgAskFingerprint(c));
 }
-// Every open choice of a message went to Telegram as an ask (so a reply there would only say it again).
 const tgAskedThere = message => { const open = (message?.choices || []).filter(c => c.state === 'open'); return open.length > 0 && open.every(c => tgAsks.has(c.id)); };
-
-// The approvals from Telegram in the last 24 hours (their times, in telegram.json: a restart forgets none).
+// Counts remain useful on the record; they never reduce the owner’s permissions on one channel.
 const tgApprovals = () => (tgSaved().approvals || []).filter(t => Number.isFinite(t) && Date.now() - t < 86400000);
-function tgApprovalsHeld() {
-  const day = tgApprovals(), hour = day.filter(t => Date.now() - t < 3600000);
-  if (hour.length >= TG_APPROVALS.hour) return `That’s ${TG_APPROVALS.hour} approvals from Telegram in the last hour, the most it may give. This one waits for you in Spark Console.`;
-  if (day.length >= TG_APPROVALS.day) return `That’s ${TG_APPROVALS.day} approvals from Telegram in the last 24 hours, the most it may give. This one waits for you in Spark Console.`;
-  return null;
-}
-// A press in the paired chat (tgPress): null when it isn't on one of the owner's owner-only buttons (a plain button goes
-// on as before); { answer } when it runs nothing, and why; { conv, c } when it may run, as the owner's yes.
+const tgApprovalsHeld = () => null;
 function tgApproving(choice) {
   const c = pendingChoices.get(choice), sent = tgAsks.get(choice);
-  if (!c?.ownerOnly) {
-    if (sent) tgAsks.delete(choice);
-    // (a dangerous ask's button after it closed: 20-danger.mjs)
-    return sent || dangerGone(choice) ? { answer: dangerGone(choice) || 'That button has expired. Ask again.' } : null;
-  }
-  const conv = chatData().conversations.find(x => sparkieWho(tgOwner(), x.id) === c.who);
+  if (!c || !sent) return { answer: dangerGone(choice) || 'That button has expired. Ask again.' };
+  const conv = chatData().conversations.find(x => x.id === sent.conv && sparkieWho(tgOwner(), x.id) === c.who);
   if (!conv) return { answer: 'That button has expired. Ask again.' };
-  // Not sent here, sent to a chat paired before this one, or approvals off or locked: the page answers it.
-  if (!tgAskOpen(choice, c)) return { answer: 'That one waits for you in Spark Console.' };
-  if (putBackHeld()) return { answer: PUTBACK_TG };
-  const held = c.action ? tgApprovalsHeld() : null;
-  if (held) {
-    audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approval-held', args: { chat: conv.id }, ok: true });
-    return { answer: held };
-  }
-  // A dangerous ask's yes runs only with its two digits, typed as the next message here (20-danger.mjs).
+  if (sent && !sent.ready && tgAskCurrent(sent)) return { answer: 'The full confirmation is still being sent. Try its button again in a moment.' };
+  if (!tgAskOpen(choice, c)) return { answer: 'That confirmation is no longer open here. Ask again.' };
   if (c.danger && c.action) return { answer: dangerPressedHere(choice) };
   return { conv, c };
 }
-// Counted before it runs: a yes that then fails still counts.
 function tgApprovalCounted(ask) {
   if (!ask.c.action) return;
-  const st = tgSaved();
-  st.approvals = [...tgApprovals(), Date.now()];
-  tgSave();
+  const st = tgSaved(); st.approvals = [...tgApprovals(), Date.now()]; tgSave();
 }
 // Every approval is echoed on the page: runChoice's line in the chat says so, and this notice.
 function tgApproved(ask, conv, r) {
@@ -136,8 +110,7 @@ function tgNewPairing() {
   aheadEndAll();
   tgApproveOff = false;
 }
-// /lock in the paired chat: approvals from Telegram off at once, and every ask's Telegram side void. Only the page turns
-// them on again.
+// /lock revokes existing Telegram confirmations. A fresh approvals-on owner confirmation can unlock it.
 function tgLock() {
   const was = tgApproveOn();
   tgApproveOff = true;
@@ -145,8 +118,8 @@ function tgLock() {
   let kept = true;
   try { if (tgBinding()) secretsWrite(s => ({ ...s, telegram: { ...s.telegram, approve: false } })); } catch (e) { kept = false; console.error(`/lock wasn’t saved: ${e.message}`); }
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approve', args: { on: false, word: '/lock' }, ok: kept });
-  if (was) fleetEvent({ type: 'notice', text: 'Approvals from Telegram were turned off from Telegram (/lock). Only you can turn them on again, in your account menu → Agents and Telegram, with your passkey.' });
-  return `${was ? 'Locked' : 'Already locked'}: nothing is approved from here now. What needs your yes waits for you in Spark Console, where you can turn approvals from Telegram on again with your passkey.${kept ? '' : ' Spark Console couldn’t save this, so it holds only until it restarts: turn them off there too.'}`;
+  if (was) fleetEvent({ type: 'notice', text: 'Approvals from Telegram were turned off from Telegram (/lock). Only you can turn them on again, with a fresh confirmation in your owner controls.' });
+  return `${was ? 'Locked' : 'Already locked'}: nothing is approved from here now. Turn approvals on again with a fresh confirmation in your owner controls.${kept ? '' : ' Spark Console couldn’t save this, so it holds only until it restarts: turn them off there too.'}`;
 }
 // PUT /telegram/approve {on} (telegramRoute): on needs the passkey (the gate) and a paired chat; off never does.
 async function tgApproveRoute(req) {

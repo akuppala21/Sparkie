@@ -1,10 +1,11 @@
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
-// Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
+// Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs, telegram-device.test.mjs, owner-admin.test.mjs, telegram-device-held.test.mjs
 // Owns: sessions.json (writers: saveSessions)
 // Timers: none        Wakes: none
 // From the internet (Tailscale Funnel) a request carries no Tailscale identity, so on its own it's a public visitor.
 // The owner signs a browser in with their passkey, or lets a device in by its short code (a terminal, or a phone
-// without the passkey) from a device that's already signed in, confirming with the passkey. Each signed-in device holds
+// without the passkey) from a device that's already signed in, confirming with the passkey. The already paired owner
+// may also approve a browser through an exact Telegram confirmation; terminals still require the page. Each signed-in device holds
 // a random token: a browser as a cookie only it sends (HttpOnly, Secure, SameSite=Strict, only to /console/api), a
 // terminal as "Authorization: Bearer scs_…". Only a token's hash is kept. On the tailnet, Tailscale's identity wins.
 const SESSIONS_FILE = `${STATE_DIR}/sessions.json`;
@@ -149,7 +150,7 @@ function accessView() {
     recoveryCodes: r.available && !secretsProblem ? { left: r.left, total: r.total, madeAt: r.madeAt } : null,
     // (the Spark Spark Console runs on, from the list: never a fixed name)
     ...(cantRead.length ? { problem: `Spark Console can’t read your ${cantRead.join(' or your ')} on ${(here => (here ? sparkName(here) : 'its Spark'))(NODES.find(n => n.host === 'local') || nodeById(brainSparks()[0]))} right now.` } : {}),
-    whereToChange: 'On the page, in your account menu: Your devices signs one out; Your passkey adds or removes a passkey and makes new recovery codes. Sparkie can’t change any of these.',
+    whereToChange: 'Use Your devices and Your passkey on the page, or /admin in your paired Telegram chat for /session, /passkey and /recovery commands. These are your direct confirmed commands; the model cannot run them as tools. Adding a passkey still uses your browser.',
   };
 }
 // When this device last used the owner's passkey: signing in with it, or confirming a change.
@@ -199,6 +200,51 @@ function deviceByCode(code) {
   const d = deviceCodes.get(String(code || '').toUpperCase());
   if (!d || d.state !== 'waiting') throw new HttpError(404, 'That code isn’t waiting any more. Start again on the other device.');
   return d;
+}
+
+
+// An opaque immutable value binds the private polling credential and every displayed request fact. It never goes
+// in the ask's text or audit. A reused short code cannot stand in for the browser the owner actually reviewed.
+const deviceFingerprint = d => sessionHash(JSON.stringify([d.userCode, d.deviceHash, d.kind, d.name, d.from, d.at, d.exp]));
+function ownerDevicePreview(code, allow) {
+  if (typeof allow !== 'boolean') throw new HttpError(400, 'Choose allow or deny for that browser.');
+  const d = deviceByCode(code);
+  if (d.kind !== 'browser') throw new HttpError(403, 'This command is for a webpage sign-in only. Let a terminal in from the page with your passkey.');
+  return { label: `${allow ? 'Allow' : 'Deny'} webpage sign-in ${d.userCode}: “${clean(d.name, 60)}”.
+Source: ${clean(d.from, 64) || 'not known'}. Expires: ${new Date(d.exp).toISOString()}.
+${allow ? 'This browser will have your owner access. Approve only a code shown on a webpage you opened.' : 'This browser will not be signed in.'}`,
+    state: Object.freeze({ request: deviceFingerprint(d) }) };
+}
+function ownerDeviceDecision(code, allow, ctx, expected = null) {
+  const telegram = ctx.via === 'telegram';
+  if (telegram && (!isOwnerPress(ctx) || !tgOwnerContextValid(ctx) || !ctx.danger || !tgApproveOn())) throw new HttpError(403, 'Confirm this browser in your currently paired Telegram chat.');
+  if (!telegram && (!['page', 'internet'].includes(ctx.via) || !ctx.login || String(ctx.login).toLowerCase() !== String(accessList().owner || '').toLowerCase())) throw new HttpError(403, 'Only the owner can let a device in.');
+  if (typeof allow !== 'boolean') throw new HttpError(400, 'Choose allow or deny for that device.');
+  const d = deviceByCode(code);
+  if (telegram && (d.kind !== 'browser' || !expected || expected !== deviceFingerprint(d))) throw new HttpError(409, 'That webpage sign-in changed. Nothing was changed; ask again.');
+  // A verified owner's exact denial can still refuse access during a restore hold; it cannot approve.
+  if (!allow) {
+    d.state = 'denied';
+    audit({ via: ctx.via, actor: 'owner', action: 'device-turned-away', args: { device: d.name, kind: d.kind, from: d.from }, ok: true });
+    return { ok: true, state: 'denied' };
+  }
+  // Every approval, on either interface, still waits for restored access to be reviewed.
+  if (putBackHeld()) throw new HttpError(409, 'Review restored access first: /review access. Nothing was changed.');
+  // The HTTP route keeps its existing passkey requirement, including when no passkey is registered.
+  if (allow && !telegram && !passkeys().length) throw new HttpError(409, 'Set up your passkey first (your account menu → Your passkey): letting a device in needs it.');
+  d.state = allow ? 'approved' : 'denied';
+  if (telegram && allow) d.telegramApproval = Object.freeze({ pair: tgPairingMark(), owner: String(accessList().owner).toLowerCase(), request: expected });
+  audit({ via: ctx.via, actor: 'owner', action: allow ? 'device-let-in' : 'device-turned-away', args: { device: d.name, kind: d.kind, from: d.from }, ok: true });
+  if (allow) fleetEvent({ type: 'notice', text: `You let a ${d.kind === 'terminal' ? 'terminal' : 'browser'} in: “${d.name}”.` });
+  return { ok: true, state: d.state };
+}
+function telegramDeviceSignInAvailable() {
+  return Boolean(accessList().owner && tgPaired() && tgApproveOn() && !putBackHeld());
+}
+function telegramDeviceApprovalCurrent(d) {
+  const a = d.telegramApproval;
+  return !a || (d.kind === 'browser' && telegramDeviceSignInAvailable() && a.pair === tgPairingMark()
+    && a.owner === String(accessList().owner || '').toLowerCase() && a.request === deviceFingerprint(d));
 }
 
 /* ── sign-in challenges: signed, not stored, so no number of them pushes out the owner's ── */
@@ -322,6 +368,8 @@ async function signinRoute(req, res, path, viewer) {
     if (!d) { limited(pollHits, req, 400); throw new HttpError(410, 'That code expired. Start again.'); }
     if (d.state === 'denied') { deviceCodes.delete(d.userCode); throw new HttpError(410, 'The owner didn’t let this device in.'); }
     if (d.state !== 'approved') return send(res, 202, { state: 'waiting' });
+    // A replaced or revoked Telegram pairing cannot mint a browser cookie from an earlier approval.
+    if (!telegramDeviceApprovalCurrent(d)) { deviceCodes.delete(d.userCode); throw new HttpError(410, 'That approval is no longer current. Start again on this webpage.'); }
     deviceCodes.delete(d.userCode);
     const { token, session } = newSession(owner, d.kind, d.name, d.from, 'code');
     audit({ via: 'internet', actor: 'owner', action: 'signed-in', args: { device: session.name, kind: d.kind, by: 'code', from: d.from }, ok: true });
@@ -336,13 +384,8 @@ async function sessionRoute(req, res, path, viewer) {
   const code = path.match(/^\/auth\/device\/([A-Za-z0-9]{4}-[A-Za-z0-9]{4})$/);
   if (req.method === 'GET' && code) return send(res, 200, deviceView(deviceByCode(code[1])));
   if (req.method === 'POST' && (path === '/auth/device/approve' || path === '/auth/device/deny')) {
-    const b = asObject(await readBody(req, 2000)), d = deviceByCode(b.code);
-    // Letting a device in needs the passkey (8.7): with none set up, nothing can confirm it.
-    if (path.endsWith('approve') && !passkeys().length) throw new HttpError(409, 'Set up your passkey first (your account menu → Your passkey): letting a device in needs it.');
-    d.state = path.endsWith('approve') ? 'approved' : 'denied';
-    audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: d.state === 'approved' ? 'device-let-in' : 'device-turned-away', args: { device: d.name, kind: d.kind, from: d.from }, ok: true });
-    if (d.state === 'approved') fleetEvent({ type: 'notice', text: `You let a ${d.kind === 'terminal' ? 'terminal' : 'browser'} in: “${d.name}”.` });
-    return send(res, 200, { ok: true, state: d.state });
+    const b = asObject(await readBody(req, 2000));
+    return send(res, 200, ownerDeviceDecision(b.code, path.endsWith('approve'), { via: viewer.session ? 'internet' : 'page', login: viewer.login }));
   }
   if (req.method === 'GET' && path === '/auth/sessions') {
     return send(res, 200, { sessions: sessionList().filter(s => !sessionOver(s)).sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))
@@ -350,13 +393,9 @@ async function sessionRoute(req, res, path, viewer) {
   }
   const one = path.match(/^\/auth\/sessions\/([a-f0-9]{12})$/);
   if (req.method === 'DELETE' && one) {
-    const list = sessionList(), s = list.find(x => x.id === one[1]);
-    if (!s) throw new HttpError(404, 'That device was already signed out.');
-    const unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(list.filter(x => x !== s)));
-    if (s.id === viewer.session?.id) clearSessionCookie(res);
-    endSession(s.id);
-    audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
-    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
+    const result = ownerSessionRemove(one[1], { via: viewer.session ? 'internet' : 'page' });
+    if (one[1] === viewer.session?.id) clearSessionCookie(res);
+    return send(res, 200, result);
   }
   return false;
 }

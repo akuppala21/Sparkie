@@ -4,8 +4,7 @@
 // the mark, and it stands as one needs-you line until the owner writes there; "go on", as that reply says, gives it a
 // fresh budget of the same size. A carry-on turn the brain never answers, or one that can't start while four answers
 // are coming, isn't counted and is tried again (the failed try's lines give way to the next one's). Started on
-// Telegram, its last reply and the stop line reach the phone even past the hour's limit of results (lowered to one here),
-// and the replies in between don't. With no eval on record, a carry-on turn's own change is a button too. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
+// Telegram, its initial continuation, final reply and stop line reach the phone exactly once without a result quota. With no eval on record, a carry-on turn's own change is a button too. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
 // stop, one needs-you line; a press that runs the button wakes it with that time given back. The brain here has a
 // context of 1,000 tokens, so one long lookup ends a reply at the output budget and a task carries on in a fresh turn
 // 1.5 seconds later. The round limit is a budget as the steps and the output are (R50): a task's carry-on turn the
@@ -19,8 +18,7 @@ import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, S
 import { startMock } from './start-mock.mjs';
 
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
-// (Telegram paired, its hourly limit of results and carry-on lines lowered to one, so a Telegram test here reaches it: the
-// stop line uses the hour up, and the last reply comes only because it is a request's last; final read TE-06)
+// Telegram paired; legacy result-limit settings must not suppress any result that the task sends.
 useFleet({ telegram: true, watchMs: 3000, env: { SPARK_CONSOLE_CONTINUE_MS: '1500', SPARK_CONSOLE_TASK_RETRY_MS: '3000', SPARK_CONSOLE_TELEGRAM_LIMITS: '20,20,1' }, prepare: ({ dir, stateDir }) => {
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TG_TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() } }), { mode: 0o600 });
@@ -231,13 +229,19 @@ const tgSent = () => { const f = join(T.fleet.dir, 'telegram-calls.jsonl'); retu
 let msgId = 700;
 const tgSay = text => tgPost('/__push', { message: { message_id: msgId++, date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } });
 
-test('from Telegram, a task’s last reply and its stop reach the phone past six results an hour; the replies in between don’t', { timeout: 400000 * SLOW }, async () => {
+test('from Telegram, the initial continuation, final reply and stop arrive exactly once without a result quota', { timeout: 400000 * SLOW }, async () => {
   const words = 'read the workflows from here, then tell me which one stops a model', from = tgSent().length;
   script([{ match: `^${esc(words)}$`, rounds: [[LONG]] }, { match: CARRIED, rounds: [[LONG]] }, { match: FINISHED, calls: [] }]);
   try {
     await tgSay(words);
     const got = await waitFor(() => { const s = tgSent().slice(from); return s.some(x => STOPPED.test(x)) && s.some(x => /Say “go on” to carry on/.test(x)) && s; }, { timeout: 300000 * SLOW, what: 'the last reply and the stop on Telegram' });
-    assert.ok(got.filter(x => /Carrying on with your request in a fresh turn/.test(x)).length <= 1, `the replies in between stay in Spark Console: ${JSON.stringify(got.map(x => x.slice(-80)))}`);
+    assert.equal(got.filter(x => /Carrying on with your request in a fresh turn/.test(x)).length, 1, 'the initial continuation reaches the owner once');
+    assert.equal(got.filter(x => STOPPED.test(x)).length, 1, 'one stop line');
+    assert.equal(got.filter(x => /Say “go on” to carry on/.test(x)).length, 1, 'one final reply');
+    const chat = (await api('/chats')).json.chats.find(x => x.channel === 'telegram');
+    const messages = await chatMessages(chat.id);
+    const last = messages.findLast(x => x.stopped);
+    assert.ok(last && got.includes(last.content), 'the exact saved final reply reaches Telegram');
   } finally { noScript(); }
 });
 

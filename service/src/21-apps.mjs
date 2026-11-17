@@ -1,5 +1,5 @@
 /* ───────── apps kept running (R38) ───────── */
-// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs
+// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs, t45-adopt-job.test.mjs, t45-owner-wish.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
@@ -410,9 +410,9 @@ action({
       throw new HttpError(409, `There’s already a container called ${container} on ${at}, and ${differs.join('; ')}. A container keeps what it was made with, so nothing was started or changed. To keep that one as it is, ask without the image, port, volumes or settings; for a new app, pick another name.`);
     }
     // Something Spark Console didn't start (no spark.app=1) is the owner's own: from an agent (directly, through Sparkie,
-    // or in a saved step) or from Telegram, keeping, starting, restarting or stopping it is the owner's call (8.4).
-    const owners = !viewer.agentKey && (['page', 'api', 'watcher'].includes(ctx.via) || (['sparkie', 'sparkie-undo'].includes(ctx.via) && !ctx.agent && !ctx.channel));
-    if (state !== 'missing' && !look.app && !owners && !ctx.ownerConfirmed) {
+    // or in a saved step), keeping, starting, restarting or stopping it is the owner's call (8.4).
+    const owners = !viewer.agentKey && (isOwnerCall(ctx) || ctx.via === 'watcher' || (ctx.via === 'sparkie-undo' && !ctx.agent && !ctx.agentId && !ctx.channel));
+    if (state !== 'missing' && !look.app && !owners && !isOwnerPress(ctx)) {
       const label = changeLabel('keep_running', input);
       return question(viewer, ctx, `${label}? ${container} wasn’t started by Spark Console, so that’s the owner’s call.`,
         [{ label, call: { action: 'keep_running', args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
@@ -463,6 +463,10 @@ action({
       return { outcome: 'started', operation: job.id, restarting: container, spark, ...appLinks(spark, container, link), next: next(job.id) };
     }
     if (state === 'running' && look.job) {
+      if (ownersAsk(viewer, ctx)) {
+        const release = claimSparks([spark], `noting the owner's ask for ${container}`);
+        try { desiredWish([key]); await rollbackRetireSuperseded([spark]); } finally { release(); }
+      }
       return { outcome: 'already', spark, container, job: true, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
     }
     if (state === 'running') {
@@ -500,6 +504,7 @@ action({
           await jobFolder(node, container);
           if (look.gpu) gpuAlone((await inventory(null)).sparks.find(s => s.id === spark) || sp, await appLook(node, container, sp.tsip), at);
           await appRoom(node, gb, container);
+          rollbackBeforeRerun([key]);
           step(j, `Starting ${container} on ${at} again`);
           // (its two mounts checked again in the same command: something may have swapped one since the folder was made)
           const r = await run(node, `${jobMountsReal(container)}; docker start ${q(container)}`, { timeout: 90000 });
@@ -507,6 +512,7 @@ action({
           if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
           await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
           consoleStopped.delete(key);
+          if (ownersAsk(viewer, ctx)) { desiredWish([key], { afterStart: { [key]: j.startedReceipts?.[key] } }); await rollbackRetireSuperseded([spark]); }
           // (its end is told again, also when it ends before the watcher's next look: its row says running, so the next
           // look reads it afresh, with this run's exit code)
           const w = knowledge.workloads[key];
@@ -556,9 +562,9 @@ action({
     if (!sp.tsip) throw new HttpError(409, `${at}’s tailnet address isn’t known right now, so the app can’t be opened on your tailnet only. Try again in a minute.`);
     // A new image is code that runs on a Spark: at once only for the owner on their tailnet (as undo_update), else an
     // owner-only button, pressed in Spark Console.
-    const ownerHere = ['page', 'api', 'sparkie'].includes(ctx.via) && !viewer.session && !viewer.agentKey && !ctx.agent && !ctx.channel;
+    const ownerHere = isOwnerCall(ctx) && !viewer.session && !viewer.agentKey;
     // (or a saved workflow's step whose save was the owner's yes to exactly this image, D6c: 18-saved-yes.mjs)
-    if (!ownerHere && !ctx.ownerConfirmed && !(ctx.imagesApproved || []).includes(input.image)) {
+    if (!ownerHere && !isOwnerPress(ctx) && !(ctx.imagesApproved || []).includes(input.image)) {
       const label = changeLabel('keep_running', input);
       return question(viewer, ctx, `${label}? Starting a new image is the owner’s call.`,
         [{ label, call: { action: 'keep_running', args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });

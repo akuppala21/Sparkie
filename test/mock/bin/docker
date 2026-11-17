@@ -29,6 +29,7 @@
 # started, at once and to its end, in its /out folder (the source of its -v …:/out), with these stand-ins on PATH: what it
 # prints is its log, and it ends with the command's exit code (otherwise a job stays running). With ~/.mock/stamp-starts,
 # a run or start writes ~/.mock/started-<name> with the time, so a container's StartedAt is when it really started.
+# Name-based stop-hangs, stop-hangs-once, stop-fails and start-fails knobs also apply to an ID reference.
 # With ~/.mock/ids-per-run, a container made again under a name gets a new id (cid). `docker inspect -f '{{json .Args}}'`
 # gives the words after a container's image in its run (~/.mock/args-<name>, written by every run; a seeded one ships
 # its own): what Sparkie's model loaded is read from them (R52).
@@ -152,7 +153,9 @@ case "$cmd" in
       [ $all = 0 ] && [ "$state" != running ] && continue
       [ "$filter" = "label=spark.console=1" ] && [ "$ours" != 1 ] && continue
       [ "$filter" = "label=spark.gpu=1" ] && ! runLabel "$M/run-$name" spark.gpu=1 && continue
+      case "$filter" in label=spark.operation=*|label=spark.attempt=*|label=spark.command=*) grep -qxF -- "${filter#label=}" "$M/labels-$name" 2>/dev/null || continue ;; esac
       case "$fmt" in
+        '{{.ID}}') cid "$name" ;;
         deploy*) printf 'deploy\t%s\t%s\t%s\t%s\tr%s\tk%s\tn%s\n' "$name" "$state" "$status" "$model" "$role" "$cluster" "$rank" ;;
         run*) p=""; [ "$protect" = 1 ] && p=true; o=""; [ "$ours" = 1 ] && o=1; g=""; runLabel "$M/run-$name" spark.gpu=1 && g=1; printf 'run\t%s\t%s\t%s\t%s\n' "$name" "$p" "$o" "$g" ;;
         gpuapp*) printf 'gpuapp\t%s\n' "$name" ;;
@@ -181,7 +184,13 @@ case "$cmd" in
   # docker images --format '{{.Repository}} {{.ID}}': each image this Spark has, by repository and a short id.
   images) while IFS= read -r l; do [ -n "$l" ] || continue; r=${l%%@*}; case "$r" in */*:*) r=${r%:*} ;; esac; printf '%s %s\n' "$r" "$(printf '%s' "$l" | cksum | cut -c1-12)"; done < "$M/images" 2>/dev/null ;;
   stop)
-    name=$(resolve "$(last "$@")") || { echo "Error response from daemon: No such container: $(last "$@")" >&2; exit 1; }
+    ref=$(last "$@"); name=$(resolve "$ref") || { echo "Error response from daemon: No such container: $ref" >&2; exit 1; }
+    # Inline fault wrappers already cover names. Resolve immutable IDs here so the same faults still bite them.
+    if [ "$ref" != "$name" ]; then
+      if [ -s "$M/stop-hangs-once" ] && [ "$(cat "$M/stop-hangs-once")" = "$name" ]; then rm -f "$M/stop-hangs-once"; exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; fi
+      if [ -s "$M/stop-hangs" ] && [ "$(cat "$M/stop-hangs")" = "$name" ]; then exec >/dev/null 2>&1 </dev/null; sleep 150; exit 1; fi
+      if [ -s "$M/stop-fails" ] && [ "$(cat "$M/stop-fails")" = "$name" ]; then echo "Error response from daemon: cannot stop container: $name: a made-up failure" >&2; exit 1; fi
+    fi
     code=$(cat "$M/stop-code-$name" 2>/dev/null || echo 0)
     sed "s/^$name|running|[^|]*|/$name|exited|Exited ($code) just now|/" "$M/containers" > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name"
     freeGpu "$name"; echo "$name" ;;
@@ -195,6 +204,7 @@ case "$cmd" in
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
       ref=$name; name=$(resolve "$ref") && line=$(lineOf "$name") || { echo "Error response from daemon: No such container: $ref" >&2; exit 1; }
+      if [ "$ref" != "$name" ] && [ -s "$M/start-fails" ] && [ "$(cat "$M/start-fails")" = "$name" ]; then echo 'Error response from daemon: failed to create task for container: a made-up failure' >&2; exit 1; fi
       IFS='|' read -r n state status ours model protect role cluster rank <<< "$line"
       [ "$state" = running ] && { echo "$name"; continue; }
       if usesPort "$ours" "$role" "$rank" && holder=$(portHolder "$name"); then
@@ -209,9 +219,15 @@ case "$cmd" in
       echo "$name"
     done ;;
   rename)
-    line=$(lineOf "$1") || { echo "Error response from daemon: No such container: $1" >&2; exit 1; }
+    original=$(resolve "$1") || { echo "Error response from daemon: No such container: $1" >&2; exit 1; }
+    set -- "$original" "$2"
+    line=$(lineOf "$1") || exit 1
+    oldid=$(cid "$1")
     lineOf "$2" >/dev/null && { echo "Error response from daemon: Error when allocating new name: Conflict. The container name \"/$2\" is already in use" >&2; exit 1; }
-    setLine "$1" "$2|${line#*|}"; [ -f "$M/up-$1" ] && mv "$M/up-$1" "$M/up-$2"; [ -f "$M/id-$1" ] && mv "$M/id-$1" "$M/id-$2"; true ;;
+    setLine "$1" "$2|${line#*|}"
+    printf '%s\n' "$oldid" > "$M/id-$2"; rm -f "$M/id-$1"
+    for prefix in up started labels run args cmd image memory; do [ -f "$M/$prefix-$1" ] && mv "$M/$prefix-$1" "$M/$prefix-$2"; done
+    true ;;
   # Like docker restart: stopped and started again (clears a hung brain, ~/.mock/brain-hung).
   restart)
     name=$(resolve "$(last "$@")") && line=$(lineOf "$name") || { echo "Error: No such container: $(last "$@")" >&2; exit 1; }
@@ -222,7 +238,7 @@ case "$cmd" in
       case "$name" in -*) continue ;; esac
       # (by its name, or the start of its id, as docker rm takes either)
       r=$(resolve "$name") && name=$r
-      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/box-until-$name" "$M/args-$name"
+      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/box-until-$name" "$M/args-$name" "$M/labels-$name"
     done ;;
   run)
     printf '%s\n' "$@" > "$M/last-run-args"
@@ -240,6 +256,8 @@ case "$cmd" in
     esac
     name=""; model=""; protect=""; role=""; cluster=""; rank=""; ours=""
     while [ $# -gt 0 ]; do case "$1" in --name) name=$2; shift;; --label) case "$2" in spark.console=1) ours=1;; spark.app=1) ours=app;; spark.model=*) model=${2#spark.model=};; spark.protect=true) protect=1;; spark.role=*) role=${2#spark.role=};; spark.cluster=*) cluster=${2#spark.cluster=};; spark.rank=*) rank=${2#spark.rank=};; spark-console.box=*) ours=box;; esac; shift;; esac; shift; done
+    # Preserve recovery labels as real Docker does. They are facts returned by inspect and label filters.
+    awk 'p {if ($0 ~ /^spark\.(operation|attempt|command)=/) print; p=0} $0 == "--label" {p=1}' "$M/last-run-args" > "$M/labels-$name"
     # Like docker: a --mount whose source isn't there refuses to start. Like SGLang and vLLM (Spark 3, 2026-11-08): a
     # cache entry mounted at /hf whose snapshot files link outside that folder has weight files missing in the container.
     hfout=""; prev=""
@@ -250,7 +268,9 @@ case "$cmd" in
       prev=$a
     done < "$M/last-run-args"
     lineOf "$name" >/dev/null && { echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2; exit 125; }
-    if [ -f "$M/ids-per-run" ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
+    collision=0; candidate=$(idOf "$name")
+    while IFS='|' read -r existing _; do [ -n "$existing" ] && [ "$(cid "$existing")" = "$candidate" ] && collision=1; done < "$M/containers"
+    if [ -f "$M/ids-per-run" ] || [ "$collision" = 1 ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
     [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
     runArgs "$M/last-run-args" > "$M/args-$name"
     if [ "$ours" = box ]; then cp "$M/last-run-args" "$M/run-$name"; echo $(( $(date +%s) + $(tail -n 1 "$M/last-run-args") )) > "$M/box-until-$name"; fi
@@ -276,7 +296,7 @@ case "$cmd" in
       elif [ -f "$M/roce-hang" ] && grep -qx 'NCCL_IB_DISABLE=0' "$M/last-run-args"; then printf 'engine start 2.11.0\nengine gloo ok\nakspark:1:1 [0] NCCL INFO NET/IB : Using [0]rocep1s0f1:1/RoCE [RO]; OOB enp1s0f1np1:10.100.186.2<0>\n' > "$M/logs-$name"; echo 'running 0 false' > "$M/check-exit-$name"
       # Success, with its result line inside one of NCCL's (C's buffer split NCCL's line around it, as on 2026-11-11).
       else { printf 'engine start 2.11.0\nengine gloo ok\n'; for i in $(seq 150); do printf 'spark:1:1 [0] NCCL INFO Channel %02d/02 : 0[0] -> 1[0] [send] via NET/IB/0\n' "$i"; done; printf 'spark:1:1 [0] NCCL INFO Init COMPLETE\nspark:1:1 [0] NCCL INFO Init timengine nccl ok\nings - ncclCommInitRankConfig: rank 0 nranks 2 total 1.23\n'; } > "$M/logs-$name"; fi
-      echo "$name|exited|Exited (0) 1 second ago||||||" >> "$M/containers"; date +%s > "$M/up-$name"; echo "c0ffee$RANDOM"; exit 0
+      echo "$name|exited|Exited (0) 1 second ago||||||" >> "$M/containers"; date +%s > "$M/up-$name"; cid "$name"; exit 0
     fi
     # With ~/.mock/roce-hang, a part of a two-Spark start sits at SGLang's first step when NCCL uses RoCE (as on Spark 3 +
     # 4, 2026-11-10), and loads normally over plain sockets (NCCL_IB_DISABLE=1). The stand-in curl ignores a stuck one.
@@ -304,7 +324,7 @@ case "$cmd" in
       grep -qE 'OutOfMemoryError|unrecognized arguments' "$M/logs-$name" 2>/dev/null && rm -f "$M/logs-$name"
       echo "$name|running|Up 1 second|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
     fi
-    date +%s > "$M/up-$name"; echo "c0ffee$RANDOM" ;;
+    date +%s > "$M/up-$name"; cid "$name" ;;
   port) name=$(resolve "$1") || exit 1; [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || exit 0
     grep "^$name|" "$M/ports" 2>/dev/null | awk -F'|' '{print "8000/tcp -> " ($3 == "" ? "127.0.0.1" : $3) ":" $2}' ;;
   inspect)
@@ -341,6 +361,9 @@ case "$cmd" in
         [ "$ours" = app ] && lab="\"spark.app\":\"1\"" && for l in spark.gpu=1 spark.job=1; do runLabel "$M/run-$name" "$l" && lab="$lab,\"${l%%=*}\":\"1\""; done
         [ "$ours" = app ] && c=$(grep -x 'spark\.chat=sc_[0-9a-f]*' "$M/run-$name" 2>/dev/null | head -1) && [ -n "$c" ] && lab="$lab,\"spark.chat\":\"${c#spark.chat=}\""
         [ "$protect" = 1 ] && lab="${lab:+$lab,}\"spark.protect\":\"true\""
+        while IFS='=' read -r key value; do
+          case "$key" in spark.operation|spark.attempt|spark.command) lab="${lab:+$lab,}\"$key\":\"$value\"" ;; esac
+        done < <(cat "$M/labels-$name" 2>/dev/null)
         started=$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)
         cmdj=$(cat "$M/cmd-$name" 2>/dev/null); [ -n "$cmdj" ] || cmdj=$appcmd; [ -n "$cmdj" ] || cmdj=$(printf '["vllm","serve","%s","--port","8000","--max-model-len","32768","--api-key","sk-abcdefghijklmnopqrstuvwxyz123"]' "${model:-$name}")
         printf '[{"Id":"%s","Name":"/%s","Image":"sha256:abc","Created":"2026-11-04T00:00:00Z","Config":{"Image":"%s","Entrypoint":null,"Cmd":%s,"Env":%s,"Labels":{%s}},"HostConfig":{"NetworkMode":"host","PortBindings":%s,"Binds":%s,"Memory":%s,"DeviceRequests":%s,"RestartPolicy":{"Name":"no"}},"State":{"Status":"%s","ExitCode":%s,"OOMKilled":%s,"StartedAt":"%s","FinishedAt":"0001-01-01T00:00:00Z"},"Mounts":[{"Source":"/home/u/.cache/huggingface","Destination":"/root/.cache/huggingface","RW":true}]}]\n' "$id" "$name" "$img" "$cmdj" "$env" "$lab" "$pb" "$binds" "$mem" "$dev" "$state" "$code" "$oom" "$started"

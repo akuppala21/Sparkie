@@ -1,5 +1,5 @@
 /* ───────── a shorter context waits for the owner's own decision (T42) ───────── */
-// Area: core        Rules: R1, R7, R9, R16, R18, R25        Tests: context-start.test.mjs, context-page.test.mjs, context-lifecycle.test.mjs, context-boundaries.test.mjs
+// Area: core        Rules: R1, R7, R9, R16, R18, R25        Tests: context-start.test.mjs, context-page.test.mjs, context-lifecycle.test.mjs, context-boundaries.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Private start plans and one-use owner decisions. No setup, environment or retry token is a job property.
@@ -23,8 +23,7 @@ function contextCarry(args, ctx) {
 function contextConsume(args, viewer, ctx) {
   contextPrune();
   const token = args.__contextRetryToken, p = contextRetries.get(token);
-  if (!(p && ctx.trusted && ctx.button && (ctx.ownerConfirmed || p.approved) && viewer.role === 'owner' && !ctx.agent && !ctx.agentId
-    && (ctx.via === 'page' || (!p.page && ctx.via === 'telegram')))) throw new HttpError(409, 'That context choice has expired or needs the owner’s own button. Nothing was started.');
+  if (!(p && ctx.trusted && ctx.button && (isOwnerPress(ctx) || (p.approved && isOwnerCall(ctx))) && viewer.role === 'owner' && !viewer.agentKey && !ctx.agent && !ctx.agentId)) throw new HttpError(409, 'That context choice has expired or needs the owner’s own button. Nothing was started.');
   contextRetries.delete(token);
   contextAttempt(p.budget, Date.now(), Math.min(FIX_WINDOW_MS, 1800000)); // Check now, and again immediately before every actual launch.
   if (args.model !== p.args.model || args.spark !== p.args.spark || JSON.stringify(args.sparks) !== JSON.stringify(p.args.sparks) || args.contextTokens !== p.proposed || args.setup !== p.args.setup) throw new HttpError(409, 'That context choice no longer matches the start it offered.');
@@ -42,7 +41,7 @@ function contextReplayHow(m, inv, p, viewer, ctx) {
 }
 function contextPageStart(m, inv, args, viewer, ctx) {
   const page = ctx.contextRetry.page, nodes = ctx.contextRetry.nodes;
-  if (!(ctx.via === 'page' && ctx.button && ctx.trusted && viewer.role === 'owner' && (ctx.ownerConfirmed || ctx.contextRetry.approved))) throw new HttpError(403, 'This page setup needs the owner’s press in Spark Console.');
+  if (!(ctx.button && ctx.trusted && viewer.role === 'owner' && !viewer.agentKey && (isOwnerPress(ctx) || (ctx.contextRetry.approved && isOwnerCall(ctx))))) throw new HttpError(403, 'This setup needs the owner’s approved button.');
   const how = resolveHow(page.body, viewer, m.name, nodes.length, inv.library);
   const placed = { nodes, two: nodes.length === 2, stop: page.approved, keep: page.keep };
   const prepared = contextPrepare(m, how, args, placed, ctx, page);
@@ -86,7 +85,7 @@ function contextDecisionFor(group) {
 }
 function contextApprove(choice, viewer, ctx) {
   const token = choice.args?.__contextRetryToken, p = contextRetries.get(token);
-  if (p && choice.ownerOnly && ctx.ownerConfirmed && ctx.trusted && ctx.button && viewer.role === 'owner' && !ctx.agentId) {
+  if (p && choice.ownerOnly && isOwnerPress(ctx) && viewer.role === 'owner' && !viewer.agentKey && !ctx.agentId) {
     contextRetries.set(token, contextFreeze({ ...p, approved: true }));
   }
 }

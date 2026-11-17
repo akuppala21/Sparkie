@@ -1,5 +1,5 @@
 /* ───────── keys given once: taken out of the owner's words at the door, kept by name ───────── */
-// Area: safety        Rules: R51, R7, R32        Tests: app-keys.test.mjs
+// Area: safety        Rules: R51, R7, R32        Tests: app-keys.test.mjs, telegram-parity-transport.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the
@@ -172,14 +172,18 @@ async function answerKeys(res, conv, text, viewer) {
   }
 }
 // The paired Telegram chat (tgUpdate, before anything else reads the words): the message is deleted first, the key
-// kept, then one fixed line. True when the message held a key. Someone else's words (forwarded) are left to tgUpdate.
-async function tgKeys(m) {
+// kept, then one fixed line. The original owner and chat stay bound across the delete and save waits; a new pairing
+// cannot inherit this request or its reply. True when the message held a key. Forwarded words are left to tgUpdate.
+async function tgKeys(m, ownerViewer) {
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot || typeof m.text !== 'string') return false;
   const given = keysGiven(m.text), b = tgPaired();
   if (!given || !b) return false;
+  if (!tgOwnerValid(ownerViewer)) return true;
+  const conv = tgConv();
   const gone = Number.isSafeInteger(m.message_id) && await tgCall(b.token, 'deleteMessage', { chat_id: b.chatId, message_id: m.message_id }, { timeoutMs: 10000 }).then(() => true, () => false);
   const after = gone ? 'Your message that held it was deleted from this chat.' : 'Your message that held it couldn’t be deleted from Telegram: delete it yourself.';
-  const message = await giveKey(tgConv(), given, 'telegram', 'telegram', after);
-  await tell('system', message.content);
+  if (!tgOwnerValid(ownerViewer)) return true;
+  const message = await giveKey(conv, given, 'telegram', 'telegram', after);
+  await tgOwnerTell(ownerViewer, 'system', message.content);
   return true;
 }

@@ -1,5 +1,5 @@
 /* ───────── the rail: a change runs at once only while Sparkie's brain is checked (the one page, milestone 5; P-4) ───────── */
-// Area: features        Rules: R52, R47        Tests: brain-rail.test.mjs
+// Area: features        Rules: R52, R47        Tests: brain-rail.test.mjs, telegram-result-approvals.test.mjs
 // Owns: eval-seal.json (writers: evalSealKey; beside secrets.json, outside the state folder)
 // Timers: none        Wakes: none
 // One brain check with two outcomes (design E 2.3, cut by the one page). Checked: the chat goes to Sparkie's own model,
@@ -174,8 +174,8 @@ async function railWords() {
 // for the rail. It waits only when it is for this build's mark, the lock's case set and the brain serving now; anything
 // else that could unlock is refused, so it can't sit ready for a later build. One at a time: a newer run replaces it
 // and voids the old button. The owner gets one owner-only button in their chat "The brain eval’s result", built here
-// from the record; pressed on the page (with the passkey) it is kept, sealed. Its call, EVAL_YES, is no action: runAction
-// hands it to evalYes, which takes only that button's press. In PAGE_ONLY, so Telegram never asks about it. The route is
+// from the record; approved by the owner on the page or in the paired Telegram chat, it is kept, sealed. Its call,
+// EVAL_YES, is no action: runAction hands it to evalYes, which takes only that button's verified owner press. The route is
 // the owner's alone (24-handler.mjs), so an agent's key can't post one, and the button is in the owner's own chat.
 const EVAL_YES = 'keep_eval_result', EVAL_CHAT = 'The brain eval’s result';
 let evalWaiting = null;
@@ -213,7 +213,7 @@ function evalWait(rec, p, now, viewer) {
   evalWaiting = { token, rec, profileKey: p.key, conv: conv.id, group: asked.group, setup: now.setup };
   audit({ via: 'page', actor: 'owner', action: 'brain-eval-waiting', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: now.setup, passOnce: rec.score.passOnce }, ok: true });
   return { stored: false, waiting: true, setup: now.setup, chat: conv.id,
-    says: `Waiting for the owner’s yes: a button in the chat “${EVAL_CHAT}” in Spark Console, pressed with the passkey. Until then Sparkie asks before every change.` };
+    says: `Waiting for the owner’s yes: a button in the chat “${EVAL_CHAT}” on the page or in your paired Telegram chat. Until then Sparkie asks before every change.` };
 }
 // The waiting result's button goes (a newer one came, or it was answered).
 function evalWaitingGone() {
@@ -224,14 +224,14 @@ function evalWaitingGone() {
   evalWaiting = null;
   saveChats();
 }
-// The press (runAction hands EVAL_YES here): only its own owner-only button, pressed by the owner on the page.
+// The press (runAction hands EVAL_YES here): only its own button, approved by the verified owner.
 async function evalYes(args, viewer, ctx) {
-  if (!(ctx.button && ctx.trusted && ctx.ownerConfirmed && ctx.via === 'page' && viewer?.role === 'owner')) throw new HttpError(404, `No action called ${EVAL_YES}.`);
+  if (!(isOwnerPress(ctx) && viewer?.role === 'owner' && !viewer?.agentKey)) throw new HttpError(404, `No action called ${EVAL_YES}.`);
   const w = evalWaiting, token = String(args?.token || '');
   if (!w || token.length !== w.token.length || !timingSafeEqual(Buffer.from(token), Buffer.from(w.token))) throw new HttpError(409, 'That result isn’t waiting any more: a newer one came, it was answered, or Spark Console restarted.');
   evalWaiting = null;
   if (args.keep !== true) {
-    audit({ via: 'page', actor: 'owner', action: 'brain-eval-dropped', args: { reads: w.rec.reads, build: w.rec.build }, ok: true });
+    audit({ via: ctx.via, actor: 'owner', action: 'brain-eval-dropped', args: { reads: w.rec.reads, build: w.rec.build }, ok: true });
     return { outcome: 'dropped', note: 'Dropped: that eval result wasn’t kept, and Sparkie still asks before every change.' };
   }
   await brainRanLook();
@@ -239,11 +239,12 @@ async function evalYes(args, viewer, ctx) {
   if (!p || p.key !== w.profileKey || brainReadsNow() !== w.rec.reads || set?.version !== w.rec.set) throw new HttpError(409, 'Kept nothing: Sparkie’s model or this build changed since that result was posted. Run the eval again.');
   let keys = 1;
   try { keys = passkeys().length; } catch {}
-  const out = keepEvalRecord(p, { ...w.rec, keptWith: keys ? 'passkey' : 'the owner’s press' }, w.setup);
+  if (!isOwnerPress(ctx) || viewer?.agentKey) throw new HttpError(409, 'That owner approval is no longer current. Nothing was kept.');
+  const out = keepEvalRecord(p, { ...w.rec, keptWith: ctx.via === 'telegram' ? 'telegram' : keys ? 'passkey' : 'the owner’s press' }, w.setup, ctx);
   // (what the rail says now, not what keeping it was hoped to mean: a newer failing run, or a check that says not checked)
   return { outcome: out.stored ? 'kept' : 'not kept', note: out.stored ? `Kept. ${await railWords()}` : out.says };
 }
 // One needs-you line while a result waits (20-needs.mjs).
 function evalWaitingNeeds(add) {
-  if (evalWaiting) add('eval', `A brain eval result for this build is waiting for your yes: press its button in the chat “${EVAL_CHAT}” in Spark Console. Until then Sparkie asks before every change.`);
+  if (evalWaiting) add('eval', `A brain eval result for this build is waiting for your yes: approve its button in the chat “${EVAL_CHAT}” on the page or in your paired Telegram chat. Until then Sparkie asks before every change.`);
 }

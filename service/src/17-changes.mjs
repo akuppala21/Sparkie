@@ -1,7 +1,7 @@
 /* ───────── actions that change things: say it, and it's done (checked inside) ───────── */
 // Area: core
 // Rules: R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38
-// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs, context-start.test.mjs
+// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs, context-start.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-restart-intent.test.mjs, telegram-proposal-confirmation.test.mjs, telegram-parity-transport.test.mjs
 // Owns: agent-settings.json (writers: setAgentSettings)
 // Timers: none        Wakes: none
 // Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is
@@ -45,7 +45,7 @@ const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never sto
 // lets it through: R34, R1-01)
 const pausedCheck = ctx => {
   const s = agentSettings();
-  if (ctx?.via && ctx.via !== 'page' && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
+  if (ctx?.via && ctx.via !== 'page' && !(ctx.via === 'telegram' && ctx.trusted && ctx.button && isOwnerCall(ctx)) && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
 };
 
 // Questions and their choices. Each choice's arguments stay here; the caller only gets an id to answer with.
@@ -63,6 +63,7 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2; a saved workflow's title, savedNamed);
 // a choice's `brain` is its label there.
 function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, brain = null } = {}) {
+  if (ctx.channel === 'telegram' && ['sparkie', 'telegram'].includes(ctx.via) && !tgOwnerContextValid(ctx)) throw new HttpError(403, 'This Telegram pairing changed. Ask again.');
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -83,14 +84,15 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     if (!c.call && !ctx.conv) return { label: c.label, choice: null };
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
-    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
+    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, question: String(text ?? ''), at: Date.now(), group, ownerOnly, validation,
+      ...(ctx.channel === 'telegram' ? { tg: tgPairingMark() } : {}),
       ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}),
       // (a go-ahead's answer keeps what its press gives, built by code, and "Always allow …" what it keeps: 21-ahead.mjs)
       ...(c.ahead ? { ahead: c.ahead } : {}), ...(c.always ? { always: c.always } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
-    note: ownerOnly ? 'Only the owner can answer this one, from Spark Console. Tell them what it asks; don’t answer it yourself.'
+    note: ownerOnly ? 'Only the owner can answer this one, on the page or in the paired Telegram chat. Tell them what it asks; don’t answer it yourself.'
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
@@ -99,8 +101,8 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map((c, i) => choices[i]?.brain || c.label),
-      note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
-        : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
+      note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button in the owner’s chat). Say in one short line what it would do, then stop. Don’t call it again.'
+        : 'Offered as choices to take (buttons in the owner’s chat). Ask this in plain words and stop.' };
   }
   return out;
 }
@@ -110,8 +112,8 @@ function changeLabel(name, input, brain = false) {
   const sp = id => sparkName(nodeById(id) || { id });
   const where = input.sparks ? ` across ${input.sparks.map(sp).join(' + ')}` : input.spark ? ` on ${sp(input.spark)}` : '';
   const what = input.model || input.container || 'it';
-  // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
-  if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
+  // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs savedWorkflowLabel, F20).
+  if (name === 'save_workflow' || name === 'forget_workflow') return savedWorkflowLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.) The line it would keep is shown whole: remember's text
   // is 300 characters at most, and the press keeps all of it as the owner's (C-11).
@@ -166,15 +168,18 @@ function changeLabel(name, input, brain = false) {
 // for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
 function propose(viewer, ctx, name, input, because = null) {
   const first = input.__validate ? ' (its first run, which validates it)' : '', label = `${changeLabel(name, input)}${first}`, said = `${changeLabel(name, input, true)}${first}`;
-  const out = question(viewer, ctx, `${label}?`, [{ label, brain: said, call: { action: name, args: input } }], 'proposal', { brain: `${said}?` });
+  // These Telegram requests keep an explicit owner confirmation whichever channel answers their button.
+  // The page checks its passkey; Telegram checks the current paired owner and exact delivered choice.
+  const ownerOnly = ctx.channel === 'telegram' && ['undo_update', 'save_workflow', 'forget_workflow', 'propose_update'].includes(name);
+  const out = question(viewer, ctx, `${label}?`, [{ label, brain: said, call: { action: name, args: input } }], 'proposal', { brain: `${said}?`, ownerOnly });
   return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
   const c = pendingChoices.get(id);
-  if (!c || c.action !== action || c.who !== whoAsks(viewer, ctx) || Date.now() - c.at > 15 * 60000) {
+  if (!c || c.action !== action || c.who !== whoAsks(viewer, ctx) || Date.now() - c.at > 15 * 60000 || (c.tg && c.tg !== tgPairingMark())) {
     throw new HttpError(409, 'That choice has expired or belongs to someone else. Ask again.');
   }
-  if (c.ownerOnly && ctx.via !== 'page') throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
+  if (c.ownerOnly && ctx.via !== 'page') throw new HttpError(403, 'Only the owner can answer this one, on the page or in the paired Telegram chat.');
   pendingChoices.delete(id);
   return c.args;
 }
@@ -446,6 +451,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
       // What the failed attempt said (its first line), kept: the next attempt replaces its containers and their logs.
       note(job, `Attempt ${n}: ${String(e.message).split('\n')[0].slice(0, 600)}`);
       note(job, `Known problem: ${known.title}. ${known.fix} (attempt ${n + 1} of 3)`);
+      try { await rollbackBeforeRetry(job); } catch (settle) { await putBack(job, m, placed); throw new Error(withOwed(job, settle.message)); }
       fix = next.fix || fix;
       if ('how' in next) how = next.how;
     }
@@ -461,6 +467,7 @@ function launch(viewer, ctx, m, placed, how, prepared = null) {
   return job;
 }
 async function putBack(job, m, placed) {
+  if (job.rollbackOperation) return rollbackReturn(job);
   step(job, 'It didn’t start, so putting back what was there');
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
   // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
@@ -560,7 +567,7 @@ function startingNow(names, where = null) {
 // (the owner's own ask for one already being started is their newest wish for it: that operation says so, so a saved
 // workflow's run whose step it is leaves it at its clean-up, A-22: startedReceipts)
 function alreadyStarting(j, model, viewer, ctx) {
-  if (ownersAsk(viewer, ctx)) j.ownersWish = true;
+  if (ownersAsk(viewer, ctx)) rollbackAdoptStart(j);
   return { outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
     note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` };
 }
@@ -762,8 +769,9 @@ async function startModel(args, viewer, ctx) {
     if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
     for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
-    const release = claimSparks(placed.nodes, `starting ${v.repo}`);
-    try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
+    const release = claimSparks(placed.nodes, `starting ${v.repo}`), beforeRelease = j.release;
+    j.release = () => { release(); beforeRelease?.(); };
+    await deployPlaced(j, viewer, ctx, m, placed, how);
   });
   return { outcome: 'started', operation: job.id, ...(acrossPick || {}), model: v.repo, quantization: v.quant || null, downloadGB: v.sizeGB, sparks: pick.nodes,
     ...(found.outsideRecipes ? { note: 'It isn’t in your recipes yet: after the download it is added, and its setups are looked up before it starts.' } : {}),
@@ -802,16 +810,20 @@ action({
     if (!spark || !container) throw new HttpError(400, 'Missing argument: spark and container.');
     sparkOf(viewer, spark);
     const dep = (await inventory(null)).sparks.find(sp => sp.id === spark)?.deployments.find(d => d.container === container);
+    const pending = rollbackKnown(spark, container);
+    if (!dep && pending) { mustUse(viewer); rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running. Its earlier put-back was cancelled.` }; }
     if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}. Only those can be stopped this way; running_models lists them.`);
     if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model is started and stopped by the owner, with /main/start and /main/stop.');
     const label = await run(nodeById(spark), `docker inspect -f '{{index .Config.Labels "spark.protect"}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
     if (isProtected(container, label.out.trim())) throw new HttpError(403, `${container} is protected.`);
-    if (dep.state !== 'running') return { outcome: 'already', note: `${container} isn’t running.` };
+    mustUse(viewer);
+    if (dep.state !== 'running') { rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running.` }; }
     const parts = dep.cluster ? dep.cluster.split('+') : [spark];
     if (!confirmRouted && parts.some(id => routedSparks().has(id))) {
       return question(viewer, ctx, `${container} answers Sparkie’s chats or apps. Stop it anyway?`, [
         { label: `Yes, stop ${container}`, call: { action: 'stop_model', args: { spark, container, confirmRouted: true } } }, { label: 'No, leave it running', call: null }], 'question', { ownerOnly: true });
     }
+    rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null);
     const owners = ctx.via === 'page' || ctx.via === 'telegram' || (ctx.via === 'sparkie' && !ctx.agent);
     const holding = [...jobs.values()].filter(j => holdsModelsOn(j, parts) && (owners || (ctx.actor && j.actor === ctx.actor)));
     if (holding.length) await cancelJobsAndWait(holding, ctx.actor || viewer.login);
@@ -821,6 +833,7 @@ action({
       // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
       const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
       if (left) { j.left = left; note(j, `Left running: ${left}.`); return; }
+      rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null);
       await stopContainer(j, spark, container, viewer);
       await stoppedForSure(j, spark, container);
     });
@@ -843,7 +856,14 @@ async function restartChecked(viewer, ctx, spark, container) {
   if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}.`);
   if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model restarts by itself; the owner starts and stops it with /main/start and /main/stop.');
   if (dep.cluster) throw new HttpError(409, 'It runs across two Sparks; use start_model to start it again.');
-  if (dep.state === 'running') return null;
+  if (dep.state === 'running') {
+    if (ownersAsk(viewer, ctx)) {
+      desiredWish([`${spark}/${container}`]); // strict intent first, before this receipt may become the run's
+      // The exact start's durable wish is transferred with its own receipt before rollbackCommit retires it.
+    }
+    return null;
+  }
+  if (rollbackRecords().some(r => r.phase !== 'committed' && r.targets.includes(spark) && r.attempts.some(a => a.commands.some(c => c.spark === spark && !c.result?.terminal)))) throw new HttpError(409, 'An earlier start still has an unanswered command on this Spark. Wait for its put-back check before starting anything there.');
   notBrainsSpark([spark]);
   const m = inv.library.find(x => x.name === dep.model);
   if (!m) throw new HttpError(409, `${dep.model} isn’t in the library on ${spark} any more.`);
@@ -855,6 +875,7 @@ async function restartChecked(viewer, ctx, spark, container) {
 // just before the docker start, from a fresh look (A-2b, as keep_running does: another GPU app or job, or less free
 // memory, may have come between the two).
 async function restartRoom(viewer, spark, container, model, inv = null) {
+  if (rollbackRecords().some(r => r.phase !== 'committed' && r.targets.includes(spark) && r.attempts.some(a => a.commands.some(c => c.spark === spark && !c.result?.terminal)))) throw new HttpError(409, 'An earlier start still has an unanswered command on this Spark. Wait for its put-back check before starting anything there.');
   // It comes back with the share it was started with, so that's what it takes: the larger of that and the estimate.
   const cmd = await run(nodeById(spark), `docker inspect -f '{{json .Config.Cmd}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
   const p = await plan(model, spark, viewer, inv || await inventory(null)), avail = p.memory.available, total = p.memory.total;
@@ -922,6 +943,7 @@ action({
   description: 'Use when one of Spark Console’s models (on one Spark) has stopped or crashed and the owner wants it back. Starts the same container again if there’s room, and checks it answers. For a model across two Sparks, use start_model.',
   input: { type: 'object', properties: { spark: sparkArg, container: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$', description: 'The container, from running_models (stopped) or workloads.' }, choice: choiceArg }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
+    if (ctx.rollback === ROLLBACK_INSIDE) return rollbackContinue(input, viewer, ctx);
     // A choice this action offered (its validation run, v3.1) is sent alone, as for stop_model.
     if (input.choice && Object.keys(input).length > 1) throw new HttpError(400, 'Send the choice alone: {"choice": id}.');
     const { spark, container } = input.choice ? redeemChoice(viewer, ctx, 'restart_model', input.choice) : input;
@@ -929,7 +951,7 @@ action({
     sparkOf(viewer, spark);
     mustUse(viewer);
     const job = await restartChecked(viewer, ctx, spark, container);
-    if (!job) { if (ownersAsk(viewer, ctx)) desiredWish([`${sparkIdOf(spark) || spark}/${container}`]); return { outcome: 'already', note: `${container} is running.` }; }
+    if (!job) return { outcome: 'already', note: `${container} is running.` };
     return { outcome: 'started', operation: job.id, restarting: container, next: `wait_operation {"id":"${job.id}"}` };
   },
 });

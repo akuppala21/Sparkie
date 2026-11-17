@@ -1,5 +1,5 @@
 /* ───────── the yes at save covers a saved workflow's images (D6c) ───────── */
-// Area: core        Rules: R35, R38        Tests: workloads-images.test.mjs
+// Area: core        Rules: R35, R38        Tests: workloads-images.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: none (saved-workflows.json's `approved`, written by writeSaved in 18-workflows.mjs)
 // Timers: none        Wakes: none
 // A new image is code that runs on a Spark, so keep_running starts one at once only for the owner on their tailnet, and
@@ -8,7 +8,7 @@
 // its question 2 as recommended). The yes is a button the owner presses, whose label lists every step, a keep_running
 // step with an image whole, and says the press is also the yes to those images and that a tag can change (pageOnlyLabel,
 // stepWords, savedImagesLabel): Sparkie's save button pressed on the page by the owner on their tailnet, or an
-// owner-only button pressed there with the passkey (a save from Telegram waits for one), never one whose call carried
+// owner-only button approved on the page or in the paired Telegram chat, never one whose call carried
 // `from` (its label listed no steps). A save with no button (the owner's own POST /actions, a save Sparkie makes at
 // once) showed nobody the images, so it isn't the yes; nor is anything an agent, an agent's chat or a device signed in
 // over the internet without the passkey does. Then save_workflow keeps `approved: {images, steps, by, at}` on the
@@ -54,8 +54,8 @@ function savedImagesLabel(steps) {
 // Whether this save is the owner's own yes to `images`: a pressed button that listed them (see above).
 function savedImagesYes(viewer, ctx, images) {
   if (!images.length) return false;
-  if (ctx.ownerConfirmed) return true;
-  return Boolean(ctx.button) && ctx.via === 'page' && !viewer?.session && !viewer?.agentKey && !ctx.agent && !ctx.agentId;
+  if (viewer?.agentKey || ctx.agent || ctx.agentId) return false;
+  return isOwnerPress(ctx) || (isOwnerButton(ctx) && !viewer?.session);
 }
 // What the save's answer, and the chat line after its press, say of its images: those its yes covers, or that a run asks.
 function savedImagesWords(images, asked, yes) {
@@ -68,5 +68,5 @@ function savedImagesWords(images, asked, yes) {
 function stepImagesYes(w, st, viewer, ctx) {
   const a = w.approved, img = st.args?.image;
   if (!a || !stepCovered(st) || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img) || (a.covered && !a.covered.includes(savedStepKey(st)))) return [];
-  return viewer?.agentKey || ctx.agent || ctx.agentId || !['page', 'api', 'sparkie'].includes(ctx.via) ? [] : [img];
+  return viewer?.agentKey || !isOwnerCall(ctx) ? [] : [img];
 }

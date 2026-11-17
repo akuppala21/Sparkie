@@ -1,5 +1,5 @@
 /* ───────── finding setups ───────── */
-// Area: knowledge        Rules: R10, R22, R27        Tests: dig.test.mjs, setups-look.test.mjs
+// Area: knowledge        Rules: R1, R2, R10, R22, R27        Tests: dig.test.mjs, setups-look.test.mjs, download-admission.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai,
@@ -344,14 +344,14 @@ printf 'disk\\t%s\\n' "$(df -B1 --output=avail "$HOME" 2>/dev/null | tail -1 | t
 
 // Download targets are the online Sparks; the default is the preferred home, else the one with the most free disk.
 async function downloadTargets(viewer) {
-  const scans = await Promise.all(NODES.map(async n => [n, await run(n, SCAN_SCRIPT, { timeout: 20000 })]));
+  const scans = await Promise.all(NODES.map(async n => [n, await run(n, SCAN_SCRIPT, { timeout: 20000 })])), compute = new Set(computeSparks());
   const present = new Set(), targets = [], where = new Map();
   const at = (key, id) => { present.add(key); where.set(key, [...(where.get(key) || []), id]); };
   for (const [n, r] of scans) {
     if (r.code !== 0) continue;
     for (const [name] of fields(r.out, 'model')) at(name, n.id);
     for (const [key] of fields(r.out, 'hf')) at(`hf:${key}`, n.id);
-    targets.push({ id: n.id, diskFree: Number((fields(r.out, 'disk')[0] || [])[0]) || null });
+    if (compute.has(n.id)) targets.push({ id: n.id, diskFree: Number((fields(r.out, 'disk')[0] || [])[0]) || null });
   }
   const best = targets.find(t => t.id === CONFIG.modelsHost) || [...targets].sort((a, b) => (b.diskFree || 0) - (a.diskFree || 0))[0];
   return { present, where, targets, defaultTarget: best?.id || null };
@@ -372,72 +372,3 @@ async function recipes(viewer) {
     playbooks: catalog.playbooks,
   };
 }
-
-// Engine images that carry the Hugging Face library, and the download run with it (see downloadVersion).
-const HF_IMAGES = 'lmsysorg/sglang|vllm/vllm-openai|nvcr\\.io/nvidia/vllm|nvcr\\.io/nvidia/sglang|eugr/spark-vllm[^ ]*';
-const HF_PULL_PY = String.raw`
-import json, sys
-from huggingface_hub import snapshot_download
-repo, allow, ignore = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])
-snapshot_download(repo, allow_patterns=allow or None, ignore_patterns=ignore or None, max_workers=16)
-print('downloaded', repo, flush=True)
-`;
-// A version goes into the Spark's Hugging Face cache, where the library and deploys find it. Weights in pickle formats
-// and duplicate copies (original/, consolidated) are skipped; safetensors, configs and tokenizers come down. A GGUF
-// version downloads only the chosen quantization's files (and its vision projector, if it has one).
-async function downloadVersion(job, repo, host, quant = null) {
-  const dir = `${HF_HUB}/models--${repo.replace('/', '--')}`;
-  let what = `--exclude 'original/*' '*.pth' '*.bin' '*.pt' 'consolidated*'`;
-  if (quant) {
-    const info = await hfJson(`/api/models/${repo}?blobs=true&expand[]=siblings`, 20000);
-    const { quants, mmproj } = dig.ggufFiles(info.siblings);
-    const pick = quants.find(x => x.file === quant);
-    if (!pick) throw new Error(`${repo} has no ${quant} files any more.`);
-    what = [...pick.files, ...(mmproj ? [mmproj] : [])].map(q).join(' ');
-    job.total = pick.bytes || job.total;
-  }
-  step(job, `Downloading ${repo}${quant ? ` (${quant})` : ''} to ${host.id}`);
-  let done = false;
-  const watch = (async () => {
-    while (!done) {
-      await sleep(4000);
-      const s = await run(host, `du -sb ${dir} 2>/dev/null | cut -f1`, { timeout: 20000 });
-      if (!done && Number(s.out)) job.progress = { done: Number(s.out), total: job.total || null };
-    }
-  })();
-  // Without the hf command on the Spark, the Hugging Face library inside an engine image already there does it (they
-  // all carry it; the models already on Spark 3 and 4 came down that way). It runs as the owner where the cache is
-  // theirs, so the files stay theirs (2026-11-11: neither Spark had the command, and GLM-5.3-Flash couldn't download).
-  // Only the cache (and the sign-in token) come from the Spark; the library's own home (xet's logs and chunk cache) is
-  // the container's /tmp, which any user can write (/hf wasn't, and xet stopped with "Permission denied").
-  const allow = quant ? what.split(' ').map(x => x.replace(/^'|'$/g, '')) : [], ignore = quant ? [] : ['original/*', '*.pth', '*.bin', '*.pt', 'consolidated*'];
-  const hostCli = !(ALL_LOCAL && existsSync(`${process.env.MOCK_ROOT}/${host.id}/.mock/no-hf`));
-  const inImage = `img=$(docker images --format '{{.Repository}} {{.ID}}' 2>/dev/null | grep -E ${q(`^(${HF_IMAGES}) `)} | head -1)
-if [ -z "$img" ]; then echo "NO_HF_CLI"; exit 3; fi
-echo "HF_IN_IMAGE \${img% *}"
-hub=${HF_HUB}; tok="\${HF_HOME:-$HOME/.cache/huggingface}/token"; mkdir -p "$hub" 2>/dev/null
-set -- -v "$hub":/hf/hub; [ -f "$tok" ] && set -- "$@" -v "$tok":/hf/token:ro -e HF_TOKEN_PATH=/hf/token; [ -w "$hub" ] && { [ ! -e "$hub/.locks" ] || [ -w "$hub/.locks" ]; } && set -- "$@" --user "$(id -u):$(id -g)"
-docker run --rm --network host -e HOME=/tmp -e HF_HOME=/tmp/hf -e HF_HUB_CACHE=/hf/hub -e HF_XET_HIGH_PERFORMANCE=1 "$@" --entrypoint python3 "\${img#* }" -c ${q(HF_PULL_PY)} ${q(repo)} ${q(JSON.stringify(allow))} ${q(JSON.stringify(ignore))}`;
-  // Many files at once, and xet's high-performance mode (more connections per file): the defaults fetched GLM-5.3-Flash
-  // at about 17 MB/s on a 500 Mbit/s line (2026-11-11).
-  const r = await run(host, hostCli ? `export HF_XET_HIGH_PERFORMANCE=1
-if command -v hf >/dev/null 2>&1; then hf download ${q(repo)} ${what} --max-workers 16
-elif command -v huggingface-cli >/dev/null 2>&1; then huggingface-cli download ${q(repo)} ${what} --max-workers 16
-else
-${inImage}
-fi` : inImage, { timeout: 6 * 3600000, signal: job.abort?.signal, onLine: line => { job.detail = line.slice(0, 200); } });
-  done = true;
-  await watch;
-  cancelCheck(job);
-  if (r.out.includes('NO_HF_CLI')) throw new Error(`${host.id} has nothing to download with: downloads go through the Hugging Face library inside an engine image (SGLang or vLLM), and there is none on ${host.id} yet. Pull one there (the image a recipe for that engine names), then try again.`);
-  const used = /HF_IN_IMAGE (\S+)/.exec(r.out)?.[1];
-  if (used && !r.code) note(job, `Downloaded with the Hugging Face library inside ${used} (${host.id} has no hf command)`);
-  if (r.code) {
-    const why = (r.err || r.out).slice(-1500);
-    // A refusal is Hugging Face's answer (401/403, gated), not a traceback's line number (", line 401,").
-    throw new Error(/\b(?:401|403)\b(?! in )(?:[^\n]{0,40}(?:Client Error|Unauthorized|Forbidden))|gated repo|is gated|Access to model[^\n]{0,120}is restricted|accept the (?:license|conditions)/i.test(why) ? `Hugging Face refused the download. Accept the model’s license on huggingface.co and sign in on ${host.id} with: hf auth login\n${why}` : why);
-  }
-  job.progress = null;
-}
-
-

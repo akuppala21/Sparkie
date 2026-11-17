@@ -274,7 +274,7 @@ function taskOpen(conv, r) {
   const button = conv.messages.some(m => (m.choices || []).some(c => c.state === 'open' && pendingChoices.has(c.id)));
   return [...open.map(x => `${x} is still running`), ...owed.map(x => `${x} hasn’t ended yet`), ...(button ? ['a button waits for you in this chat'] : [])];
 }
-// The report's lines, from the journal and what is open now. tg: Telegram's copy, with no failure line (R32).
+// The same masked report on the page and Telegram, from the journal and what is open now (R32).
 function taskReportText(conv, r, tg = false) {
   const c = taskCounts(r.task), took = Math.max(0, Date.parse(r.end) - Date.parse(r.since));
   const how = TASK_ENDS[r.how] || (r.how === 'turns' ? `stopped at its ${r.turns} carry-on turns` : r.how === 'hours' ? `stopped at its ${r.hours} hours` : r.how === 'steps' ? `stopped at its ${TASK_STEPS} commands` : r.how);
@@ -286,7 +286,7 @@ function taskReportText(conv, r, tg = false) {
   const limit = ['turns', 'hours', 'steps'].includes(r.how) ? `It stopped at ${how.replace(/^stopped at /, '')}: say “carry on” for another ${taskPlural(r.hours, 'hour')} and ${r.turns} turns.`
     : r.how === 'full' ? 'It stopped because this chat is full: start a new chat and ask again there.' : null;
   return [`Report on your request “${taskText(r.request, 120)}”: ${how}.`,
-    `${ops}${!failed.length ? '' : tg ? ' What failed is in Spark Console.' : ` Failed: ${failed.join('; ')}.`}`,
+    `${ops}${!failed.length ? '' : ` Failed: ${failed.join('; ')}.`}`,
     `Changes: ${c.atOnce} made at once, ${c.afterYes} after your yes; ${taskPlural(c.asked, 'question')} asked of you. Undone: ${c.undone}.`,
     `Time: ${taskTook(took)}, ${taskPlural(Math.max(1, c.turns), 'turn')}.`,
     energy, open.length ? `Still open: ${open.join('; ')}.` : 'Still open: nothing.', limit].filter(Boolean).join('\n');

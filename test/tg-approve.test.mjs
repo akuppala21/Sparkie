@@ -3,8 +3,8 @@
 // Telegram chat sent once to the paired chat with the exact change and the page's own buttons, a press on either
 // running it once, a Telegram yes echoed on the page; with the switch off nothing sent and a press there refused while
 // the page still answers; `/lock` read late or after a full minute; silence for strangers, groups, bots and edited messages; nothing asked or run for an agent's
-// conversation; a typed "ok" answering nothing; at
-// most 3 approvals an hour and 10 a day, kept across a restart; `/lock`; over 3,500 characters asked on the page only;
+// conversation cannot approve itself, but the actual owner can; typed "ok" answers no owner-only ask;
+// approval counts never limit owner powers; long changes arrive whole with the final buttons;
 // an ask void after a new pairing and after a restart.
 //
 // The owner's yes from the paired Telegram chat (owner decisions 20 and 22; contract 8.7, 8.17; 20-tg-approve.mjs). The
@@ -24,7 +24,7 @@ const KEY = new Authenticator(TAILNET, MAIN_ORIGIN);
 const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, STRANGER_TG = 5550002;
 const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF';
 const ASK_TEXT = `${TESTORG} answers Sparkie’s chats or apps. Stop it anyway?\n\nYes, stop ${TESTORG}`;
-const WAITS = 'That one waits for you in Spark Console.';
+const EXPIRED = 'That button has expired. Ask again.';
 // Paired as before this step: no approvals switch in the file.
 const pairing = (extra = {}) => ({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: '2026-11-10T00:00:00.000Z', ...extra } });
 function seed({ dir, stateDir }, secrets, files = {}) {
@@ -101,7 +101,7 @@ const askSentFor = (from, yes) => waitFor(() => tgSent(from).find(s => s.body.re
 const pagePress = (chat, choice) => confirmed('POST', `/chats/${chat}/choose`, { choice });
 
 // T128: a risky ask with Telegram paired runs once from a press in the paired chat or on the page; a typed "ok" answers
-// nothing; the fourth approval in an hour waits for the page; after /lock only the page approves; an ask left open
+// nothing; counts never block later approvals; /lock revokes old asks and unlock needs fresh confirmation; an ask left open
 // across a restart runs nothing (the last describe).
 describe('approving from Telegram', { concurrency: 1 }, () => {
   test('the switch: off for a chat paired before it existed; on needs the owner, the page and the passkey; off needs none', { timeout: 60000 * SLOW }, async () => {
@@ -121,7 +121,7 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     is(r, 200, 'with the passkey');
     assert.equal(r.json.approve, true);
     assert.equal(secrets().telegram.approve, true, 'kept beside the pairing, in the secrets file');
-    assert.match(await said(), /^Approvals from Telegram: on\. A press in your paired chat counts as your yes/);
+    assert.match(await said(), /^Approvals from Telegram: on\. Your paired chat has the same owner controls as the page/);
     const off = await api('/telegram/approve', { method: 'PUT', body: { on: false } });
     is(off, 200, 'off needs no passkey');
     assert.deepEqual([off.json.approve, secrets().telegram.approve], [false, false]);
@@ -190,14 +190,14 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     assert.deepEqual([(await view()).approve, secrets().telegram.approve], [false, false]);
     from = tgCalls().length;
     await tgPress(yes.id);
-    assert.equal(await answerAfter(from), WAITS);
+    assert.equal(await answerAfter(from), EXPIRED);
     await sleep(1000);
     assert.equal(stateOf('spark3', TESTORG), 'running');
     assert.equal(stopsRun().length, ran);
     assert.equal(approvalsKept().length, 1);
     from = tgCalls().length;
     await tgSay('/status');
-    assert.match(await answerAfter(from), /\nApprovals from Telegram: off\. What needs your yes waits for you in Spark Console/, '/status there says so');
+    assert.match(await answerAfter(from), /\nApprovals from Telegram: off\. Turn them on again in your owner controls\./, '/status there says so');
     is(await confirmed('PUT', '/telegram/approve', { on: true }), 200);
   });
 
@@ -210,7 +210,7 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     assert.equal(tgSent(from).length, 0, 'no ask while the switch is off');
     from = tgCalls().length;
     await tgPress(first.yes.id);
-    assert.equal(await answerAfter(from), WAITS);
+    assert.equal(await answerAfter(from), EXPIRED);
     assert.equal(stateOf('spark3', TESTORG), 'running');
     is(await pagePress(first.chat, first.yes.id), 200, 'the page still works');
     await settle();
@@ -222,11 +222,11 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     is(await api('/telegram/approve', { method: 'PUT', body: { on: false } }), 200);
     from = tgCalls().length;
     await tgPress(second.yes.id);
-    assert.equal(await answerAfter(from), WAITS);
+    assert.equal(await answerAfter(from), EXPIRED);
     is(await confirmed('PUT', '/telegram/approve', { on: true }), 200);
     from = tgCalls().length;
     await tgPress(second.yes.id);
-    assert.equal(await answerAfter(from), WAITS, 'an older ask gets nothing');
+    assert.equal(await answerAfter(from), EXPIRED, 'an older ask gets nothing');
     assert.equal(stateOf('spark3', TESTORG), 'running');
     is(await pagePress(second.chat, second.yes.id), 200);
     await settle();
@@ -283,45 +283,47 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     await settle();
   });
 
-  test('an agent\'s conversation: nothing is asked in Telegram, the agent\'s own answer runs nothing, and a press of it there gets the old answer', { timeout: 120000 * SLOW }, async () => {
+  test('an agent\'s conversation asks the actual paired owner; the agent cannot approve and the owner can run it once', { timeout: 120000 * SLOW }, async () => {
     const k = actKey, ran = stopsRun().length;
     let from = tgCalls().length;
     const r = await call(k.token, ASK, { message: `stop ${TESTORG} on spark 3` });
     assert.equal(r.isError, false, r.text);
     const yes = (r.value.choices || []).find(c => c.label === `Yes, stop ${TESTORG}`);
     assert.ok(yes, JSON.stringify(r.value));
-    await sleep(1500);
-    assert.equal(tgSent(from).length, 0, 'not asked in Telegram');
+    const ask = await askSentFor(from, yes);
+    assert.ok(ask.body.text.startsWith(`Agent “${k.name}” asked. Only your confirmation runs it.\n\n`), 'the saved agent name is shown exactly');
+    assert.ok(ask.body.text.endsWith(ASK_TEXT));
+    assert.equal(stateOf('spark3', TESTORG), 'running', 'an agent request alone stops nothing');
     const taken = await call(k.token, ASK, { conversation: r.value.conversation, choice: yes.id });
     assert.match(taken.raw, /Only the owner can answer this one/);
     from = tgCalls().length;
     await tgPress(yes.id);
-    assert.equal(await answerAfter(from), WAITS);
-    await sleep(1000);
-    assert.equal(stateOf('spark3', TESTORG), 'running');
-    assert.equal(stopsRun().length, ran);
-    assert.equal(approvalsKept().length, 3);
+    assert.equal(await answerAfter(from), 'Under way. I’ll tell you here when it’s done.');
+    await waitFor(() => stateOf('spark3', TESTORG) === 'exited', { what: 'the stop only the owner approved' });
+    assert.equal(stopsRun().length, ran + 1);
+    assert.equal(approvalsKept().length, 4);
+    from = tgCalls().length; await tgPress(yes.id);
+    assert.equal(await answerAfter(from), EXPIRED);
+    assert.equal(stopsRun().length, ran + 1, 'one owner approval, no replay');
+    await settle();
   });
 
-  test('the fourth approval in an hour waits for the page', { timeout: 120000 * SLOW }, async () => {
+  test('a later approval in the same hour has the same powers, exact result and one-use protection', { timeout: 120000 * SLOW }, async () => {
     let from = tgCalls().length;
-    const ran = stopsRun().length;
+    const ran = stopsRun().length, before = approvalsKept().length;
     const { chat, yes } = await askOnPage();
     await askSentFor(from, yes);
-    from = tgCalls().length;
-    await tgPress(yes.id);
-    assert.equal(await answerAfter(from), 'That’s 3 approvals from Telegram in the last hour, the most it may give. This one waits for you in Spark Console.');
-    await sleep(1000);
-    assert.equal(stateOf('spark3', TESTORG), 'running');
-    assert.equal(approvalsKept().length, 3, 'a held press isn\'t counted');
-    assert.ok(auditLines().some(l => l.action === 'telegram-approval-held' && l.args.chat === chat));
-    is(await pagePress(chat, yes.id), 200, 'the page answers it');
+    from = tgCalls().length; await tgPress(yes.id);
+    assert.equal(await answerAfter(from), 'Under way. I’ll tell you here when it’s done.');
+    await waitFor(() => stateOf('spark3', TESTORG) === 'exited', { what: 'the later owner stop' });
+    assert.equal(approvalsKept().length, before + 1);
+    assert.ok(!auditLines().some(l => l.action === 'telegram-approval-held' && l.args.chat === chat));
+    is(await pagePress(chat, yes.id), 409, 'the page cannot replay the Telegram approval');
     await settle();
-    assert.equal(stopsRun().length, ran + 1);
-    assert.equal(stopsRun().at(-1).via, 'page');
+    assert.equal(stopsRun().length, ran + 1); assert.equal(stopsRun().at(-1).via, 'telegram');
   });
 
-  test('/lock turns approvals off at once from Telegram; only the page turns them on, with the passkey', { timeout: 120000 * SLOW }, async () => {
+  test('/lock revokes old asks; the page route still needs a passkey and the paired owner unlocks with a fresh exact confirmation', { timeout: 120000 * SLOW }, async () => {
     let from = tgCalls().length;
     const { chat, yes } = await askOnPage();
     await askSentFor(from, yes);
@@ -333,40 +335,58 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     assert.ok(auditLines().some(l => l.action === 'telegram-approve' && l.via === 'telegram' && l.args.word === '/lock'));
     from = tgCalls().length;
     await tgPress(yes.id);
-    assert.equal(await answerAfter(from), WAITS);
+    assert.equal(await answerAfter(from), EXPIRED);
     is(await api('/telegram/approve', { method: 'PUT', body: { on: true } }), 428, 'on again needs the passkey');
     assert.equal((await view()).approve, false);
-    is(await confirmed('PUT', '/telegram/approve', { on: true }), 200);
+    const unlockAt = tgCalls().length; await tgSay('/admin approvals on');
+    const unlock = await waitFor(() => tgSent(unlockAt).find(x => /then type \d{2}\./.test(x.body.text) && x.body.reply_markup), { what: 'the fresh unlock confirmation' });
+    const unlockId = unlock.body.reply_markup.inline_keyboard[0][0].callback_data, digits = /then type (\d{2})\./.exec(unlock.body.text)[1];
+    assert.equal((await view()).approve, false, 'asking never unlocks');
+    from = tgCalls().length; await tgPress(unlockId);
+    assert.match(await answerAfter(from), /Type the two digits/);
+    assert.equal((await view()).approve, false, 'press alone never unlocks');
+    from = tgCalls().length; await tgSay('00'); await answerAfter(from);
+    assert.equal((await view()).approve, false, 'wrong digits never unlock');
+    await tgSay(digits);
+    await waitFor(async () => (await view()).approve === true, { what: 'unlock after the exact digits' });
+    from = tgCalls().length; await tgPress(unlockId);
+    assert.match(await answerAfter(from), /no longer open|expired|answered/);
     from = tgCalls().length;
     await tgPress(yes.id);
-    assert.equal(await answerAfter(from), WAITS, 'the ask sent before /lock stays void there');
+    assert.equal(await answerAfter(from), EXPIRED, 'the ask sent before /lock stays void there');
     assert.equal(stateOf('spark3', TESTORG), 'running');
     is(await pagePress(chat, yes.id), 200, 'the page answers it');
     await settle();
   });
 
-  test('a change over 3,500 characters is asked on the page only', { timeout: 120000 * SLOW }, async () => {
-    // Every setting typed by the owner, so the start is clear and only the owner's yes is missing (a new image, from
-    // Telegram).
+  test('a change over 3,500 characters arrives whole before its exact buttons and runs once for the paired owner', { timeout: 120000 * SLOW }, async () => {
+    // The owner asks a question; the brain proposes a complete long change. Its delivery alone must never start it.
     const env = Array.from({ length: 12 }, (_, i) => `OPTION_${String(i).padStart(2, '0')}_${'N'.repeat(38)}=${'v'.repeat(230)}`);
-    const volume = `longdata:/srv/${'d'.repeat(180)}`;
-    const words = `keep longapp on spark 4 running from nginx:1.27 at port 9137:80 with ${volume} and ${env.join(' ')}`;
-    script([{ match: '^keep longapp on spark 4 running', calls: [{ name: 'keep_running', arguments: { spark: 'spark4', container: 'longapp', image: 'nginx:1.27', port: '9137:80', volumes: [volume], env } }] }]);
+    const volumes = Array.from({ length: 4 }, (_, i) => `longdata${i}:/srv/${String.fromCharCode(97 + i).repeat(180)}`);
+    const words = 'what would it take to keep longapp on spark 4 running from nginx:1.27?';
+    script([{ match: '^what would it take to keep longapp on spark 4 running', calls: [{ name: 'keep_running', arguments: { spark: 'spark4', container: 'longapp', image: 'nginx:1.27', port: '9137:80', volumes, env } }] }]);
     try {
       const from = tgCalls().length;
       await tgSay(words);
-      const [reply] = await sentAfter(from, 1, 'the reply');
-      await sleep(1500);
-      assert.equal(tgSent(from).length, 1, 'no ask was sent');
-      assert.equal(reply.body.reply_markup, undefined, 'no button in Telegram');
-      assert.ok(reply.body.text.endsWith(`\n\n${WAITS}`), reply.body.text);
-      const chat = (await api('/chats')).json.chats.find(c => c.channel === 'telegram');
-      const c = (await chatMessages(chat.id)).findLast(m => m.choices?.length).choices.find(x => x.label.startsWith('Start longapp'));
-      assert.ok(c.label.length > 3500, String(c.label.length));
-      const pressAt = tgCalls().length;
-      await tgPress(c.id);
-      assert.equal(await answerAfter(pressAt), WAITS);
-      assert.equal(stateOf('spark4', 'longapp'), undefined, 'nothing started');
+      const chat = await waitFor(async () => (await api('/chats')).json.chats.find(c => c.channel === 'telegram'), { what: 'the Telegram conversation' });
+      const reply = await waitFor(async () => (await chatMessages(chat.id)).findLast(m => m.role === 'assistant' && m.tools?.some(t => t.name === 'keep_running')), { what: 'the completed long proposal' });
+      const c = reply.choices?.find(x => x.label.startsWith('Start longapp'));
+      assert.ok(c, JSON.stringify(reply));
+      assert.ok(c.label.length > 4000, String(c.label.length));
+      const ask = await askSentFor(from, c);
+      const parts = tgSent(from), last = parts.findIndex(x => x.body.reply_markup?.inline_keyboard?.flat().some(b => b.callback_data === c.id)), whole = parts.slice(0, last + 1);
+      assert.ok(ask && last >= 0);
+      assert.ok(whole.map(x => x.body.text).join('').includes(c.label), `the full code-built choice is delivered: ${JSON.stringify(whole.map(x => x.body.text))}`);
+      assert.ok(whole.length > 1, 'the complete long change uses multiple parts');
+      assert.ok(whole.slice(0, -1).every(x => !x.body.reply_markup), 'no buttons before the final part');
+      assert.ok(whole.map(x => x.body.text).join('').includes(c.label), 'all characters of the exact choice reach the owner');
+      assert.equal(stateOf('spark4', 'longapp'), undefined, 'delivery starts nothing');
+      const pressAt = tgCalls().length; await tgPress(c.id);
+      assert.equal(await answerAfter(pressAt), 'Under way. I’ll tell you here when it’s done.');
+      await waitFor(() => stateOf('spark4', 'longapp') === 'running', { what: 'the exact approved long app' });
+      const again = tgCalls().length; await tgPress(c.id);
+      assert.equal(await answerAfter(again), EXPIRED);
+      assert.equal(auditLines().filter(x => x.action === 'keep_running' && x.outcome === 'started').length, 1, 'the long choice runs once');
     } finally { noScript(); }
   });
 
@@ -418,7 +438,7 @@ describe('with the real limits', { concurrency: 1 }, () => {
         await sleep(Math.max(0, t0 + 62000 - Date.now()));
         from = tgCalls().length;
         await tgPress(yes.id);
-        assert.equal(await answerAfter(from), WAITS);
+        assert.equal(await answerAfter(from), EXPIRED);
         await sleep(1000);
         assert.equal(stateOf('spark3', TESTORG), 'running');
         assert.equal(stopsRun().length, 0);
@@ -428,10 +448,9 @@ describe('with the real limits', { concurrency: 1 }, () => {
 });
 
 describe('across a restart', { concurrency: 1 }, () => {
-  test('ten approvals in a day hold the next one for the page, also after a restart; an ask left open across a restart runs nothing', { timeout: 300000 * SLOW }, async () => {
+  test('ten earlier approvals never cap owner powers, before or after restart; an open pre-restart ask cannot run', { timeout: 300000 * SLOW }, async () => {
     // Ten approvals between 2 and 11 hours ago: none in the last hour.
     const approvals = Array.from({ length: 10 }, (_, i) => Date.now() - (2 + i) * 3600000);
-    const DAY = 'That’s 10 approvals from Telegram in the last 24 hours, the most it may give. This one waits for you in Spark Console.';
     const one = await startMock({ ...FLEET, prepare: ctx => seed(ctx, pairing({ approve: true }), { 'telegram.json': JSON.stringify({ offset: 0, approvals }) }) });
     let kept, old;
     try {
@@ -443,10 +462,12 @@ describe('across a restart', { concurrency: 1 }, () => {
         await askSentFor(from, asked.yes);
         from = tgCalls().length;
         await tgPress(asked.yes.id);
-        assert.equal(await answerAfter(from), DAY);
-        assert.equal(stateOf('spark3', TESTORG), 'running');
-        assert.equal(approvalsKept().length, 10);
-        return asked;
+        assert.equal(await answerAfter(from), 'Under way. I’ll tell you here when it’s done.');
+        await waitFor(() => stateOf('spark3', TESTORG) === 'exited', { what: 'the eleventh owner approval' });
+        assert.equal(approvalsKept().length, 11);
+        await settle();
+        from = tgCalls().length; const open = await askOnPage(); await askSentFor(from, open.yes);
+        return open;
       });
       kept = { chats: readFileSync(join(one.stateDir, 'chats.json'), 'utf8'), telegram: JSON.stringify({ ...JSON.parse(readFileSync(join(one.stateDir, 'telegram.json'), 'utf8')), offset: 0 }) };
     } finally { await one.stop(); }
@@ -465,10 +486,11 @@ describe('across a restart', { concurrency: 1 }, () => {
         await askSentFor(from, asked.yes);
         from = tgCalls().length;
         await tgPress(asked.yes.id);
-        assert.equal(await answerAfter(from), DAY, 'the count came through the restart');
-        assert.equal(stateOf('spark3', TESTORG), 'running');
-        is(await choose(asked.chat, asked.yes.id), 200, 'the page answers it');
-        await waitFor(() => stopsRun().length === 1, { what: 'the page\'s stop' });
+        assert.equal(await answerAfter(from), 'Under way. I’ll tell you here when it’s done.');
+        await waitFor(() => stateOf('spark3', TESTORG) === 'exited', { what: 'the twelfth owner approval' });
+        assert.equal(approvalsKept().length, 12, 'accounting survives restart without denying owner powers');
+        is(await choose(asked.chat, asked.yes.id), 409, 'the used Telegram choice cannot replay on the page');
+        assert.equal(stopsRun().length, 1);
       });
     } finally { await two.stop(); }
   });

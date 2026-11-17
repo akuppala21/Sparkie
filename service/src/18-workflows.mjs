@@ -1,7 +1,7 @@
 /* ───────── workflows ───────── */
 // Area: core
 // Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
-// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, telegram-owner-adapters.test.mjs
 // Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
 //   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
 //   writes it, noteUpdate reads it)
@@ -22,8 +22,9 @@ const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('
 const CONTEXT_CODE = () => [CONTEXT_FLAGS, contextNumber, contextValue, contextOverride, contextPolicy, contextChange, contextAttempt, contextFreeze,
   contextFingerprint, contextPrune, contextCarry, contextConsume, contextPrepare, contextBind, contextPark, contextPublish, contextCheck, contextDecisionFor, contextApprove, contextChoiceResult,
   contextAlready, contextReplayHow, contextPageStart, withHow, engineOf, imageOf, question, sparkieMessageChoices, taskPark, taskAnswered, endTask, taskEnded, runChoice, pressLate, pressSaid, pressPost, keepTask, wakeWork, startContext, sparkieCheck];
-const START_CODE = () => [...CONTEXT_CODE(), startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
-  startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
+const ROLLBACK_CODE = () => [ROLLBACK_TARGET_PY, rollbackSave, rollbackShape, rollbackRecords, rollbackRead, rollbackWrite, rollbackForget, rollbackHeld, rollbackSupersede, rollbackBeforeRerun, rollbackAdoptStart, rollbackRetireSuperseded, rollbackTarget, rollbackLook, rollbackPrepare, rollbackAttempt, rollbackCommand, rollbackRun, rollbackOriginal, rollbackStopOriginal, rollbackAside, rollbackRemove, rollbackStopCreated, rollbackStopDisposed, rollbackFenceState, rollbackFence, rollbackReconcile, rollbackOwned, rollbackDesiredChanged, rollbackTransfer, rollbackResult, rollbackReturn, rollbackCommit, rollbackBeforeRetry, rollbackPass, rollbackContinue, rollbackStopCancelled, rollbackStopNew, rollbackKnown, rollbackRoom, rollbackKey, rollbackSame];
+const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
+  startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, downloadAdmission, nodeById, sparkName, HF_HUB, HF_IMAGES, HF_PULL_PY, HF_WATCH_PY, downloadTiming, downloadRemote, downloadLease, downloadResume, run, spawnOn, knownOffline, noteReach, offlineNow, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
   powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
@@ -107,7 +108,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -123,7 +124,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [contextPublish, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
+    code: () => [...ROLLBACK_CODE(), contextPublish, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -132,7 +133,9 @@ const workflowVersions = new Map();
 function workflowVersion(id) {
   if (workflowVersions.has(id)) return workflowVersions.get(id);
   const w = workflowById(id), a = ACTIONS.get(w.action), h = createHash('sha256');
-  for (const f of w.code()) h.update(String(f));
+  // Shared action and confirmation gates are part of every workflow's version too.
+  for (const f of [runAction, isOwnerCall, isOwnerButton, isOwnerPress, question, runChoice, dangerPress,
+    tgOwnerContext, tgOwnerContextValid, tgPairingMark, tgAskOpen, tgAskCurrent, tgAskFingerprint, ...w.code()]) h.update(String(f));
   h.update(JSON.stringify(ENGINES, (k, val) => (typeof val === 'function' ? String(val) : val)));
   h.update(String(a.run)).update(JSON.stringify(a.input)).update(a.description);
   for (const f of w.failures) h.update(`${f.id}|${f.sign || ''}|${f.next || ''}`);
@@ -464,7 +467,7 @@ action({
           try {
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
-            // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
+            // (a run started from Telegram keeps its channel; each step still has its own action safeguards, R32)
             // (a compare's candidate run stops nothing to make room: the owner's models stay as they were, D)
             out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx), ...(ctx.compare ? { noStops: true, compareRun: true } : {}) });
@@ -542,6 +545,7 @@ const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now
 const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
+  if (rollbackHeld([node.id])) return;
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
   if (node.id === MAIN?.node) return;
   // (its Spark powered off by Spark Console, or the model parked for that: off on purpose, 21-power.mjs)
@@ -784,11 +788,10 @@ action({
     // Going back a build removes the latest fixes, security ones included. It runs as asked only for the owner on their
     // tailnet (the page, the API, or Sparkie in the owner's own chat). Anyone else gets an owner-only button, pressed on
     // the page with the passkey: an agent (whose key could have leaked), directly or through ask_sparkie, a device signed
-    // in over the internet (whose cookie could have been stolen), Telegram, a saved workflow's step, and a plain button
-    // pressed by any of those (security audit and its review, 2026-11-11). A Telegram turn has no session either: its
-    // channel says it isn't the owner on their tailnet (R32).
-    const ownerHere = ['page', 'api', 'sparkie'].includes(ctx.via) && !viewer.session && !viewer.agentKey && !ctx.agent && !ctx.channel;
-    if (!ownerHere && !ctx.ownerConfirmed) {
+    // in over the internet (whose cookie could have been stolen), a saved workflow's step, and a plain button
+    // pressed by any of those. The current paired Telegram owner has the same authority as the owner on the page.
+    const ownerHere = isOwnerCall(ctx) && !viewer.session && !viewer.agentKey;
+    if (!ownerHere && !isOwnerPress(ctx)) {
       const snap = lastSnapshot();
       if (!snap) throw new HttpError(404, 'There’s no earlier build to go back to on this Spark.');
       return question(viewer, ctx, `Go back to the build from before the update on ${snap.stamp}? Spark Console restarts a moment later, and fixes made since then are gone until the next update.`,

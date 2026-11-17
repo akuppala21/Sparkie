@@ -1,7 +1,7 @@
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
 // Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74
-// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs, intent-isolation.test.mjs
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs, intent-isolation.test.mjs, telegram-history-save.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
@@ -377,27 +377,22 @@ function changeIntent(text) {
   for (const k of negated) asked.delete(k);
   return { asked: [...asked], negated: [...negated], mixed, keepOnly: negated.has('stop') && !worded.has('stop') };
 }
-// Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
-// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
-// owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
-// to Sparkie there. Keeping an eval or trial result and propose_update are here too. install_update is not: it is the
-// dangerous ask, which the owner may answer on the page or in the paired chat (R54).
-// (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
-const PAGE_ONLY = new Set([
-  'undo_update',
-  'keep_eval_result',
-  'keep_trial_result',
-  'remember',
-  'forget_memory',
-  'save_workflow',
-  'forget_workflow',
-  'propose_update',
-]);
-const PAGE_ONLY_TOOLS = new Set([
-  'forget_workflow',
-  'save_workflow',
-]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}${input.from ? '' : savedImagesLabel(input.steps)}`
+// Kept for the generated registry's existing column: no action is restricted to the page by channel policy.
+const PAGE_ONLY = new Set([]);
+// The page and paired Telegram are the owner's two interfaces. Telegram authority is a server-only proof
+// copied from its authenticated update, bound to the current pairing; channel/from strings grant nothing.
+function isOwnerCall(ctx = {}) {
+  if (ctx.agent || ctx.agentId) return false;
+  if (ctx.channel || ctx.via === 'telegram') return tgOwnerContextValid(ctx);
+  return ['page', 'sparkie', 'api'].includes(ctx.via);
+}
+function isOwnerButton(ctx = {}) {
+  return Boolean(ctx.trusted && ctx.button && ['page', 'telegram'].includes(ctx.via) && isOwnerCall(ctx));
+}
+function isOwnerPress(ctx = {}) {
+  return Boolean(ctx.ownerConfirmed && isOwnerButton(ctx));
+}
+const savedWorkflowLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}${input.from ? '' : savedImagesLabel(input.steps)}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -752,7 +747,7 @@ async function sparkieCheck(name, input, ctx) {
   }
   // A workflow's steps are Sparkie's own writing. They are saved at once only when this turn read nothing from outside,
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
-  // label lists the steps (pageOnlyLabel, F20).
+  // label lists the steps (savedWorkflowLabel, F20).
   if (name === 'save_workflow') {
     // ("save that as …": the request's own steps, so the check and the button see them, D6e)
     const o = out.from !== undefined ? fromRequest(out, null, ctx) : out, { leftOut, ...plain } = o;
@@ -810,6 +805,11 @@ function hourCounted(ctx, out) {
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
+  if ((ctx.channel === 'telegram' && ctx.via === 'sparkie' || ctx.via === 'telegram') && !tgOwnerContextValid(ctx)) {
+    throw new HttpError(403, 'This Telegram pairing changed. Send the request again from your paired chat.');
+  }
+  // Deterministic owner administration uses the same operation as the page, even when the brain is down or paused.
+  if (name === OWNER_ADMIN) return ownerAdmin(viewer, args, ctx);
   // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
   if (name === EVAL_YES) return evalYes(args, viewer, ctx);
   // (a coding trial result waiting for the owner's yes, the same way: 21-brain-trial.mjs)
@@ -837,15 +837,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   // (and the owner's own typed word, /undo, answered by code on the page and on Telegram: 20-words.mjs)
-  if (ctx.via !== 'page' && !ctx.ownerWord && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
-  // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
-  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
-    const label = pageOnlyLabel(name, input);
-    const out = { ...question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
-      [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true }), askedBecause: 'page' };
-    audit({ via: ctx.via || null, actor: ctx.actor || null, channel: ctx.channel, ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: 'question' });
-    return out;
-  }
+  if (ctx.via !== 'page' && !(ctx.via === 'telegram' && ctx.trusted && ctx.button && isOwnerCall(ctx)) && !ctx.ownerWord && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
   // Sparkie runs a change straight away when the owner's message asks for that kind of change (not a question about it,
   // not ruled out) and the target is what their words name (sparkieCheck). Anything less clear comes back as a question
   // with a button. "Don't stop …" rules stopping out for the whole request.
@@ -854,6 +846,15 @@ async function runAction(name, viewer, args, ctx = {}) {
   // (and a proposal's install, which asks as install_update does: 21-selfchange.mjs, C8d)
   if (ctx.via === 'sparkie' && a.asks !== 'danger' && !(name === 'propose_update' && input.do === 'install')) {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
+    // A history save from Telegram has always kept `from` on its confirmation, which names the request, not its
+    // steps. Preserve that provenance: expanding it here would turn a save into consent to run its images.
+    // Either owner channel may answer; the save's carried-from guard grants no image approval (R35, D6c A1).
+    if (name === 'save_workflow' && input.from !== undefined && ctx.channel === 'telegram') {
+      const label = savedWorkflowLabel(name, input);
+      const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+      audit({ via: ctx.via, actor: ctx.actor || null, channel: ctx.channel, ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: 'question' });
+      return { ...out, askedBecause: 'words' };
+    }
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;
     // An ambiguous owner constraint cannot become an executable Start with an unstated default context.

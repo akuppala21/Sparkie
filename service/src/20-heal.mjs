@@ -1,7 +1,7 @@
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
 // Area: safety
 // Rules: R7, R8, R11, R18, R19, R21, R34, R38
-// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs, workloads-heal.test.mjs
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs, workloads-heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
 // Owns: none
 // Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
@@ -235,6 +235,7 @@ async function healPass() {
   try {
     // (the owner's pause stops it; the automatic one, for an agent that looped, doesn't)
     const s = agentSettings();
+    await rollbackPass();
     if (!s.selfHeal || (s.halted && !s.autoPaused)) return;
     await watchBrain().catch(e => console.error(`Watching Sparkie’s model: ${e.message}`));
     const list = desired().running;
@@ -243,7 +244,7 @@ async function healPass() {
     if (!inv) return;
     const busy = new Set([...jobs.values()].filter(j => j.status === 'running').flatMap(j => j.nodes || [j.node]).filter(Boolean));
     for (const x of list) {
-      if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id))) continue;
+      if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id)) || rollbackHeld(x.sparks || [x.spark])) continue;
       // Parked by the power rules, or on a Spark Spark Console powered off (21-power.mjs): nothing heals against an
       // intentional power-off; it comes back when its Spark is turned on, or on its next call.
       if (x.parked || x.putBack || (x.sparks || [x.spark]).some(consoleOff)) continue;

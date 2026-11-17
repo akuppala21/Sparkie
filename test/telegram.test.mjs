@@ -1,16 +1,16 @@
 // Covers: Telegram (R32) on the stand-in Bot API: connecting needs the owner, the page and the passkey, a refused token
 // stores nothing, and the token lives only in the 0600 secrets file (never in the state folder, log, API or Sparkie's
 // tools); strangers, wrong codes, groups and bots get silence and never burn the code; the paired chat talks to Sparkie
-// (typing, plain text, previews off, split under 4,096, `/new`, `/status`), a change reports once as a fixed line,
+// (typing, plain text, previews off, split under 4,096, full incoming text, `/new`, `/status`), changes report once,
 // buttons press as `telegram`, one turn at a time; forwarded, photo, old and token-shaped messages aren't read; going
-// back a build, saved workflows and a memory erase wait in the console with the passkey (memory said there is kept,
+// back a build, saved workflows and memory erasure keep the same owner intent and confirmation rules (memory is kept,
 // marked as said on Telegram; "save that as …" pressed there saves the steps but is no yes to their images); pause,
 // injection, masking;
 // unreachable, 409, a secrets file that can't be read (read again by itself, answered once it's back, no restart),
 // brain down (the line names `/restart sparkie`), revoked token, disconnect and `/unpair`; the owner's words there
 // (`/help`, `/pause` with no file path, `/restart sparkie`, `/stop` while Sparkie answers) answered by code, and
-// `/resume` and `/undo update` resuming or undoing nothing; the lines after a restart; floods with the real limits; the
-// build in `sparkie_setup`; Telegram's address and sender in one place. `/undo update` is not a word there.
+// `/resume` requiring its dangerous confirmation and `/undo update` handled by code; restart notices and input floods; the
+// build in `sparkie_setup`; Telegram's address and sender in one place. Required confirmations remain one-use.
 //
 // Telegram (docs/architecture.md R32, docs/analysis-2026-11-11/09-telegram-design.md). The owner pairs one private
 // Telegram chat with a code only the passkey page shows; after that, text from that chat is a turn in the owner's Sparkie
@@ -72,6 +72,7 @@ const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JS
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
 const view = async () => (await api('/telegram')).json;
 const tgChat = async () => (await api('/chats')).json.chats.find(c => c.channel === 'telegram');
+const tgIdle = () => waitFor(() => !JSON.parse(readFileSync(join(fleet().stateDir, 'telegram.json'), 'utf8')).answering, { timeout: 60000 * SLOW, every: 100, what: 'the preceding Telegram turn to finish' });
 const freePort = () => new Promise(res => { const sv = net.createServer(); sv.listen(0, '127.0.0.1', () => { const p = sv.address().port; sv.close(() => res(p)); }); });
 
 describe('Telegram', { concurrency: 1 }, () => {
@@ -182,36 +183,43 @@ describe('Telegram', { concurrency: 1 }, () => {
       assert.match(asked.system, /writing from Telegram/);
       for (const t of ['save_workflow', 'forget_workflow']) assert.ok(!asked.tools.includes(t), `${t} offered`);
       assert.ok(asked.tools.includes('remember'), 'remember not offered');
-      // Telegram is offered what the page is for the same words (R46), less the page-only tools: here the core, start_model
-      // in it.
-      const pageOnly = ['save_workflow', 'forget_workflow'];
+      // The same words open the same tool groups on the page and Telegram (R46); these words open only the core.
       await say(await newChat(), 'what\'s running');
       const onPage = requests().findLast(x => x.words === 'what\'s running' && !/writing from Telegram/.test(x.system));
-      assert.deepEqual([...asked.tools].sort(), onPage.tools.filter(t => !pageOnly.includes(t)).sort());
-      assert.deepEqual([...asked.tools].sort(), CORE_TOOLS.filter(t => !pageOnly.includes(t)).sort());
+      assert.deepEqual([...asked.tools].sort(), [...onPage.tools].sort());
+      assert.deepEqual([...asked.tools].sort(), [...CORE_TOOLS].sort());
       assert.ok(asked.tools.includes('start_model'));
       // undo_update, not offered for words that open no group (any undo word offers both undos), still reaches runAction
-      // from Telegram when called, and gives what it gives today: a button, since the words didn't ask for it; pressed in
-      // Telegram, the owner-only button, waiting in Spark Console.
+      // from Telegram when called. The words did not ask for it, so only the owner's real, one-use press permits it.
       script([{ match: '^go back to how it was before$', calls: [{ name: 'undo_update', arguments: {} }] }]);
       try {
-        const before = tgCalls().length;
+        const before = tgCalls().length, rolled = auditLines().filter(l => l.action === 'rollback').length;
         await tgSay('go back to how it was before');
         const [reply] = await sentAfter(before);
+        await tgIdle();
         assert.ok(!requests().findLast(x => x.words === 'go back to how it was before' && x.round === 0).tools.includes('undo_update'), 'undo_update was offered');
         const button = reply.body.reply_markup?.inline_keyboard?.[0]?.[0];
         assert.ok(button, `a button: ${JSON.stringify(reply.body)}`);
+        const chat = await tgChat();
+        assert.ok((await chatMessages(chat.id)).flatMap(m => m.choices || []).some(c => c.id === button.callback_data && c.state === 'open'), 'the exact unrequested change is still only an open choice');
+        is(await choose(chat.id, button.callback_data), 428, 'a page press still needs the passkey');
+        assert.equal(auditLines().filter(l => l.action === 'rollback').length, rolled, 'asking and a bare page press undo nothing');
+        const pressAt = tgCalls().length;
         await tgPress(button.callback_data);
-        const [, pressed] = await sentAfter(before, 2, 'the press');
-        assert.match(pressed.body.text, /That one waits for you in Spark Console\.$/);
-        assert.equal(pressed.body.reply_markup, undefined, 'no button for it in Telegram');
-        const line = auditLines().findLast(l => l.action === 'undo_update');
-        assert.deepEqual([line.outcome, line.channel], ['question', 'telegram']);
-        assert.ok(!auditLines().some(l => l.action === 'rollback'), 'nothing was undone');
+        const [pressed] = await sentAfter(pressAt, 1, 'the owner press');
+        assert.match(pressed.body.text, /Going back to the build from before the update on 20261110T120000Z/);
+        assert.equal(auditLines().filter(l => l.action === 'rollback').length, rolled + 1);
+        const ran = auditLines().findLast(l => l.action === 'undo_update');
+        assert.deepEqual([ran.outcome, ran.channel, ran.via], ['started', 'telegram', 'telegram']);
+        const replay = tgCalls().length;
+        await tgPress(button.callback_data);
+        const [expired] = await sentAfter(replay);
+        assert.match(expired.body.text, /expired/);
+        assert.equal(auditLines().filter(l => l.action === 'rollback').length, rolled + 1, 'the same choice never runs twice');
       } finally { noScript(); }
     });
 
-    test('a long answer is split under 4,096 characters a message; a long message is cut to 4,000', async () => {
+    test('a long answer is split under 4,096 characters a message; the owner’s incoming message stays complete', async () => {
       const from = tgCalls().length, long = `${'wordy '.repeat(900)}end`;
       await tgSay(long);
       const sent = await sentAfter(from, 2, 'two parts');
@@ -219,7 +227,7 @@ describe('Telegram', { concurrency: 1 }, () => {
       assert.ok(tgSent(from).length <= 3);
       for (const s of tgSent(from)) assert.ok(s.body.text.length <= 4096, String(s.body.text.length));
       const saved = (await chatMessages((await tgChat()).id)).filter(x => x.role === 'user').at(-1).content;
-      assert.equal(saved.length, 4000);
+      assert.equal(saved, long, 'the paired owner’s incoming words are not truncated');
       assert.ok(sent.length >= 2);
     });
 
@@ -298,28 +306,39 @@ describe('Telegram', { concurrency: 1 }, () => {
       assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(TOKEN));
     });
 
-    // A1 (owner decision 5): /pause, /restart sparkie and /stop work here too; resuming and going back a build never do.
-    test('the owner\'s words on Telegram are answered by code, also while Sparkie answers; nothing resumes from here', { timeout: 240000 * SLOW }, async () => {
+    // Owner commands run through code. Resuming still requires the exact dangerous confirmation and digits.
+    test('the owner\'s words are answered by code while Sparkie answers; an unconfirmed resume stays paused', { timeout: 240000 * SLOW }, async () => {
       let from = tgCalls().length, asked = requests().length;
       await tgSay('/help');
       const [help] = await sentAfter(from);
       assert.match(help.body.text, /^Paired with Spark Console\./);
-      for (const w of ['/new', '/status', '/pause', '/restart sparkie', '/stop', '/unpair']) assert.ok(help.body.text.includes(w), w);
-      assert.doesNotMatch(help.body.text, /By hand|docker |agent-settings\.json|\/undo update|\/resume/);
+      for (const w of ['/new', '/status', '/pause', '/resume', '/admin', '/restart sparkie', '/stop', '/unpair']) assert.ok(help.body.text.includes(w), w);
+      assert.doesNotMatch(help.body.text, /By hand|docker |agent-settings\.json/);
       const rollbacks = () => auditLines().filter(l => l.action === 'rollback').length, rolled = rollbacks();
       try {
         from = tgCalls().length;
         await tgSay('/pause');
         const [p] = await sentAfter(from);
         assert.match(p.body.text, /^Paused\. /);
-        assert.match(p.body.text, /It can’t be resumed from Telegram\.$/);
+        assert.match(p.body.text, /To resume: send \/resume and confirm the change/);
         assert.doesNotMatch(p.body.text, /agent-settings\.json/);
         assert.equal((await api('/agents')).json.settings.halted, true);
         assert.ok(auditLines().some(l => l.action === 'agent-settings' && l.via === 'telegram' && l.args?.word === '/pause'));
         assert.equal(requests().length, asked, 'no model call');
-        for (const w of ['/resume', '/undo update']) { const f = tgCalls().length; await tgSay(w); await sentAfter(f, 1, w); }
-        assert.equal((await api('/agents')).json.settings.halted, true, 'still paused');
-        assert.equal(rollbacks(), rolled, 'nothing undone');
+        let f = tgCalls().length;
+        await tgSay('/resume');
+        const [resume] = await sentAfter(f, 1, '/resume confirmation');
+        assert.match(resume.body.text, /Resume agents’ changes/);
+        assert.match(resume.body.text, /To run it: press Run it, then type \d{2}\./);
+        assert.ok(resume.body.reply_markup?.inline_keyboard?.length, 'the real confirmation reaches the paired owner');
+        assert.equal((await api('/agents')).json.settings.halted, true, 'typed /resume without its press and digits stays paused');
+        f = tgCalls().length;
+        await tgSay('/undo update');
+        const [undo] = await sentAfter(f, 1, '/undo update');
+        assert.match(undo.body.text, /Going back to the build from before the update/);
+        assert.equal((await api('/agents')).json.settings.halted, true, 'undoing an update does not resume agents');
+        assert.equal(rollbacks(), rolled + 1, 'the explicit owner undo command runs once');
+        assert.equal(requests().length, asked, 'both owner commands bypass the model');
       } finally { is(await confirmed('PUT', '/agents/settings', { halted: false }), 200); }
       // With the brain not answering: the line names the word (and promises no restart by itself); the word restarts it.
       const hung = join(T.fleet.root, 'spark2', '.mock', 'brain-hung');
@@ -359,36 +378,31 @@ describe('Telegram', { concurrency: 1 }, () => {
     });
   });
 
-  describe('what Telegram may not do', { concurrency: 1 }, () => {
-    test('"undo the update": no rollback, no Telegram button, and pressing that choice from Telegram is refused; on the page it needs the passkey', { timeout: 90000 * SLOW }, async () => {
+  describe('paired owner controls and their confirmations', { concurrency: 1 }, () => {
+    test('an explicit owner update undo has page-equivalent authority and keeps the Telegram audit channel', { timeout: 90000 * SLOW }, async () => {
       script([{ match: '^undo the update$', calls: [{ name: 'undo_update', arguments: {} }] }]);
       try {
-        const from = tgCalls().length;
+        const from = tgCalls().length, rolled = auditLines().filter(l => l.action === 'rollback').length;
         await tgSay('undo the update');
         const [m] = await sentAfter(from);
-        assert.match(m.body.text, /That one waits for you in Spark Console\.$/);
-        assert.equal(m.body.reply_markup, undefined, 'no button for it in Telegram');
-        assert.ok(!auditLines().some(l => l.action === 'rollback'), 'nothing was undone');
+        assert.match(m.body.text, /Going back to the build from before the update/);
+        assert.equal(auditLines().filter(l => l.action === 'rollback').length, rolled + 1);
         const line = auditLines().findLast(l => l.action === 'undo_update');
-        assert.deepEqual([line.outcome, line.channel], ['question', 'telegram']);
-        const chat = await tgChat(), c = (await chatMessages(chat.id)).findLast(x => x.choices?.length).choices[0];
-        await tgPress(c.id);
-        const [, refused] = await sentAfter(from, 2);
-        assert.equal(refused.body.text, 'That one waits for you in Spark Console.');
-        is(await choose(chat.id, c.id), 428, 'on the page: the passkey');
-        assert.ok(!auditLines().some(l => l.action === 'rollback'));
+        assert.deepEqual([line.outcome, line.channel, line.via], ['started', 'telegram', 'sparkie']);
       } finally { noScript(); }
     });
 
-    test('/undo update is not a word on Telegram: it reaches Sparkie, and nothing is undone (owner decision 5)', { timeout: 90000 * SLOW }, async () => {
+    test('/undo update is answered by code with no model call and undoes the update once', { timeout: 90000 * SLOW }, async () => {
       const from = tgCalls().length, asked = requests().length, rollbacks = auditLines().filter(l => l.action === 'rollback').length;
       await tgSay('/undo update');
-      await sentAfter(from, 1);
-      assert.ok(requests().length > asked, 'it went to Sparkie');
-      assert.equal(auditLines().filter(l => l.action === 'rollback').length, rollbacks);
+      const [reply] = await sentAfter(from, 1);
+      assert.match(reply.body.text, /Going back to the build from before the update/);
+      assert.equal(requests().length, asked, 'the owner command did not reach the model');
+      assert.equal(auditLines().filter(l => l.action === 'rollback').length, rollbacks + 1);
+      assert.equal(auditLines().findLast(l => l.action === 'rollback').via, 'telegram');
     });
 
-    test('saved workflows: not offered on Telegram, and a model that calls one anyway gets an owner-only button; memory said there is kept, marked as said on Telegram', { timeout: 90000 * SLOW }, async () => {
+    test('saved workflows use the same tool groups and exact step confirmation; memory keeps its Telegram attribution', { timeout: 90000 * SLOW }, async () => {
       script([{ match: '^remember that spark 3 is the coding box$', calls: [{ name: 'remember', arguments: { text: 'Spark 3 is the coding box', kind: 'fact' }, offered: false }] },
         { match: '^save my routine$', calls: [{ name: 'save_workflow', arguments: { title: 'coding mode', steps: [{ action: 'stop_model', args: { spark: 'spark3', container: 'x' } }] }, offered: false }] }]);
       try {
@@ -401,12 +415,26 @@ describe('Telegram', { concurrency: 1 }, () => {
         assert.notEqual(existsSync(memoryFile) ? readFileSync(memoryFile, 'utf8') : null, before, 'memory changed');
         const kept = JSON.parse(readFileSync(memoryFile, 'utf8')).entries.filter(e => e.text === 'Spark 3 is the coding box');
         assert.deepEqual(kept.map(e => [e.by, e.src.via, e.src.channel]), [['owner', 'sparkie', 'telegram']]);
-        for (const [action, outcome] of [['remember', 'remembered'], ['save_workflow', 'question']]) {
-          const line = auditLines().findLast(l => l.action === action);
-          assert.deepEqual([line?.outcome, line?.channel], [outcome, 'telegram'], action);
-        }
+        await tgIdle();
+        const remembered = auditLines().findLast(l => l.action === 'remember');
+        assert.deepEqual([remembered?.outcome, remembered?.channel], ['remembered', 'telegram']);
         const asked = requests().findLast(x => x.words === 'save my routine');
-        assert.ok(asked.tools.includes('remember') && !asked.tools.includes('save_workflow'));
+        assert.ok(asked.tools.includes('remember') && asked.tools.includes('save_workflow'));
+        const chat = await tgChat(), choice = (await chatMessages(chat.id)).flatMap(m => m.choices || []).findLast(c => c.state === 'open' && c.label.startsWith('Save the workflow “coding mode”'));
+        assert.ok(choice, 'the save still needs the exact steps confirmed');
+        await waitFor(() => tgSent(from).some(m => m.body.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === choice.id))), { what: 'the exact save choice on Telegram' });
+        assert.ok(!(await api('/actions/workflows', { method: 'POST', body: {} })).json.saved.some(w => w.name === 'coding-mode'), 'asking has not saved the workflow');
+        is(await choose(chat.id, choice.id), 428, 'the page still needs a passkey');
+        const saveAt = tgCalls().length;
+        await tgPress(choice.id);
+        const [saved] = await sentAfter(saveAt);
+        assert.equal(saved.body.text, 'Approved from Telegram: Save the workflow “coding mode”: 1. Stop x on Spark 3: done.');
+        const savedAudit = auditLines().findLast(l => l.action === 'save_workflow');
+        assert.deepEqual([savedAudit?.outcome, savedAudit?.channel, savedAudit?.via], ['saved', 'telegram', 'telegram']);
+        assert.ok((await api('/actions/workflows', { method: 'POST', body: {} })).json.saved.some(w => w.name === 'coding-mode'));
+        const replayAt = tgCalls().length;
+        await tgPress(choice.id);
+        assert.match((await sentAfter(replayAt))[0].body.text, /expired/);
       } finally { noScript(); }
     });
 
@@ -442,38 +470,49 @@ describe('Telegram', { concurrency: 1 }, () => {
       }
     });
 
-    // Review of G1 (2026-11-14): the lines the owner asked to be rid of are never sent out to Telegram.
-    test('a forgotten memory line never reaches Telegram: memory {past} is refused there', { timeout: 90000 * SLOW }, async () => {
+    // Forgotten is retired, not erased: the paired owner can inspect it; it never returns to live memory by a read.
+    test('the paired owner reads retired memory and its journal records without reviving the forgotten line', { timeout: 120000 * SLOW }, async () => {
       const WORDS = 'my garage code is 9182';
       const kept = await api('/actions/remember', { method: 'POST', body: { text: WORDS, kind: 'fact' } });
       is(kept, 200, 'remember');
       is(await api('/actions/forget_memory', { method: 'POST', body: { id: kept.json.id } }), 200, 'forget');
-      script([{ match: '^what did I ask you to forget\\?$', calls: [{ name: 'memory', arguments: { past: true } }] }]);
+      script([{ match: '^what did I ask you to forget\\?$', calls: [{ name: 'memory', arguments: { past: true } }] },
+        { match: '^what do you have on my garage\\?$', calls: [{ name: 'recall', arguments: { about: 'garage code' } }, { name: 'recall', arguments: { id: kept.json.id } }] },
+        { match: '^drop the garage line$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id } }] },
+        { match: '^erase the garage line for good$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id, erase: true } }] }]);
       try {
-        const from = tgCalls().length;
-        await tgSay('what did I ask you to forget?');
-        const [m] = await sentAfter(from);
-        assert.match(m.body.text, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
-        assert.ok(!tgSent(from).some(x => String(x.body.text).includes(WORDS)), 'the words never went to Telegram');
-        // Nor through recall (the journal holds the call that kept it), or a question about that line, plain or to erase
-        // it: not in what the brain there is sent, not in a reply or on a button.
-        script([{ match: '^what do you have on my garage\\?$', calls: [{ name: 'recall', arguments: { about: 'garage code' } }, { name: 'recall', arguments: { id: kept.json.id } }] },
-          { match: '^drop the garage line$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id } }] },
-          { match: '^erase the garage line for good$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id, erase: true } }] }]);
-        for (const words of ['what do you have on my garage?', 'drop the garage line', 'erase the garage line for good']) {
-          const before = tgCalls().length;
+        for (const words of ['what did I ask you to forget?', 'what do you have on my garage?']) {
+          const from = tgCalls().length;
           await tgSay(words);
-          await sentAfter(before);
-          assert.ok(!tgCalls().slice(before).some(c => JSON.stringify(c.body).includes(WORDS)), `${words}: the words went to Telegram`);
+          await sentAfter(from);
+          await tgIdle();
           const toBrain = requests().filter(x => x.words === words).flatMap(x => x.results.map(r => r.content)).join('\n');
-          assert.ok(toBrain && !toBrain.includes(WORDS), `${words}: the brain on Telegram was sent the words: ${toBrain.slice(0, 400)}`);
+          assert.ok(toBrain.includes(WORDS), `${words}: the paired owner receives the retired owner record`);
         }
+        const before = tgCalls().length;
+        await tgSay('drop the garage line');
+        await sentAfter(before);
+        await tgIdle();
+        const live = (await api('/actions/memory', { method: 'POST', body: {} })).json;
+        assert.ok(!live.entries.some(e => e.id === kept.json.id), 'reads and a repeated forget do not revive the line');
+        const eraseAt = tgCalls().length;
+        await tgSay('erase the garage line for good');
+        await sentAfter(eraseAt);
+        await tgIdle();
+        const chat = await tgChat(), choices = (await chatMessages(chat.id)).findLast(m => m.choices?.some(c => c.label === `Erase for good: “${WORDS}”`)).choices;
+        const yes = choices.find(c => c.label === `Erase for good: “${WORDS}”`), no = choices.find(c => c.label === 'No, keep it');
+        assert.ok(yes && no);
+        await waitFor(() => tgSent(eraseAt).some(m => m.body.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === yes.id))), { what: 'the retired-line erase confirmation' });
+        assert.ok((await api('/actions/memory', { method: 'POST', body: { past: true } })).json.past.some(e => e.id === kept.json.id), 'asking has not erased it');
+        const declineAt = tgCalls().length;
+        await tgPress(no.id);
+        assert.equal((await sentAfter(declineAt))[0].body.text, 'Okay, left as it is.');
+        assert.ok((await api('/actions/memory', { method: 'POST', body: { past: true } })).json.past.some(e => e.id === kept.json.id), 'declining keeps the retired line');
       } finally { noScript(); }
     });
 
-    // Erasing a memory line for good waits for the page (contract 8.7), whatever the gates for Telegram allow: the erase
-    // asks the owner itself (20-memory.mjs eraseLine), so a later step that lets Telegram forget can't let it erase.
-    test('erasing a memory line for good from Telegram waits for the page: no Telegram button, a press there is refused, on the page it needs the passkey', { timeout: 90000 * SLOW }, async () => {
+    // Erasure still requires the exact owner's confirmation. A stranger, typed yes or a bare page request cannot erase.
+    test('a paired-owner erase button runs once; page confirmation still requires its passkey', { timeout: 180000 * SLOW }, async () => {
       const WORDS = 'The spare key for the rack is in the top drawer';
       const kept = await api('/actions/remember', { method: 'POST', body: { text: WORDS, kind: 'fact' } });
       is(kept, 200, 'remember');
@@ -482,24 +521,51 @@ describe('Telegram', { concurrency: 1 }, () => {
       try {
         const from = tgCalls().length;
         await tgSay('erase the line about the rack key for good');
-        const [m] = await sentAfter(from);
-        assert.match(m.body.text, /That one waits for you in Spark Console\.$/);
-        assert.equal(m.body.reply_markup, undefined, 'no button for it in Telegram');
+        await sentAfter(from);
+        await tgIdle();
         const line = auditLines().findLast(l => l.action === 'forget_memory');
         assert.deepEqual([line.outcome, line.channel, line.args], ['question', 'telegram', { id, erase: true }]);
-        assert.ok((await lines()).entries.some(e => e.id === id), 'still there');
-        const chat = await tgChat(), c = (await chatMessages(chat.id)).findLast(x => x.choices?.length).choices[0];
+        assert.ok((await lines()).entries.some(e => e.id === id), 'asking has not erased the line');
+        const chat = await tgChat(), c = (await chatMessages(chat.id)).findLast(x => x.choices?.some(c => c.label === `Erase for good: “${WORDS}”`)).choices[0];
         assert.equal(c.label, `Erase for good: “${WORDS}”`);
+        await waitFor(() => tgSent(from).some(m => m.body.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === c.id))), { what: 'the exact owner erase button' });
+        const strangerAt = tgCalls().length;
+        await tgPress(c.id, { from: STRANGER_TG });
+        await sleep(500);
+        assert.equal(tgSent(strangerAt).length, 0, 'a stranger gets silence');
+        assert.ok((await lines()).entries.some(e => e.id === id), 'the stranger did not erase it');
+        const yesAt = tgCalls().length;
+        await tgSay('yes');
+        await sentAfter(yesAt);
+        await tgIdle();
+        assert.ok((await lines()).entries.some(e => e.id === id), 'typed yes is no confirmation');
+        is(await choose(chat.id, c.id), 428, 'the page still needs a passkey');
+        const pressAt = tgCalls().length;
         await tgPress(c.id);
-        const [, refused] = await sentAfter(from, 2);
-        assert.equal(refused.body.text, 'That one waits for you in Spark Console.');
-        assert.ok((await lines()).entries.some(e => e.id === id), 'still there after the press on Telegram');
-        is(await choose(chat.id, c.id), 428, 'on the page: the passkey');
-        const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: c.id });
-        is(pressed, 200, 'with the passkey');
-        assert.equal(pressed.json.outcome, 'erased');
+        const [erased] = await sentAfter(pressAt);
+        assert.match(erased.body.text, /Erased for good/);
         const after = await lines();
         assert.ok(!after.entries.some(e => e.id === id) && !after.past.some(p => p.id === id), JSON.stringify(after));
+        const replayAt = tgCalls().length;
+        await tgPress(c.id);
+        assert.match((await sentAfter(replayAt))[0].body.text, /expired/);
+        const again = await lines();
+        assert.ok(!again.entries.some(e => e.id === id) && !again.past.some(p => p.id === id), 'a replay cannot restore erased memory');
+        // Keep the existing authenticated page path covered with a separate exact line.
+        const pageLine = await api('/actions/remember', { method: 'POST', body: { text: `${WORDS} (page confirmation)`, kind: 'fact' } });
+        is(pageLine, 200);
+        script([{ match: '^erase the page check$', calls: [{ name: 'forget_memory', arguments: { id: pageLine.json.id, erase: true }, offered: false }] }]);
+        const pageAt = tgCalls().length;
+        await tgSay('erase the page check');
+        await sentAfter(pageAt);
+        await tgIdle();
+        const pageChoice = (await chatMessages(chat.id)).findLast(m => m.choices?.some(c => c.label.includes('(page confirmation)'))).choices[0];
+        is(await choose(chat.id, pageChoice.id), 428, 'the second page press still needs its passkey');
+        const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: pageChoice.id });
+        is(pressed, 200, 'with the passkey');
+        assert.equal(pressed.json.outcome, 'erased');
+        const pageAfter = await lines();
+        assert.ok(!pageAfter.entries.some(e => e.id === pageLine.json.id) && !pageAfter.past.some(e => e.id === pageLine.json.id), 'the authenticated page erase removes live and retired memory');
       } finally { noScript(); }
     });
 
@@ -686,12 +752,26 @@ describe('Telegram', { concurrency: 1 }, () => {
         const before = requests().length;
         await tgSay('take 3 seconds please');
         for (let i = 0; i < 24; i++) await tgSay(`flood ${i}`);
-        await sentAfter(from, 3, 'the answer and the two fixed lines');
-        await sleep(2000);
+        await sentAfter(from, 2, 'the answer and the busy line');
+        await tgIdle();
         const texts = tgSent(from).map(s => s.body.text);
-        assert.equal(texts.filter(t => t === 'Too many messages. Wait a minute.').length, 1, texts.join(' | '));
         assert.equal(texts.filter(t => /^Still answering/.test(t)).length, 1, texts.join(' | '));
-        assert.ok(!requests().slice(before).some(x => /^flood /.test(x.words)), 'no flood message reached the model');
+        assert.ok(!requests().slice(before).some(x => /^flood /.test(x.words)), 'no overlapping flood message reached the model');
+        // Busy messages never reach the brain and do not consume its turn budget. Fill the remaining 18 accepted
+        // turns sequentially: the first lookup and slow turn above have consumed two of the real 20-per-minute cap.
+        for (let i = 0; i < 18; i++) {
+          const next = tgCalls().length;
+          await tgSay(`counted turn ${i}`);
+          await sentAfter(next);
+          await tgIdle();
+        }
+        const over = tgCalls().length, askedBeforeExcess = requests().length;
+        for (let i = 0; i < 6; i++) await tgSay(`excess turn ${i}`);
+        await sentAfter(over, 1, 'the one rate-limit line');
+        await sleep(1000);
+        const limited = tgSent(over).map(s => s.body.text);
+        assert.deepEqual(limited, ['Too many messages. Wait a minute.']);
+        assert.equal(requests().length, askedBeforeExcess, 'excess accepted-turn requests never reach the model');
       } finally { await F.stop(); F = null; }
     });
 

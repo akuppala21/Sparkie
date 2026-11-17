@@ -1,5 +1,5 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
-// Area: record        Rules: R9, R20, R21, R22, R38, R41, R57        Tests: power.test.mjs, desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
+// Area: record        Rules: R9, R20, R21, R22, R38, R41, R57        Tests: power.test.mjs, desired.test.mjs, desired-look.test.mjs, workloads.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-owner-wish.test.mjs
 // Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
 // Timers: watchHeld (every 60 s; seeds desired.json if missing)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
@@ -20,7 +20,7 @@ const keyOf = x => `${x.spark}/${x.container}`;
 // A finished operation changes the list: what it started is added, what it stopped is taken away. The brain's Spark
 // isn't on it.
 function desiredAfter(job) {
-  if (job.status !== 'completed') return;
+  if (job.status !== 'completed' || job.type === 'start-rollback') return;
   // The self-test's own model (21-selftest.mjs) isn't the owner's wish: its start, the drill's restart and its stop
   // (marked by the self-test and by maybeHeal) leave the list as it is.
   if (job.selfTest) return;
@@ -66,7 +66,9 @@ function desiredAfter(job) {
 // step, self-healing, an agent or the self-test. An operation that started it, or is still starting it (a run's step
 // loading it), is marked too, in the same tick: the run takes its receipt when that ends, so the wish outlives it.
 const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
-function desiredWish(keys) {
+function desiredWish(keys, { afterStart = null } = {}) {
+  if (afterStart) rollbackSupersede(keys, 'the owner asked for it again', null, false, afterStart);
+  else rollbackSupersede(keys, 'the owner asked for it again', null, false);
   for (const j of jobs.values()) if ((j.ranHere || []).some(k => keys.includes(k)) || (j.node && j.container && keys.includes(`${j.node}/${j.container}`))) {
     j.ownersWish = true;
     try { savedRunReceipts(j); } catch (e) { console.error(`Couldn’t keep the owner’s wish with the pending start: ${e.message}`); }
@@ -187,6 +189,9 @@ async function watchHeld() {
     if (!existsSync(DESIRED_FILE)) {
       const inv = await recentInventory().catch(() => null);
       if (!inv) return;
+      // A first look during an unfinished start can see its unproved new container. Observation is not a newer
+      // owner wish: wait for compensation to settle before making the first list from what is running.
+      if (rollbackRecords().some(r => r.phase !== 'committed')) return;
       seedDesired(inv);
     }
     if (!desired().running.length) { heldLast = []; return; }
@@ -223,8 +228,8 @@ function cancelCheck(job) {
 // The operations a stop cancels on its Sparks: the ones that start, stop or bring back models there, so a stop never
 // waits behind a start. A download, a search for setups or a Spark action touches no model and goes on (2026-11-11: a
 // stop on Spark 3 cancelled GLM-5.3-Flash's 178 GB download there).
-const CHANGES_MODELS = new Set(['deploy', 'deploy-cluster', 'start-model', 'restart', 'stop', 'undo', 'power-off', 'power-on']);
-const holdsModelsOn = (j, ids) => j.status === 'running' && CHANGES_MODELS.has(j.type) && (j.nodes || [j.node]).some(id => ids.includes(id));
+const CHANGES_MODELS = new Set(['deploy', 'deploy-cluster', 'start-model', 'restart', 'stop', 'undo', 'power-off', 'power-on', 'start-rollback']);
+const holdsModelsOn = (j, ids) => j.status === 'running' && CHANGES_MODELS.has(j.type) && (j.claimedNodes || j.nodes || [j.node]).some(id => ids.includes(id));
 async function cancelRunningOn(ids, by) {
   return cancelJobsAndWait([...jobs.values()].filter(j => holdsModelsOn(j, ids)), by);
 }

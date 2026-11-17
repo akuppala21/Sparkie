@@ -18,13 +18,13 @@
 // proven setup for a model is the brain's, a start across Spark 3 and Spark 4 uses it made plain: the same engine and
 // settings, split over the cable by the start's own two-Spark flags, rather than the engine's defaults (which couldn't
 // start the brain's hybrid Qwen at all). The model is the brain's own, as on the real Sparks: in Recipes, on Spark 4, copied to Spark 3.
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdtempSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { T, useFleet, api, call, createKey, createActKey, agentSettings, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, resetFleet, api, call, createKey, createActKey, agentSettings, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
 
 const keys = {};
 const DFLASH = ['--context-length', '1000000', '--speculative-algorithm', 'DFLASH', '--speculative-num-draft-tokens', '16', '--tp-size', '1',
@@ -51,9 +51,18 @@ fi
 exec ${JSON.stringify(join(BIN, 'docker'))} "$@"
 `);
 chmodSync(join(WRAP, 'docker'), 0o755);
-useFleet({ watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_CONNECT_MS: String(20000 * SLOW), PATH: `${WRAP}:${BIN}:${process.env.PATH}` },
+const FLEET_OPTIONS = { watchMs: 60000, statusMs: 3000, env: { SPARK_CONSOLE_CONNECT_MS: String(20000 * SLOW), PATH: `${WRAP}:${BIN}:${process.env.PATH}` },
   prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [brainRun] }), { mode: 0o600 }),
-}, async () => { keys.look = await createKey('across'); keys.act = await createActKey('across-act'); });
+};
+const setupKeys = async () => { keys.look = await createKey('across'); keys.act = await createActKey('across-act'); };
+useFleet(FLEET_OPTIONS, setupKeys);
+beforeEach(async t => {
+  // Prior cases deliberately leave unproved stop commands. They end only with their entire fake fleet.
+  if (['a start across two that fails, with the stop', 'a part stops while loading',
+    'a part whose run Docker', 'a pair with room on Spark 4 only'].some(prefix => t.name.startsWith(prefix))) {
+    await resetFleet(FLEET_OPTIONS, setupKeys);
+  }
+}, { timeout: 180000 * SLOW });
 
 test('across Spark 3 and Spark 4, a model whose only proven setup is the brain\'s starts with it, split over the cable', { timeout: 300000 * SLOW }, async t => {
   const broken = join(T.fleet.root, 'spark4', '.mock', 'engine-check-broken');

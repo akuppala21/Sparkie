@@ -13,7 +13,7 @@
 // (the GET's read) says no for no record, another build, another task set, only a partial run, a newest full run that
 // missed the bar, one written by hand and another brain serving, and yes for a full run with every task 2 of 3 or better;
 // a partial run neither gives nor takes. Once a passkey is set up a passing result waits: nothing kept, one owner-only
-// button in the chat "The coding trial’s result" naming the record's sha256, never asked on Telegram; a bare press is
+// button in the chat "The coding trial’s result" naming the record's sha256, also offered to the paired owner on Telegram; a bare press is
 // 428; pressed with the passkey it is kept, sealed. A newer post voids the shown button (a result swapped between the
 // look and the press keeps nothing); Sparkie's own call, its call from Telegram, an agent's call and an agent's press
 // keep nothing; "No" drops it.
@@ -360,7 +360,7 @@ describe('where a result is kept, and the read', { concurrency: 1 }, () => {
     assert.equal(now.passed, true, 'the brain back, its pass back');
   });
 
-  test('once a passkey is set up a passing result waits: nothing kept, one owner-only button naming its sha256, never asked on Telegram; a bare press is 428; pressed with the passkey it is kept and sealed; a replay is refused', { timeout: 180000 * SLOW }, async () => {
+  test('once a passkey is set up a passing result waits: nothing kept, one owner-only button naming its sha256, also offered to the paired owner on Telegram; a bare press is 428; pressed with the passkey it is kept and sealed; a replay is refused', { timeout: 180000 * SLOW }, async () => {
     const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     assert.equal((await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) })).status, 201);
     await post(await record({}, { passes: { [SET.ids[2]]: 0 } }));
@@ -375,8 +375,13 @@ describe('where a result is kept, and the read', { concurrency: 1 }, () => {
     assert.ok(w.message.content.startsWith(`A coding trial result is waiting for your yes: sha256 ${hash}. It is for build ${rec.build}, `), w.message.content);
     assert.ok(w.message.content.includes(`${SET.ids.map(id => `${id}: 3 of 3 runs passed`).join('; ')}. The bar is every task passing at least 2 of 3.`), w.message.content);
     assert.ok(w.message.content.includes('Keep it only for a run you started, and only if the sha256 above is the one the runner printed.'), w.message.content);
-    await sleep(3000);
-    assert.ok(!tgSent().slice(tgFrom).some(c => /trial/i.test(c.body.text)), 'nothing asked on Telegram');
+    const phone = await waitFor(() => tgSent().slice(tgFrom).find(c =>
+      c.body.reply_markup?.inline_keyboard?.flat().some(b => b.callback_data === w.keep.id)),
+      { timeout: 60000 * SLOW, what: 'the exact result confirmation in the paired owner chat' });
+    const phoneIds = phone.body.reply_markup.inline_keyboard.flat().map(b => b.callback_data);
+    assert.deepEqual(phoneIds, w.open.map(c => c.id), 'both channels offer the same one-use choices');
+    assert.ok(tgSent().slice(tgFrom).map(c => c.body.text).join('').includes(w.message.content), 'the full result and its cautions reached the phone');
+    assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'delivery alone keeps no result');
     const bare = await api(`/chats/${w.conv}/choose`, { method: 'POST', body: { choice: w.keep.id } });
     assert.deepEqual([bare.status, bare.json.passkey], [428, 'confirm'], bare.text);
     assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing kept without the passkey');

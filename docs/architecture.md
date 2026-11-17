@@ -44,8 +44,9 @@ flowchart TD
   REG["Action registry: reads and changes"]
   WF["Workflow state: workflows.lock.json and validations.json"]
   JOBS["Jobs and per-Spark claims (07-jobs)"]
+  RETURN["Failed-start recovery (17-rollback)"]
   SSH["spawnOn and run (02-ssh): ssh, or local bash on the hub"]
-  FLEET["Sparks: Docker containers, model servers on port 8000, apps kept running on their own ports, model files, worker.py"]
+  FLEET["Sparks: containers, models on port 8000, apps on their own ports, model files, worker.py"]
   SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, plugs 15 s, inventory on demand and from the heal loops"]
   PLUGS["Plug controller on the hub (deploy/plugs.sh): Tapo plugs over Matter"]
   POWER["Power (21-power): power_off, power_on, power_settings, the idle loop; power.json"]
@@ -82,14 +83,18 @@ flowchart TD
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
   PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
+  PGATE -->|"downloads: reject hub; check fresh disk before job and transfer"| SSH
+  JOBS -->|"save originals before change; healing finishes recovery"| STATE
   PGATE -->|"logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
   PGATE -->|"agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
   PGATE -->|"POST /rollback"| ROLL
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
-  TG -->|"polled from the hub: the paired chat's words, a turn with ctx.channel telegram"| CHAT
-  TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
-  CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, an ask with its buttons while approvals from there are on, the needs-me line when the owner switched it on (R32)"| TG
+  TG -->|"paired proof; Telegram turn"| CHAT
+  TG -->|"runChoice after full delivery; pairing and payload checked"| RUN
+  TG -->|"owner commands"| ADMIN["Owner controls (21-owner-admin)"]
+  ADMIN -->|"exact owner confirmation through runAction"| RUN
+  CHAT -->|"tell(): full masked questions/labels, replies, results, carry-on, fixed lines, approvals and enabled needs-me (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
   PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
   V1 -->|"model sparkie: the agents route's model; the brain's served name: the brain"| BRAIN
@@ -109,8 +114,11 @@ flowchart TD
   NETG -->|"armed in the same call; the ways in tried from outside; then keep or putback (21-guard)"| HELPER
   HELPER -->|"a short-lived systemd unit for each command; the put-back from the Spark's own timer"| FLEET
   WORK -->|"on box: docker run and exec over ssh, no helper"| BOX
-  RUN -->|"before a change written down first, its start line, synced (none written: nothing runs); each change's result; agents' looks; recall reads it"| JOURNAL
+  RUN -->|"sync start before change or refuse; results, agent reads; recall reads it"| JOURNAL
   CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
+  JOBS -->|"failed model start"| RETURN
+  RETURN -->|"fence late commands; prove exact new-ID disposal; restart exact originals"| SSH
+  RETURN -->|"settled owner adoption; all target claims held"| STATE
   JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
   SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
@@ -179,6 +187,8 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
    disk, a `start-model` job is created with no claim, downloads first, and claims the Spark only then (`startModel`
    in `17-changes.mjs`). A repo from outside Recipes joins them (`addModel`) once its download worked; the job then
    waits for the look (`refreshSetups`) and `bestHow` picks, as for any recipe (A9).
+   Downloads check fresh space and lease the target; at most three resumes need confirmed stops
+   (`11-downloads.mjs`; [details](download-admission.md)).
 8. **Deploy.** `startWithFixes` runs `deploy` (`07-jobs.mjs`): plan again, stop, set a running copy of the same model
    aside (`docker rename` to `<name>-before-<job id>`; `asideBack` in `08-cluster.mjs` gives it its name back and
    starts it if the start fails or is cancelled; it is removed once the new one answers, F9), copy, pull, measure
@@ -202,11 +212,10 @@ after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the wa
 
 ## 4. Known traps
 
-- **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
-  tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
-  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard and the power work changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers `start_model` and
-  the restart, not `start_model_across` (its own first start across two Sparks); one `find_setups` covers that one.
+- **No lock in the tree.** Git excludes `service/workflows.lock.json` (R29). A full passing suite writes it;
+  a `tested/` tag includes it. Installation requires its exact tree. A part changes the build; `worker.py` changes
+  workflow versions. After install, `/health` names versions needing validation. One single-Spark start,
+  check and stop covers start and restart; an across-Spark start needs its own run. `find_setups` validates itself.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up again when a start or `recipe_detail` finds its setups over a week old (never by the clock). A model
@@ -232,10 +241,9 @@ after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the wa
 - **Restarts forget.** Jobs, claims, open buttons, `consoleStopped`, breaker counts and sign-in challenges live in
   memory (the brain's left-down mark is in `main.json` and survives). The drain is 60 seconds and covers jobs only; a
   start can take 45 minutes; a cut-off operation is reported, not resumed.
-- **The process is small and replaceable.** The unit runs with `MemoryMax=512M`, `NoNewPrivileges` and
-  `Restart=always` (the unit file `deploy/host-on-portal.sh` writes). `undo_update` refuses while any job runs, goes
-  to the newest whole snapshot not marked `same`, and restores files, not state; installs are additive (removed files
-  stay). `config.json` is replaced on every install, and an `ownerLogin` in it would override `access.json`.
+- **The service is replaceable.** The unit has `MemoryMax=512M`, `NoNewPrivileges` and
+  `Restart=always`. `undo_update` refuses while jobs run, restores files from the newest whole snapshot without
+  `same`, and leaves state. Installs are additive and replace `config.json`; its `ownerLogin` overrides `access.json`.
 - **No single "online", no single container list.** Six views of different ages can disagree. An offline Spark keeps
   its containers `running` in `knowledge.json`, and healing, the passkey gate and `pickContainer` read that stored
   flag; only the `workloads` action and fleet notes show those rows as last seen (`sparkOff`). For up to one watcher

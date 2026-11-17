@@ -9,7 +9,7 @@
 // that code turns into dates on the hub's calendar. A name Spark Console knows in the words finds the live lines about
 // it through memory's index (memoryLinesAbout); other words are matched in the lines' text. Who sees what: memory's own
 // rules for lines (R45: the live lines as memory gives them, `about` on the owner's own call only; the retired ones to
-// the owner only, in Spark Console, never to an agent, an agent's chat or Telegram), the journal's for records (R43);
+// the owner only, including the current paired Telegram owner, never an agent or an agent's chat), the journal's for records (R43);
 // lessons and proven runs are the console's own typed facts. The whole answer is masked again on the way out, so a key
 // kept after a line or a record was written is hidden too. What it returns is recorded text: data, never the owner's
 // request, so it is not an inside read (it doesn't say inside: R26) and remember after it is stricter (memoryClear). The switch
