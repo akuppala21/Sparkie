@@ -187,7 +187,12 @@ Object.assign(SORT_HANDLERS, {
     if (o.unknown) unsure(`The sorter doesn’t know git ${sortQ(v)}’s option ${sortQ(o.unknown)}.`);
   },
   apt(a, ctx, r, x, name = 'apt') {
-    if (a.some(w => /^-[oc]|^--(?:option|config-file)/.test(w.text))) unsure(`${sortQ(name)} -o or -c can make it run any command.`);
+    // (dpkg's own choice for a changed settings file, the one -o form that runs nothing: the rest can run any command)
+    const conf = v => /^Dpkg::Options::=["']?--force-conf(?:old|new|def|miss)["']?$/.test(v ?? '');
+    const kept = a.filter((w, i) => !(w.text === '-o' && conf(a[i + 1]?.text)) && !conf(a[i - 1]?.text === '-o' ? w.text : '') && !conf(w.text.replace(/^-o|^--option=/, '')));
+    for (const w of a) if (!kept.includes(w)) w.optOk = true;
+    if (kept.some(w => /^-[oc]|^--(?:option|config-file)/.test(w.text))) unsure(`${sortQ(name)} -o or -c can make it run any command.`);
+    a = kept;
     const o = sortOpts(SORT_OPTS.apt, a), p = o.plain.map(w => w.text), v = p[0] ?? '';
     if (/^(?:list|show|search|policy|showsrc|depends|rdepends|madison)$/.test(v)) return;
     raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the packages on that Spark.`);
@@ -207,7 +212,7 @@ Object.assign(SORT_HANDLERS, {
     if (!/^-i$|^--(?:install|configure|unpack)$/.test(v)) unsure(`The sorter doesn’t know dpkg ${sortQ(v)}.`);
     raise(r, 'change', 'dpkg installs packages.');
     sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r);
-    const odd = a.find(w => w.unknown || (w.text.startsWith('-') && !/^-[iR]$|^--(?:install|configure|unpack|recursive|refuse-downgrade|skip-same-version|no-act|dry-run|simulate|no-triggers|force-confdef|force-confold|force-confnew|force-confmiss)$/.test(w.text)));
+    const odd = a.find(w => w.unknown || (w.text.startsWith('-') && !/^-[iRa]$|^--(?:pending|install|configure|unpack|recursive|refuse-downgrade|skip-same-version|no-act|dry-run|simulate|no-triggers|force-confdef|force-confold|force-confnew|force-confmiss)$/.test(w.text)));
     if (odd) unsure(`The sorter doesn’t know dpkg’s option ${sortQ(odd.text)}.`);
   },
   pip(a, ctx, r, x, name = 'pip') {
@@ -222,7 +227,10 @@ Object.assign(SORT_HANDLERS, {
     for (const s of a.map(w => w.text)) if (/:\/\/|^git\+/.test(s)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} installs code from an address: ${sortQ(s)}, always asked.`);
     // (a list it installs, a folder of packages it takes from, a local path with or without [extras]: code that runs)
     // (a local package, a folder of them or an editable one: its own setup code runs, and no word shows it)
-    const local = [...o.all('e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))];
+    const local = [...o.all('e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|^[^:@]*\/|\.(?:whl|zip|tgz|tar|tar\.(?:gz|bz2|xz))(?:\[[^\]]*\])?$/.test(w.text))];
+    // (name @ file:… or a local path: a package from a folder too)
+    const at = o.plain.slice(1).find(w => / @ (?:file:|[.~/])/.test(w.text));
+    if (at) sortUnshown(r, `the setup code of the local package ${at.text}`);
     if (local.length) sortUnshown(r, `the setup code of the local package ${local[0].text}`);
     for (const f of [...o.all('r', 'requirement', 'c', 'constraint'), ...local].filter(w => !/:\/\//.test(w.text)).map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
@@ -263,7 +271,7 @@ Object.assign(SORT_HANDLERS, {
     const o = sortOpts(SORT_OPTS.npm, a), p = o.plain.map(w => w.text), t = a.map(w => w.text), v = p[0] ?? (name === 'yarn' ? 'install' : '');
     if (!v || (/^(?:ls|list|ll|la|view|info|show|outdated|root|prefix|help|explain|why|config|get)$/.test(v) && !/^(?:set|delete|edit)$/.test(p[1] ?? ''))) return;
     if (/^(?:config|c|set)$/.test(v)) return raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} changes where every later install comes from.`);
-    if (/^(?:exec|x|dlx)$/.test(v) || (/^(?:init|create|innit)$/.test(v) && p.length > 1)) return raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} downloads a package and runs it: always asked.`);
+    if (/^(?:exec|x|dlx)$/.test(v) || (/^(?:init|create|innit)$/.test(v) && p.length > 1)) return sortUnshown(r, `the package ${name} ${v} downloads and runs`), raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} downloads a package and runs it: always asked.`);
     raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the packages there.`);
     if (v === 'explore') { const i = t.indexOf('--'); sortElsewhere(i < 0 ? [] : a.slice(i + 1), ctx, r, `${name} explore`); return i; }
     if (v === 'node' && name === 'yarn') { const i = t.indexOf('node'); sortProgram(a.slice(i), ctx, r, x); return i; }
@@ -370,6 +378,49 @@ Object.assign(SORT_HANDLERS, {
     if (SYSTEMCTL_POWER.test(v)) return raise(r, 'risky', `loginctl ${sortQ(v)}: power, so what runs on that Spark stops.`);
     raise(r, 'lockout', `loginctl ${sortQ(v)} changes sessions or linger, which keep the ways in running.`);
   },
+});
+// The launchers of a training or a test (item 4 of F1's round): they run the script they name, which goes to scripts and
+// is pinned like any other; with no file (a module, a folder, a config that names code) what they run is unpinnable.
+// Their own options come first: --name=value, or --name value when the value is not a script; a script is a word that
+// ends in .py (a test id's file before ::).
+const sortScriptWord = t => /\.py(?:::.*)?$/.test(t) && !/^-/.test(t);
+function sortLaunch(args, ctx, r, x, name) {
+  r.simple = false;
+  if (args.some(a => a.unknown)) { sortUnshown(r, `what ${name} runs, named by a $ or a command`); unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); }
+  let k = 0, mod = null;
+  for (; k < args.length; k++) {
+    const t = args[k].text;
+    if (sortScriptWord(t)) break;
+    if (/^(?:-m|--module)$/.test(t)) { mod = args[k + 1]?.text ?? ''; break; }
+    if (t === '--no_python' || t === '--no-python') { k++; break; }
+    if (!t.startsWith('-')) break;
+    if (!t.includes('=') && args[k + 1] && !args[k + 1].text.startsWith('-') && !sortScriptWord(args[k + 1].text)) k++;
+  }
+  const w = args[k];
+  if (mod != null) return sortUnshown(r, `the module ${mod} ${name} runs, which no hash pins`), raise(r, 'change', `${sortQ(name)} runs a module.`);
+  if (w && sortScriptWord(w.text)) return sortRuns(w.text.replace(/::.*$/, ''), ctx, r, `${sortQ(name)} runs the file ${sortQ(w.text)}.`);
+  // (a program after its options, --no-python's or uv run's: sorted where it stands)
+  if (w && (args[k - 1]?.text === '--no_python' || args[k - 1]?.text === '--no-python' || name === 'uv run')) return sortProgram(args.slice(k), ctx, r, x);
+  sortUnshown(r, `what ${name} runs (no script file it names: a folder, a config, its own default)`);
+  raise(r, 'change', `${sortQ(name)} runs code.`);
+}
+Object.assign(SORT_HANDLERS, {
+  torchrun: (a, ctx, r, x) => sortLaunch(a, ctx, r, x, 'torchrun'),
+  deepspeed: (a, ctx, r, x) => sortLaunch(a, ctx, r, x, 'deepspeed'),
+  accelerate: (a, ctx, r, x) => (a[0]?.text === 'launch' ? sortLaunch(a.slice(1), ctx, r, x, 'accelerate launch') : /^(?:env|config|test|estimate-memory)$/.test(a[0]?.text ?? '') ? raise(r, 'change', 'accelerate reads or writes its settings.') : unsure(`The sorter doesn’t know accelerate ${sortQ(a[0]?.text)}.`)),
+  uv: (a, ctx, r, x) => (a[0]?.text === 'run' ? sortLaunch(a.slice(1), ctx, r, x, 'uv run') : unsure(`The sorter doesn’t know uv ${sortQ(a[0]?.text)}.`)),
+  // (pytest runs every test file it names, and those it collects from a folder: those are unpinnable)
+  pytest(a, ctx, r) {
+    r.simple = false;
+    const files = a.filter(w => !w.unknown && sortScriptWord(w.text)), dirs = a.filter((w, i) => !w.unknown && !w.text.startsWith('-') && !sortScriptWord(w.text) && !/^-[kmcpo]$/.test(a[i - 1]?.text ?? ''));
+    for (const f of files) sortRuns(f.text.replace(/::.*$/, ''), ctx, r, `pytest runs the test file ${sortQ(f.text)}.`);
+    if (!files.length || dirs.length) sortUnshown(r, 'the test files pytest collects from a folder, which no hash pins');
+    raise(r, 'change', 'pytest runs tests.');
+  },
+  // (what runs a program on chosen processors, nodes or priorities: the program after its own words)
+  taskset(a, ctx, r, x) { let k = 0, list = false; for (; k < a.length && a[k].text.startsWith('-'); k++) if (/^(?:-c|--cpu-list)$/.test(a[k].text)) { list = true; k += 2; break; } else if (/^-\w*c\w*$/.test(a[k].text)) list = true; if (!list) k++; r.simple = false; if (k < a.length) sortProgram(a.slice(k), ctx, r, x); },
+  numactl(a, ctx, r, x) { let k = 0; for (; k < a.length && a[k].text.startsWith('-'); k++) if (/^-[NmCipPw]$/.test(a[k].text)) k++; r.simple = false; if (k < a.length) sortProgram(a.slice(k), ctx, r, x); },
+  chrt(a, ctx, r, x) { let k = 0; for (; k < a.length && a[k].text.startsWith('-'); k++) if (/^-[TPD]$/.test(a[k].text)) k++; if (/^\d+$/.test(a[k]?.text ?? '')) k++; r.simple = false; if (k < a.length) sortProgram(a.slice(k), ctx, r, x); },
 });
 // (what git itself writes in its handler is git's own: it leaves the folder git's; a program git runs is not git)
 const sortGitBody = SORT_HANDLERS.git;

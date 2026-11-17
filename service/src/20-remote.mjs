@@ -114,6 +114,7 @@ Object.assign(SORT_HANDLERS, {
           if (c === 'l') user = v;
           if (c === 'p' || (c === 'o' && /^(?:HostName|HostKeyAlias|Port|Hostname)\b/i.test(v))) odd = v;
           if (c === 'o' && /^User\s*=?\s*(\S+)/i.test(v)) user = /^User\s*=?\s*(\S+)/i.exec(v)[1];
+          if (c === 'o' && /^(?:ProxyCommand|LocalCommand|KnownHostsCommand|RemoteCommand)/i.test(v)) sortUnshown(r, `the command ssh -o ${v.split(/[= ]/)[0]} runs, which the sorter does not read`);
           if (/^(?:Proxy|\w*Forward|Tunnel)/i.test(v) && c === 'o') relay ??= `ssh -o ${v.split(/[= ]/)[0]}`;
           else if ('FES'.includes(c) || (c === 'o' && /^(?:LocalCommand|PermitLocalCommand|RemoteCommand|Control|Include|KnownHostsCommand|PKCS11Provider)/i.test(v))) sortToHub('', ctx, r, 'ssh', true), unsure('ssh is given an option that runs a command, or shares a connection, the sorter can’t see.');
           break;

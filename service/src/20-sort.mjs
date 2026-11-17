@@ -275,12 +275,20 @@ function sortProgram(words, ctx, r, x) {
       name = base;
     }
     if (/^(?:mkfs|fsck)\.\w+$/.test(name)) name = name.split('.')[0];
+    // (an interpreter or a shell by its real name, python3.12, pypy3, lua5.4, node22: its plain form, S2)
+    if (!sortKnown(name)) { const m = /^(python|pypy|perl|ruby|php|lua|luajit|node|nodejs|tclsh|bash|zsh|ksh)(\d[\d.]*)$/.exec(name); if (m) name = m[1] === 'pypy' ? 'python' : m[1]; }
     // (the first program it resolves: a simple command's tool, for a go-ahead's kind, 21-ahead.mjs)
     ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     sortInstall(name, args, ctx, via);
     // (a program it doesn't know: said by name, so an ask can say what the sorter doesn't check; what it is handed by find
     // -exec or xargs as its own name, {}, is code from the file system)
+    // (one it doesn't know, or one of the system's that enters another place, handed a shell, an interpreter or a file to
+    // run, runs code the sorter doesn't read; one it doesn't know reads what it is handed, and where that goes isn't
+    // known: a key among it leaves, S2, K2)
+    if (!sortKnown(name) || ['lockout', 'risky', 'open'].includes(g?.cls) && !h) sortHandedCode(name, args, r);
+    if (!sortKnown(name)) { ctx.srcs.push(...args.filter((a, i) => !a.unknown && !/^-/.test(a.text) && !/^(?:-o|--output|-out|--out|-O)$/.test(args[i - 1]?.text ?? '')).map(a => a.text)); ctx.outs.push('a program the sorter does not know'); }
+    if (/^(?:nc|ncat|netcat|socat|telnet)$/.test(name)) ctx.outs.push('another machine');
     if (!sortKnown(name)) { ctx.unknownProgram ??= name.replace(/[^\w.+@-]/g, '').slice(0, 60) || null; if (x.unknownArgs && /^\{\}$/.test(name)) sortUnshown(r, 'a program find or xargs names from what it finds'); unsure(`The sorter doesn't know the program ${sortQ(name)}.`); }
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
@@ -302,7 +310,8 @@ function sortProgram(words, ctx, r, x) {
     else if (g.cls === 'lockout' && SORT_LOCK_READS[name]?.(args.map(a => a.text))) raise(r, 'change', `${sortQ(name)} here only reads the network or firewall settings, which a look’s wall hides.`);
     else raise(r, g.cls, `${sortQ(name)}: ${g.why}.`);
     // (after what it does, so the more dangerous answer stands; a handler that runs another program reads its own words)
-    const so = SORT_OPTS[name] && sortOpts(SORT_OPTS[name], args.slice(0, own), SORT_MODES[name]), u = so?.unknown;
+    // (words a handler read itself as safe, apt's one -o form, are not options for this check)
+    const so = SORT_OPTS[name] && sortOpts(SORT_OPTS[name], args.slice(0, own).filter(w => !w.optOk), SORT_MODES[name]), u = so?.unknown;
     // (a {…} that makes an option word: what the program gets is not the words the sorter read; after what it does)
     for (const a of args.slice(0, own)) if (a.brace && sortBraces(a.text).some(t => t.startsWith('-'))) unsure(`A {…} makes ${sortQ(a.text)} into option words, which the sorter does not read as the program would.`);
     // (a file an option names to write, and a folder it writes names of its own into, from the same table)

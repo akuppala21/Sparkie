@@ -63,9 +63,12 @@ function sortInterp(args, ctx, r, x, name) {
   if (codes.length) { sortUnshown(r, `the code a ${name} one-liner runs and loads (a module from the folder it starts in, a file it reads as code), which the sorter does not read`); sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
+  if (mod && !mod.unknown && /^(?:torch\.distributed\.(?:run|launch)|pytest)$/.test(mod.text)) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`, true); SORT_HANDLERS[mod.text === 'pytest' ? 'pytest' : 'torchrun'](o.plain, ctx, r, x, mod.text); return fin(); }
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`); sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); } else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { sortUnshown(r, `the code ${name} runs`); if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { sortUnshown(r, `the ${name} code a $ or a command names`); if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
+  // (a folder run as Python: its __main__.py and what that imports, which no hash pins)
+  if (file && file.text !== '-' && key === 'python' && !/\.py[cwz]?$/.test(file.text)) sortUnshown(r, `what ${name} runs from ${file.text} (a folder's __main__.py, or a file with no .py name), which no hash pins`);
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (x.opaque) { sortUnshown(r, `the ${name} code it reads from its input`); unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`); }
   if (typeof x.stdin === 'string') { sortUnshown(r, `the ${name} code its here-text holds and what it loads, which the sorter does not read`); sortScan(x.stdin, ctx, r, true, 'seen'); }
@@ -80,7 +83,7 @@ function sortInterp(args, ctx, r, x, name) {
 }
 // An awk program that starts or writes something: system, a pipe (not ||), a library loaded, or a print or printf sent
 // to a file; a comparison ($3 > 100) and plain getline from its input run nothing else.
-const sortAwkRuns = t => /\bsystem\b|@(?:load|include)\b|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(String(t));
+const sortAwkRuns = t => { const s = String(t).replace(/\\\n/g, ' ').replace(/"(?:[^"\\]|\\.)*"/g, '""'); return /\bsystem\b|@(?:load|include)\b|@\w+\s*\(|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(s); };
 const sortDoubts = name => () => unsure(`It uses the shell’s ${sortQ(name)}, which can change what later words run.`);
 // Built-ins that set a name (declare, read, printf -v, getopts, unset): each name is an assignment; a name with [ (an
 // index bash works out as arithmetic, running what is in it) or a value worked out as arithmetic (-i) is a doubt.
@@ -118,11 +121,15 @@ const sortZip = (a, ctx, r, x, name) => {
 const sortBecome = (a, ctx, r, x, name) => {
   r.answer = 'set root';
   raise(r, 'risky', `${sortQ(name)} becomes another user: a command becomes root only by setting root, so it is answered “set root”.`);
-  const c = a.findIndex(w => /^-c$|^--command$/.test(w.text));
-  if (c < 0 || !a[c + 1] || a[c + 1].unknown) return;
+  const c = a.findIndex(w => /^-c$|^--command$/.test(w.text)), dd = a.findIndex(w => w.text === '--'), p = a.filter(w => !w.text.startsWith('-'));
   const was = ctx.root;
   ctx.root = true;
-  try { sortInline(a[c + 1].text, ctx, r, `${name} -c`); } finally { ctx.root = was; }
+  // (what it runs as the other user: -c's text, the program after --, sg's command; S2)
+  try {
+    if (c >= 0) { if (!a[c + 1] || a[c + 1].unknown) { sortUnshown(r, `what ${name} -c runs, from a $ or a command`); return; } sortInline(a[c + 1].text, ctx, r, `${name} -c`); }
+    else if (dd >= 0 && a[dd + 1]) sortProgram(a.slice(dd + 1), ctx, r, x);
+    else if (name === 'sg' && p[1]) { if (p[1].unknown) sortUnshown(r, 'what sg runs, from a $ or a command'); else sortInline(p[1].text, ctx, r, 'sg'); }
+  } finally { ctx.root = was; }
 };
 // Where a program that writes under names it picks puts them: the folder given, or the folders it may start in.
 const sortInto = (dir, ctx, r) => (dir ? sortTouch(dir, ctx, r, true) : [...ctx.cwds].forEach(d => sortTouch({ text: d ?? '', unknown: d == null, subs: [] }, ctx, r, true)));
@@ -160,6 +167,8 @@ const SORT_HANDLERS = {
     if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
       if (!p || p.unknown) { sortUnshown(r, `the ${name} program a $ or a command makes`); unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`); }
+      // (getline from a file reads it: a change, as before)
+      if (/\bgetline\b[^;{}\n]*</.test(String(p.text).replace(/"(?:[^"\\]|\\.)*"/g, '""'))) raise(r, 'change', `The ${sortQ(name)} program reads a file with getline.`);
       if (sortAwkRuns(p.text)) { sortUnshown(r, `what the ${name} program starts or writes (system, a pipe, an output file), which the sorter does not read`); sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
     ctx.srcs.push(...a.slice(files.length || inline.length ? o.end : o.end + 1).filter(w => !w.unknown && !/^[A-Za-z_]\w*=/.test(w.text)).map(w => w.text));
