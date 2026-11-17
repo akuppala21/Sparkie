@@ -6,6 +6,7 @@
 #   SPARKS (every Spark's id, in the file's order)  COMPUTE (every one but the hub)
 #   addr_of <id>   says_of <id> ("Spark 3")   spark_of <a Spark's number, id, address or name, with or without user@>
 #   (prints its id; nothing, and false, for one hub.env doesn't name; a Spark's Tailscale name is ak<id>)
+# A Spark's line in hub.env holds its tailnet address (or a plain name ssh reaches it by).
 HUB_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hub.env"
 hub_stop() { echo "Stopped: $*. Nothing was changed." >&2; exit 2; }
 [ -f "$HUB_FILE" ] || hub_stop "$HUB_FILE isn't there, and it is what says which Spark is the hub"
@@ -16,7 +17,7 @@ HUB=$(hub_get HUB) HUB_NAME=$(hub_get HUB_NAME) LOGIN=$(hub_get LOGIN) TAILNET=$
 SPARKS=$(sed -n 's/^\(spark[1-9][0-9]*\)=.*$/\1/p' "$HUB_FILE" | tr '\n' ' ')
 SPARKS=${SPARKS% }
 for _s in $SPARKS; do
-  [[ $(addr_of "$_s") =~ ^[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}$ ]] || hub_stop "$HUB_FILE gives $_s no plain address"
+  [[ $(addr_of "$_s") =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || hub_stop "$HUB_FILE gives $_s no plain address"
 done
 [[ $HUB =~ ^spark[1-9][0-9]*$ && " $SPARKS " == *" $HUB "* ]] || hub_stop "$HUB_FILE names no hub (HUB=) among its Sparks"
 [[ $HUB_NAME =~ ^[a-z0-9-]+$ && $LOGIN =~ ^[a-z_][a-z0-9_-]*$ && $TAILNET =~ ^[a-z0-9.-]+$ ]] \

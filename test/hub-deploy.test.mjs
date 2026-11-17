@@ -4,7 +4,8 @@
 // whose hub isn't the one the console installed there runs as. `power-setup.sh` refuses the hub by every name and sets
 // up Spark 2, and its `--undo` reaches the hub directly; `power-check.sh` looks at every compute Spark through the hub;
 // `plugs.sh` keeps the hub's plug read-only (pair and name), never as another Spark's, and runs only on the hub;
-// `open-to-internet.sh` never touches port 443; `cutover.sh` on a hub with no portal only adds the :8443/ route;
+// `root-for-sparkie.sh` from the Mac runs the hub's installed copy; `open-to-internet.sh` never touches port 443;
+// `cutover.sh` on a hub with no portal only adds the :8443/ route;
 // `copy-hub-state.sh` copies the hub's files but the sign-ins, moves aside what was there, and refuses while a console
 // runs; no file under `deploy/` names a Spark outside `hub.env`. Starts no stand-in fleet: each script runs against
 // stand-ins for ssh, docker, tailscale, systemctl and curl in a made-up home.
@@ -22,8 +23,8 @@ const HUB_ENV = readFileSync(join(DEPLOY, 'hub.env'), 'utf8');
 const val = (text, k) => (new RegExp(`^${k}=(.*)$`, 'm').exec(text) || [])[1];
 const SPARKS = { spark1: '100.119.233.101', spark2: '100.79.155.126', spark3: '100.122.49.9', spark4: '100.109.240.15' };
 const S1 = `akuppala@${SPARKS.spark1}`;
-// The helper's two files are being changed today on their own step; they follow the hub once it has landed.
-const NOT_YET = ['spark-console-root', 'root-for-sparkie.sh'];
+// The root helper names the hub only in comments; its hash is pinned in the service, so they change with that pin.
+const NOT_YET = ['spark-console-root'];
 const TIMEOUT = 60000 * SLOW;
 const dirs = [];
 const tmp = prefix => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
@@ -321,6 +322,23 @@ switch (cmd) {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /Say which Spark the plug is on, by its number: pair <n> \(deploy\/hub\.env: spark1 spark2 spark3 spark4\)\./);
     assert.ok(!existsSync(join(h, 'ssh-hosts.log')));
+  });
+});
+
+describe('root-for-sparkie.sh from the Mac goes to the hub', () => {
+  test('it runs Spark 1’s installed copy at the hub’s address; --with-root --hub is refused for Spark 1 before anything', () => {
+    const h = tmp('shd-root-');
+    mkdirSync(join(h, 'bin'));
+    sh(join(h, 'bin', 'ssh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/ssh.log"\nexit 0\n');
+    const run = args => spawnSync('bash', [join(DEPLOY, 'root-for-sparkie.sh'), ...args], { env: { PATH: `${join(h, 'bin')}:${process.env.PATH}`, HOME: h }, cwd: h, encoding: 'utf8', timeout: TIMEOUT });
+    const r = run(['--check', '3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Running Spark 1's installed copy \(akuppala@100\.119\.233\.101\), so what goes on the Spark is the installed build's\.$/m);
+    assert.deepEqual(lines(join(h, 'ssh.log')), [`-t ${S1} bash ~/spark-console-src/deploy/root-for-sparkie.sh --check 3`]);
+    const w = run(['--with-root', '--hub', '1']);
+    assert.equal(w.status, 2);
+    assert.match(w.stderr, /^Stopped: root is never turned on on Spark 1, the hub: /);
+    assert.equal(lines(join(h, 'ssh.log')).length, 1, 'nothing more was sent');
   });
 });
 

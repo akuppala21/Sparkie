@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The owner's one-time command for Sparkie's root helper (docs/rules/R42.md; design: docs/design-2026-11-13/
-# a-workspace.md, 2.13). Run it once for each Spark, in your own terminal: the compute Sparks first, Spark 2 last.
+# a-workspace.md, 2.13). Run it once for each Spark, in your own terminal: the compute Sparks first, the hub last.
 #
 #   bash spark-console/deploy/root-for-sparkie.sh --check 3   what is there for each wall; changes nothing, asks no password
 #   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once.
@@ -10,20 +10,21 @@
 #                                                             Sparkie asks you before each root command, but the helper
 #                                                             runs one for any program that runs as you on that Spark;
 #                                                             each inside the net, which puts back only the ways in.
-#                                                             Never on Spark 2: --with-root --hub is refused
+#                                                             Never on the hub: --with-root --hub is refused
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
 #                                                             (not while the lock-out net holds a change there)
-#   bash spark-console/deploy/root-for-sparkie.sh --hub 2     Spark 2 itself, the hub: last, and only with --hub
+#   bash spark-console/deploy/root-for-sparkie.sh --hub <n>   the hub itself (config.json's Spark with host "local";
+#                                                             deploy/hub.env names it): last, and only with --hub
 #
-# From the Mac it does one thing: it runs Spark 2's installed copy of itself over ssh
-# (ssh -t <you>@<Spark 2> 'bash ~/spark-console-src/deploy/root-for-sparkie.sh 3'), so what goes on a Spark is always
+# From the Mac it does one thing: it runs the hub's installed copy of itself over ssh (the hub's address and your login
+# are in deploy/hub.env: ssh -t <login>@<the hub> 'bash ~/spark-console-src/deploy/root-for-sparkie.sh 3'), so what goes on a Spark is always
 # the installed build's. There, it copies the helper (deploy/spark-console-root) to that Spark's ~/.cache/spark-console/
 # and runs the short set-up script below on that Spark, in a terminal. The set-up script travels on the command line
 # and is never written to disk; nothing your account can write is installed or run after the password is typed:
-#   1. Spark 2 is refused without --hub, and --hub anywhere else (here by the Spark's number, there by its machine id)
+#   1. the hub is refused without --hub, and --hub anywhere else (here by the Spark's number, there by its machine id)
 #   2. /usr, /usr/local and /usr/local/sbin must be writable by root alone
-#   3. the copy's SHA-256 must be the one Spark 2 sent
+#   3. the copy's SHA-256 must be the one the hub sent
 #   4. the sudo line is written by root to /etc/sudoers.d/spark-console-root.new (sudo skips a name with a dot) and
 #      checked there with visudo -cf: if that fails, it is removed and nothing has changed
 #   5. the helper is copied by root to /usr/local/sbin/spark-console-root.new and hashed again there, now that only root
@@ -53,18 +54,19 @@ for a in "$@"; do
   esac
 done
 [ -n "$N" ] || usage
-# (root is never on Spark 2: the console refuses it there, so a switch would only be a door. R70)
-[ "$MODE$HUB" != with-root1 ] || stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there, so --with-root --hub would only open a door. Set Spark 2 up without --with-root."
+# (root is never on the hub: the console refuses it there, so a switch would only be a door. R70)
+[ "$MODE$HUB" != with-root1 ] || stop "root is never turned on on Spark $N, the hub: Spark Console refuses a root command there, so --with-root --hub would only open a door. Set Spark $N up without --with-root."
 FLAGS=''
 [ "$MODE" = install ] || FLAGS="--$MODE "
 [ "$HUB" = 0 ] || FLAGS+='--hub '
 
-# Not Spark 2's installed copy (the Mac's, say): run that one instead, so what is installed is the installed build's.
+# Not the hub's installed copy (the Mac's, say): run that one instead, so what is installed is the installed build's.
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/root-for-sparkie.sh"
 INSTALLED=$(realpath "$HOME/spark-console-src/deploy/root-for-sparkie.sh" 2>/dev/null || true)
 if [ "$SELF" != "$INSTALLED" ]; then
-  HOST="${SPARK2:-akuppala@100.79.155.126}"
-  echo "Running Spark 2's installed copy ($HOST), so what goes on the Spark is the installed build's."
+  . "${SELF%/*}/hub.sh"
+  HOST="$HUB_HOST"
+  echo "Running $HUB_SAYS's installed copy ($HOST), so what goes on the Spark is the installed build's."
   exec ssh -t "$HOST" "bash ~/spark-console-src/deploy/root-for-sparkie.sh $FLAGS$N"
 fi
 
@@ -72,21 +74,24 @@ HERE=${SELF%/*}
 HELPER_FILE="$HERE/spark-console-root"
 CONFIG="$HERE/../service/config.json"
 [ -f "$HELPER_FILE" ] && [ -f "$CONFIG" ] || stop "this build has no deploy/spark-console-root or no Spark list"
-read -r ADDR FLEET_USER < <(python3 -I -c '
+# (and the hub: the Spark the installed build runs Spark Console on, its Spark with host "local")
+read -r ADDR FLEET_USER HUB_NODE < <(python3 -I -c '
 import json, sys
 c = json.load(open(sys.argv[1]))
 n = [x for x in c.get("nodes", []) if x.get("id") == sys.argv[2]]
-print(n[0].get("host") or "-" if n else "-", c.get("user") or "-")' "$CONFIG" "spark$N") || stop "couldn't read Spark Console's list of Sparks"
+h = [x.get("id") for x in c.get("nodes", []) if x.get("host") == "local" and isinstance(x.get("id"), str)]
+print(n[0].get("host") or "-" if n else "-", c.get("user") or "-", h[0] if len(h) == 1 else "-")' "$CONFIG" "spark$N") || stop "couldn't read Spark Console's list of Sparks"
+HUB_SAYS='the hub'; [[ ! ${HUB_NODE:-} =~ ^spark[1-9][0-9]*$ ]] || HUB_SAYS="Spark ${HUB_NODE#spark}"
 [ "$ADDR" != - ] || stop "Spark $N is not on Spark Console's list"
 if [ "$ADDR" = local ]; then
-  [ "$MODE" != with-root ] || stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there. Set Spark 2 up without --with-root: bash ~/spark-console-src/deploy/root-for-sparkie.sh --hub $N"
+  [ "$MODE" != with-root ] || stop "root is never turned on on Spark $N, the hub: Spark Console refuses a root command there. Set Spark $N up without --with-root: bash ~/spark-console-src/deploy/root-for-sparkie.sh --hub $N"
   [ "$HUB" = 1 ] || stop "Spark $N runs Spark Console: it is the hub, set up last, after a compute Spark, and only with --hub: bash ~/spark-console-src/deploy/root-for-sparkie.sh ${FLAGS}--hub $N"
 else
-  [ "$HUB" = 0 ] || stop "--hub is only for Spark 2 itself; Spark $N is a compute Spark"
+  [ "$HUB" = 0 ] || stop "--hub is only for $HUB_SAYS itself; Spark $N is a compute Spark"
   [[ $ADDR =~ ^[A-Za-z0-9.-]+$ && $FLEET_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || stop "Spark $N's address or the fleet's account is not a plain name"
 fi
 HUB_ID=$(systemd-id128 machine-id 2>/dev/null || true)
-[[ $HUB_ID =~ ^[0-9a-f]{32}$ ]] || stop "couldn't read Spark 2's machine id (it is how Spark 2 is told apart), so nothing was done"
+[[ $HUB_ID =~ ^[0-9a-f]{32}$ ]] || stop "couldn't read this Spark's machine id (it is how the hub is told apart), so nothing was done"
 read -r SHA _ < <(sha256sum "$HELPER_FILE")
 
 # The set-up script: run on the Spark being set up, as you, in a terminal (sudo asks there). It is never written to a
@@ -95,7 +100,7 @@ sq() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
 setup_text() {
   cat <<'SETUP'
 # The set-up half of spark-console's deploy/root-for-sparkie.sh, run on the Spark being set up, as you.
-#   bash -c '<this text>' root-setup install|with-root|without-root|check|undo <the helper's SHA-256> <Spark 2's machine id>
+#   bash -c '<this text>' root-setup install|with-root|without-root|check|undo <the helper's SHA-256> <the hub's machine id>
 #     <1 with --hub, else 0>
 set -euo pipefail
 HELPER=/usr/local/sbin/spark-console-root
@@ -282,7 +287,7 @@ install() {
   folders_ok || stop "/usr, /usr/local or /usr/local/sbin can be written by an account other than root, so the helper would not be safe there. Nothing was changed."
   [ -f "$COPY" ] || stop "the copy of the helper did not arrive. Nothing was changed."
   read -r got _ < <(sha256sum "$COPY")
-  [ "$got" = "$sha" ] || stop "the copy's SHA-256 is not the one Spark 2 sent. Nothing was changed."
+  [ "$got" = "$sha" ] || stop "the copy's SHA-256 is not the one the hub sent. Nothing was changed."
   make_missing
   me=$(id -un)
   want_line="$me ALL=(root) NOPASSWD: $HELPER"
@@ -310,7 +315,7 @@ install() {
     read -r got _ < <(sudo sha256sum "$HELPER.new" || echo '-')
     if [ "$got" != "$sha" ]; then
       sudo rm -f "$HELPER.new" "$LINE.new"
-      stop "the helper's copy changed after it arrived (its SHA-256 is no longer the one Spark 2 sent), so nothing was installed."
+      stop "the helper's copy changed after it arrived (its SHA-256 is no longer the one the hub sent), so nothing was installed."
     fi
     sudo mv -f "$HELPER.new" "$HELPER"
     note "the helper is in place: $HELPER"
@@ -391,9 +396,9 @@ main() {
   case "$mode" in install|with-root|undo) trap 'rm -f "$COPY"' EXIT ;; esac
   mid=$(systemd-id128 machine-id 2>/dev/null || true)
   [[ $mid =~ ^[0-9a-f]{32}$ ]] || stop "couldn't read this Spark's machine id, so nothing was done"
-  if [ "$mid" = "$hub_id" ] && [ "$hub" != 1 ]; then stop "this is Spark 2, the hub: it is set up last, and only with --hub."; fi
-  if [ "$mid" != "$hub_id" ] && [ "$hub" = 1 ]; then stop "--hub is only for Spark 2 itself, and this is another Spark."; fi
-  if [ "$mode" = with-root ] && { [ "$hub" = 1 ] || [ "$mid" = "$hub_id" ]; }; then stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there."; fi
+  if [ "$mid" = "$hub_id" ] && [ "$hub" != 1 ]; then stop "this is the hub: it is set up last, and only with --hub."; fi
+  if [ "$mid" != "$hub_id" ] && [ "$hub" = 1 ]; then stop "--hub is only for the hub itself, and this is another Spark."; fi
+  if [ "$mode" = with-root ] && { [ "$hub" = 1 ] || [ "$mid" = "$hub_id" ]; }; then stop "root is never turned on on the hub: Spark Console refuses a root command there."; fi
   case "$mode" in
     check) check "$sha" ;;
     install) install "$sha" && note "root here: ${ROOT_NOW:-not known}" ;;

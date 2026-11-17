@@ -12,7 +12,7 @@
 // protected container stopped, healing acting against a power-off made on purpose.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, readdirSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync, mkdtempSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';

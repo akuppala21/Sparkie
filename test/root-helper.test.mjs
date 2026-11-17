@@ -2824,7 +2824,7 @@ describe("the owner's one-time command", () => {
     writeFileSync(join(f.T, 'swap-copy'), '');
     const r = f.cmd(['3']);
     assert.equal(r.status, 2, r.stdout + r.stderr);
-    assert.match(r.stderr, /Stopped on .*: the helper's copy changed after it arrived \(its SHA-256 is no longer the one Spark 2 sent\), so nothing was installed\.\n/);
+    assert.match(r.stderr, /Stopped on .*: the helper's copy changed after it arrived \(its SHA-256 is no longer the one the hub sent\), so nothing was installed\.\n/);
     for (const p of ['usr/local/sbin/spark-console-root', 'usr/local/sbin/spark-console-root.new', 'etc/sudoers.d/spark-console-root',
       'etc/sudoers.d/spark-console-root.new', 'var/lib/spark-console/proved']) assert.ok(!has(f, p), p);
     const steps = sudoCalls(f);
@@ -2980,7 +2980,7 @@ describe("the owner's one-time command", () => {
     assert.ok(setup, 'the far side is the text between SETUP and SETUP');
     const far = spawnSync('bash', ['-c', setup, 'root-setup', 'with-root', sha(readFileSync(HELPER_SRC)), HUB_ID, '1'], { env: { ...f.env, HOME: join(f.T, 'spark2') }, cwd: join(f.T, 'spark2'), encoding: 'utf8', timeout: 60000 });
     assert.equal(far.status, 2, far.stdout + far.stderr);
-    assert.match(far.stderr, /^ {2}Stopped on .*: root is never turned on on Spark 2, the hub: Spark Console refuses a root command there\.\n$/);
+    assert.match(far.stderr, /^ {2}Stopped on .*: root is never turned on on the hub: Spark Console refuses a root command there\.\n$/);
     assert.deepEqual(sudoCalls(f), [], 'nothing was asked');
   });
 
@@ -3171,7 +3171,7 @@ describe("the owner's one-time command", () => {
     writeFileSync(join(f.T, 'spark3.id'), HUB_ID);
     const r = f.cmd(['3']);
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /Stopped on .*: this is Spark 2, the hub: it is set up last, and only with --hub\./);
+    assert.match(r.stderr, /Stopped on .*: this is the hub: it is set up last, and only with --hub\./);
     assert.deepEqual(sudoCalls(f), []);
     assert.ok(!existsSync(join(f.T, 'spark3/.cache/spark-console/spark-console-root.copy')), 'the copy is gone');
     // With --hub it runs on Spark 2 itself, no ssh.
@@ -3185,7 +3185,13 @@ describe("the owner's one-time command", () => {
 
   test("from the Mac it runs Spark 2's installed copy over ssh, which reaches the Spark", () => {
     const f = fleet();
-    const r = f.cmd(['--check', '3'], { home: join(f.T, 'mac'), file: SETUP_SRC, extra: { SPARK2: 'owner@spark2.test' } });
+    // (from the Mac the hub is deploy/hub.env's, beside the script: here the test's own, Spark 2 at spark2.test with the
+    // login owner, as SPARK2=owner@spark2.test made it before hub.env)
+    const mac = join(f.T, 'mac-deploy');
+    mkdirSync(mac);
+    for (const n of ['root-for-sparkie.sh', 'hub.sh']) copyFileSync(join(dirname(SETUP_SRC), n), join(mac, n));
+    writeFileSync(join(mac, 'hub.env'), 'HUB=spark2\nHUB_NAME=akspark2\nLOGIN=owner\nTAILNET=test\nspark2=spark2.test\nspark3=spark3.test\n');
+    const r = f.cmd(['--check', '3'], { home: join(f.T, 'mac'), file: join(mac, 'root-for-sparkie.sh') });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /^Running Spark 2's installed copy \(owner@spark2\.test\), so what goes on the Spark is the installed build's\.\nSpark 3 \(spark3\.test\):\n/);
     const ssh = calls(f.target).filter(c => c[0] === 'ssh').map(c => c.slice(1));
