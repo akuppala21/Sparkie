@@ -4,7 +4,8 @@
 //                                 docs/rules.md when they differ, then runs tools/check-docs.mjs and the header check
 //                                 (checkParts in tools/parts.mjs); docs/status.md and its check too (tools/status.mjs);
 //                                 test/covers.md, from each test file's "// Covers:" comment (tools/check-docs.mjs);
-//                                 and that each part tools/affected.mjs names is still there (checkAffected)
+//                                 and that each part tools/affected.mjs runs everything for is still there
+//                                 (checkAffected in tools/parts.mjs: make loads no tool that can run something)
 //   node tools/make.mjs --check   changes nothing: fails if any of the six is stale or a check finds a problem
 //
 // It exits 1 on any problem, with one line each.
@@ -14,9 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { buildServer } from './build-server.mjs';
 import { codeMap } from './code-map.mjs';
 import { checkDocs, rulesIndex, coversTable, describe } from './check-docs.mjs';
-import { checkParts, registry } from './parts.mjs';
+import { checkParts, registry, checkAffected } from './parts.mjs';
 import { checkStatus, statusTable } from './status.mjs';
-import { checkAffected } from './affected.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');

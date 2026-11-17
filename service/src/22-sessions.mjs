@@ -243,14 +243,15 @@ async function signinRoute(req, res, path, viewer) {
   const owner = accessList().owner;
   if (path === '/auth/signout') {
     const s = sessionFor(req);
+    let unnoted = null;
     if (s) {
-      // (its note outside the state first, then the save: 22-putback.mjs)
-      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
+      // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+      unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   if (!owner) throw new HttpError(409, 'No owner is set up on this Spark yet.');

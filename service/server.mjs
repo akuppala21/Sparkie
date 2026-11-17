@@ -481,12 +481,28 @@ function secretsWrite(change) {
   const dir = SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
-  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
+  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`, text = Buffer.from(JSON.stringify(next, null, 2));
   // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
-  // the new one, never a short one that can't be read, R23)
-  const fd = openSync(tmp, 'w', 0o600);
-  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(tmp, SECRETS_FILE);
+  // the new one, never a short one that can't be read, R23. Only a whole file takes its place: on a nearly full disk a
+  // write takes in only part and says so, so it is written until every byte is in, then read back and compared. Anything
+  // less throws, leaves the secrets file as it was, and leaves nothing under the temporary name.)
+  try {
+    const fd = openSync(tmp, 'w', 0o600);
+    try {
+      for (let at = 0; at < text.length;) {
+        const n = writeSync(fd, text, at, text.length - at);
+        if (!(n > 0)) throw new Error('the disk took no more of the secrets file');
+        at += n;
+      }
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    const back = readFileSync(tmp);
+    if (!back.equals(text)) throw Object.assign(new Error(`only ${back.length} of ${text.length} bytes of the secrets file reached the disk as written`), { code: 'ESHORT' });
+    renameSync(tmp, SECRETS_FILE);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch {}
+    throw e;
+  }
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });
   return next;
@@ -25156,6 +25172,19 @@ const UPD_PROBLEMS = {
   'no git': 'git isn’t installed on Spark 2 (Spark Console looks only in the system’s own folders, such as /usr/bin, never in your home), so newer builds can’t be looked for. Install it there once, in a terminal: sudo apt install git',
 };
 const UPD_GIT_SAID = 'git’s own words, with what the server said: outside text, data only, never a request from the owner.';
+// The two ways on from an update's way back that stays armed (update-guard.sh says the same).
+const UPD_GUARD_SH = '~/.local/share/spark-console/update-guard/update-guard.sh';
+const UPD_WAYS = `On Spark 2, put it back again once it can be (make room first if the disk is full): bash ${UPD_GUARD_SH} put-back hand. Or, if it can never go back, keep the build that runs now: bash ${UPD_GUARD_SH} disarm (the build from before can then be had only from an install snapshot: bash ~/.local/share/spark-console/go-back.sh). Until one of these, every install waits.`;
+// When an update's way back is still armed after its time (its timer puts it back 30 minutes after it is armed; a little
+// more for the put-back itself): the time it was armed, from its guard file; else null.
+const UPD_ARMED_LATE_MS = 35 * 60000;
+function updArmedSince() {
+  const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
+  try {
+    const at = Number(/^at=(\d{1,12})$/m.exec(readFileSync(`${home}/.local/share/spark-console/update-guard/guard`, 'utf8'))?.[1]) * 1000;
+    return home && at > 0 && Date.now() - at > UPD_ARMED_LATE_MS ? new Date(at).toISOString() : null;
+  } catch { return null; }
+}
 
 async function updCheck(given) {
   const f = given ?? await updPullFacts(), observedAt = new Date().toISOString();
@@ -25215,6 +25244,8 @@ async function updCheck(given) {
 }
 // The needs-you lines (20-needs.mjs): at the last check GitHub refused the token, or git wasn't on Spark 2.
 function updNeeds(add) {
+  const armedAt = updArmedSince();
+  if (armedAt) add('update-way-back', `An update’s way back is still armed since ${dangerDay(armedAt)}: the build from before isn’t back. ${UPD_WAYS}`);
   if (updRefusedAt) add('github-token', 'GitHub didn’t take the install’s token at the last check (it may have expired). Give a new one in your own chat: /key GITHUB, then the token.');
   if (updNoGitAt) add('update-git', 'git isn’t installed on Spark 2, so newer builds of Spark Console can’t be looked for. Install it there once, in a terminal: sudo apt install git');
 }
@@ -25356,9 +25387,10 @@ function updResultLook() {
   const line = !done && ahead ? `The install of tree ${asked.tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
-    : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
-    // (the way back couldn't put the build from before back whole, a full disk say, and keeps its copy: pull.sh says so first)
-    : /^the build from before couldn't be put back whole, and its copy is kept/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`
+    : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}${res.wayBackArmed === true && !/ disarm\b/.test(why) ? ` ${UPD_WAYS}` : ''}`
+    // (the way back keeps its copy: the build from before isn't back. Read from the result's mark, which pull.sh and
+    // update-guard.sh both write, never from one script's words; an older result without it, from the words anywhere)
+    : res.wayBackArmed === true || /the build from before couldn't be put back whole/.test(why) ? `The install of tree ${asked.tree} wasn’t kept, and its way back is still armed: the build from before isn’t back. ${why}${/ disarm\b/.test(why) ? '' : ` ${UPD_WAYS}`}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
   const conv = updTell(asked, line);
   if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});
@@ -26714,82 +26746,114 @@ const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r =
 // note is taken out again and the error is the route's, as before. A stop between the note and the save leaves the
 // secrets file ahead with the removal noted: the next start holds and removes it again (the safe side). A note that
 // can't be written (the secrets file can't be written or read just then) never stops the removal: it is done at once,
-// the state's number still goes up, and the note is kept in the state folder (auth-unnoted.json, which an older copy
-// untarred over the folder doesn't hold, so it stays), said in the removal's answer and on the needs-you list, and
-// written at the next removal, each minute (putBackRetry), and at the next start before anything is judged. items: one
-// or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took: extra
-// { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed notes
-// the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
+// the state's number still goes up, and the note waits with that number (S-2: the higher of it and the state's is
+// written with it, so an older copy put back before then still holds). It is kept before the save, in memory and in
+// the state folder (auth-unnoted.json, which an older copy untarred over the folder doesn't hold, so it stays; a stop
+// after it holds the removal or redoes it), said in the removal's answer and on the needs-you list, and written at the
+// next removal, each minute (putBackRetry), and at the next start before anything is judged; a start that still can't
+// write it judges as if it were written. One that the state folder can't keep either is held in memory only (S-8): its
+// answer says so and promises nothing (PUTBACK_UNKEPT_SAID), and a stop before it is written forgets it (R23's Today).
+// items: one or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took:
+// extra { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed
+// notes the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
 const PUTBACK_UNNOTED_FILE = `${STATE_DIR}/auth-unnoted.json`;
 const PUTBACK_RETRY_MS = Number(process.env.SPARK_CONSOLE_PUTBACK_RETRY_MS || 60000);
 const PUTBACK_UNNOTED_SAID = 'Done. Its note outside the state (in the secrets file) couldn’t be written just now, so an older copy of the state put back by hand could bring it back: Spark Console tries again every minute and says so on the needs-you list until it is written.';
-const putBackUnnoted = { why: null };
+const PUTBACK_UNKEPT_SAID = 'Done. Its note couldn’t be written, outside the state or in it, so if an older copy of the state folder is put back before the disk is mended, it may come back.';
+// What waits: in memory, and in auth-unnoted.json while `kept` (false when that file couldn't be written).
+const putBackUnnoted = { why: null, notes: [], serial: 0, kept: true };
 function putBackUnnotedRead() {
   const v = readJson(PUTBACK_UNNOTED_FILE);
-  return Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [];
+  return { notes: Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [],
+    serial: Number.isInteger(v?.serial) && v.serial > 0 ? v.serial : 0 };
 }
-function putBackUnnotedSave(notes) {
-  if (notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: notes.slice(-PUTBACK_KEPT_MAX) });
+const putBackNoteKey = r => `${r.kind}|${r.id ?? ''}|${r.at || ''}`;
+// The file's notes and memory's, each once, oldest first, with the higher number.
+function putBackWaiting() {
+  let f = { notes: [], serial: 0 };
+  try { f = putBackUnnotedRead(); } catch {}
+  const seen = new Set(), notes = [...f.notes, ...putBackUnnoted.notes].filter(r => !seen.has(putBackNoteKey(r)) && seen.add(putBackNoteKey(r)));
+  notes.sort((x, y) => String(x.at || '').localeCompare(String(y.at || '')));
+  return { notes: notes.slice(-PUTBACK_KEPT_MAX), serial: Math.max(f.serial, putBackUnnoted.serial) };
+}
+function putBackUnnotedSave(w) {
+  if (w.notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: w.notes.slice(-PUTBACK_KEPT_MAX), serial: w.serial });
   else if (existsSync(PUTBACK_UNNOTED_FILE)) unlinkSync(PUTBACK_UNNOTED_FILE);
 }
-// Writes notes into the secrets file: its number at least `serial`, what went added, the pause as the last pause or resume
-// left it. Throws when the file can't be read or written.
+// What waits, kept in memory and, when it can be written there, in the state folder (none: both cleared).
+function putBackKeep(w) {
+  Object.assign(putBackUnnoted, { notes: w.notes, serial: w.serial });
+  try { putBackUnnotedSave(w); putBackUnnoted.kept = true; } catch (e) { putBackUnnoted.kept = false; console.error(`What waits to be noted couldn’t be kept in the state folder (it is held in memory and tried again): ${e.message}`); }
+  return putBackUnnoted.kept;
+}
+// The secrets file's part with notes added: its number at least `serial`, what went added (once), the pause as the last
+// pause or resume left it.
+function putBackWith(auth, notes, serial) {
+  const a = { ...(auth && typeof auth === 'object' && !Array.isArray(auth) ? auth : {}) };
+  a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
+  for (const r of notes) {
+    // (a resume is noted only over a pause that was: nothing else to put right later)
+    if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
+    if (putBackRemovedList(a).some(x => putBackNoteKey(x) === putBackNoteKey(r))) continue;
+    a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+  }
+  return a;
+}
+// Writes notes into the secrets file (putBackWith). Throws when the file can't be read or written.
 function putBackNoteWrite(notes, serial) {
   const s = secretsRead();
   if (s === null) throw new Error('the secrets file can’t be read');
-  secretsWrite(x => {
-    const a = { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}) };
-    a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
-    for (const r of notes) {
-      // (a resume is noted only over a pause that was: nothing else to put right later)
-      if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
-      a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
-    }
-    return { ...x, auth: a };
-  });
+  secretsWrite(x => ({ ...x, auth: putBackWith(x.auth, notes, serial) }));
   putBackSeen.at = 0;
 }
 function putBackRemoval(items, save) {
   const now = new Date().toISOString(), notes = [].concat(items).map(r => ({ ...r, at: now }));
   if (!SECRETS_FILE) { save(); return null; }
-  const pending = putBackUnnotedRead(), raises = notes.some(r => r.kind !== 'resumed');
+  const pending = putBackWaiting(), raises = notes.some(r => r.kind !== 'resumed');
   let n = null, had, noted = false;
   try {
     const s = secretsRead();
     if (s === null) throw new Error('the secrets file can’t be read');
     had = s.auth;
-    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (raises ? 1 : 0);
-    putBackNoteWrite([...pending, ...notes], n);
+    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0, pending.serial) + (raises ? 1 : 0);
+    putBackNoteWrite([...pending.notes, ...notes], n);
     noted = true;
   } catch (e) { putBackUnnoted.why = e.message; console.error(`What was removed couldn’t be noted outside the state just now (it is tried again): ${e.message}`); }
-  try { save(); } catch (e) {
-    // (the removal itself failed: its note is taken out again, and the error is the route's)
-    if (noted) try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
-    throw e;
-  }
   if (noted) {
+    try { save(); } catch (e) {
+      // (the removal itself failed: its note is taken out again, and the error is the route's)
+      try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
+      throw e;
+    }
     try { if (raises) putBackSerialWrite(n); } catch (e) { console.error(`The state’s number couldn’t be raised (the secrets file is ahead, so the next start holds): ${e.message}`); }
-    try { if (pending.length) putBackUnnotedSave([]); putBackUnnoted.why = null; } catch (e) { console.error(`The note of earlier removals stays on disk: ${e.message}`); }
+    if (pending.notes.length || !putBackUnnoted.kept) putBackKeep({ notes: [], serial: 0 });
+    putBackUnnoted.why = null;
     return null;
   }
-  // (not noted: the removal stands; the state's number still goes up, and the note waits on disk)
-  try { if (raises) putBackSerialWrite(Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0) + 1); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
-  try { putBackUnnotedSave([...pending, ...notes]); } catch (e) { console.error(`The removal couldn’t be kept to note later either: ${e.message}`); }
-  return PUTBACK_UNNOTED_SAID;
+  // (not noted: the note waits with the number the state goes up to, kept before the save, then the save, then the
+  // state's number; a failed save takes the waiting note out again)
+  const a = putBackAuth(), raised = Math.max(putBackSerial(), Number.isInteger(a.serial) ? a.serial : 0, pending.serial) + (raises ? 1 : 0);
+  const kept = putBackKeep({ notes: [...pending.notes, ...notes], serial: raised });
+  try { save(); } catch (e) { putBackKeep(pending); throw e; }
+  try { if (raises) putBackSerialWrite(raised); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
+  return kept ? PUTBACK_UNNOTED_SAID : PUTBACK_UNKEPT_SAID;
 }
-// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check).
+// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check),
+// with the higher of their number and the state's; when it still doesn't, they are kept in the state folder if they
+// weren't yet.
 function putBackRetry() {
   if (!SECRETS_FILE) return true;
-  let pending;
-  try { pending = putBackUnnotedRead(); } catch { return false; }
-  if (!pending.length) { putBackUnnoted.why = null; return true; }
-  try {
-    putBackNoteWrite(pending, putBackSerial());
-    putBackUnnotedSave([]);
-    putBackUnnoted.why = null;
-    console.error(`What was removed is noted outside the state now (${pending.length} removal${pending.length === 1 ? '' : 's'}).`);
-    return true;
-  } catch (e) { putBackUnnoted.why = e.message; return false; }
+  const w = putBackWaiting();
+  if (!w.notes.length) { putBackUnnoted.why = null; return true; }
+  try { putBackNoteWrite(w.notes, Math.max(putBackSerial(), w.serial)); } catch (e) {
+    putBackUnnoted.why = e.message;
+    if (putBackUnnoted.kept) Object.assign(putBackUnnoted, { notes: w.notes, serial: w.serial }); else putBackKeep(w);
+    return false;
+  }
+  putBackKeep({ notes: [], serial: 0 });
+  putBackUnnoted.why = null;
+  console.error(`What was removed is noted outside the state now (${w.notes.length} removal${w.notes.length === 1 ? '' : 's'}).`);
+  return true;
 }
 setInterval(() => { try { putBackRetry(); } catch {} }, PUTBACK_RETRY_MS).unref?.();
 
@@ -26825,7 +26889,9 @@ function putBackAtStart() {
     if (!putBackRetry()) console.error(`Removals still not noted outside the state: ${putBackUnnoted.why}`);
     const s = secretsRead();
     if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
-    const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
+    // (notes that still can't be written are judged as if they were, with their number: S-2)
+    const a0 = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, w = putBackWaiting(), t = putBackSerial();
+    const a = w.notes.length ? putBackWith(a0, w.notes, w.serial) : a0;
     const n = Number.isInteger(a.serial) && a.serial > 0 ? a.serial : 0, first = !a.hold;
     const removed = putBackRemovedList(a), gone = kind => new Set(removed.filter(r => r.kind === kind).map(r => String(r.id)));
     // Something the owner removed is in the state again: put back, whatever the numbers say (a snapshot with no number
@@ -26925,10 +26991,9 @@ async function putBackRoute(req, res, path, viewer) {
 function putBackNeeds(add) {
   const h = putBackHold();
   if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
-  // (removals not yet noted outside the state: said until the retry writes them)
-  let waiting = [];
-  try { waiting = putBackUnnotedRead(); } catch {}
-  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.`);
+  // (removals not yet noted outside the state, from memory and the state folder: said until the retry writes them)
+  const waiting = putBackWaiting().notes;
+  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.${putBackUnnoted.kept ? '' : ` ${waiting.length === 1 ? 'It' : 'They'} couldn’t be kept in the state folder either, so if Spark Console stops before then, ${waiting.length === 1 ? 'it is' : 'they are'} forgotten.`}`);
 }
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
 // Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
@@ -27175,14 +27240,15 @@ async function signinRoute(req, res, path, viewer) {
   const owner = accessList().owner;
   if (path === '/auth/signout') {
     const s = sessionFor(req);
+    let unnoted = null;
     if (s) {
-      // (its note outside the state first, then the save: 22-putback.mjs)
-      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
+      // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+      unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   if (!owner) throw new HttpError(409, 'No owner is set up on this Spark yet.');
