@@ -726,7 +726,8 @@ test('a2: a script reached through a link is said not pinned on the ask, and its
   const p = await choose(chat, yes.id);
   assert.equal(p.status, 200, p.text);
   assert.equal(text('notes/a2l-out.txt'), 'linked\n', 'it ran');
-  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-/.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
+  // (step-f2's H2: the helper's script copies are in /var/lib/spark-console/pins/<id>; no copy there, nor the old place)
+  assert.ok(!propsOf('bash notes/a2lnk/l.sh').some(a => /^BindReadOnlyPaths=\/(run\/spark-console|var\/lib\/spark-console\/pins)\/[0-9a-f]+\/script-/.test(a)), JSON.stringify(propsOf('bash notes/a2lnk/l.sh')));
 });
 
 // P-5 (A-16 beside it): a key went to code no hash pins: a module, a build, a one-liner's file. It is refused now,
@@ -992,7 +993,8 @@ test('f2 R-3: a key for a loop over a named script and for each launcher is aske
     assert.ok(q.includes(`\nIt runs ~/${script} (SHA-256 `), `${command}: asked with the script pinned: ${JSON.stringify(sentBack(words)).slice(0, 600)}`);
     const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
     assert.equal(p.status, 200, p.text);
-    const bind = new RegExp(`^BindReadOnlyPaths=/run/spark-console/[0-9a-f]+/script-1:/.*/${script.replace(/[.]/g, '\\.')}$`);
+    // (step-f2's H2: the helper's script copies are in /var/lib/spark-console/pins/<id>, not /run/spark-console/<id>)
+    const bind = new RegExp(`^BindReadOnlyPaths=/var/lib/spark-console/pins/[0-9a-f]+/script-1:/.*/${script.replace(/[.]/g, '\\.')}$`);
     assert.ok(propsOf(command).some(a => bind.test(a)), `${command}: handed to --script: ${JSON.stringify(propsOf(command))}`);
   };
   await pinned('for i in 1; do bash notes/f2loop.sh; done', 'notes/f2loop.sh');
