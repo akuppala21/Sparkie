@@ -24,6 +24,10 @@ const J_LARGE = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_JOURNAL_NEEDS_BYTE
 const JOURNAL_REFUSED = `Couldn’t write the record of this change on ${hubName()} (its disk may be full), so nothing was changed. Free some space there, then ask again.`;
 // When a write last failed and last worked (the needs-you line), and the changes a restart cut off (for a day).
 let journalProblem = null, journalWorked = 0, journalCut = null, journalDirSet = false;
+// Where the newest records' long texts are, by id ({month, o, cut}), as journal() wrote them: a read kept on a chat is
+// read back from here with no pass over the journal (R-9, 20-came-from.mjs). The newest 4,096; empty after a restart.
+const jBodies = new Map(), J_BODIES = 4096;
+const jBodyAt = id => jBodies.get(String(id)) || null;
 const journalId = () => `j_${randomBytes(6).toString('hex')}`;
 // The names a record is about (Sparks, models, containers, a failure), for search. Masked before the cut, with 200
 // characters past it, so a key across the cut is hidden whole (as audit does).
@@ -134,6 +138,7 @@ function journal(kind, fields = {}, body = null) {
       throw e;
     } finally { closeSync(fd); }
     journalWorked = Date.now();
+    if (Array.isArray(rec.o)) { jBodies.set(id, { month, o: rec.o, cut: Boolean(rec.cut) }); if (jBodies.size > J_BODIES) jBodies.delete(jBodies.keys().next().value); }
     return id;
   } catch (e) {
     if (!journalProblem || journalProblem.at < journalWorked) console.error(`The journal couldn’t be written: ${e.code || e.message}.`);
