@@ -303,6 +303,8 @@ function postResult(job) {
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
+    // (a saved workflow's clean-up stop that found it started again since left it running, and says so: A-22)
+    : job.status === 'completed' && job.left ? `Left running: ${job.left}.`
     : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)

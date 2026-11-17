@@ -120,6 +120,8 @@ async function bringBack(x, why, parts, power = false) {
   // with the reason (audit, 2026-11-11: a bring-back of GLM could stop the model the owner had just started).
   const ctx = { actor: 'Self-healing', via: 'watcher', request: `bring back ${x.container}: ${why}`, canChange: true, trusted: true, noStops: true };
   const stopped = [];
+  // (a saved workflow's run that started it keeps it as its own once it is back, in its new containers too: A-22)
+  const held = await receiptsHeld([key, ...parts.map(d => `${d.spark}/${d.container}`)]).catch(() => []);
   try {
     // A two-Spark model starts as a pair: what's left of it (stuck waiting for the part that's gone) stops first, and
     // starts again as it was if the start is refused.
@@ -131,6 +133,7 @@ async function bringBack(x, why, parts, power = false) {
     const out = x.sparks ? await runAction('start_model', healOwner(), { model: x.model, sparks: x.sparks, ...validating }, ctx)
       : await runAction('restart_model', healOwner(), { spark: x.spark, container: x.container, ...validating }, ctx);
     if (!out?.operation) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
+    if (held.length) waitJob(out.operation, 45 * 60000).then(done => (done?.status === 'completed' ? receiptsBroughtBack(held, done) : null)).catch(() => {});
     audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: x.sparks ? { model: x.model, sparks: x.sparks } : { spark: x.spark, container: x.container }, ok: true, outcome: 'started', operation: out.operation, request: ctx.request });
   } catch (e) {
     for (const d of stopped) {

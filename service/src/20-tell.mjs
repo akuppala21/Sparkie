@@ -131,6 +131,8 @@ function tellWhat(job) {
 }
 function tellResultLine(job) {
   const what = tellWhat(job);
+  // (a saved workflow's clean-up stop that left it running: never "finished", A-22)
+  if (job.status === 'completed' && job.left) return `${what}: left running, as it was started again since, not by this run.`;
   // (a long command's exit code, a number: an exit other than 0 is a result, told as one, 21-long.mjs)
   if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished${job.type === 'run' && Number.isInteger(job.exit) ? ` with exit code ${job.exit}` : ''}.`;
   if (job.status === 'cancelled') return `${what} was cancelled.`;

@@ -63,9 +63,11 @@ function desiredAfter(job) {
 }
 // The owner's own ask for what already runs (a start, a restart or a keep answered "already", A-22): their newest wish
 // for it, so its entry's since moves (no revision), and a saved workflow's clean-up leaves it (startedStill). Not a run's
-// step, self-healing, an agent or the self-test.
+// step, self-healing, an agent or the self-test. An operation that started it, or is still starting it (a run's step
+// loading it), is marked too, in the same tick: the run takes its receipt when that ends, so the wish outlives it.
 const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
 function desiredWish(keys) {
+  for (const j of jobs.values()) if ((j.ranHere || []).some(k => keys.includes(k)) || (j.node && j.container && keys.includes(`${j.node}/${j.container}`))) j.ownersWish = true;
   try {
     const d = readKept(DESIRED_FILE);
     if (!d || !Array.isArray(d.running)) return;
