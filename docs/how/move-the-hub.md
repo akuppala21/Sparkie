@@ -17,6 +17,8 @@ run at once: the state is copied first, then the install starts the new one. Fro
 4. Stop Spark 2's console: `ssh $S2 'systemctl --user disable --now spark-console-api spark-console-watchdog.timer;
    docker stop spark-console-plugs'` (its brain stops with `docker stop sparkie-main`).
 5. Copy the hub's files, sign-ins left out: `bash $D/copy-hub-state.sh 2 1`. It refuses while either runs a console.
+   It also moves the copied `main.json` to Spark 1 (a saved setup's Spark, a route to Spark 2's own loopback), each
+   change printed and the file as it came kept beside it.
 6. Install on Spark 1: `NOTE='the hub moves to Spark 1' bash $D/host-on-portal.sh` (its default; it refuses Spark 2).
    It starts the console with the copied state and checks it as the owner. Then `bash $D/cutover.sh`: the `:8443/`
    route (Spark 1 has no portal, so nothing is switched off).
@@ -25,7 +27,7 @@ run at once: the state is copied first, then the install starts the new one. Fro
 8. Plugs: `bash $D/plugs.sh` (the controller on Spark 1, with the copied keys); `bash $D/plugs.sh status` gives Spark
    1's plug `<p>`; `bash $D/plugs.sh name <p> 1` makes it read-only and proves it. Spark 2's: the Tapo app removes
    the controller's connection and gives a new Matter code; `bash $D/plugs.sh pair 2`. Then
-   `bash $D/power-setup.sh 2`.
+   `bash $D/power-setup.sh 2`. Until Spark 2's plug is paired again, the console reads it but can't switch it.
 9. `bash $D/open-to-internet.sh`: Spark 1's 8443 to the internet. Its 443 is never touched.
 10. Check: `/status` and one turn in the chat, `bash $D/plugs.sh status`, `bash $D/power-check.sh`.
 

@@ -13,10 +13,15 @@
 #   ~/.local/share/spark-console/journal       what was said, called and run (R43)
 #   ~/.local/share/spark-console/repo.git      the copy of the repository pull.sh and check_update read
 # Each of these already on <to> is moved aside first, to <its name>.before-<time> beside it: nothing is deleted. Then
-# the names and sizes of what arrived are compared with <from>'s.
+# the names and sizes of what arrived are compared with <from>'s. Then, on <to> only, the copied main.json is told its
+# new hub: a saved setup whose Spark is <from> (the brain's, made from a Library model) and a chat or agents route to a
+# model on <from>'s own loopback address get <to> as their Spark. Each change is printed; the file is written whole
+# (Node.js, as the service writes it) and the copy from before is kept beside it, main.json.before-rewrite-<time>.
+# Nothing else in it changes, and a main.json with nothing to change is left as it is. plugs.json is copied as it is.
 # It refuses, with nothing changed: a Spark deploy/hub.env doesn't name, or the same one twice; on either Spark, Spark
 # Console or its watchdog running, the plug controller running, or an update's way back still armed; a <from> with no
-# state. It needs no sudo, and never touches SSH settings, Tailscale, the firewall, users, a container or any model.
+# state; no Node.js on <to>. It needs no sudo, and never touches SSH settings, Tailscale, the firewall, users, a
+# container or any model.
 set -euo pipefail
 . "$(dirname "$0")/hub.sh"
 [ $# = 2 ] || { echo "Usage: bash $0 <from> <to>   (Spark numbers, for example: bash $0 2 1)" >&2; exit 2; }
@@ -40,7 +45,8 @@ case "$MODE" in
     echo "dog=$(systemctl --user is-active spark-console-watchdog.timer 2>/dev/null || true)"
     echo "plugs=$(docker inspect -f '{{.State.Running}}' spark-console-plugs 2>/dev/null || true)"
     if [ -s .local/share/spark-console/update-guard/guard ]; then echo guard=armed; else echo guard=; fi
-    if [ -d .local/state/spark-console ]; then echo state=yes; else echo state=; fi ;;
+    if [ -d .local/state/spark-console ]; then echo state=yes; else echo state=; fi
+    echo "node=$(command -v node || true)" ;;
   aside)
     for i in $(present); do mv -T -- "$i" "$i.before-$2"; echo "  moved aside on $(hostname): ~/$i.before-$2"; done ;;
   send)
@@ -52,6 +58,23 @@ case "$MODE" in
     for i in $(present); do
       find "$i" \( -type f -o -type l \) ! -path .local/state/spark-console/sessions.json ! -name '*.sock' ! -name '*.tmp' -printf '%p %s\n'
     done | LC_ALL=C sort | sha256sum | cut -c1-64 ;;
+  hub)
+    # main.json told its new hub ($2 was the hub, $3 is): a saved setup's Spark, and a route's to a model on the old
+    # hub's own loopback address. Written whole, the copy from before kept beside it; nothing else changes.
+    f=.local/state/spark-console/main.json
+    if [ ! -f "$f" ]; then echo "  main.json: none to tell"; exit 0; fi
+    node -e '
+const fs = require("fs"), [f, from, to, stamp] = process.argv.slice(1);
+const text = fs.readFileSync(f, "utf8"), d = JSON.parse(text), said = [];
+const loopback = u => { try { const h = new URL(u).hostname.replace(/^\[|\]$/g, ""); return h === "localhost" || h === "::1" || /^127\./.test(h); } catch { return false; } };
+for (const [id, p] of Object.entries(d.presets || {})) if (p && typeof p === "object" && p.node === from) { p.node = to; said.push(`presets.${id}.node`); }
+for (const r of ["chat", "agents"]) { const x = d[r]; if (x && x.kind === "endpoint" && x.node === from && loopback(x.url)) { x.node = to; said.push(`${r}.node`); } }
+if (!said.length) { console.log("  main.json: nothing in it names the old hub; left as it was"); process.exit(0); }
+fs.writeFileSync(`${f}.before-rewrite-${stamp}`, text, { mode: 0o600 });
+fs.writeFileSync(`${f}.rewrite.tmp`, JSON.stringify(d), { mode: 0o600 });
+fs.renameSync(`${f}.rewrite.tmp`, f);
+for (const s of said) console.log(`  main.json: ${s}: ${from} -> ${to}`);
+console.log(`  (main.json as it arrived: ~/${f}.before-rewrite-${stamp})`);' "$f" "$2" "$3" "$4" ;;
 esac
 EOF
 CTL="$(mktemp -d)"
@@ -69,6 +92,7 @@ for x in "$F $FROM" "$T $TO"; do
   [ "$(val plugs)" != true ] || stop "the plug controller is running on $(says_of "$id"), and its pairing keys go too. Stop it first: ssh $host 'docker stop spark-console-plugs'"
   [ -z "$(val guard)" ] || stop "an update from GitHub on $(says_of "$id") still has its way back armed (RECOVERY.txt, step 6, says how to end it)"
   [ "$id" != "$F" ] || [ "$(val state)" = yes ] || stop "$(says_of "$F") has no state folder to copy"
+  [ "$id" != "$T" ] || [ -n "$(val node)" ] || stop "Node.js isn't on $(says_of "$T"), and the copied main.json needs it to be told its new hub. Install Node.js 22 there first (docs/how/move-the-hub.md, step 2)"
 done
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -79,4 +103,7 @@ on "$FROM" send </dev/null | on "$TO" take \
 A=$(on "$FROM" sum </dev/null) B=$(on "$TO" sum </dev/null)
 [ -n "$A" ] && [ "$A" = "$B" ] \
   || { echo "The copy on $(says_of "$T") doesn't hold the same files and sizes as $(says_of "$F")'s. Run this again; what was there before is beside it, as *.before-$STAMP." >&2; exit 1; }
-echo "Done: $(says_of "$T") holds the hub's files as $(says_of "$F") had them (sign-ins left out); the same names and sizes on both."
+echo "$(says_of "$T") holds the hub's files as $(says_of "$F") had them (sign-ins left out); the same names and sizes on both."
+on "$TO" hub "$F" "$T" "$STAMP" </dev/null \
+  || { echo "The copied main.json on $(says_of "$T") couldn't be told its new hub (above); everything else is copied. Run this again." >&2; exit 1; }
+echo "Done."

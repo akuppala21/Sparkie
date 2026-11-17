@@ -6,8 +6,8 @@
 // `plugs.sh` keeps the hub's plug read-only (pair and name), never as another Spark's, and runs only on the hub;
 // `root-for-sparkie.sh` from the Mac runs the hub's installed copy; `open-to-internet.sh` never touches port 443;
 // `cutover.sh` on a hub with no portal only adds the :8443/ route;
-// `copy-hub-state.sh` copies the hub's files but the sign-ins, moves aside what was there, and refuses while a console
-// runs; no file under `deploy/` names a Spark outside `hub.env`. Starts no stand-in fleet: each script runs against
+// `copy-hub-state.sh` copies the hub's files but the sign-ins, moves aside what was there, tells the copied `main.json`
+// its new hub (and back), and refuses while a console runs or with no Node.js where it goes; no file under `deploy/` names a Spark outside `hub.env`. Starts no stand-in fleet: each script runs against
 // stand-ins for ssh, docker, tailscale, systemctl and curl in a made-up home.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -466,8 +466,8 @@ exec bash -c "$*"
     put('spark2', '.local/share/spark-console/releases/20261115T000000Z/build', 'abc\n');
     // Spark 1: what was there already
     put('spark1', '.local/state/spark-console/old.json', '{"old":true}');
-    const copy = args => spawnSync('bash', [join(DEPLOY, 'copy-hub-state.sh'), ...args], { encoding: 'utf8', timeout: TIMEOUT,
-      env: { PATH: `${bin}:${process.env.PATH}`, HOME: root } });
+    const copy = (args, { path = process.env.PATH } = {}) => spawnSync('bash', [join(DEPLOY, 'copy-hub-state.sh'), ...args], { encoding: 'utf8', timeout: TIMEOUT,
+      env: { PATH: `${bin}:${path}`, HOME: root } });
     const tree = s => spawnSync('find', ['.', '-path', './.standin', '-prune', '-o', '-print'], { cwd: at(s), encoding: 'utf8', timeout: TIMEOUT }).stdout.split('\n').filter(Boolean).sort();
     return { at, put, copy, tree };
   };
@@ -487,7 +487,59 @@ exec bash -c "$*"
     assert.equal(aside.length, 1, aside.join(' '));
     assert.equal(readFileSync(f.at('spark1', '.local/state', aside[0], 'old.json'), 'utf8'), '{"old":true}');
     assert.deepEqual(f.tree('spark2'), was2, 'Spark 2 is as it was');
-    assert.match(r.stdout, /^Done: Spark 1 holds the hub's files as Spark 2 had them/m);
+    assert.match(r.stdout, /^Spark 1 holds the hub's files as Spark 2 had them/m);
+    assert.match(r.stdout, /^ {2}main\.json: none to tell\nDone\.$/m);
+  });
+
+  // main.json as the service writes it (JSON.stringify): a setup made from a Library model on the old hub, one on
+  // Spark 3, the chat route to a model on the old hub's loopback, the agents' route to Spark 2's tailnet address.
+  const MAIN = { current: 'lib-q', leftDown: '2026-11-16T00:00:00.000Z',
+    presets: { 'lib-q': { node: 'spark2', title: 'Q on spark2', served: 'q', port: 30100, from: 'spark2' }, 'lib-r': { node: 'spark3', title: 'R', port: 30101 } },
+    chat: { kind: 'endpoint', url: 'http://127.0.0.1:30100', model: 'q', title: 'Q', node: 'spark2' },
+    agents: { kind: 'endpoint', url: `http://${SPARKS.spark2}:8000`, model: 'm', title: 'M', node: 'spark2' } };
+  const MAIN_AT = '.local/state/spark-console/main.json';
+  const swapped = (m, from, to) => JSON.parse(JSON.stringify(m).replaceAll(`"node":"${from}"`, `"node":"${to}"`));
+
+  test('main.json on the new hub names it: a saved setup’s Spark and a route to the old hub’s loopback move; another Spark, a title, a tailnet route stay', () => {
+    const f = fleet();
+    f.put('spark2', MAIN_AT, JSON.stringify(MAIN), 0o600);
+    const r = f.copy(['2', '1']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const want = JSON.parse(JSON.stringify(MAIN));
+    want.presets['lib-q'].node = 'spark1';
+    want.chat.node = 'spark1';
+    assert.equal(readFileSync(f.at('spark1', MAIN_AT), 'utf8'), JSON.stringify(want), 'only those two fields changed, written as the service writes it');
+    assert.equal(statSync(f.at('spark1', MAIN_AT)).mode & 0o777, 0o600);
+    const kept = readdirSync(f.at('spark1', '.local/state/spark-console')).filter(n => n.startsWith('main.json.before-rewrite-'));
+    assert.equal(kept.length, 1, kept.join(' '));
+    assert.equal(readFileSync(f.at('spark1', '.local/state/spark-console', kept[0]), 'utf8'), JSON.stringify(MAIN), 'the copy as it arrived');
+    assert.match(r.stdout, /^ {2}main\.json: presets\.lib-q\.node: spark2 -> spark1\n {2}main\.json: chat\.node: spark2 -> spark1\n/m);
+    assert.equal(readFileSync(f.at('spark2', MAIN_AT), 'utf8'), JSON.stringify(MAIN), 'Spark 2’s own is as it was');
+  });
+
+  test('a main.json with nothing naming the old hub is left byte for byte; the way back (1 to 2) moves them the other way', () => {
+    const f = fleet(), plain = JSON.stringify({ current: 'lib-r', presets: { 'lib-r': { node: 'spark3', title: 'spark2 R' } }, chat: { kind: 'main' }, agents: { kind: 'same' } });
+    f.put('spark2', MAIN_AT, plain, 0o600);
+    const r = f.copy(['2', '1']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(readFileSync(f.at('spark1', MAIN_AT), 'utf8'), plain);
+    assert.deepEqual(readdirSync(f.at('spark1', '.local/state/spark-console')).filter(n => n.startsWith('main.json.before-rewrite-')), []);
+    assert.match(r.stdout, /main\.json: nothing in it names the old hub; left as it was/);
+    const back = fleet(), onHub1 = swapped(MAIN, 'spark2', 'spark1');
+    onHub1.agents = MAIN.agents;
+    back.put('spark1', MAIN_AT, JSON.stringify(onHub1), 0o600);
+    const b = back.copy(['1', '2']);
+    assert.equal(b.status, 0, b.stdout + b.stderr);
+    assert.equal(readFileSync(back.at('spark2', MAIN_AT), 'utf8'), JSON.stringify(MAIN));
+  });
+
+  test('without Node.js on the Spark it goes to, it stops before anything is copied', () => {
+    // (the runners' Node is in /usr/local/bin: a PATH of /usr/bin and /bin has none)
+    assert.equal(spawnSync('bash', ['-c', 'command -v node || true'], { env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: TIMEOUT }).stdout, '', 'no node on /usr/bin:/bin here');
+    const f = fleet(), before = [f.tree('spark1'), f.tree('spark2')], r = f.copy(['2', '1'], { path: '/usr/bin:/bin' });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /^Stopped: Node\.js isn't on Spark 1, and the copied main\.json needs it to be told its new hub\..*Nothing was changed\.$/m);
+    assert.deepEqual([f.tree('spark1'), f.tree('spark2')], before);
   });
 
   test('it refuses, changing nothing: a console, its watchdog or the plug controller running on either Spark, an armed update, no state, the same Spark twice, a Spark hub.env doesn’t name', () => {
