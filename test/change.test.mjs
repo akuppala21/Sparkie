@@ -469,7 +469,12 @@ describe('deploys on three Sparks at once', { concurrency: true }, () => {
     assert.deepEqual(x.stops, ['spark3/sc-testorg--Qwen3.8-27B-abliterated-GGUF']);
     assert.match(x.next, /wait_operation/);
     // Asking again while it starts (say, after a timeout) gets the same operation, by any of its names: no second job.
-    for (const args of [{ model: 'gpt-oss-20b', spark: 'spark3' }, { model: 'openai/gpt-oss-20b' }]) {
+    // The same call again, as the action reads it ("Spark 3" is spark3), joins the first at the agent door and gets its
+    // answer (R73); the model by another name, or with no Spark named, is another call, and the action's own check answers.
+    const same = await ok('start_model', { model: 'gpt-oss-20b', spark: 'spark3' }, k.token);
+    assert.deepEqual(same, x, 'the same call again gets the first one\u2019s answer');
+    assert.ok(auditLines().some(l => l.action === 'start_model' && l.joined === true), 'the repeat\u2019s audit line says joined');
+    for (const args of [{ model: 'openai/gpt-oss-20b', spark: 'spark3' }, { model: 'openai/gpt-oss-20b' }]) {
       const again = await ok('start_model', args, k.token);
       assert.equal(again.outcome, 'already-starting', JSON.stringify(again));
       assert.equal(again.operation, x.operation);
