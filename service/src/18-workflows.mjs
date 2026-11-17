@@ -56,6 +56,15 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  alreadyStarting,
+  receiptsHeld,
+  receiptsBroughtBack,
+  startedStill,
+  receiptOf,
+  RECEIPT_LOOK,
+  fields,
+  desired,
+  savedRunKeep,
   stopChecked,
   stopLook,
   STOPPED_STATES,
@@ -64,6 +73,9 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   withOwed,
   CONTEXT_FLOOR,
   spanOf,
+  START_READY_MS,
+  unanswered,
+  backUnits,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -84,7 +96,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK] },
+    code: () => [stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -100,7 +112,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -134,8 +146,9 @@ function workflowStatus(id) {
     runs: v.runs || 0, succeeded: v.succeeded || 0, lastRunAt: v.lastRunAt || null };
 }
 // A finished operation counts for its workflow: every run in the totals, and a passing one as that version's validation.
+// A clean-up's stop that left its model running (left, A-22) stopped nothing, so it counts for nothing.
 function recordWorkflowRun(job) {
-  if (!job.workflow || job.status === 'cancelled') return;
+  if (!job.workflow || job.status === 'cancelled' || job.left) return;
   // Read strictly (R20, F12): when the record can't be read just now this run isn't counted, so the save below never goes
   // over the other workflows' records. (validations() stays for lookups.)
   let all;
@@ -411,6 +424,8 @@ action({
       if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (and known while it runs, so what self-healing or a power cycle brings back for it stays its own: runsRan)
+      runsRan.set(j.id, ran);
       // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
       savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
@@ -451,7 +466,7 @@ action({
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { runsRan.delete(j.id); letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },

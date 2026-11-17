@@ -33,6 +33,9 @@ One small change at a time onto `main`: its affected tests on a compute Spark, t
 - Install a build whose whole suite hasn't passed: the installer refuses a build without its lock.
 - Edit a test or the map to get a step through.
 - Batch steps to save runs: a pick costs minutes, and a missed file shows up in the whole run after.
+- Land a change under `tools/` on a few files run by hand: `tools/` is on both always-lists, so its pick is the whole
+  suite. What the tools may do is held by `selfchange.test.mjs` (what `make.mjs` loads in the box), `trial`, `box`,
+  `box-fill`, `pull`, `docs`, `build`, `affected` and `land`.
 
 ## Rules
 

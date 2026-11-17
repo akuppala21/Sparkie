@@ -12,7 +12,8 @@
 # Spark 2 (the newest 10 are kept) and prints the command that puts it back. The update is kept only if the new service
 # answers, keeps running as the same process for 40 seconds, still knows the owner, answers at the agent door and the
 # model address, Sparkie answers one chat turn with a tool call, and Telegram polls again if it did before; on any miss,
-# or a copy that fails part-way, the previous files go back on their own. SKIP_CHAT_CHECK=1 updates without the chat
+# or a copy that fails part-way, the previous files go back on their own (in place and checked after, when there is no
+# room for a checked copy beside them; when even that isn't whole, it says so and the line that finishes it). SKIP_CHAT_CHECK=1 updates without the chat
 # turn (for when Sparkie's model is down).
 # If Spark Console ever stops answering, on Spark 2: bash ~/.local/share/spark-console/go-back.sh puts the last build
 # back (every install copies it there; RECOVERY.txt beside it lists the other by-hand steps).
@@ -308,7 +309,7 @@ if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]]; then
       || echo "  NOTE: that build from before didn't come back answering, or its copy wasn't whole; this install goes on."
     # (still armed: its build couldn't be put back whole, or another run of it holds its lock. Going on would leave its
     # timer to undo this install later)
-    [ ! -s "$GUARD/guard" ] || fail "That update's way back is still armed: its build from before couldn't be put back whole (is the disk full?), or another run of it holds its lock. Make room if the disk is full, run: bash $GUARD/update-guard.sh put-back hand, then this install again. This install changed nothing."
+    [ ! -s "$GUARD/guard" ] || fail "That update's way back is still armed: its build from before couldn't be put back whole (is the disk full?), or another run of it holds its lock. To go on, put it back again once it can be (make room first if the disk is full): bash $GUARD/update-guard.sh put-back hand. Or, if it can never go back, give it up and keep the build that runs now: bash $GUARD/update-guard.sh disarm (the build from before can then be had only from an install snapshot). Then run this install again. This install changed nothing."
   fi
 fi
 
@@ -323,13 +324,19 @@ on_exit() {
   if [ "$code" != 0 ] && [ "$PHASE" = changing ]; then
     if [ -n "$SNAP" ] && [ -f "$SNAP/restore.sh" ]; then
       echo "  Putting the previous install back (its files only; state stays as it is) ..." >&2
-      # (with --stand-in, its restore.sh is told so by a mark beside it, there only while this put-back runs)
+      # (with --stand-in, its restore.sh is told so by a mark beside it, there only while this put-back runs; so is it
+      # that it may put back in place when there is no room for its checked copy beside: the install may have failed
+      # because the disk filled)
       [ -z "$STAND_IN" ] || : > "$SNAP/stand-in"
+      : > "$SNAP/in-place-if-no-room" 2>/dev/null || true
+      # (the incoming source is no longer needed: its room may be what the put-back needs, when the disk filled)
+      rm -f "$IN/source.tar"
       bash "$SNAP/restore.sh" > "$SNAP/restore.log" 2>&1; back=$?
-      rm -f "$SNAP/stand-in"
+      rm -f "$SNAP/stand-in" "$SNAP/in-place-if-no-room"
       sed 's/^/  /' "$SNAP/restore.log" >&2
       if [ "$back" = 0 ]; then echo "  STOP: The update was not kept. The previous version is running again. Fix the problem above and run this again." >&2
-      else echo "  STOP: The update was not kept, and the previous version isn't answering either. Its snapshot is $SNAP." >&2; fi
+      elif [ "$back" = 3 ]; then echo "  STOP: The update was not kept, and the previous files couldn't be put back whole (is the disk full?). Make room, then run: bash $SNAP/restore.sh" >&2
+      else echo "  STOP: The update was not kept. The previous files are back, but the previous version isn't answering either. Its snapshot is $SNAP." >&2; fi
     else
       echo "  STOP: There's no earlier install to go back to. Fix the problem above and run this again." >&2
     fi
@@ -374,15 +381,22 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 # signed out since is let back in. So does the state's number (auth-serial.json): the next start holds sign-in from the
 # internet and agents' changes until the owner, on the tailnet, has looked at what came back (contract 6.25). And so
 # does saved-runs.json: the next start would stop by name what a saved workflow ran back then (R57).
-#   bash restore.sh [--with-state]
+# Exit 0: back and answering; 1: back, not answering; 3: not put back whole (make room, then run it again).
+#   bash restore.sh [--with-state] [--in-place-if-no-room]
+# --in-place-if-no-room, or a mark of that name beside it (the installer's own put-back, when the install failed,
+# perhaps because the disk filled): when
+# there is no room for the checked copy beside the live folders, the files go back in place (emptied, then copied) and
+# are checked after.
 set -euo pipefail
 # Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH.
 # They say so with --stand-in (or the installer that runs this, by a mark beside it): never the environment.
-WITH_STATE='' SPARK_CONSOLE_ALL_LOCAL=''
+WITH_STATE='' SPARK_CONSOLE_ALL_LOCAL='' IN_PLACE=''
 for a in "$@"; do
-  case "$a" in --with-state) WITH_STATE=1 ;; --stand-in) SPARK_CONSOLE_ALL_LOCAL=1 ;; *) echo "Usage: bash $0 [--with-state]" >&2; exit 2 ;; esac
+  case "$a" in --with-state) WITH_STATE=1 ;; --stand-in) SPARK_CONSOLE_ALL_LOCAL=1 ;; --in-place-if-no-room) IN_PLACE=1 ;;
+    *) echo "Usage: bash $0 [--with-state] [--in-place-if-no-room]" >&2; exit 2 ;; esac
 done
 [ ! -e "${0%/*}/stand-in" ] || SPARK_CONSOLE_ALL_LOCAL=1
+[ ! -e "${0%/*}/in-place-if-no-room" ] || IN_PLACE=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$(cd "$(dirname "$0")" && pwd)"
 # stage <saved> <beside>: an exact copy of a saved folder made beside the live one, and checked. Nothing live changes.
@@ -391,9 +405,17 @@ stage() { [ -d "$1" ] || return 0; rm -rf "$2" && mkdir -p "$2" && cp -a "$1/." 
 # It stays the same folder, so Tailscale's routes keep pointing at it.
 swap() {
   [ -d "$1" ] || return 0
-  mkdir -p "$2"; find "$2" -mindepth 1 -delete
-  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do { [ -e "$e" ] || [ -L "$e" ]; } || continue; mv "$e" "$2/"; done
+  mkdir -p "$2" && find "$2" -mindepth 1 -delete || return 1
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do { [ -e "$e" ] || [ -L "$e" ]; } || continue; mv "$e" "$2/" || return 1; done
   rmdir "$1"
+}
+# in_place <saved> <live>: the live folder emptied, then the saved one copied in (needs no room beyond the live files).
+in_place() { [ -d "$1" ] || return 0; mkdir -p "$2" && find "$2" -mindepth 1 -delete && cp -a "$1/." "$2/"; }
+# back: the live page, service and unit are exactly the saved ones.
+back() {
+  { [ ! -d "$S/spark-console" ] || diff -rq --no-dereference "$S/spark-console" "$HOME/spark-console" >/dev/null 2>&1; } \
+    && { [ ! -d "$S/spark-console-service" ] || diff -rq --no-dereference "$S/spark-console-service" "$HOME/spark-console-service" >/dev/null 2>&1; } \
+    && { [ ! -f "$S/spark-console-api.service" ] || cmp -s "$S/spark-console-api.service" "$HOME/.config/systemd/user/spark-console-api.service"; }
 }
 echo "Putting back the Spark Console install saved in $S …"
 # However this ends, the service is started again: a copy or a move that fails must never leave it stopped (the
@@ -402,17 +424,31 @@ trap 'systemctl --user daemon-reload 2>/dev/null; systemctl --user start spark-c
 # First a copy beside each live folder, checked: one that fails (a full disk, a disk error) changes nothing live, the
 # service isn't stopped, and this snapshot stays as it is, to be run again once there is room.
 B="$HOME/.spark-console.restore" BS="$HOME/.spark-console-service.restore" BU="$HOME/.config/systemd/user/.spark-console-api.service.restore"
-if ! { stage "$S/spark-console" "$B" && stage "$S/spark-console-service" "$BS" \
-    && { [ ! -f "$S/spark-console-api.service" ] || { mkdir -p "$HOME/.config/systemd/user" && cp -p "$S/spark-console-api.service" "$BU" && cmp -s "$S/spark-console-api.service" "$BU"; }; }; }; then
+if stage "$S/spark-console" "$B" && stage "$S/spark-console-service" "$BS" \
+    && { [ ! -f "$S/spark-console-api.service" ] || { mkdir -p "$HOME/.config/systemd/user" && cp -p "$S/spark-console-api.service" "$BU" && cmp -s "$S/spark-console-api.service" "$BU"; }; }; then
+  systemctl --user stop spark-console-api 2>/dev/null || true
+  swap "$B" "$HOME/spark-console" || true
+  swap "$BS" "$HOME/spark-console-service" || true
+  [ ! -f "$BU" ] || mv -f "$BU" "$HOME/.config/systemd/user/spark-console-api.service" || true
+elif [ -n "$IN_PLACE" ]; then
+  # (no room for the copy beside, and the installer's own put-back: the files the failed install left are emptied
+  # first, which frees what the copy back needs; checked after)
+  rm -rf "$B" "$BS"; rm -f "$BU"
+  echo "  There isn't room for a checked copy beside the live one, so the saved install is put back in place and checked after." >&2
+  systemctl --user stop spark-console-api 2>/dev/null || true
+  in_place "$S/spark-console" "$HOME/spark-console" || true
+  in_place "$S/spark-console-service" "$HOME/spark-console-service" || true
+  [ ! -f "$S/spark-console-api.service" ] || { mkdir -p "$HOME/.config/systemd/user" && cp -p "$S/spark-console-api.service" "$HOME/.config/systemd/user/"; } || true
+else
   rm -rf "$B" "$BS"; rm -f "$BU"
   echo "  The saved install couldn't be copied back (is the disk full?), so nothing was changed. Make room, then run this again: bash $0" >&2
-  exit 1
+  exit 3
 fi
-systemctl --user stop spark-console-api 2>/dev/null || true
-swap "$B" "$HOME/spark-console"
-swap "$BS" "$HOME/spark-console-service"
+if ! back; then
+  echo "  The saved install couldn't be put back whole (is the disk full?). Make room, then run this again: bash $0" >&2
+  exit 3
+fi
 if [ -f "$S/spark-console-api.service" ]; then
-  mv -f "$BU" "$HOME/.config/systemd/user/spark-console-api.service"
   # (said plainly when the Node that unit starts the service with is no longer there, as code-server's goes, E 2.6)
   n=$(sed -n 's/^ExecStart=\([^ ]*\) .*/\1/p' "$S/spark-console-api.service" | head -n 1)
   [ -z "$n" ] || [ -x "$n" ] || echo "  The build put back starts with the Node.js at $n, which is no longer there, so it can't start. Install Node.js 22 from NodeSource, then install again." >&2

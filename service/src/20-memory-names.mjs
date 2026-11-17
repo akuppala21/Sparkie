@@ -97,8 +97,10 @@ const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset
 const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');
 const memoryLive = e => !memoryEnded(e);
 // The index: the live lines (none past its day: it is made again when the day turns), each with its names, and each
-// name's lines in the file's order; each word's lines too, for the picker's rare words (byWord). `sig` is memory.json as
-// the index last saw it (its inode, size and times), so a look needs no read while the file is unchanged.
+// name's lines in the file's order; each word's lines too, for the picker's rare words (byWord), of the owner's own lines
+// only, with their count (own): a word is rare among the owner's lines, so an agent's lines can't change which of the
+// owner's lines are picked (F2 C9). `sig` is memory.json as the index last saw it (its inode, size and times), so a look
+// needs no read while the file is unchanged.
 let memIndex = null;
 function memorySig() {
   try { const s = statSync(MEMORY_FILE, { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; } catch (e) { return e.code === 'ENOENT' ? 'none' : null; }
@@ -112,11 +114,14 @@ function memoryNamed(lines) {
 function memoryIndexOf(entries, sig) {
   const lines = memoryNamed(entries.filter(memoryLive)), byName = new Map(), byWord = new Map();
   const put = (map, k, e) => { const at = map.get(k); if (at) at.push(e); else map.set(k, [e]); };
+  let own = 0;
   for (const e of lines) {
     for (const n of new Set(e.about)) if (typeof n === 'string') put(byName, n, e);
+    if (!ownLine(e)) continue;
+    own++;
     for (const w of new Set(pickWords(e.text))) put(byWord, w, e);
   }
-  memIndex = { sig, lines, byName, byWord, day: memoryDay() };
+  memIndex = { sig, lines, byName, byWord, own, day: memoryDay() };
   return memIndex;
 }
 // The index as memory.json is now: read again only when the file changed (a read error throws, as memoryEntries does).
@@ -211,9 +216,10 @@ function memorySystem() {
 // The picks for the owner's words, from the lines the system prompt doesn't hold (design G 3.4): a line scores 100 for
 // each of its names in the words, 10 for each rare word it shares with them (6 at most) and 3, 2, 1 or 0 for a
 // correction, a preference, a fact, a lesson; it needs a name or two rare words to be picked at all; ties go to the
-// newest. A rare word is in under a tenth of the lines. Lines that share rare words are taken rarest word first, 400 at
-// most; a line carrying a name from the words is always taken. Picked in score order while they fit the picks' size, from
-// the best 64 (more never fit). Each list is walked newest first, so the cap and the best 64 keep the newest.
+// newest. A rare word is in under a tenth of the owner's lines (byWord counts theirs only). Lines that share rare words
+// are taken rarest word first, 400 at most; a line carrying a name from the words is always taken. Picked in score order
+// while they fit the picks' size, from the best 64 (more never fit). Each list is walked newest first, so the cap and the
+// best 64 keep the newest.
 const PICK_CAP = 400, PICK_TOP = 64, KIND_SCORE = { correction: 3, preference: 2, fact: 1, alias: 1, lesson: 0 };
 function memoryPicks(words, setup) {
   if (!memoryPicking()) return null;
@@ -226,7 +232,7 @@ function memoryPicks(words, setup) {
   // named line under the first of the words' names it carries)
   const names = memoryNamesIn(words, 20), named = new Set(names), rare = new Map();
   const nameCount = e => { let n = 0; for (const x of e.about || []) if (named.has(x)) n++; return n; };
-  const lists = [...new Set(pickWords(words))].map(w => idx.byWord.get(w) || []).filter(ls => ls.length && ls.length < idx.lines.length / 10)
+  const lists = [...new Set(pickWords(words))].map(w => idx.byWord.get(w) || []).filter(ls => ls.length && ls.length < idx.own / 10)
     .sort((a, b) => a.length - b.length);
   let taken = 0;
   for (const ls of lists) for (let i = ls.length - 1; i >= 0; i--) { const e = ls[i]; if (!shown.has(e) && ownLine(e) && (rare.has(e) || nameCount(e) || taken++ < PICK_CAP)) rare.set(e, (rare.get(e) || 0) + 1); }

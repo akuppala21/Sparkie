@@ -64,9 +64,10 @@ const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model |
 // bare names (bareName, 05-library.mjs): what happened, where, when, its kind. Never text from a Spark, a container, a
 // model or an agent: an operation's error (it quotes a container's log), a bring-back's reason, a notice's words (some
 // carry a name a device or a file gave). fleet_events and operation_log, outside reads, have the words.
-const recordName = v => bareName(String(v ?? '')) || 'a name not shown here';
+// (a word past 64 signs is said, not shown: nameShown, 05-library.mjs; `where` is the outside read that has it)
+const recordName = (v, where = 'fleet_events') => nameShown(String(v ?? ''), where) || 'a name not shown here';
 const recordEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model ? recordName(e.model) : ''} ${e.status}${e.error ? ' (operation_log has why)' : ''}`
-  : e.type === 'spark-powered-off' ? `${e.spark} was powered off by Spark Console on purpose${e.parked?.length ? `; parked ${e.parked.map(recordName).join(', ')}` : ''}`
+  : e.type === 'spark-powered-off' ? `${e.spark} was powered off by Spark Console on purpose${e.parked?.length ? `; parked ${e.parked.map(p => recordName(p)).join(', ')}` : ''}`
   : e.type === 'spark-powered-on' ? `${e.spark} was turned on again`
   : e.type.startsWith('spark-') ? `${e.spark} went ${e.type.slice(6)}${e.poweredOff ? ' (powered off by Spark Console on purpose)' : ''}${e.last ? ` (last reading ${e.last.ageSeconds} s before: ${readingWords(e.last)})` : ''}`
     : e.type === 'learned' ? `learned ${recordName(e.model)} from ${recordName(e.container)} on ${e.spark}${e.recipe ? ' (saved as a recipe)' : ''}`
@@ -348,14 +349,14 @@ function fleetNotes(viewer) {
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${recordName(w.name)} (${w.kind})`).join('; ')}`;
     }
     // (names bare: a served model's id is whatever its server answers, R26)
-    const served = w => (w.servedModels || []).map(bareName).filter(Boolean);
-    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${recordName(w.name)} (${w.kind}${served(w).length ? `, serves ${served(w).join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
+    const served = w => (w.servedModels || []).map(m => nameShown(m, 'running_models')).filter(Boolean);
+    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${recordName(w.name, 'running_models')} (${w.kind}${served(w).length ? `, serves ${served(w).join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
   }).filter(Boolean);
   const recentEv = events.slice(-10).reverse().map(e => `${e.at.slice(0, 16).replace('T', ' ')} UTC: ${recordEvent(e)}`);
   const off = WORKFLOWS.map(w => workflowStatus(w.id)).filter(st => st.state !== 'active').map(st => `${st.id}: ${st.state === 'untested' ? 'off (this version wasn’t tested)' : 'not validated yet (the owner’s first run validates it)'}`);
   // What should be running but isn't (held), from the last look: the owner can bring it back or forget it.
   // (its reason can quote a failure's first line: should_be_running, an outside read, says it)
-  const held = (heldLast || []).map(x => `${recordName(x.container)} on ${x.spark}: held (should_be_running says why)`);
+  const held = (heldLast || []).map(x => `${recordName(x.container, 'should_be_running')} on ${x.spark}: held (should_be_running says why)`);
   // Telegram, only while it has a problem (the owner fixes a token or a pairing; Sparkie says how).
   const telegram = tgProblem() ? [`Telegram: ${TG_WORDS[tg.state]}`] : [];
   // What is waiting on the owner (20-needs.mjs), first, only when there is something.

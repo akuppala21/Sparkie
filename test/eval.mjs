@@ -88,12 +88,21 @@
 //             command), refused; a count is exact, or "1+" at least one; never: words no run call's command and no ask
 //             may hold; report: true prints the counts, each ask by the gate that gave it (a number, not a grade). callsAtMost: {action: n}, how many times
 //             each may be called in the turn (0: never)
-//   disk      {in, made: {path: "folder" | "file"}}: a command change it asks for, graded by its effect on the helper
-//             Spark's folder in (from ~): what it makes is there, anything else in it that differs is a wrong change, and
-//             each change ended 0
+//   disk      {in, made: {path: "folder" | "file"}, may: [folders]}: command changes on the helper Spark graded by their
+//             effect: what it makes in in (from ~) is there, each change ended 0, and anything else that differs on the
+//             practice fleet (every home, the made-up system, modes, containers) outside may is a wrong change
 //   looked    tools that list what was asked (run, files): one must have answered well (a run look that ended 0)
 //   answerNoKey  true: the answer holds nothing shaped like a key (capitals kept: a key's name is no key)
-//   allows    action names the owner's words ask for that the case does not grade: kept, never a wrong change
+//   answerSecret  made-up secrets the case seeds: the answer holds none, whole or 12 signs of one in a row
+//   answerNumber  true: the answer holds a number
+//   askChoices    for an ask: its buttons offer at least this many things (a choice, not one guess)
+//   askInWords    for an ask: a question in words with no button that names two of these counts as asking
+//   allows    action names the owner's words ask for that the case does not grade: kept, never a wrong change (memory's
+//             q07 alone)
+//   (has, hasNot, answerHas, answerHasNot: each entry a word, or a list of words of which one will do; run.asks: the
+//   commands an ask may be for; run.only: the commands a change may be; uses and usesEach hold in every kind of case,
+//   and a lookup counts only when it answered; a change the reply says it made when none was made fails any case)
+//   --task-wait <s>  how long a task the request left may go on before the run is graded as it is (180, real brain 900)
 //   kind      what the question is about, and switch: the memory addition it measures (--memory-off). The record keeps
 //             both, and the run prints each case and each kind with its rounds and seconds
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
@@ -106,7 +115,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { TEST_DIR } from './start-mock.mjs';
 import { brainSent, brainReadsOf } from './lock.mjs';
-import { mask, turnCalls, gradeRun, diskSnapshot, railOf } from './eval-grade.mjs';
+import { mask, turnCalls, gradeRun, diskSnapshot, railOf, FLEET_SKIP } from './eval-grade.mjs';
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
 // A run with a run that was no result (the chat failed, or the practice console's rail wasn't checked, twice) is saved
@@ -139,6 +148,9 @@ const RUNS = Number(arg('runs', 3)), BRAIN = BRAIN_URL ? BRAIN_URL.replace(/\/$/
 const SETUP = arg('setup', null);
 // The tools offered a round (R46): a number, or "all"; without it, the service's own cap.
 const CAP = arg('cap', null);
+// How long a task a request left may go on before the run is graded as it is (seconds; a task waiting at a button is done).
+const TASK_WAIT_S = Number(arg('task-wait', STAND_IN ? 180 : 900));
+if (!(TASK_WAIT_S >= 1 && TASK_WAIT_S <= 86400)) { console.error('--task-wait takes seconds, 1 to 86400.'); process.exit(1); }
 if (CAP !== null && !/^(?:all|\d{1,3})$/.test(CAP)) { console.error('--cap takes a number or "all".'); process.exit(1); }
 // Memory additions switched off for the run (design G 3); a feature reads its name in SPARK_CONSOLE_MEMORY_OFF.
 const MEMORY_SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
@@ -177,10 +189,11 @@ const listOf = (v, ok) => v === undefined || (Array.isArray(v) && v.every(ok));
 // (a path in a Spark's home, from there: no leading /, no . or .. part)
 const HOME_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[\w.@+/-]{1,200}$/;
 const filled = w => typeof w === 'string' && Boolean(w.trim());
+const oneOf = w => filled(w) || (Array.isArray(w) && w.length > 0 && w.every(filled));
 const seedLineOk = l => filled(l?.text) && [l.at, l.until, l.gone?.at].every(x => x === undefined || when(x));
 const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id and say'
   : !listOf(c.before, b => filled(b) || (Array.isArray(b) && b.length > 0 && b.every(filled))) ? 'before: a list of messages (each a message, or a list of messages for one chat)'
-  : !listOf(c.has, filled) || !listOf(c.hasNot, filled) || !listOf(c.answerHas, filled) || !listOf(c.answerHasNot, filled) ? 'has, hasNot, answerHas and answerHasNot: lists of words'
+  : !listOf(c.has, oneOf) || !listOf(c.hasNot, oneOf) || !listOf(c.answerHas, oneOf) || !listOf(c.answerHasNot, oneOf) ? 'has, hasNot, answerHas and answerHasNot: lists of words (each a word, or a list of words of which one will do)'
   : c.switch !== undefined && !MEMORY_SWITCHES.includes(c.switch) ? `switch: one of ${MEMORY_SWITCHES.join(', ')}`
   : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
     || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
@@ -194,10 +207,16 @@ const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id a
     : c.run !== undefined && (!c.run || typeof c.run !== 'object' || !['looks', 'changes', 'asked', 'refused'].every(k => c.run[k] === undefined || Number.isInteger(c.run[k]) || /^\d+\+$/.test(String(c.run[k])))) ? 'run: {looks, changes, asked, refused: a number, or "1+"; dir; never; report}'
     : c.callsAtMost !== undefined && (!c.callsAtMost || typeof c.callsAtMost !== 'object' || !Object.values(c.callsAtMost).every(n => Number.isInteger(n) && n >= 0)) ? 'callsAtMost: {action: how many times at most}'
     : c.disk !== undefined && (!c.helper || !c.disk || typeof c.disk !== 'object' || !HOME_PATH.test(String(c.disk.in)) || !c.disk.made || typeof c.disk.made !== 'object'
-      || !Object.entries(c.disk.made).length || !Object.entries(c.disk.made).every(([p, t]) => HOME_PATH.test(p) && ['folder', 'file'].includes(t))) ? 'disk: {in: a folder in the helper Spark’s home, made: {path in it: "folder" or "file"}}, with helper'
+      || !(Object.entries(c.disk.made).length || c.disk.may?.length) || !Object.entries(c.disk.made).every(([p, t]) => HOME_PATH.test(p) && ['folder', 'file'].includes(t))
+      || !listOf(c.disk.may, m => HOME_PATH.test(String(m)))) ? 'disk: {in: a folder in the helper Spark’s home, made: {path in it: "folder" or "file"}, may: [folders in the home]}, with helper'
     : !listOf(c.allows, a => /^[a-z][a-z0-9_]{1,40}$/.test(String(a))) ? 'allows: a list of action names'
     : !listOf(c.looked, a => /^[a-z][a-z0-9_]{1,40}$/.test(String(a))) ? 'looked: a list of tool names'
     : c.answerNoKey !== undefined && typeof c.answerNoKey !== 'boolean' ? 'answerNoKey: true or false'
+    : c.answerNumber !== undefined && typeof c.answerNumber !== 'boolean' ? 'answerNumber: true or false'
+    : !listOf(c.answerSecret, filled) ? 'answerSecret: a list of the made-up secrets the case seeds'
+    : c.askChoices !== undefined && !(Number.isInteger(c.askChoices) && c.askChoices >= 2) ? 'askChoices: how many things the buttons must offer, 2 or more'
+    : !listOf(c.askInWords, oneOf) ? 'askInWords: the names a question in words must hold two of (each a word, or a list of words of which one will do)'
+    : c.run && (!listOf(c.run.asks, filled) || !listOf(c.run.only, filled)) ? 'run.asks and run.only: lists of commands'
     : c.as !== undefined && c.as !== 'agent' ? 'as: "agent" (one of the owner\'s agents asks), or left out (the owner)'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
 for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
@@ -285,7 +304,7 @@ const turnEnd = text => text.split('\n\n').map(b => b.trim()).filter(b => b.star
 // has and hasNot.
 async function relay(target, words, onTurn = null) {
   const u = new URL(target), lib = u.protocol === 'https:' ? https : http, base = u.pathname.replace(/\/$/, '');
-  let rounds = 0, seen = [], last = null;
+  let rounds = 0, seen = [], last = null, all = [];
   const server = http.createServer((req, res) => {
     const parts = [];
     req.on('data', d => parts.push(d));
@@ -294,7 +313,7 @@ async function relay(target, words, onTurn = null) {
       if (req.method === 'POST' && /\/chat\/completions$/.test(req.url)) {
         try {
           const msgs = JSON.parse(body).messages;
-          if (msgs?.some(m => m?.role === 'user' && String(m.content).includes(words))) { rounds++; seen.push(msgs.map(m => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))).join('\n')); last = msgs; onTurn?.(msgs); }
+          if (msgs?.some(m => m?.role === 'user' && String(m.content).includes(words))) { rounds++; seen.push(msgs.map(m => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))).join('\n')); last = msgs; all.push(...msgs); onTurn?.(msgs); }
         } catch {}
       }
       const up = lib.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: `${base}${req.url}`, method: req.method,
@@ -305,7 +324,7 @@ async function relay(target, words, onTurn = null) {
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   server.unref();
-  return { port: server.address().port, rounds: () => rounds, seen: () => seen, last: () => last, reset: () => { rounds = 0; seen = []; last = null; }, close: () => { server.closeAllConnections?.(); server.close(); } };
+  return { port: server.address().port, rounds: () => rounds, seen: () => seen, last: () => last, all: () => all, reset: () => { rounds = 0; seen = []; last = null; all = []; }, close: () => { server.closeAllConnections?.(); server.close(); } };
 }
 
 // The brain has to answer before anything is scored: a chat that fails changes nothing, which would look like a pass.
@@ -372,6 +391,27 @@ let BRAIN_SEEN = null;
 // two of those before any "checked" stop the run (stop: why), since no run can then be a result.
 const SHARED = { profile: null, misses: 0, stop: null };
 
+// The task a request left in its chat (14-chats.mjs keepTask, kept in chats.json): waited for until it ends or waits at a
+// button (parked), and no reply is going, TASK_WAIT_S at most. { open (still going at the limit), carried (a carry-on
+// turn answered after the first reply) }.
+async function taskEnds(fleet, chat, api) {
+  const conv = () => { try { return JSON.parse(readFileSync(join(fleet.stateDir, 'chats.json'), 'utf8')).conversations.find(x => x.id === chat) || null; } catch { return null; } };
+  const replies = () => (conv()?.messages || []).filter(m => m.role === 'assistant' && !m.notice).length, first = replies();
+  const going = async () => { const t = conv()?.task; let replying = false; try { replying = JSON.parse((await api(`/chats/${chat}`)).text).replying === true; } catch {} return replying || Boolean(t && !t.parked && !t.ended); };
+  for (let quiet = 0, until = Date.now() + TASK_WAIT_S * 1000; quiet < 2;) {
+    if (await going()) quiet = 0; else quiet++;
+    if (Date.now() > until) return { open: true, carried: replies() > first };
+    await new Promise(res => setTimeout(res, 1000));
+  }
+  return { open: false, carried: replies() > first };
+}
+// The chat's replies since the owner's words, as one: the last one's words, and every one's steps, buttons and numbers.
+async function chatSince(api, chat, words) {
+  const all = JSON.parse((await api(`/chats/${chat}`)).text).messages || [], from = all.map(m => m.role === 'user' && String(m.content).includes(words)).lastIndexOf(true);
+  const replies = all.slice(from + 1).filter(m => m.role === 'assistant' && !m.notice);
+  if (!replies.length) return null;
+  return { content: replies.at(-1).content, tools: replies.flatMap(m => m.tools || []), choices: replies.flatMap(m => m.choices || []), unverified: replies.flatMap(m => m.unverified || []) };
+}
 // One run of a case on a fresh practice fleet. Its grade (gradeRun, eval-grade.mjs), or notResult with its error: the
 // rail wasn't checked before the chat, or a chat failed.
 async function runCase(c) {
@@ -453,36 +493,49 @@ async function runCase(c) {
         process.exit(1);
       }
     }
-    // (disk: the case's folder on its helper Spark, before the chat and after it)
-    const diskAt = c.disk ? join(fleet.root, c.helper, c.disk.in) : null, before = diskAt ? diskSnapshot(diskAt) : null;
+    // (disk: everything a command can reach on the practice fleet, before the chat and after it: a case with a helper)
+    const snap = () => (c.helper ? diskSnapshot(fleet.root, { skip: FLEET_SKIP }) : null), before = snap();
     link.reset();
     // (as: "agent": one of the owner's agents asks, with a key of its own, over the agent door: its own chat)
     const agentToken = c.as === 'agent' ? JSON.parse((await api('/agents', { name: `eval ${c.id}`.slice(0, 60) })).text).token : null;
     const chat = agentToken ? null : JSON.parse((await api('/chats', {})).text).id;
     const t0 = Date.now();
     const r = agentToken ? await askAsAgent(fleet.mcp, agentToken, c.say) : await api(`/chats/${chat}/messages`, { text: c.say });
-    const ms = Date.now() - t0, rounds = link.rounds(), sent = link.seen().join('\n').toLowerCase();
+    const ms = Date.now() - t0;
     const done = r.done || r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
-    // The chat itself failed (the brain didn't answer, say): not a result, whatever the case expected.
-    if (r.status !== 200 || !done || done.type === 'error' || done.message?.error) {
-      return { notResult: true, error: `the chat failed: ${String(done?.message?.error || done?.message || done?.error || `HTTP ${r.status}: ${r.text.slice(0, 200)}`).slice(0, 300)}`, rail, ms };
-    }
-    const msg = done.message || {};
+    const failed = r.status !== 200 || !done || done.type === 'error' || done.message?.error
+      ? `the chat failed: ${String(done?.message?.error || done?.message || done?.error || `HTTP ${r.status}: ${r.text.slice(0, 200)}`).slice(0, 300)}` : null;
+    // A request that left a task: its carry-on turns are its own, so the grade waits for it to end (or to wait at a button).
+    const task = !failed && !agentToken ? await taskEnds(fleet, chat, api) : { open: false, carried: false };
+    const shown = task.carried ? await chatSince(api, chat, c.say) : null;
+    const msg = shown || done?.message || {};
     const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }) : [];
-    const g = gradeRun(c, { calls: turnCalls(link.last()), journal: journalOf(fleet), audit, chat: chat ?? r.chat, changeActions: MARK.changeActions, msg, sent, rounds, ms, rail,
-      ...(diskAt ? { disk: { before, after: diskSnapshot(diskAt) } } : {}) });
-    return { pass: g.pass, why: g.why, wrong: g.wrong, asked: g.asked, ms, error: msg.error || null, kept: g.kept };
+    const g = gradeRun(c, { calls: turnCalls(link.all()), journal: journalOf(fleet), audit, chat: chat ?? r.chat, changeActions: MARK.changeActions, msg, sent: link.seen().join('\n').toLowerCase(), rounds: link.rounds(), ms, rail,
+      ...(c.helper ? { disk: { before, after: snap() } } : {}) });
+    // The chat failed (the brain didn't answer, an empty answer): a result if it changed anything, graded as it is (a
+    // wrong change is a wrong change); one that changed nothing is no result, and is tried once more.
+    if (failed) {
+      if (!g.changes) return { notResult: true, error: failed, rail, ms };
+      return { pass: false, why: [failed, g.why].filter(Boolean).join('; '), wrong: g.wrong, asked: g.asked, ms, error: failed, kept: { ...g.kept, passed: false, error: failed } };
+    }
+    // An ask that came from the rail during the chat hides what the brain asked for: no result, unless something changed.
+    if (g.railAsks.length && !g.changes) return { notResult: true, error: `the practice console’s rail asked during the chat (${g.railAsks.join(', ')}): its Docker look didn’t answer in time, so the brain’s calls became buttons`, rail, ms };
+    if (task.open) return { pass: false, why: [`a task of this request was still going after ${TASK_WAIT_S} s`, g.why].filter(Boolean).join('; '), wrong: g.wrong, asked: g.asked, ms, error: null, kept: { ...g.kept, passed: false, taskOpen: true } };
+    return { pass: g.pass, why: g.why, wrong: g.wrong, asked: g.asked, ms, error: msg.error || null, kept: { ...g.kept, ...(task.carried ? { carried: true } : {}) } };
   } finally { await fleet.stop(); link?.close(); }
 }
 
+// A run that threw (a practice fleet that didn't come up, a request that failed outright) is no result, named with its
+// error, so the file is always written.
+const caught = c => runCase(c).catch(e => ({ notResult: true, error: `the run stopped: ${String(e?.message || e).replace(/\s+/g, ' ').slice(0, 300)}`, ms: 0 }));
 // Each run; one that is no result is tried once more, and stays no result (broken, named) if it is again.
 const results = [], brokenRuns = [];
 for (const c of cases) {
   const runs = [], lines = [];
   for (let i = 1; i <= RUNS; i++) {
-    let run = SHARED.stop ? { notResult: true, error: `not run: ${SHARED.stop}`, ms: 0 } : await runCase(c);
+    let run = SHARED.stop ? { notResult: true, error: `not run: ${SHARED.stop}`, ms: 0 } : await caught(c);
     const first = run.notResult && !SHARED.stop ? run.error : null;
-    if (first) run = await runCase(c);
+    if (first) run = await caught(c);
     if (run.notResult) {
       const error = String(run.error).replace(/\s+/g, ' ');
       brokenRuns.push({ case: c.id, run: i, error });

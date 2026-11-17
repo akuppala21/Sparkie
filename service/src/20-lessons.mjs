@@ -191,13 +191,16 @@ function passedOverAsk(viewer, ctx, args, m, placed, best) {
 // do. null for anything this code didn't write.
 const LESSON_APP_FAILS = { image: 'its image didn’t download', docker: 'Docker wouldn’t start it', 'stopped-at-once': 'it stopped right after starting' };
 const lessonDay = v => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) ? v.slice(0, 10) : null);
+// (its names as the record shows a name, R26, F2 C6: a word of 64 signs at most, a longer one said, nameShown; an
+// image's digest is hex and doesn't count)
 function lessonTried(l) {
-  const on = lSparks(l.tried?.on), where = on ? ` on ${on.split('+').map(id => sparkName(nodeById(id))).join(' + ')}` : '', image = lValue(l.tried?.image, L_IMAGE);
+  const on = lSparks(l.tried?.on), where = on ? ` on ${on.split('+').map(id => sparkName(nodeById(id))).join(' + ')}` : '', given = lValue(l.tried?.image, L_IMAGE);
+  const image = given && (bareName(given.replace(/@sha256:[a-f0-9]{64}$/, '')) ? given : '(a long image name: recall has it)');
   if (l.kind === 'app') {
-    const name = lValue(l.subject?.container, L_CONTAINER);
+    const name = nameShown(lValue(l.subject?.container, L_CONTAINER), 'recall');
     return name ? `the app ${name}${image ? ` (image ${image})` : ''}${where}` : null;
   }
-  const model = lValue(l.subject?.model, L_MODEL), engine = Object.hasOwn(ENGINES, String(l.subject?.engine)) ? l.subject.engine : null;
+  const model = nameShown(lValue(l.subject?.model, L_MODEL), 'recall'), engine = Object.hasOwn(ENGINES, String(l.subject?.engine)) ? l.subject.engine : null;
   const n = Number.isInteger(l.subject?.sparks) && l.subject.sparks > 0 && l.subject.sparks < 9 ? l.subject.sparks : null;
   const how = lValue(l.tried?.how, L_HOW), setup = how?.startsWith('setup:') ? `recipe setup ${how.slice(6)}` : how === 'proven' ? 'a run that worked here before' : how === 'own' ? 'its own setup (its spark.json, or the engine’s defaults)' : 'a setup';
   if (!model) return null;
