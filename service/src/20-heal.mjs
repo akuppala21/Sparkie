@@ -172,9 +172,10 @@ async function restartBrain() {
 // notice says so. Without it (stopped or removed by hand, or the owner's Stop) nothing starts.
 const BRAIN_DOWN = ['exited', 'created', 'dead', 'missing'];
 let brainSilentSince = 0, brainDownSince = 0;
-function keepBrain() {
+function keepBrain(status) {
   if (!brainLeftDown()) return;
   const x = { spark: MAIN.node, container: MAIN.container }, key = `keep:${keyOf(x)}`;
+  if (!status?.ready?.image) return healSkip(x, 'Sparkie’s pinned image is not available on this Spark. Use Start to download it; no recovery attempt was used.');
   if (healCount(key).length >= 2) {
     markBrainLeftDown(false);
     fleetEvent({ type: 'notice', text: `Spark Console tried twice in the last 6 hours to start Sparkie’s model again on ${sparkName(mainNode() || { id: MAIN.node })}, and it still isn’t running. It won’t try again by itself. To try again, type /restart sparkie in your chat.` });
@@ -196,7 +197,7 @@ async function watchBrain() {
   if (idle && BRAIN_DOWN.includes(m.state)) {
     brainSilentSince = 0;
     brainDownSince ||= Date.now();
-    if (Date.now() - brainDownSince >= HEAL_SETTLE_MS) { brainDownSince = 0; keepBrain(); }
+    if (Date.now() - brainDownSince >= HEAL_SETTLE_MS) { brainDownSince = 0; keepBrain(m); }
     return;
   }
   brainDownSince = 0;

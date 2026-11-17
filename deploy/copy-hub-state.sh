@@ -24,7 +24,7 @@
 # container or any model.
 set -euo pipefail
 . "$(dirname "$0")/hub.sh"
-[ $# = 2 ] || { echo "Usage: bash $0 <from> <to>   (Spark numbers, for example: bash $0 2 1)" >&2; exit 2; }
+[ $# = 2 ] || { [ $# = 3 ] && [ "$3" = --start-brain ]; } || { echo "Usage: bash $0 <from> <to> [--start-brain]   (Spark numbers, for example: bash $0 2 1)" >&2; exit 2; }
 stop() { echo "Stopped: $*. Nothing was changed." >&2; exit 2; }
 F=$(spark_of "$1" || true) T=$(spark_of "$2" || true)
 [ -n "$F" ] && [ -n "$T" ] || stop "$1 or $2 isn't a Spark in deploy/hub.env ($SPARKS)"
@@ -64,20 +64,21 @@ case "$MODE" in
     f=.local/state/spark-console/main.json
     if [ ! -f "$f" ]; then echo "  main.json: none to tell"; exit 0; fi
     node -e '
-const fs = require("fs"), [f, from, to, stamp] = process.argv.slice(1);
+const fs = require("fs"), [f, from, to, stamp, startBrain] = process.argv.slice(1);
 const text = fs.readFileSync(f, "utf8"), d = JSON.parse(text), said = [];
 const loopback = u => { try { const h = new URL(u).hostname.replace(/^\[|\]$/g, ""); return h === "localhost" || h === "::1" || /^127\./.test(h); } catch { return false; } };
 for (const [id, p] of Object.entries(d.presets || {})) if (p && typeof p === "object" && p.node === from) { p.node = to; said.push(`presets.${id}.node`); }
 for (const r of ["chat", "agents"]) { const x = d[r]; if (x && x.kind === "endpoint" && x.node === from && loopback(x.url)) { x.node = to; said.push(`${r}.node`); } }
+if (startBrain === "yes" && d.desiredRunning !== false) { d.desiredRunning = true; d.leftDown ||= new Date().toISOString(); said.push("desiredRunning (explicit migration start)"); }
 if (!said.length) { console.log("  main.json: nothing in it names the old hub; left as it was"); process.exit(0); }
 fs.writeFileSync(`${f}.before-rewrite-${stamp}`, text, { mode: 0o600 });
 fs.writeFileSync(`${f}.rewrite.tmp`, JSON.stringify(d), { mode: 0o600 });
 fs.renameSync(`${f}.rewrite.tmp`, f);
 for (const s of said) console.log(`  main.json: ${s}: ${from} -> ${to}`);
-console.log(`  (main.json as it arrived: ~/${f}.before-rewrite-${stamp})`);' "$f" "$2" "$3" "$4" ;;
+console.log(`  (main.json as it arrived: ~/${f}.before-rewrite-${stamp})`);' "$f" "$2" "$3" "$4" "${5:-no}" ;;
 esac
 EOF
-CTL="$(mktemp -d)"
+CTL="$(mktemp -d /tmp/sc-ssh.XXXXXX)"
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$CTL/%C" -o ControlPersist=120)
 trap '"${SSH[@]}" -O exit "$FROM" >/dev/null 2>&1 || true; "${SSH[@]}" -O exit "$TO" >/dev/null 2>&1 || true; rm -rf "$CTL"' EXIT
 on() { local h="$1"; shift; "${SSH[@]}" "$h" "bash -c $(printf %q "$REMOTE") copy-hub-state $*"; }
@@ -104,6 +105,7 @@ A=$(on "$FROM" sum </dev/null) B=$(on "$TO" sum </dev/null)
 [ -n "$A" ] && [ "$A" = "$B" ] \
   || { echo "The copy on $(says_of "$T") doesn't hold the same files and sizes as $(says_of "$F")'s. Run this again; what was there before is beside it, as *.before-$STAMP." >&2; exit 1; }
 echo "$(says_of "$T") holds the hub's files as $(says_of "$F") had them (sign-ins left out); the same names and sizes on both."
-on "$TO" hub "$F" "$T" "$STAMP" </dev/null \
+START_BRAIN=no; [ "${3:-}" != --start-brain ] || START_BRAIN=yes
+on "$TO" hub "$F" "$T" "$STAMP" "$START_BRAIN" </dev/null \
   || { echo "The copied main.json on $(says_of "$T") couldn't be told its new hub (above); everything else is copied. Run this again." >&2; exit 1; }
 echo "Done."

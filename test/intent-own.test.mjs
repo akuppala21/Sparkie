@@ -903,14 +903,14 @@ const SEVERAL_STARTS = [
   ['stop qwen on spark 3 and start gemma on spark 4', 'gemma', '?spark4 ?spark4 ?spark4'],
   ['stop qwen on spark 3 and start gpt-oss-20b on spark 4', 'gpt-oss-20b', '?spark4 ?spark4 ?spark4'],
   ['start gemma on spark 3, then restart qwen on spark 4', 'gemma', '?spark3 ?spark3 ?spark3'],
-  // (a place said before its order's word: a button; it shows Spark 3 today, the place after the start word)
-  ['on spark 4 start gemma and on spark 3 run qwen', 'gemma', '?spark3 ?spark3 ?spark3'],
-  ['on spark 4, start gemma, and on spark 3 run qwen', 'gemma', '?spark3 ?spark3 ?spark3'],
-  ['start gemma and on spark 3 run qwen, on spark 4 run wl-y', 'gemma', '?spark3 ?spark4 ?'],
+  // A place before its order is kept on that request's button; another clause cannot replace it.
+  ['on spark 4 start gemma and on spark 3 run qwen', 'gemma', '?spark4 ?spark4 ?spark4'],
+  ['on spark 4, start gemma, and on spark 3 run qwen', 'gemma', '?spark4 ?spark4 ?spark4'],
+  ['start gemma and on spark 3 run qwen, on spark 4 run wl-y', 'gemma', '? ? ?'],
   // (one order naming two Sparks, the model in two orders, one ruled out, a move)
   ['start gemma on spark 3 and spark 4', 'gemma', '?spark3 ?spark4 ?'],
   ['start gemma on spark 3, then start gemma on spark 4', 'gemma', '?spark3 ?spark4 ?'],
-  ['start gemma on spark 3 not spark 4, then run wl-y on spark 4', 'gemma', '?spark3 ?spark4 ?'],
+  ['start gemma on spark 3 not spark 4, then run wl-y on spark 4', 'gemma', '?spark3 ?spark3 ?spark3'],
   ['start gemma on spark 3 then move it to spark 4', 'gemma', '?spark3 ?spark4 ?'],
 ];
 
@@ -923,9 +923,28 @@ test('A-20, several orders in one message: each that brings something up takes t
     }
     assert.equal(got.join(' '), want, text);
   }
-  // A call across Sparks for one of them: a button, showing the call's Sparks.
+  // A mismatching multi-Spark call stays a button, corrected to this model's requested destination.
   const v = await check('start_model', { model: 'gpt-oss-20b', sparks: ['spark3', 'spark1'] }, 'start gpt-oss-20b on spark 3, then run wl-y on spark 4');
-  assert.deepEqual([v.clear, v.input.spark, v.input.sparks], [false, undefined, ['spark3', 'spark1']]);
+  assert.deepEqual([v.clear, v.input.spark, v.input.sparks], [false, 'spark3', undefined]);
+});
+
+test('A29: each start and its approval use only their own clause, including a malicious union and an omitted destination', async () => {
+  for (const [text, model, spark] of [
+    ['start gpt-oss-20b on spark 3, then run wl-y on spark 4', 'gpt-oss-20b', 'spark3'],
+    ['run wl-y on spark 4, then start gpt-oss-20b on spark 3', 'gpt-oss-20b', 'spark3'],
+    ['on spark 4 start gemma and on spark 3 run qwen', 'gemma', 'spark4'],
+    ['start gemma on spark 4 and keep qwen on spark 3 running', 'gemma', 'spark4'],
+    ['stop qwen on spark 3 and start gemma on spark 4', 'gemma', 'spark4'],
+  ]) {
+    const v = await check('start_model', { model, sparks: ['spark3', 'spark4'] }, text);
+    assert.deepEqual([v.clear, v.input.spark, v.input.sparks], [false, spark, undefined], text);
+  }
+  const repeated = await check('start_model', { model: 'gemma', sparks: ['spark3', 'spark4'] }, 'start gemma on spark 3, then start gemma on spark 4');
+  assert.deepEqual([repeated.clear, repeated.input.spark, repeated.input.sparks], [false, undefined, undefined]);
+  for (const text of ['start gemma, and on spark 3 run qwen', 'on spark 3 run qwen, then start gemma']) {
+    const v = await check('start_model', { model: 'gemma', spark: 'spark3' }, text);
+    assert.deepEqual([v.clear, v.input.spark, v.input.sparks], [false, undefined, undefined], text);
+  }
 });
 
 test('A-20, final read 2 (S3, T1): a stop runs at once only on a Spark this message names and its own words settle, or, with none named, where no other Spark has a container of the console\'s that shares a word with them', async () => {

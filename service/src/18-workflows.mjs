@@ -61,6 +61,12 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   receiptsBroughtBack,
   startedStill,
   receiptOf,
+  captureStartedReceipts,
+  savedRunReceipts,
+  savedRunsNow,
+  runJob,
+  desiredAfter,
+  stepOpEnd,
   RECEIPT_LOOK,
   fields,
   desired,
@@ -96,7 +102,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -112,7 +118,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
+    code: () => [captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -459,8 +465,9 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx), ...(ctx.compare ? { noStops: true, compareRun: true } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
+          savedRunKeep(j, { step: i + 1, pending: [], awaiting: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
             starting: st.action === 'start_model' && out?.outcome === 'started' && out.operation ? out.operation : null });
+          if (out?.operation && jobs.has(out.operation)) savedRunReceipts(jobs.get(out.operation));
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
@@ -469,7 +476,7 @@ action({
           // (each with its receipt: its Docker id, start time and list entry's since, so the clean-up stops only what this
           // run started, A-22)
           ran.push(...await startedReceipts(startedListed(startedBy(st.action, args, out, st.keep === true), listed)));
-          savedRunKeep(j, { started: ran, pending: [], starting: null });
+          savedRunKeep(j, { started: ran, pending: [], awaiting: [], starting: null });
           // (in a compare's run only the {model} step's model is handed on: the candidate, never a fixed helper's, D)
           if (!ctx.compare || placeholders(st.args).includes('model')) j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
@@ -601,6 +608,42 @@ function testModels(inv) {
     .sort((a, b) => (a.sizeBytes > 30e9) - (b.sizeBytes > 30e9) || workedHere.has(b.name) - workedHere.has(a.name) || inRecipes(b) - inRecipes(a)
       || failedHere.has(a.name) - failedHere.has(b.name) || a.sizeBytes - b.sizeBytes);
 }
+// Validation's put-back uses checked stops too. Outstanding restores stay on the operation and in its journal words;
+// this is a recovery record for the owner, not a promise of an automatic retry after a console restart.
+async function restoreValidation(job, viewer, ctx, where, container, before) {
+  const originals = before.filter(c => c !== container);
+  if (!originals.length) return;
+  const pending = originals.map(c => `${where}/${c}`);
+  job.stoppedHere = [...pending];
+  const unresolved = [];
+  let clear = false;
+  try {
+    const release = claimSparks([where], 'stopping the validation model before putting back earlier work');
+    try { clear = await stopChecked(nodeById(where), container) === 'stopped'; } finally { release(); }
+  } catch (e) { note(job, `Checking the validation model’s stop failed: ${e.message}`); }
+  if (!clear) job.ranHere = [...new Set([...(job.ranHere || []), `${where}/${container}`])];
+  for (const c of originals) {
+    try {
+      if (!clear) throw new Error(`${container} may still be running; its stop couldn’t be confirmed`);
+      const out = await runAction('restart_model', viewer, { spark: where, container: c }, { ...ctx, trusted: false, noStops: true });
+      if (out?.operation) {
+        const done = await waitJob(out.operation, 45 * 60000);
+        if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its restart didn’t finish').split('\n')[0]);
+      } else if (out?.outcome !== 'already') throw new Error(out?.note || out?.question || out?.outcome || 'its restart didn’t start');
+      job.stoppedHere = job.stoppedHere.filter(k => k !== `${where}/${c}`);
+      note(job, `Started ${c} again`);
+    } catch (e) {
+      const words = `${c} wasn’t started again on ${sparkName(nodeById(where))}: ${maskSecrets(String(e.message).split('\n')[0]).slice(0, 300)}`;
+      unresolved.push({ items: [`${where}/${c}`], words });
+      note(job, words);
+    }
+  }
+  if (unresolved.length) {
+    job.notBack = unresolved;
+    job.cleanUp = unresolved.map(x => `${x.words}.`).join(' ');
+    throw new Error(`Earlier work still needs restoration. ${job.cleanUp}`);
+  }
+}
 // One tap after an install (docs/contract.md 6.3): each workflow that isn't validated runs its real check with a small
 // model on a compute Spark (never the hub): start, stop, start again (restart), stop. Whatever was running there and had to
 // stop is started again at the end. It's the owner's validation run, so every step carries it.
@@ -642,22 +685,18 @@ async function validateChanged(viewer, job) {
   const need = id => (want.includes(id) ? id : null);
   const container = containerName(model.name);
   const before = inv.sparks.find(sp => sp.id === where).deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank).map(d => d.container);
-  const started = await run1('start_model', { model: model.name, spark: where }, want.includes('start_model') ? 'start_model' : null);
+  let failure = null;
   try {
+    await run1('start_model', { model: model.name, spark: where }, want.includes('start_model') ? 'start_model' : null);
     await run1('stop_model', { spark: where, container }, need('stop_model'));
     if (want.includes('restart_model')) {
       await run1('restart_model', { spark: where, container }, 'restart_model');
       await run1('stop_model', { spark: where, container }, null);
     }
-  } finally {
-    // Put back what was running there before.
-    for (const c of before.filter(c => c !== container)) {
-      const out = await runAction('restart_model', viewer, { spark: where, container: c }, { ...ctx, trusted: false }).catch(e => ({ note: e.message }));
-      if (out?.operation) await waitJob(out.operation, 45 * 60000);
-      note(job, out?.operation ? `Started ${c} again` : `Couldn’t start ${c} again: ${out?.note || 'unknown'}`);
-    }
-  }
-  void started;
+  } catch (e) { failure = e; }
+  try { await restoreValidation(job, viewer, ctx, where, container, before); }
+  catch (e) { if (!failure) failure = e; else failure = Object.assign(new Error(`${failure.message}\n${e.message}`), failure.cancelled ? { cancelled: true } : {}); }
+  if (failure) throw failure;
   if (want.includes('start_model_across')) note(job, '“Start one model across two Sparks” still needs its first run: when Spark 3 and Spark 4 are both free, ask Sparkie to start one model across them.');
 }
 // The last good build (the installer's snapshot before this one), to roll back to with one click.

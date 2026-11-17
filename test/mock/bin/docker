@@ -165,7 +165,19 @@ case "$cmd" in
         '{{.ID}}'*) printf '%s\t%s\tc%s\t%s\n' "$name" "$name" "$ours" "$status" ;;
       esac
     done < "$M/containers" ;;
-  image) shift; grep -qxF "$1" "$M/images" ;;
+  image)
+    shift
+    fmt=
+    if [ "$1" = --format ] || [ "$1" = -f ]; then fmt=$2; shift 2; fi
+    grep -qxF "$1" "$M/images" || exit 1
+    if [ -n "$fmt" ]; then
+      # Each local image has an immutable configuration ID. A digest reference is its ID in this fixture unless
+      # a test supplies separate ID and repository digest metadata (the two Docker image store layouts).
+      key=$(printf '%s' "$1" | sha256sum | cut -d' ' -f1)
+      if [ -f "$M/image-metadata-$key" ]; then cat "$M/image-metadata-$key"
+      else case "$1" in sha256:*) printf '%s\n' "$1" ;; *@sha256:*) printf '%s %s\n' "${1##*@}" "$1" ;; *) printf 'sha256:%s\n' "$key" ;; esac; fi
+    fi ;;
+
   # docker images --format '{{.Repository}} {{.ID}}': each image this Spark has, by repository and a short id.
   images) while IFS= read -r l; do [ -n "$l" ] || continue; r=${l%%@*}; case "$r" in */*:*) r=${r%:*} ;; esac; printf '%s %s\n' "$r" "$(printf '%s' "$l" | cksum | cut -c1-12)"; done < "$M/images" 2>/dev/null ;;
   stop)

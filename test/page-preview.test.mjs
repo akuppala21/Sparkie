@@ -154,6 +154,20 @@ describe('the page preview', { concurrency: 1 }, () => {
     assert.deepEqual([who.json.access, who.json.via], ['owner', 'tailnet']);
   });
 
+  test('bootstrap names the configured hub and compute Sparks; a stale saved public address does not replace its origin', async () => {
+    const config = JSON.parse(readFileSync(join(P.owner.dir, 'config.json'), 'utf8'));
+    const hub = config.nodes.find(n => n.host === 'local').id;
+    const boot = (await json(P.owner.port, '/console/api/bootstrap')).json;
+    const connections = (await json(P.owner.port, '/console/api/connections')).json;
+    assert.equal(boot.hubId, hub);
+    assert.ok(!boot.computeIds.includes(hub));
+    assert.ok(boot.computeIds.length > 0);
+    for (const id of boot.computeIds) assert.ok(config.nodes.some(n => n.id === id));
+    const saved = JSON.parse(readFileSync(join(P.owner.dir, 'state', 'access.json'), 'utf8'));
+    assert.notEqual(`https://${saved.publicHost}/`, `${config.origin}/`, 'fixture has a saved address from before migration');
+    assert.equal(connections.portalUrl, `${config.origin.replace(/\/$/, '')}/`);
+  });
+
   test('with --as public the same read answers as the public face: not signed in, from the internet; the public fleet answers', async () => {
     const r = await json(P.public.port, '/console/api/bootstrap', { headers: { 'tailscale-user-login': OWNER } });
     assert.equal(r.status, 401, r.text);

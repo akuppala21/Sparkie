@@ -13,7 +13,7 @@ const HISTORY_POINTS = 90;
 const LIVE_POINTS = 300;
 const HISTORY_MAX_AGE_MS = 45 * 60 * 1000;
 // How a job ends. ('started' and 'running' are under way; 'interrupted' means a restart of Spark Console cut it off.)
-const TERMINAL = new Set(['completed', 'partial', 'failed', 'interrupted']);
+const TERMINAL = new Set(['completed', 'partial', 'failed', 'interrupted', 'cancelled']);
 const underWay = j => !TERMINAL.has(j.status);
 const STORE = { theme: 'spark-console:theme', history: 'spark-console:history' };
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -290,12 +290,13 @@ function containerTitle(name) {
   if (ext?.models?.length) return ext.models.map(id => (libFor(id) ? modelTitle(libFor(id)) : String(id).split('/').pop())).join(', ');
   return /^sc-/.test(c) ? c.replace(/^sc-/, '').replace(/-part2$/, '').replace('--', '/') : c;
 }
-// What's running on a Spark, by name (a model across two Sparks shows once).
+// Container names for one Spark's card. The fleet counter counts the actual Docker entries separately.
 const workloads = n => [...new Set((n?.runningContainers || []).map(containerTitle))];
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 function condition(n) {
   if (!n || !state.status) return 'unknown';
+  if (n.asleep === true && n.poweredOff && !n.poweredOff.problem && !isStale()) return 'asleep';
   if (!n.reachable || n.state !== 'online') return 'offline';
   if (isStale()) return 'stale';
   if (n.issues?.length) return 'degraded';
@@ -309,6 +310,7 @@ const COND = {
   idle: ['Idle', 'good'],
   degraded: ['Needs attention', 'warn'],
   stale: ['Out of date', 'warn'],
+  asleep: ['Off to save power', ''],
   offline: ['Offline', 'bad'],
   unknown: ['Checking', ''],
 };
@@ -318,12 +320,7 @@ const led = cond => h('span', { class: 'led', dataset: { cond } });
 
 const conn = id => state.connections?.nodes?.find(c => c.id === id);
 function portalHostId() {
-  try {
-    const host = new URL(state.connections.portalUrl).hostname.split('.')[0];
-    return state.connections.nodes.find(c => c.alias === host)?.id || null;
-  } catch {
-    return null;
-  }
+  return state.boot?.hubId || null;
 }
 // The hub's name (the Spark that runs Spark Console and the brain), as the page has it.
 const hubLabel = () => (portalHostId() ? nodeName(portalHostId()) : 'the Spark that runs Spark Console');
@@ -411,7 +408,12 @@ async function loadJobs() {
 // Activity: the jobs followed on this page (freshest) merged with the recent ones the service keeps, newest first.
 function activityJobs() {
   const byId = new Map((state.recentJobs || []).map(j => [j.id, j]));
-  for (const j of state.svcJobs.values()) byId.set(j.id, { ...byId.get(j.id), ...j, console: true, nodeIds: j.node ? [j.node] : j.nodes || [] });
+  for (const local of state.svcJobs.values()) {
+    const fresh = byId.get(local.id);
+    // A server-confirmed end always wins over the last observation on this device.
+    const j = fresh && (!underWay(fresh) || local.connection) ? fresh : local;
+    byId.set(j.id, { ...local, ...j, connection: j === fresh ? null : local.connection, console: true, nodeIds: j.node ? [j.node] : j.nodes || [] });
+  }
   return [...byId.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 // A library model by its Hugging Face name.
@@ -497,6 +499,7 @@ function bar(fraction) {
 /* ───────── live bindings ───────── */
 // live(fn) runs fn now and again whenever fresh data arrives. View bindings reset on every route change.
 let viewLive = [];
+let viewCleanup = [];
 const shellLive = [];
 function live(fn, list = viewLive) {
   list.push(fn);
@@ -832,7 +835,7 @@ async function resumeJobs() {
 // Operations Sparkie just started from a chat: follow them like your own, so their progress shows here too.
 async function followNewJobs() {
   await loadJobs();
-  for (const j of state.recentJobs || []) if (!TERMINAL.has(j.status) && !state.svcJobs.has(j.id)) followServiceJob(j);
+  for (const j of state.recentJobs || []) if (!TERMINAL.has(j.status) && !state.following.has(j.id)) followServiceJob(j);
 }
 
 /* ───────── routing ───────── */
@@ -859,6 +862,7 @@ const MOVED = {
 
 const PAGES = {};
 function render() {
+  for (const clean of viewCleanup.splice(0)) clean();
   closeMenus();
   viewLive = [];
   viewFast = [];
@@ -1226,7 +1230,7 @@ function roomFor(ids) {
   return free.length === ids.length ? Math.floor((Math.min(...free) * GB_PER_GIB * ids.length) / 1.15) : null;
 }
 
-// A small map of the Sparks and the direct cables that work between them.
+// A small map of observed links. Shared addresses alone leave a link unverified.
 function linkMap() {
   const ids = nodes().map(n => n.id), size = 112, r = 11;
   const spots = [[0.22, 0.22], [0.78, 0.22], [0.78, 0.78], [0.22, 0.78]];
@@ -1236,26 +1240,28 @@ function linkMap() {
   for (const p of linkedPairs()) {
     const [x1, y1] = at(p.a), [x2, y2] = at(p.b);
     map.append(svg('line', { x1, y1, x2, y2, class: `link ${p.tested ? 'ok' : 'untested'}` }));
-    lines.push(`${nodeName(p.a)}–${nodeName(p.b)}`);
+    lines.push(`${nodeName(p.a)}–${nodeName(p.b)} (${p.tested ? 'tested' : 'unverified'})`);
   }
   for (const id of ids) {
     const [cx, cy] = at(id), t = svg('text', { x: cx, y: cy + 4 });
     t.textContent = String(id).replace(/^spark/, '');
     map.append(svg('circle', { cx, cy, r, class: `spark-dot ${isUp(node(id)) ? 'on' : 'off'}` }), t);
   }
-  map.setAttribute('aria-label', lines.length ? `Direct cables that work: ${lines.join(', ')}` : 'No working direct cables');
+  map.setAttribute('aria-label', lines.length ? `Direct links: ${lines.join(', ')}` : 'No direct links known');
   return map;
 }
 
-// One line per pair of linked Sparks: how big a model they could share, whether either is busy, and Start a model.
+// A link can include the protected hub; model capacity needs a tested link between compute Sparks.
 function pairRow(p) {
-  const room = roomFor([p.a, p.b]), busy = [p.a, p.b].filter(id => workloads(node(id)).length);
+  const eligible = [p.a, p.b].every(id => state.boot?.computeIds?.includes(id));
+  const room = eligible && p.tested ? roomFor([p.a, p.b]) : null, busy = [p.a, p.b].filter(id => workloads(node(id)).length);
   return h('div', { class: 'row' },
     h('div', { class: 'row-main' }, h('span', { class: 'row-icon ok' }, icon('link')),
       h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, `${nodeName(p.a)} + ${nodeName(p.b)}`),
         h('div', { class: 'row-sub' }, [room ? `fits a model up to about ${room} GB` : null,
           busy.length === 2 ? 'both busy now' : busy.length ? `${nodeName(busy[0])} busy now` : 'both free',
-          p.tested ? null : 'cable not tested yet'].filter(Boolean).join(' · ')))),
+          !eligible ? 'reserved for Sparkie and Spark Console' : null,
+          p.tested ? null : 'unverified link; cable not tested yet'].filter(Boolean).join(' · ')))),
     null);
 }
 
@@ -1295,7 +1301,7 @@ PAGES.fleet = function fleetPage(view) {
     const pairs = linkedPairs();
     if (!pairs.length) { redraw(clustersBox); return; }
     redraw(clustersBox, panel('Linked Sparks', h('div', { class: 'cluster-strip' }, linkMap(), h('div', { class: 'rows' }, pairs.map(p => pairRow(p)))),
-      { tight: true, sub: 'Two Sparks joined by a direct cable can run one model together', cls: 'cluster-panel' }));
+      { tight: true, sub: 'Tested links between compute Sparks can serve one model together', cls: 'cluster-panel' }));
   });
   if (!state.fabric.loading && (!state.fabric.sparks || Date.now() - (state.fabric.at || 0) > 300000)) loadFabric();
   // What each Spark runs is named after its model, which comes from the library.
@@ -1308,15 +1314,15 @@ PAGES.fleet = function fleetPage(view) {
     put(stats, h('div', { class: 'stat' }, h('div', { class: 'stat-label' }, icon(ic), label), h('div', { class: 'stat-value' }, value, unit), foot));
     return { value, unit, foot };
   };
-  const sOnline = stat('Sparks online', 'server'), sWork = stat('Models running', 'box'), sMem = stat('Memory', 'layers');
+  const sOnline = stat('Sparks online', 'server'), sWork = stat('Containers running', 'box'), sMem = stat('Memory', 'layers');
   const sPower = stat('GPU power', 'zap');
   fast(() => {
-    const list = nodes(), up = list.filter(isUp), busySparks = up.filter(n => workloads(n).length);
-    const running = busySparks.reduce((t, n) => t + workloads(n).length, 0);
+    const list = nodes(), up = list.filter(isUp), asleep = list.filter(n => condition(n) === 'asleep'), busySparks = up.filter(n => workloads(n).length);
+    const running = busySparks.reduce((t, n) => t + (n.runningContainers || []).length, 0);
     const total = sum(up, 'memoryTotalGiB'), used = total - sum(up, 'memoryFreeGiB');
     sOnline.value.textContent = state.status ? up.length : '—';
     sOnline.unit.textContent = `/ ${list.length}`;
-    sOnline.foot.textContent = !state.status ? 'Checking…' : list.length - up.length ? `${list.length - up.length} offline` : 'All online';
+    sOnline.foot.textContent = !state.status ? 'Checking…' : [asleep.length ? `${asleep.length} off to save power` : null, list.length - up.length - asleep.length ? `${list.length - up.length - asleep.length} offline` : null].filter(Boolean).join(' · ') || 'All online';
     sWork.value.textContent = state.status ? running : '—';
     sWork.foot.textContent = !state.status ? 'Checking…' : busySparks.length ? `on ${plural(busySparks.length, 'Spark')}` : 'Nothing running';
     glide(sMem.value, total ? used * GB_PER_GIB : null, used * GB_PER_GIB >= 100 ? 0 : 1);
@@ -1390,9 +1396,9 @@ function sparkCard(id) {
         pillEl);
       if (!up) {
         set(body, head, h('div', { class: 'sc-offline' },
-          icon(cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
-          cond === 'offline' ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
-          h('span', {}, cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
+          icon(cond === 'asleep' ? 'moon' : cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
+          ['offline', 'asleep'].includes(cond) ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
+          h('span', {}, cond === 'asleep' ? 'Powered off on purpose. Ask Sparkie when you need it.' : cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
         refs = { pill: pillEl };
       } else {
         const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric('Power', 'W'), [temp, tempBox] = metric('Temp', '°F');
@@ -1471,10 +1477,10 @@ function jobRow(j, { onOpen, open = false } = {}) {
       h('div', { class: 'row-text' },
         h('div', { class: 'row-title' }, jobLabel(j)),
         // Who started it, when it wasn't you: Sparkie, one of your agents or Auto-restart.
-        (sub => sub ? h('div', { class: 'row-sub' }, sub) : null)([whoKey(j) === 'you' ? null : whoName(whoKey(j)), where, first || (done ? (num(j.result?.found) ? `${plural(j.result.found, 'setup')} found` : null) : j.step || j.message)].filter(Boolean).join(' · ')))];
+        (sub => sub ? h('div', { class: 'row-sub' }, sub) : null)([whoKey(j) === 'you' ? null : whoName(whoKey(j)), where, j.connection || first || (done ? (num(j.result?.found) ? `${plural(j.result.found, 'setup')} found` : null) : j.step || j.message)].filter(Boolean).join(' · ')))];
   const side = h('div', { class: 'row-side' },
       h('span', { class: 'muted num hide-sm' }, fmt.when(j.createdAt)),
-      j.status === 'interrupted' ? pill('Cut off', 'warn') : pill(failed ? 'Failed' : done ? (j.status === 'partial' ? 'Partial' : 'Done') : 'Running', failed ? 'bad' : done ? 'good' : 'info'));
+      j.status === 'interrupted' ? pill('Cut off', 'warn') : pill(j.connection ? 'Checking' : failed ? 'Failed' : done ? (j.status === 'cancelled' ? 'Cancelled' : j.status === 'partial' ? 'Partial' : 'Done') : 'Running', failed ? 'bad' : done ? 'good' : 'info'));
   if (onOpen) {
     const log = (j.log || []).join('\n');
     // What was asked for, in the words used (Auto-restart says what it saw instead).
@@ -1690,9 +1696,13 @@ function overviewTab(box, n0) {
       wrap, h('div', { class: 'tile-foot' }, span, h('span', {}, opts.range || '')));
   };
   const offline = h('div');
-  live(() => redraw(offline, ...(!state.status || isUp(node(id)) ? [] : [h('div', { class: 'banner bad' }, icon('wifiOff'),
-    h('div', { class: 'banner-text' }, h('strong', {}, `${n0.name} is offline`), h('p', {}, 'Live metrics resume when it’s back on Tailscale. Run checks to see which part is failing.')),
-    owner() ? h('a', { class: 'btn sm', href: `#/spark/${id}/diagnostics?run=1` }, icon('clipboard'), 'Run checks') : null)])));
+  live(() => {
+    const n = node(id), asleep = condition(n) === 'asleep';
+    redraw(offline, ...(!state.status || isUp(n) ? [] : [h('div', { class: asleep ? 'banner' : 'banner bad' }, icon(asleep ? 'moon' : 'wifiOff'),
+      h('div', { class: 'banner-text' }, h('strong', {}, asleep ? `${n0.name} is off to save power` : `${n0.name} is offline`),
+        h('p', {}, asleep ? 'Powered off on purpose. Ask Sparkie when you need it.' : 'Live metrics resume when it’s back on Tailscale. Run checks to see which part is failing.')),
+      !asleep && owner() ? h('a', { class: 'btn sm', href: `#/spark/${id}/diagnostics?run=1` }, icon('clipboard'), 'Run checks') : null)]));
+  });
 
   // Going offline or coming back switches the layout (metrics, or the banner and how to connect).
   const upAtStart = !state.status || isUp(node(id));
@@ -2362,34 +2372,46 @@ const SVC_LABEL = {
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 
 async function followServiceJob(job) {
-  const key = `svc-${job.id}`, label = SVC_LABEL[job.type]?.(job) || 'Working';
-  let j = job;
-  const started = Date.now();
-  state.svcJobs.set(j.id, j);
-  while (underWay(j)) {
-    const pct = jobPercent(j);
-    // After a few seconds, progress carries on in Activity (the badge counts it) instead of a toast on every page.
-    if (Date.now() - started > 12000 && !dismissedToasts.has(key)) { dismissedToasts.add(key); $(`#toasts [data-id="${key}"]`)?.remove(); }
-    if (!dismissedToasts.has(key)) toast(label, { kind: 'busy', sub: [`${j.step}${pct != null ? ` · ${pct}%` : ''}`, h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity(j.id) }, 'Details')], timeout: 0, id: key });
-    runLive();
-    await sleep(1500);
-    try {
-      j = await capi(`jobs/${job.id}`);
-      state.svcJobs.set(j.id, j);
-    } catch (e) {
-      if (e.status === 404 || e.missing) { j = { ...j, status: 'failed', error: e.message }; break; }
+  if (state.following.has(job.id)) return state.svcJobs.get(job.id);
+  state.following.set(job.id, true);
+  try {
+    const key = `svc-${job.id}`, label = SVC_LABEL[job.type]?.(job) || 'Working';
+    let j = job;
+    const started = Date.now();
+    let missed = 0;
+    state.svcJobs.set(j.id, j);
+    while (underWay(j)) {
+      const pct = jobPercent(j);
+      // After a few seconds, progress carries on in Activity (the badge counts it) instead of a toast on every page.
+      if (Date.now() - started > 12000 && !dismissedToasts.has(key)) { dismissedToasts.add(key); $(`#toasts [data-id="${key}"]`)?.remove(); }
+      if (!dismissedToasts.has(key)) toast(label, { kind: 'busy', sub: [`${j.step}${pct != null ? ` · ${pct}%` : ''}`, h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity(j.id) }, 'Details')], timeout: 0, id: key });
+      runLive();
+      await sleep(Math.min(15000, 1500 * (missed + 1)));
+      try {
+        j = await capi(`jobs/${job.id}`);
+        missed = 0;
+        state.svcJobs.set(j.id, j);
+      } catch (e) {
+        const fresh = (state.recentJobs || []).find(x => x.id === job.id && !underWay(x));
+        if (fresh) { j = fresh; break; }
+        j = { ...j, connection: e.status === 404 ? 'This operation is no longer available; its outcome is unknown.' : 'Connection lost; checking again.' };
+        state.svcJobs.set(j.id, j);
+        if (++missed >= 30 || e.status === 401) break;
+      }
     }
-  }
-  state.svcJobs.set(j.id, j);
-  const found = j.result && num(j.result.found) ? `${plural(j.result.found, 'setup')} found, ${j.result.oneClick} one click` : null;
-  dismissedToasts.delete(key);
-  if (j.status === 'completed') toast(`${label}: done`, { sub: [j.endpoint ? `Serving at ${j.endpoint}${j.tailnetLink ? ` (on your tailnet: ${j.tailnetLink})` : ''}` : found].filter(Boolean), id: key, timeout: 9000 });
-  else toast(`${label} failed`, { kind: 'bad', sub: [String(j.error || '').split('\n')[0], ' ', h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity(j.id) }, 'See what happened')], id: key, timeout: 20000 });
-  loadJobs();
-  loadLibrary();
-  if (j.type.startsWith('main-')) loadMain();
-  loadStatus();
-  return j;
+    state.svcJobs.set(j.id, j);
+    const found = j.result && num(j.result.found) ? `${plural(j.result.found, 'setup')} found, ${j.result.oneClick} one click` : null;
+    dismissedToasts.delete(key);
+    if (underWay(j)) toast(`${label}: outcome not yet known`, { sub: [j.connection], id: key, timeout: 9000 });
+    else if (j.status === 'cancelled') toast(`${label}: cancelled`, { id: key, timeout: 9000 });
+    else if (j.status === 'completed') toast(`${label}: done`, { sub: [j.endpoint ? `Serving at ${j.endpoint}${j.tailnetLink ? ` (on your tailnet: ${j.tailnetLink})` : ''}` : found].filter(Boolean), id: key, timeout: 9000 });
+    else toast(`${label} failed`, { kind: 'bad', sub: [String(j.error || '').split('\n')[0], ' ', h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity(j.id) }, 'See what happened')], id: key, timeout: 20000 });
+    loadJobs();
+    loadLibrary();
+    if (j.type.startsWith('main-')) loadMain();
+    loadStatus();
+    return j;
+  } finally { state.following.delete(job.id); }
 }
 
 // The service didn't answer: usually it's restarting for a moment after an update, and the page tries again on its own.
@@ -2615,7 +2637,7 @@ function splitSnapshot(content) {
 
 function nodeLine(n, host = portalHostId()) {
   const about = [hardware(n), host === n.id ? 'runs Spark Console' : null, conn(n.id)?.alias ? `ssh ${conn(n.id).alias}` : null].filter(Boolean).join('; ');
-  if (!isUp(n)) return `- ${n.name} (${about}): ${condition(n) === 'stale' ? 'status out of date' : 'offline, not reachable over Tailscale'}`;
+  if (!isUp(n)) return `- ${n.name} (${about}): ${condition(n) === 'asleep' ? 'powered off on purpose' : condition(n) === 'stale' ? 'status out of date' : 'offline, not reachable over Tailscale'}`;
   const m = n.model || {}, net = n.network || {};
   const used = num(n.memoryTotalGiB) && num(n.memoryFreeGiB) ? n.memoryTotalGiB - n.memoryFreeGiB : null;
   const facts = [
@@ -2651,12 +2673,20 @@ function fleetSnapshot() {
   ].filter(Boolean).join('\n');
 }
 
+function conversationReadDelay(conv, now = Date.now()) {
+  const open = (conv?.messages || []).filter(m => m.choices?.some(x => x.state === 'open'));
+  const deadlines = open.map(m => Date.parse(m.opensAt)).filter(at => Number.isFinite(at) && at > now);
+  if (deadlines.length) return Math.max(50, Math.min(conv.replying ? 2000 : 5000, Math.min(...deadlines) - now + 50));
+  return conv?.replying ? 2000 : open.length ? 5000 : null;
+}
+
 PAGES.sparkie = function sparkiePage(view, r) {
   if (!canChat()) { put(view, empty('lock', `${ASSISTANT} isn’t enabled for you`, 'Only the owner chats with Sparkie.')); return; }
   view.className = 'view flush';
   const c = state.chat;
   const id = r.a && r.a !== 'new' ? r.a : null;
   if (c.conv?.id !== id) c.conv = null;
+  c.waiting = false;
   if (!id) c.spark = r.params.get('spark') || null;
   else if (!c.conv) c.spark = null;
   const subjectNode = () => (c.spark ? node(c.spark) : null);
@@ -2686,7 +2716,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   // stuck, as its own small request.
   const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/putback', '/help'];
   const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)); };
-  const syncSend = () => { sendBtn.disabled = (c.sending && !isWord(ta.value)) || (!sparkieModel().up && !slashDraft()); };
+  const syncSend = () => { sendBtn.disabled = ((c.sending || c.conv?.replying) && !isWord(ta.value)) || (!sparkieModel().up && !slashDraft()); };
   ta.addEventListener('input', () => { c.draft = ta.value; grow(); syncSend(); });
   ta.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
@@ -2847,7 +2877,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
     // Sparkie's words.
     // A dangerous ask: lines built by code, shown as written; the exact command in its own block; then its digits.
     if (m.danger) {
-      const d = m.danger, end = m.pair ? `To run it: press ${d.yes}, then type ${m.pair}.` : m.opensAt ? `This ask opens at ${fmt.time(m.opensAt)}: read it meanwhile.` : null;
+      const d = m.danger, end = m.pair ? `To run it: type ${m.pair}, then press ${d.yes}.` : m.opensAt ? `This ask opens at ${fmt.time(m.opensAt)}: read it meanwhile.` : null;
       return h('div', { class: 'msg notice' },
         h('div', { class: 'msg-avatar bad', 'aria-hidden': 'true' }, icon('alert')),
         h('div', { style: { 'min-width': '0' } },
@@ -2874,7 +2904,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
       h('div', { class: 'msg-avatar', 'aria-hidden': 'true' }, mine ? (m.from ? icon('key') : initials(state.boot.userName)) : ASSISTANT[0]),
       h('div', { style: { 'min-width': '0' } },
         h('div', { class: 'msg-meta' }, h('strong', {}, mine ? m.from || 'You' : ASSISTANT), !mine && (m.nodeId || m.node) ? h('span', {}, `on ${nodeName(m.nodeId || m.node)}`) : null,
-          m.streaming ? h('span', {}, m.content ? 'answering…' : m.tools?.length ? 'looking things up…' : m.thinking ? 'thinking…' : 'reading…') : h('span', {}, fmt.time(m.createdAt))),
+          m.streaming ? h('span', {}, m.reconnecting ? 'connection lost; checking again…' : m.content ? 'answering…' : m.tools?.length ? 'looking things up…' : m.thinking ? 'thinking…' : 'reading…') : h('span', {}, fmt.time(m.createdAt))),
         mine ? h('div', { class: 'msg-body' }, text)
           : m.streaming && !m.content ? h('div', { class: 'typing', role: 'status', 'aria-label': `${ASSISTANT} is replying` }, h('i'), h('i'), h('i'))
             : m.content ? h('div', { class: 'msg-body' }, renderMarkdown(m.content)) : null,
@@ -2907,7 +2937,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
     btn.setAttribute('aria-busy', 'true');
     try {
       const r = await capi(`chats/${conv.id}/choose`, 'POST', { choice: x.id, ...(pair !== null ? { pair } : {}) });
-      if (c.conv?.id === conv.id && !c.sending) { c.conv = withMessages(c.conv, r); drawMessages(); }
+      if (here(conv.id) && !c.sending) { c.conv = withMessages(c.conv, r); drawMessages(); }
       if (r.operation) followNewJobs();
       // Followed even without an operation id: a press that took too long still posts its result here.
       watchOps(conv.id, r.operation ? [r.operation] : [], 2);
@@ -2917,40 +2947,71 @@ PAGES.sparkie = function sparkiePage(view, r) {
       btn.removeAttribute('aria-busy');
       // An expired button: the conversation as saved shows it gone.
       const saved = await capi(`chats/${conv.id}`).catch(() => null);
-      if (saved && c.conv?.id === conv.id && !c.sending) { c.conv = withMessages(c.conv, saved); drawMessages(false); }
+      if (saved && here(conv.id) && !c.sending) { c.conv = withMessages(c.conv, saved); drawMessages(false); }
     }
   }
 
-  // Operations started from this conversation post their result in it when they finish. While one is under way (or a
-  // button just started one), the conversation is read again every 5 seconds until it settles.
-  // An operation stops being waited for once its result is posted, or Activity shows it ended (a restart can cut one off
-  // without a result) or no longer lists it. atLeast: read the conversation this many times whatever happens.
-  let watching = null;
+  // Only GETs are retried: a detached answer keeps running on the service. Never send the turn again.
+  let watching = null, readTimer = null, cancelReadWait = null, disposed = false;
+  const here = convId => !disposed && layout.isConnected && c.conv?.id === convId;
+  function applySaved(saved) {
+    const partial = c.conv?.messages?.findLast(m => m.streaming);
+    c.conv = withMessages(c.conv, saved);
+    // Keep already received text visibly incomplete until the saved answer replaces it.
+    if (saved.replying && partial) c.conv.messages.push(partial);
+    c.waiting = Boolean(saved.replying && !partial);
+    drawMessages(false); drawComposer();
+  }
+  function waitForRead(ms) {
+    return new Promise(resolve => {
+      cancelReadWait = () => { clearTimeout(readTimer); cancelReadWait = null; resolve(); };
+      readTimer = setTimeout(() => { cancelReadWait = null; resolve(); }, ms);
+    });
+  }
   function watchOps(convId, ops = [], atLeast = 0) {
-    if (watching?.convId === convId) { for (const op of ops) watching.pending.add(op); watching.atLeast = Math.max(watching.atLeast, watching.polls + atLeast); return; }
-    const w = watching = { convId, pending: new Set(ops), polls: 0, atLeast };
-    const here = () => watching === w && layout.isConnected && c.conv?.id === convId;
+    if (!here(convId)) return;
+    if (watching?.convId === convId) {
+      for (const op of ops) watching.pending.add(op);
+      watching.atLeast = Math.max(watching.atLeast, watching.polls + atLeast);
+      return;
+    }
+    const w = watching = { convId, pending: new Set(ops), polls: 0, atLeast, retry: false };
     (async () => {
       const until = Date.now() + 30 * 60000;
-      while (here() && Date.now() < until) {
+      while (here(convId) && watching === w && Date.now() < until) {
         const posted = new Set((c.conv.messages || []).filter(m => m.notice && m.operation).map(m => m.operation));
         const jobs = activityJobs();
         for (const op of [...w.pending]) {
           const j = jobs.find(x => x.id === op);
           if (posted.has(op) || (j && !underWay(j)) || (!j && w.polls > 0)) w.pending.delete(op);
         }
-        if (w.polls >= w.atLeast && !w.pending.size && !jobs.some(j => j.conv === convId && underWay(j))) break;
-        await sleep(5000);
-        if (!here()) break;
-        if (c.sending || c.waiting) continue;
+        const delay = conversationReadDelay(c.conv);
+        if (!w.retry && delay === null && w.polls >= w.atLeast && !w.pending.size && !jobs.some(j => j.conv === convId && underWay(j))) break;
+        await waitForRead(delay ?? 5000);
+        if (!here(convId) || watching !== w) break;
+        if (c.sending) continue;
         await loadJobs();
         const saved = await capi(`chats/${convId}`).catch(() => null);
-        w.polls++;
-        if (saved && here() && !c.sending) { c.conv = withMessages(c.conv, saved); drawMessages(false); }
+        if (!here(convId) || watching !== w) break;
+        w.retry = !saved;
+        if (saved && !c.sending) { w.polls++; applySaved(saved); }
       }
       if (watching === w) watching = null;
     })();
   }
+  const onVisible = () => {
+    if (!document.hidden && c.conv && !c.sending) {
+      const convId = c.conv.id;
+      capi(`chats/${convId}`).then(saved => { if (here(convId) && !c.sending) { applySaved(saved); watchOps(convId); } }).catch(() => watchOps(convId, [], 1));
+    }
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  viewCleanup.push(() => {
+    disposed = true; watching = null;
+    cancelReadWait?.();
+    c.waiting = false;
+    document.removeEventListener('visibilitychange', onVisible);
+  });
 
   // Finished messages are built once and kept (so selections, copies and open snapshots survive); only the reply
   // being written is rebuilt.
@@ -2973,6 +3034,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
       else redraw(inner, ...list);
     }
     if (stick || nearBottom) scroller.scrollTop = scroller.scrollHeight;
+    if (c.conv && conversationReadDelay(c.conv) !== null) watchOps(c.conv.id);
   }
 
   let drawQueued = false;
@@ -2984,24 +3046,17 @@ PAGES.sparkie = function sparkiePage(view, r) {
 
   async function openConsole(convId) {
     try {
-      let conv = await capi(`chats/${convId}`);
-      if (route().a !== convId) return;
+      const conv = await capi(`chats/${convId}`);
+      if (disposed || !layout.isConnected || route().a !== convId) return;
       c.conv = conv;
       c.spark = conv.spark || null;
+      c.waiting = Boolean(conv.replying);
       drawHead(); drawMessages(); drawList(); drawComposer();
-      // A reply that was still being written when the page opened: check back until it's saved.
-      while (conv.replying && route().a === convId) {
-        c.waiting = true;
-        drawMessages(false);
-        await sleep(2000);
-        conv = await capi(`chats/${convId}`);
-        if (c.conv?.id === convId) c.conv = conv;
-      }
-      c.waiting = false;
-      if (layout.isConnected) drawMessages();
       loadJobs().then(() => watchOps(convId));
     } catch (e) {
-      set(inner, empty('alert', 'Couldn’t open this chat', e.message, h('a', { class: 'btn', href: '#/sparkie/new' }, 'Start a new chat')));
+      if (disposed || !layout.isConnected || route().a !== convId) return;
+      c.waiting = false;
+      set(inner, empty('alert', 'Couldn’t open this chat', e.message, h('button', { class: 'btn', type: 'button', onclick: () => openConsole(convId) }, 'Try again')));
     }
   }
 
@@ -3014,17 +3069,18 @@ PAGES.sparkie = function sparkiePage(view, r) {
   async function sendConsole(text) {
     c.sending = true;
     drawComposer();
+    let conv = c.conv, reply;
     try {
-      let conv = c.conv;
       if (!conv) {
         conv = await capi('chats', 'POST', { spark: c.spark });
+        if (disposed || !layout.isConnected) return;
         c.conv = conv;
         history.replaceState(null, '', `#/sparkie/${conv.id}`);
       }
       const n = subjectNode(), context = n ? sparkSnapshot(n) : fleetSnapshot();
       ta.value = c.draft = '';
       grow();
-      const reply = { role: 'assistant', content: '', createdAt: new Date().toISOString(), node: state.main.data?.node, streaming: true };
+      reply = { role: 'assistant', content: '', createdAt: new Date().toISOString(), node: state.main.data?.node, streaming: true };
       conv.messages = [...(conv.messages || []), { role: 'user', content: text, context, createdAt: new Date().toISOString() }, reply];
       drawHead();
       drawMessages();
@@ -3041,16 +3097,20 @@ PAGES.sparkie = function sparkiePage(view, r) {
         }
         if (c.conv === conv) drawSoon();
       });
-      if (reply.streaming) Object.assign(reply, { streaming: false, error: reply.content ? null : 'The connection closed before the answer finished.' });
+      if (reply.streaming) { reply.reconnecting = true; conv.replying = true; }
       // The saved copy has the title the first message gave it, and the reply as stored.
       const saved = await capi(`chats/${conv.id}`).catch(() => null);
-      if (saved && c.conv === conv) c.conv = saved;
+      if (saved && here(conv.id) && c.conv === conv) applySaved(saved);
     } catch (e) {
-      toast(e.message, { kind: 'bad', timeout: 9000 });
-      if (c.conv) c.conv.messages = (c.conv.messages || []).filter(m => !m.streaming);
+      if (reply?.streaming) {
+        reply.reconnecting = true; conv.replying = true;
+      } else toast(e.message, { kind: 'bad', timeout: 9000 });
     } finally {
       c.sending = false;
-      if (layout.isConnected) { drawHead(); drawMessages(); drawComposer(); }
+      if (!disposed && layout.isConnected) {
+        drawHead(); drawMessages(); drawComposer();
+        if (conv && here(conv.id)) watchOps(conv.id, [], 1);
+      }
       loadConsoleChats();
     }
   }
@@ -3081,7 +3141,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   async function send(text) {
     text = text.trim();
     if (!text) return;
-    if (c.sending) { if (isWord(text)) await sendWord(text); return; }
+    if (c.sending || c.conv?.replying) { if (isWord(text)) await sendWord(text); return; }
     await sendConsole(text);
     // Anything Sparkie started is followed until its result is posted here.
     if (c.conv && layout.isConnected) loadJobs().then(() => { if (c.conv) watchOps(c.conv.id); });
@@ -3119,7 +3179,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   if (id && !c.conv) open(id);
   // Back on a chat that was open before: catch up with what was posted meanwhile, and follow its operations again.
   else if (id && !c.sending) {
-    capi(`chats/${id}`).then(saved => { if (saved && layout.isConnected && c.conv?.id === id && !c.sending) { c.conv = withMessages(c.conv, saved); drawMessages(false); } }).catch(() => {});
+    capi(`chats/${id}`).then(saved => { if (saved && here(id) && !c.sending) { applySaved(saved); watchOps(id); } }).catch(() => {});
     loadJobs().then(() => watchOps(id));
   }
   if (c.pendingPrompt) {
@@ -3939,8 +3999,9 @@ async function start() {
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) disconnectLive();
-    else { loadStatus(); connectLive(); checkForUpdate().then(offer => offer && offerUpdate()); }
+    else { loadStatus(); resumeJobs(); connectLive(); checkForUpdate().then(offer => offer && offerUpdate()); }
   });
+  window.addEventListener('online', () => { resumeJobs(); loadStatus(); });
   render();
   if (state.boot.putBack) putBackList();
   loadMain();

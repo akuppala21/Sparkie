@@ -10,7 +10,7 @@ run at once: the state is copied first, then the install starts the new one. Fro
 1. A build whose `hub.env` and `config.json` both name Spark 1, with its whole-suite lock (`node test/lock.mjs`).
 2. Spark 1, by hand there (with the same `S2`): Node.js 22 (the NodeSource line `install.sh` prints);
    `sudo loginctl enable-linger $USER`; `ssh-keygen`, then `ssh-copy-id` to Spark 2, 3 and 4. The brain's model,
-   draft and image (`main.presets` in `config.json`), from Spark 2: `rsync -a $S2:.cache/huggingface/hub/models--<model>
+   draft and image (`main.presets` in `config.json`), from Spark 2: `rsync -aL $S2:.cache/huggingface/hub/models--<model>
    :.cache/huggingface/hub/models--<draft> ~/.cache/huggingface/hub/` and `ssh $S2 docker save <image> | docker load`
    (the same image id).
 3. Spark 1's shutdown rule off: `bash $D/power-setup.sh --undo 1`.
@@ -18,7 +18,7 @@ run at once: the state is copied first, then the install starts the new one. Fro
    docker stop spark-console-plugs'` (its brain stops with `docker stop sparkie-main`).
 5. Copy the hub's files, sign-ins left out: `bash $D/copy-hub-state.sh 2 1`. It refuses while either runs a console.
    It also moves the copied `main.json` to Spark 1 (a saved setup's Spark, a route to Spark 2's own loopback), each
-   change printed and the file as it came kept beside it.
+   change printed and the file as it came kept beside it. `--start-brain` opts in to startup; a saved Stop stays stopped. Check copied snapshot links resolve.
 6. Install on Spark 1: `NOTE='the hub moves to Spark 1' bash $D/host-on-portal.sh` (its default; it refuses Spark 2).
    It starts the console with the copied state and checks it as the owner. Then `bash $D/cutover.sh`: the `:8443/`
    route (Spark 1 has no portal, so nothing is switched off).

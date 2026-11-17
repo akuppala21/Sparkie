@@ -18,9 +18,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, useFleet, REPO, SLOW, postInTwo } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
-import { lockFor, gitFields, runOf, brainSent, brainReadsOf } from './lock.mjs';
+import { lockFor, gitFields, runOf, brainSent, brainReadsOf, shippedHub } from './lock.mjs';
 
-useFleet({ watchMs: 60000, statusMs: 20000 });
+useFleet({ hub: shippedHub(), watchMs: 60000, statusMs: 20000 });
 
 const GITHUB = { GITHUB_ACTIONS: 'true', GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'someone/spark-console', GITHUB_RUN_ID: '4242', GITHUB_RUN_ATTEMPT: '2' };
 const hasGit = spawnSync('git', ['--version']).status === 0;
@@ -58,6 +58,8 @@ describe('the lock', () => {
       assert.ok(t.function.description?.length > 20, t.function.name);
       assert.equal(typeof t.function.parameters, 'object', t.function.name);
     }
+    assert.match(sent.system, /Spark 1/, 'the web prompt names the shipped hub');
+    assert.match(sent.catalog.telegram.system, /Spark 1/, 'the Telegram prompt names the same shipped hub');
     const reads = brainReadsOf(sent);
     assert.equal(reads, (await lockFor(T.fleet, { env: {} })).brainReads);
     assert.equal(brainReadsOf(structuredClone(sent)), reads);
@@ -98,7 +100,7 @@ describe('the lock', () => {
   test('the service reads the new lock as before: every workflow of this build counts as tested', { timeout: 120000 * SLOW }, async () => {
     const file = join(T.fleet.dir, 'new-lock.json');
     writeFileSync(file, JSON.stringify(await lockFor(T.fleet, { env: GITHUB })));
-    const other = await startMock({ watchMs: 60000, statusMs: 20000, env: { SPARK_CONSOLE_CHECK_LOCK: '1', SPARK_CONSOLE_WORKFLOW_LOCK: file } });
+    const other = await startMock({ hub: shippedHub(), watchMs: 60000, statusMs: 20000, env: { SPARK_CONSOLE_CHECK_LOCK: '1', SPARK_CONSOLE_WORKFLOW_LOCK: file } });
     try {
       const { workflows } = await (await fetch(`${other.base}/workflows`)).json();
       assert.ok(workflows.length >= 5);

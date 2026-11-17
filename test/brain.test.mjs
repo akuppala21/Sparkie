@@ -331,11 +331,11 @@ describe('the brain’s 45-minute limit: the words say what happened to the cont
       return { code: 0, out: '', err: '' };
     };
     const names = ['run', 'note', 'step', 'mainPlan', 'mainNode', 'nodeById', 'stopContainer', 'copyModel', 'markBrainLeftDown', 'mainRunCommand',
-      'sleep', 'Date', 'repoOf', 'recordVerified', 'q', 'stopMain', 'ASSISTANT_NAME', 'saveMainChoice', 'ROUTES', 'saveRoutes', 'checkBrainSoon', 'STOPPED_STATES', 'initial'];
+      'sleep', 'Date', 'repoOf', 'recordVerified', 'q', 'stopMain', 'ASSISTANT_NAME', 'saveMainChoice', 'ROUTES', 'saveRoutes', 'checkBrainSoon', 'STOPPED_STATES', 'initial', 'markBrainDesired'];
     const make = new Function(...names, `let MAIN = initial;\n${slow}\n${words}\n${lift('async function startMain(')}\n${src.includes('async function mainLook(') ? lift('async function mainLook(') : ''}\n${lift('async function switchMain(')}\nreturn { startMain, switchMain };`);
     const fns = make(run, (job, t) => notes.push(t), (job, t) => notes.push(`step: ${t}`), async m => ({ title: m.title, steps: [] }), () => ({ id: 'spark2' }), () => ({ id: 'spark2' }),
       async () => {}, async () => {}, () => {}, m => `START ${m.title}`, async () => {}, { now: () => (clock += 60000) }, x => x, async () => {}, x => `'${x}'`,
-      async (job, m) => { cmds.push(`STOP ${m.title}`); }, 'Sparkie', () => {}, {}, () => {}, () => false, ['exited', 'dead', 'created', 'missing'], main);
+      async (job, m) => { cmds.push(`STOP ${m.title}`); }, 'Sparkie', () => {}, {}, () => {}, () => false, ['exited', 'dead', 'created', 'missing'], main, () => {});
     return { ...fns, cmds, notes, job: {} };
   }
   const OLD = { title: 'Old', container: 'sparkie-main', node: 'spark2', port: 30100 }, NEW = { title: 'New', container: 'sparkie-main', node: 'spark2', port: 30100 };

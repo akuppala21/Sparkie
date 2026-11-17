@@ -276,3 +276,92 @@ describe('a saved workflow\'s clean-up stops only what its run started (A-22)', 
     end('rc-first', 0);
   });
 });
+
+const receiptPart = readFileSync(new URL('../service/src/18-step-jobs.mjs', import.meta.url), 'utf8');
+const receiptFn = name => new RegExp(`^async function ${name}\\([^]*?^\\}`, 'm').exec(receiptPart)?.[0];
+test('A-22: missing or incomplete ownership never authorizes a stop', async () => {
+  for (const seen of [undefined, {}, { id: 'a'.repeat(64) }, { since: SINCE }, { id: null, since: SINCE }]) {
+    let looks = 0;
+    const still = new Function('sparkName', 'nodeById', 'receiptOf', `${receiptFn('startedStill')}\nreturn startedStill;`)(
+      n => n.id, id => ({ id }), async () => { looks++; return { id: 'a'.repeat(64), startedAt: SINCE }; });
+    await assert.rejects(still('spark3', GPT20, seen), /record of what this run started is missing/);
+    assert.equal(looks, 0);
+  }
+});
+test('A-22: a current look with unreadable identity never authorizes a stop', async () => {
+  const still = new Function('sparkName', 'nodeById', 'receiptOf', `${receiptFn('startedStill')}\nreturn startedStill;`)(
+    n => n.id, id => ({ id }), async () => ({ id: null, startedAt: SINCE }));
+  await assert.rejects(still('spark3', GPT20, { id: 'a'.repeat(64), since: SINCE }), /wasn’t stopped/);
+});
+test('A-22: a finished step consumes its own operation receipt without sampling a replacement', async () => {
+  const key = `spark3/${GPT20}`, own = { id: 'a'.repeat(64), since: SINCE, startedAt: SINCE };
+  const operations = new Map([['start', { startedReceipts: { [key]: own } }]]);
+  const receipts = new Function('jobs', `${receiptFn('startedReceipts')}\nreturn startedReceipts;`)(operations);
+  const items = [{ kind: 'model', spark: 'spark3', container: GPT20, ops: ['start'] }];
+  assert.deepEqual((await receipts(items))[0].seen, { id: own.id, since: SINCE });
+  operations.set('start', { startedReceipts: { [key]: null } });
+  assert.equal((await receipts(items))[0].seen, undefined, 'unknown original identity stays unknown');
+});
+test('A-22: cleanup with no ownership evidence leaves it running and reports unresolved cleanup', async () => {
+  let calls = 0;
+  const stop = new Function('nodeById', 'sparkName', 'runAction', 'maskSecrets', `${receiptFn('stopWhatRan')}\nreturn stopWhatRan;`)(
+    id => ({ id }), n => n.id, async () => { calls++; }, String);
+  const words = await stop([{ kind: 'model', spark: 'spark3', container: GPT20 }], {}, {}, 'test');
+  assert.equal(calls, 0);
+  assert.match(words, /record of what this run started is missing/);
+  assert.match(words, /may still be running/);
+});
+test('A-22: a successful start records its resource identity before completion and claim release', async () => {
+  const source = readFileSync(new URL('../service/src/07-jobs.mjs', import.meta.url), 'utf8');
+  const fn = /^function runJob\([^]*?^\}/m.exec(source)[0], order = [];
+  let letReceiptFinish;
+  const pending = new Promise(resolve => { letReceiptFinish = resolve; });
+  const job = { id: 'test', status: 'running', log: [], release: () => order.push('release') };
+  const deps = { desiredAfter: j => { assert.equal(j.status, 'completed'); order.push('desired'); },
+    captureStartedReceipts: async j => { assert.equal(j.status, 'running'); order.push('receipt'); await pending; },
+    note: (_j, text) => order.push(text), agentCache: { clear() {} }, recordWorkflowRun() {}, fleetEvent() {}, learnFrom() {}, journalOp() {}, console, jobMasked: String };
+  const runJob = new Function(...Object.keys(deps), `${fn}\nreturn runJob;`)(...Object.values(deps));
+  runJob(job, async () => {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(job.status, 'running');
+  assert.deepEqual(order, ['desired', 'receipt']);
+  letReceiptFinish();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(job.status, 'completed');
+  assert.deepEqual(order, ['desired', 'receipt', 'Done', 'release']);
+});
+test('A-22: a once-job without ranHere still captures its own identity under its start claim', async () => {
+  const key = 'spark4/rc-once', own = { id: 'b'.repeat(64), startedAt: SINCE }, job = { app: true, type: 'deploy', node: 'spark4', container: 'rc-once' };
+  let saved = false;
+  const capture = new Function('receiptOf', 'desired', 'keyOf', 'savedRunReceipts', `${receiptFn('captureStartedReceipts')}\nreturn captureStartedReceipts;`)(
+    async (spark, container) => { assert.equal(`${spark}/${container}`, key); return own; }, () => ({ running: [] }), x => `${x.spark}/${x.container}`, () => { saved = true; });
+  await capture(job);
+  assert.deepEqual(job.startedReceipts[key], { ...own, since: null });
+  assert.equal(saved, true);
+});
+test('A-22: a loading app receipt is kept on the pending restart record; an unknown identity stays unresolved', () => {
+  const source = readFileSync(new URL('../service/src/18-run-record.mjs', import.meta.url), 'utf8');
+  const fn = /^function savedRunReceipts\([^]*?^\}/m.exec(source)[0];
+  const item = { kind: 'app', spark: 'spark4', container: 'rc-web', operation: 'app-start' };
+  const record = { operation: 'workflow-run', awaiting: [item], pending: [] }, parent = { id: record.operation };
+  const save = new Function('savedRunsNow', 'jobs', 'savedRunKeep', `${fn}\nreturn savedRunReceipts;`)(
+    () => ({ runs: { [parent.id]: record } }), new Map([[parent.id, parent]]), (_j, fields) => Object.assign(record, fields));
+  save({ id: 'app-start', startedReceipts: { 'spark4/rc-web': null } });
+  assert.equal(record.pending.length, 0);
+  assert.equal(record.awaiting.length, 1);
+  save({ id: 'app-start', startedReceipts: { 'spark4/rc-web': { id: 'c'.repeat(64), startedAt: SINCE } } });
+  assert.deepEqual(record.awaiting, []);
+  assert.deepEqual(record.pending[0].seen, { id: 'c'.repeat(64), startedAt: SINCE });
+  assert.equal(record.pending[0].wish, undefined);
+  save({ id: 'app-start', ownersWish: true, startedReceipts: { 'spark4/rc-web': { id: 'c'.repeat(64), startedAt: SINCE } } });
+  assert.equal(record.pending[0].wish, true, 'adoption while still loading survives a process restart');
+});
+test('A-22: an owner’s wish during loading is persisted with the pending operation immediately', () => {
+  const source = readFileSync(new URL('../service/src/20-desired.mjs', import.meta.url), 'utf8');
+  const fn = /^function desiredWish\([^]*?^\}/m.exec(source)[0], operation = { id: 'loading', node: 'spark4', container: 'rc-web' }, persisted = [];
+  const wish = new Function('jobs', 'savedRunReceipts', 'readKept', 'DESIRED_FILE', 'console', `${fn}\nreturn desiredWish;`)(
+    new Map([[operation.id, operation]]), j => persisted.push({ id: j.id, wish: j.ownersWish }), () => null, '/not-read', console);
+  wish(['spark4/rc-web']);
+  assert.equal(operation.ownersWish, true);
+  assert.deepEqual(persisted, [{ id: operation.id, wish: true }]);
+});

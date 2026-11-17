@@ -456,6 +456,7 @@ action({
         step(j, `Restarting ${container} on ${at}`);
         const r = await run(node, `docker restart --time 20 ${q(container)}`, { timeout: 90000 });
         if (r.code) throw new Error(`Docker couldn’t restart it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+        await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
         consoleStopped.delete(key);
         appDone(j, container, link, await appUp(j, node, container, sp.tsip, hostPort), hostPort);
       });
@@ -504,6 +505,7 @@ action({
           const r = await run(node, `${jobMountsReal(container)}; docker start ${q(container)}`, { timeout: 90000 });
           if (r.code === JOB_NOT_REAL) throw jobNotReal(node, container, r);
           if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+          await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
           consoleStopped.delete(key);
           // (its end is told again, also when it ends before the watcher's next look: its row says running, so the next
           // look reads it afresh, with this run's exit code)
@@ -527,6 +529,7 @@ action({
           step(j, `Starting ${container} on ${at}`);
           const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
           if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+          await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
           consoleStopped.delete(key);
           answers = await appUp(j, node, container, sp.tsip, hostPort);
         } catch (e) { await appPutBack(j, node, container); throw e; }
@@ -593,6 +596,7 @@ action({
         }
         throw new Error(`Docker couldn’t start it: ${maskSecrets((r.err || r.out).trim()).slice(0, 400)}`);
       }
+      await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
       // A job runs to its end: it isn't put on the list (no ranHere) and isn't watched until it answers; the watcher
       // tells its end (jobEnded).
       if (a.once) {

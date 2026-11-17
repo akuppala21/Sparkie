@@ -1,7 +1,7 @@
 /* ───────── jobs ───────── */
 // Area: ground
 // Rules: R7, R9, R13, R14, R15, R16, R21
-// Tests: change.test.mjs, state.test.mjs, pause.test.mjs
+// Tests: change.test.mjs, state.test.mjs, pause.test.mjs, workloads-receipts.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 const jobs = new Map();
@@ -55,7 +55,11 @@ function stopList(v) {
 }
 
 function runJob(job, fn) {
-  fn(job).then(() => {
+  fn(job).then(async () => {
+    job.finishedAt = new Date().toISOString();
+    // Keep the claim and a running status until this operation's own resource ids are recorded (A-22).
+    try { desiredAfter({ ...job, status: 'completed' }); } catch (e) { console.error(`Couldn’t update what should be running: ${e.message}`); }
+    try { await captureStartedReceipts(job); } catch (e) { note(job, `Couldn’t record what this operation started; automatic clean-up will leave it alone: ${e.message}`); }
     job.status = 'completed';
     job.step = 'Done';
     note(job, 'Done');
@@ -86,7 +90,6 @@ function runJob(job, fn) {
     // What agents see is fresh after anything changed, and the operation goes on the fleet's record.
     agentCache.clear();
     recordWorkflowRun(job);
-    try { desiredAfter(job); } catch (e) { console.error(`Couldn’t update what should be running: ${e.message}`); }
     if (job.conv) try { postResult(job); } catch (e) { console.error(`Couldn’t post ${job.id}’s result: ${e.message}`); }
     // (one started from Telegram whose chat is gone: off the list that restarts report)
     if (job.channel) try { tellAwaitDone(job.id); } catch {}

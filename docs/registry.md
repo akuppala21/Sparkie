@@ -88,7 +88,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`, `START_CODE`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
@@ -99,14 +99,14 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
 | `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
-| `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
+| `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `markBrainDesired`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `net.json` | `21-net` | `netSave`; `netSave` is called by `netMark`, `netGuarded` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `putBackAtStart`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
-| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `receiptsBroughtBack`, `placeStep`, `START_CODE`, `run_workflow`; `savedRunDone` is called by `run_workflow` | no | yes |
+| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunDone` is called by `run_workflow` | no | yes |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |

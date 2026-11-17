@@ -434,7 +434,7 @@ esac
 REMOTE_EOF
 REMOTE="IMAGE='$IMAGE'"$'\n'"HUB='$HUB' HUB_SAYS='$HUB_SAYS' HUB_N='$HUB_N'"$'\n'"$REMOTE"
 
-CTL="$(mktemp -d)"
+CTL="$(mktemp -d /tmp/sc-ssh.XXXXXX)"
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$CTL/ssh" -o ControlPersist=120)
 trap '"${SSH[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; rm -rf "$CTL"' EXIT
 echo "Connecting to $HUB_SAYS, the hub ($HOST). Your password is asked once."

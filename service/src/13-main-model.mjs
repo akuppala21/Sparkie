@@ -47,6 +47,13 @@ function markBrainLeftDown(on) {
   } catch (e) { console.error(`Couldn’t ${on ? 'set' : 'clear'} the left-down mark for Sparkie’s model: ${e.message}`); }
 }
 
+function markBrainDesired(on) {
+  const saved = readKept(MAIN_FILE) || {};
+  writeMainFile({ ...saved, desiredRunning: on, ...(on ? { leftDown: saved.leftDown || new Date().toISOString() } : { leftDown: undefined }) });
+}
+// An install opts in explicitly. Existing saved choices (including an older intentional Stop) are not fresh installs.
+if (CONFIG.main?.startOnInstall === true && !existsSync(MAIN_FILE) && MAIN) markBrainDesired(true);
+
 // Where Sparkie's chats and the agents' address go. chat: { kind: 'main' } (the model above, run by this service) or
 // { kind: 'endpoint', url, model, title, node } (any running model this service can reach). agents: the same, or
 // { kind: 'same' } to follow chat.
@@ -79,6 +86,30 @@ model=${q(m.model)}; draft=`;
     .join('\n');
 }
 
+// Docker's image configuration ID and a registry manifest digest are different identities. A local tag is
+// only a lookup candidate: a configured digest must match the inspected ID or a repository digest.
+function mainImageRef(m = MAIN) {
+  const image = String(m.image || ''), manifest = /^(.+)@(sha256:[0-9a-f]{64})$/.exec(image);
+  const wanted = m.imageId || manifest?.[2] || null;
+  const repo = image.split('@')[0].replace(/:[^/:]+$/, '');
+  // Older setups used imageId for either kind of digest. Local metadata can prove that association, but
+  // a bare configuration ID cannot name a registry manifest. Only an explicit repository digest is pullable.
+  const localRef = wanted && (!manifest || wanted === manifest[2]) ? `${repo}@${wanted}` : null;
+  return { wanted, localRef, pull: manifest ? image : null };
+}
+function mainImageScript(m = MAIN) {
+  const { wanted, localRef, pull } = mainImageRef(m);
+  return `img=
+for candidate in ${[wanted, pull, m.image].filter(Boolean).map(q).join(' ')}; do
+  metadata=$(docker image inspect --format '{{.Id}} {{join .RepoDigests " "}}' "$candidate" 2>/dev/null) || continue
+  candidate_id=\${metadata%% *}
+  [[ "$candidate_id" =~ ^sha256:[0-9a-f]{64}$ ]] || continue
+  ${wanted ? `matched=; for identity in $metadata; do [ "$identity" = ${q(wanted)} ] || [ "$identity" = ${q(localRef || '')} ] || continue; matched=yes; done
+  [ "$matched" = yes ] || continue` : ''}
+  img="$candidate_id"; break
+done`;
+}
+
 const mainStatusScript = (m = MAIN) => `${mainSnapshots(m)}
 # docker inspect prints an empty line before failing on a container that doesn't exist.
 c=$(docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.State.ExitCode}}' ${q(m.container)} 2>/dev/null | head -1)
@@ -86,7 +117,8 @@ printf 'container\\t%s\\n' "\${c:-missing}"
 printf 'health\\t%s\\n' "$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:${m.port}/v1/models 2>/dev/null)"
 ${m.store === 'models' ? `[ -e ${q(m.model)}/config.json ]` : `{ [ -n "$model" ] && [ -e ${q(`models--${m.model}`)}/snapshots/"$model"/config.json ]; }`} && printf 'model\\tyes\\n' || printf 'model\\tno\\n'
 ${m.draft ? `{ [ -n "$draft" ] && [ -e ${q(`models--${m.draft}`)}/snapshots/"$draft"/config.json ]; } && printf 'draft\\tyes\\n' || printf 'draft\\tno\\n'` : `printf 'draft\\tyes\\n'`}
-docker image inspect ${q(m.imageId || m.image)} >/dev/null 2>&1 && printf 'image\\tyes\\n' || printf 'image\\tno\\n'`;
+${mainImageScript(m)}
+[ -n "$img" ] && printf 'image\\tyes\\n' || printf 'image\\tno\\n'`;
 
 async function mainStatus(m = MAIN) {
   if (!m) return { configured: false };
@@ -118,6 +150,7 @@ async function mainPlan(m = MAIN) {
   if (!status.online) throw new HttpError(409, status.error);
   if (!status.ready.model && !m.copyFrom) throw new HttpError(409, `${status.model} isn’t on ${m.node}.`);
   if (!status.ready.draft) throw new HttpError(409, `${status.draft} (its draft model) isn’t in ${m.node}’s Hugging Face cache.`);
+  if (!status.ready.image && !mainImageRef(m).pull) throw new HttpError(409, 'The configured image is not on this Spark. Set an immutable image reference (repository@sha256:digest) before downloading it.');
   const r = await run(node, `${gpuUsersScript(m.imageId || m.image)}
 mi="\${SPARK_MEMINFO:-/proc/meminfo}"
 printf 'mem\\t%s\\t%s\\n' "$(awk '/MemTotal/ {printf "%.0f", $2 * 1024}' "$mi" 2>/dev/null)" "$(awk '/MemAvailable/ {printf "%.0f", $2 * 1024}' "$mi" 2>/dev/null)"`, { timeout: 30000 });
@@ -136,7 +169,7 @@ printf 'mem\\t%s\\t%s\\n' "$(awk '/MemTotal/ {printf "%.0f", $2 * 1024}' "$mi" 2
   return {
     node: m.node, title: status.title, state: status.state,
     steps: [...stop.values(), !status.ready.model && m.copyFrom ? { kind: 'copy', from: m.copyFrom, bytes: m.sizeBytes || 0 } : null,
-      status.ready.image ? null : { kind: 'pull', image: m.image }, { kind: 'start', engine: m.engine, port: m.port }].filter(Boolean),
+      status.ready.image ? null : { kind: 'pull', image: mainImageRef(m).pull }, { kind: 'start', engine: m.engine, port: m.port }].filter(Boolean),
     warnings, memory: { total: total || null, available: available || null, need: total ? Math.round(total * fraction) : null },
   };
 }
@@ -162,7 +195,8 @@ function mainRunCommand(m = MAIN) {
   return `${mainSnapshots(m)}
 [ -n "$model" ] || { echo "${repoOf(m.model)} isn’t on this Spark." >&2; exit 1; }
 ${m.draft ? `[ -n "$draft" ] || { echo "${repoOf(m.draft)} isn’t in this Spark’s Hugging Face cache." >&2; exit 1; }` : ''}
-img=${q(m.imageId || m.image)}; docker image inspect "$img" >/dev/null 2>&1 || img=${q(m.image)}
+${mainImageScript(m)}
+[ -n "$img" ] || { echo 'The configured image is not on this Spark. Download its pinned digest first.' >&2; exit 1; }
 mkdir -p "$HOME/.cache/spark-console/kernels/home" "$HOME/.cache/spark-console/kernels/sglang"
 ${overlay ? mainOverlayScript(m) : ''}
 ${[...flags, ...mounts, ...serve, ...['--served-model-name', m.served, '--host', '0.0.0.0', '--port', '8000', ...m.args.map(String)].map(q)].join(' ')}`;
@@ -218,8 +252,10 @@ async function startMain(job, keep = [], m = MAIN) {
     job.progress = null;
   }
   if (p.steps.some(s => s.kind === 'pull')) {
-    step(job, `Downloading ${m.image}`);
-    const r = await run(node, `docker pull ${q(m.image)}`, { timeout: 3600000, onLine: line => { job.detail = line.slice(0, 200); } });
+    const image = p.steps.find(s => s.kind === 'pull').image;
+    if (!image) throw new Error('This setup needs an image pinned by its full digest before it can be downloaded.');
+    step(job, `Downloading ${image}`);
+    const r = await run(node, `docker pull ${q(image)}`, { timeout: 3600000, onLine: line => { job.detail = line.slice(0, 200); } });
     if (r.code) throw new Error(`Image download failed: ${r.err || r.out.slice(-500)}`);
   }
   markBrainLeftDown(true);
@@ -287,6 +323,7 @@ const unconfirmedWords = (look, why = '') => `Spark Console asked Docker to remo
 async function switchMain(job, target, keep) {
   const previous = MAIN;
   try { await mainPlan(target); } catch (e) { throw new Error(`${target.title} can’t start, and nothing was stopped: ${e.message}`); }
+  markBrainDesired(true);
   if (previous) { markBrainLeftDown(true); await stopMain(job, previous); }
   try {
     await startMain(job, keep, target);

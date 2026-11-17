@@ -386,7 +386,7 @@ test('A-19: a new file another program makes between the look and the publish st
   assert.deepEqual(a19Left(d), []);
 });
 
-test('A-19: where there is no exchange, the program compares once more just before its one move', { timeout: 60000 * SLOW }, async () => {
+test('A-19: where there is no exchange, replacement is refused and both unchanged and concurrently edited files are preserved', { timeout: 60000 * SLOW }, async () => {
   const d = a19Dir('no-exchange'), f = join(d, 'notes.txt'), bin = join(d, 'bin');
   // (a python3 that says this libc or filesystem has no exchange, as the program's own exchange answers then)
   mkdirSync(bin, { recursive: true });
@@ -401,8 +401,15 @@ test('A-19: where there is no exchange, the program compares once more just befo
   writeFileSync(f, BEFORE);
   const hold2 = join(d, 'hold2');
   const ok = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold: hold2 })], d, hold2, WANTED, () => {}, env);
-  assert.equal(ok.code, 0, ok.err);
-  assert.equal(readFileSync(f, 'utf8'), WANTED);
+  assert.equal(ok.code, 4, ok.err);
+  assert.match(ok.err, /cannot replace a file without risking another edit/);
+  assert.equal(readFileSync(f, 'utf8'), BEFORE);
+  assert.deepEqual(a19Left(d), []);
+  const late = join(d, 'late');
+  const race = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), late })], d, late, WANTED, () => writeFileSync(f, NEWER), env);
+  assert.equal(race.code, 3, race.err);
+  assert.equal(readFileSync(f, 'utf8'), NEWER);
+  assert.deepEqual(a19Left(d), []);
 });
 
 test('A-19: a hidden file, whose text is never read, is compared by its inode, size and time: an edit since the look is kept', { timeout: 60000 * SLOW }, async () => {

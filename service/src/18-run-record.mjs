@@ -1,5 +1,5 @@
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R57        Tests: workloads-restart.test.mjs
+// Area: core        Rules: R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
@@ -8,7 +8,9 @@
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
 // known only once its operation has ended, so a start under way is kept as its operation, `starting`), and the Sparks
-// it keeps awake. The record goes when the run ends, however it
+// it keeps awake. `awaiting` names a pending start whose resource identity has not been captured yet: recovery leaves
+// it alone and reports uncertainty. The operation moves it to `pending` with its own receipt while still holding its
+// claim (savedRunReceipts). The record goes when the run ends, however it
 // ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
 // no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
@@ -45,9 +47,29 @@ function savedRunDone(j) {
 function savedRunPending(action, args, out, keep) {
   if (out?.outcome !== 'started' || !out.operation) return [];
   const id = v => sparkIdOf(v) || String(v);
-  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
-  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep, operation: out.operation }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep, operation: out.operation }];
   return [];
+}
+// A step not yet known to have made a resource is awaiting its own operation's receipt. Once captured under that
+// operation's claim it joins pending with its id/start time, so a restart can clean up even while the app is loading.
+function savedRunReceipts(op) {
+  if (!op.startedReceipts || !Object.keys(op.startedReceipts).length) return;
+  for (const r of Object.values(savedRunsNow().runs)) {
+    const matching = (r.awaiting || []).filter(x => x.operation === op.id);
+    const pending = (r.pending || []).map(x => x.operation === op.id && op.ownersWish ? { ...x, wish: true } : x);
+    const wished = pending.some((x, i) => x !== r.pending[i]);
+    if (!matching.length && !wished) continue;
+    const awaiting = [...(r.awaiting || [])];
+    for (const x of matching) {
+      const seen = op.startedReceipts[`${x.spark}/${x.container}`];
+      if (!seen?.id || !seen.startedAt) continue;
+      pending.push({ ...x, seen: { id: seen.id, startedAt: seen.startedAt }, ...(op.ownersWish ? { wish: true } : {}) });
+      awaiting.splice(awaiting.indexOf(x), 1);
+    }
+    const j = jobs.get(r.operation);
+    if (j && (wished || pending.length !== (r.pending || []).length)) savedRunKeep(j, { pending, awaiting });
+  }
 }
 // An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
 // steps' (its actor, since the run began).
@@ -66,7 +88,7 @@ async function savedRunsRecover() {
   if (!cut.length) return;
   for (const r of cut) {
     const title = String(r.title || 'a saved workflow').slice(0, 80);
-    const items = [...(Array.isArray(r.started) ? r.started : []), ...(Array.isArray(r.pending) ? r.pending : [])]
+    const items = [...(Array.isArray(r.started) ? r.started : []), ...(Array.isArray(r.pending) ? r.pending : []), ...(Array.isArray(r.awaiting) ? r.awaiting : [])]
       .filter(x => x && ['model', 'app', 'job'].includes(x.kind) && nodeById(x.spark) && NAME_RE.test(String(x.container || '')));
     let words;
     try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }

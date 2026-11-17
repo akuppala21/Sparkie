@@ -61,7 +61,7 @@ if [ "${1:-}" = "--ask" ]; then
   done
   grep -E "$SUMMARY|^✖|^Not |^The copy" "$OUT/$name.log" 2>/dev/null | head -80
   echo "Whole log: $OUT/$name.log"
-  [ "$(cat "$OUT/$name.done")" = "0" ] && grep -q '^exit=0' "$OUT/$name.log"
+  [ "$(cat "$OUT/$name.done")" = "0" ] && grep -qx 'exit=0' "$OUT/$name.log"
   exit $?
 fi
 
@@ -80,21 +80,36 @@ tree_of() {
 # $1 folder to test, $2 its folder name on the Spark, $3 test files (already checked; empty = whole suite), $4 slow,
 # $5 files at once, $6 the name the answer is filed under.
 run_once() {
-  local dir=$1 remote=$2 files=$3 slow=$4 conc=$5 name=$6 inner map="" tree=""
-  if [ -n "$files" ]; then inner="time node --test --test-concurrency=$conc $files"; else inner="time node test/lock.mjs"; map="-e SPARK_TEST_MAP=1"; tree=$(tree_of "$dir"); fi
+  local dir=$1 remote=$2 files=$3 slow=$4 conc=$5 name=$6 inner map="" tree="" stamp rc=0
+  # A new directory and receipt for every dispatch, including selected tests. A lost SSH connection can never
+  # turn an earlier log into this run's success. Never qualify a copy whose source changed during transfer.
+  stamp=$(mktemp -d "$OUT/.dispatch.XXXXXX") || return 1
+  stamp=${stamp##*/}
+  remote="$remote-${stamp#.dispatch.}"
+  case "$remote" in *[!A-Za-z0-9._-]*) echo "Not a safe test folder name." >&2; return 1 ;; esac
+  rm -f "$OUT/$name.lock.json" "$OUT/$name.affected-map.json" "$OUT/$name.log"
+  tree=$(tree_of "$dir")
+  [ -n "$tree" ] || { echo "The source tree could not be identified." > "$OUT/$name.log"; return 1; }
+  if [ -n "$files" ]; then inner="time node --test --test-concurrency=$conc $files"; else inner="time node test/lock.mjs"; map="-e SPARK_TEST_MAP=1"; fi
+  map="$map -e SPARK_TEST_TREE=$tree"
   echo "$(date +%H:%M:%S) $name: copying $(basename "$dir") to $HOST and running: ${files:-the whole suite}"
   rsync -a --delete --exclude .claude --exclude .git --exclude node_modules "$dir/" "$HOST:$remote/" || { echo "The copy failed (is the Spark on?)." | tee "$OUT/$name.log"; return 1; }
-  if [ -n "$tree" ] && [ "$tree" = "$(tree_of "$dir")" ]; then map="$map -e SPARK_TEST_TREE=$tree"; fi
-  ssh "$HOST" "cd ~/$remote && docker run --rm --network none --user \$(id -u):\$(id -g) -e HOME=/tmp -e SPARK_TEST_STRICT=1 -e SPARK_TEST_SLOW=$slow -e SPARK_TEST_CONCURRENCY=$conc $map -v \"\$PWD\":/w -w /w $IMAGE bash -c '$inner' > ~/$remote-run.log 2>&1; echo \"exit=\$?\" >> ~/$remote-run.log"
+  [ "$tree" = "$(tree_of "$dir")" ] || { echo "The copy changed while it was being sent. Nothing ran." | tee "$OUT/$name.log"; return 1; }
+  ssh "$HOST" "cd ~/$remote || exit 1; { echo run=$stamp; echo tree=$tree; docker run --rm --network none --user \$(id -u):\$(id -g) -e HOME=/tmp -e SPARK_TEST_STRICT=1 -e SPARK_TEST_SLOW=$slow -e SPARK_TEST_CONCURRENCY=$conc $map -v \"\$PWD\":/w -w /w $IMAGE bash -c '$inner'; result=\$?; echo \"exit=\$result\"; exit \$result; } > ~/$remote-run.log 2>&1" || rc=$?
   scp -q "$HOST:$remote-run.log" "$OUT/$name.log" || { echo "Couldn’t bring the log back." | tee "$OUT/$name.log"; return 1; }
-  rm -f "$OUT/$name.lock.json" "$OUT/$name.affected-map.json"
-  if grep -q "^Marked build" "$OUT/$name.log"; then
-    scp -q "$HOST:$remote/service/workflows.lock.json" "$OUT/$name.lock.json"
-    if grep -q "^Wrote test/affected-map.json" "$OUT/$name.log"; then scp -q "$HOST:$remote/test/affected-map.json" "$OUT/$name.affected-map.json"; fi
+  [ "$rc" = 0 ] && [ "$(grep -c '^run=' "$OUT/$name.log")" = 1 ] && grep -qx "run=$stamp" "$OUT/$name.log" \
+    && [ "$(grep -c '^tree=' "$OUT/$name.log")" = 1 ] && grep -qx "tree=$tree" "$OUT/$name.log" \
+    && [ "$(grep -c '^exit=' "$OUT/$name.log")" = 1 ] && grep -qx 'exit=0' "$OUT/$name.log" \
+    || { echo "This dispatch did not return a matching passing result." | tee -a "$OUT/$name.log"; return 1; }
+  if [ -z "$files" ]; then
+    scp -q "$HOST:$remote/service/workflows.lock.json" "$OUT/$name.lock.json" || return 1
+    python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("tree") == sys.argv[2] else 1)' "$OUT/$name.lock.json" "$tree" \
+      || { rm -f "$OUT/$name.lock.json"; echo "The lock does not name this tested tree."; return 1; }
+    if grep -q "^Wrote test/affected-map.json" "$OUT/$name.log"; then scp -q "$HOST:$remote/test/affected-map.json" "$OUT/$name.affected-map.json" || return 1; fi
   fi
   grep -E "$SUMMARY" "$OUT/$name.log"
   echo "$(date +%H:%M:%S) $name: done"
-  grep -q '^exit=0' "$OUT/$name.log"
+  return 0
 }
 
 # Reads one request and runs it. Anything it doesn't understand runs nothing.

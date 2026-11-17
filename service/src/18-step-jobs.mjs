@@ -1,5 +1,5 @@
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
-// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs
+// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs, workloads-receipts.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A step that runs a job (keep_running with once true, or one whose answer says it is a job: run again, or already
@@ -56,8 +56,8 @@ async function jobStepEnd(j, n, args, out) {
 }
 // A step's own operation, to its end (60 minutes at most, as before). Cancelling the run cancels it too: it stops at its
 // next step and puts back what it did.
-async function stepOpEnd(j, id) {
-  const until = Date.now() + 60 * 60000;
+async function stepOpEnd(j, id, limit = 60 * 60000) {
+  const until = Date.now() + limit;
   while (jobs.get(id)?.status === 'running' && Date.now() < until) {
     const x = jobs.get(id);
     if (j.cancelled && !x.cancelled) cancelJob(x, j.cancelled);
@@ -95,7 +95,7 @@ function startedBy(action, args, out, keep = false) {
 // but self-healing's moves it, 20-desired.mjs, and so does the owner's ask answered "already"); for a job, which has no
 // entry, its start time (a run again by hand moves it). The clean-up stops it only while these still match
 // (startedStill).
-// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before. One the owner asked for
+// A missing or incomplete receipt leaves the workload alone and reports unresolved clean-up. One the owner asked for
 // while its step's operation was starting it (alreadyStarting, desiredWish: the operation's ownersWish) is theirs: it is
 // marked wish, and the clean-up leaves it. The mark is read after the since, in the same tick as desiredWish's own
 // writes, so an ask just as the step ends is never lost between the two.
@@ -104,26 +104,35 @@ async function receiptOf(spark, container) {
   const r = await run(nodeById(spark), RECEIPT_LOOK(container), { timeout: 20000 }).catch(() => null);
   if (r?.code !== 0) return null;
   const id = (fields(r.out, 'id')[0] || [])[0] || null, at = String((fields(r.out, 'at')[0] || [])[0] || '').split('|')[1] || null;
-  return { id: /^[0-9a-f]{12,64}$/.test(id || '') ? id : null, startedAt: at };
+  return /^[0-9a-f]{12,64}$/.test(id || '') && at ? { id, startedAt: at } : null;
+}
+// Captured before the start's claim is released (runJob), never by sampling a later owner's container.
+async function captureStartedReceipts(job) {
+  const keys = [...new Set([...(job.ranHere || []), ...((job.type === 'restart' || job.app) && job.node && job.container ? [`${job.node}/${job.container}`] : [])])];
+  job.startedReceipts = {};
+  for (const key of keys.filter(k => !/-part2$/.test(k))) {
+    const [spark, container] = key.split('/');
+    const seen = await receiptOf(spark, container);
+    const entry = desired().running.find(x => keyOf(x) === key);
+    job.startedReceipts[key] = seen ? { ...seen, since: entry?.since || null } : null;
+  }
+  savedRunReceipts(job);
 }
 async function startedReceipts(items) {
-  const out = [];
-  for (const x of items) {
-    const seen = await receiptOf(x.spark, x.container);
-    const entry = x.kind === 'job' ? null : desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
-    const { ops = [], ...item } = x, wish = ops.some(id => jobs.get(id)?.ownersWish);
-    // (a model or an app: its id and its entry's since, so self-healing's restart, which moves neither, is still the run's;
-    // a job: its id and its start time)
-    out.push({ ...item, ...(wish ? { wish: true } : {}), ...(seen ? { seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : {}) });
-  }
-  return out;
+  return items.map(x => {
+    const { ops = [], ...item } = x, key = `${x.spark}/${x.container}`;
+    const own = ops.map(id => jobs.get(id)?.startedReceipts).find(r => r && Object.hasOwn(r, key));
+    const seen = own?.[key], wish = ops.some(id => jobs.get(id)?.ownersWish);
+    return { ...item, ...(wish ? { wish: true } : {}), ...(seen ? { seen: x.kind === 'job' ? { id: seen.id, startedAt: seen.startedAt } : { id: seen.id, since: seen.since } } : {}) };
+  });
 }
 // Inside the stop's own claim (stop_model, keep_running's stop): whether what a run started is still what it started.
 // null when it is, else the words for why it is left running.
 async function startedStill(spark, container, seen) {
-  if (!seen) return null;
-  const now = await receiptOf(spark, container), at = sparkName(nodeById(spark) || { id: spark });
-  if (!now) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
+  const at = sparkName(nodeById(spark) || { id: spark });
+  if (!seen?.id || (!seen.startedAt && !seen.since)) throw new Error(`The record of what this run started is missing for ${container} on ${at}, so it wasn’t stopped.`);
+  const now = await receiptOf(spark, container);
+  if (!now?.id || (seen.startedAt && !now.startedAt)) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
   const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
   const other = (seen.id && now.id && now.id !== seen.id) || (seen.startedAt && now.startedAt && now.startedAt !== seen.startedAt)
     || ('since' in seen && (entry?.since || null) !== seen.since);
@@ -186,7 +195,8 @@ async function stopWhatRan(ran, viewer, ctx, title) {
       // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
       const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       // (only what this run started: its receipt is looked at again inside the stop's own claim, A-22)
-      const cx = x.seen ? { ...c, onlyIf: x.seen } : c;
+      if (!x.seen?.id || (!x.seen.startedAt && !x.seen.since)) throw new Error('the record of what this run started is missing');
+      const cx = { ...c, onlyIf: x.seen };
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, cx)
         : await stopAppStarted(viewer, x, cx);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');

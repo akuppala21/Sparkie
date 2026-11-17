@@ -111,7 +111,7 @@ const handler = async (req, res) => {
       const a = accessList();
       return send(res, 200, {
         source: 'console', viewer: { login: viewer.login, role: viewer.role, permissions: viewer.permissions || ownerPermissions() },
-        userName: a.userName,
+        userName: a.userName, hubId: hubId(), computeIds: computeSparks(),
         nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true })),
         main: consoleOrigin() || null,
         // How this device is signed in when it isn't through Tailscale (4.10).
@@ -126,7 +126,7 @@ const handler = async (req, res) => {
       const a = accessList(), user = a.sshUser;
       const list = NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true, ip: n.ip || (n.host !== 'local' ? n.host : null), user: n.user || user, alias: `ak${n.id}` }));
       return send(res, 200, {
-        portalUrl: a.publicHost ? `https://${a.publicHost}/` : CONFIG.origin ? `${CONFIG.origin}/` : null, user, nodes: list,
+        portalUrl: CONFIG.origin ? `${CONFIG.origin.replace(/\/$/, '')}/` : a.publicHost ? `https://${a.publicHost}/` : null, user, nodes: list,
         sshConfig: list.filter(n => n.ip).map(n => `Host ${n.alias}\n  HostName ${n.ip}\n  User ${n.user}\n  ServerAliveInterval 30\n  ServerAliveCountMax 3\n`).join('\n'),
       });
     }
@@ -530,7 +530,7 @@ const handler = async (req, res) => {
       const starting = path === '/main/start';
       const job = claimed([MAIN.node], `${starting ? 'starting' : 'stopping'} Sparkie’s model`, () => newJob(starting ? 'main-start' : 'main-stop', { node: MAIN.node, model: MAIN.title || MAIN.served }));
       // (the owner's Stop: the brain keeper never starts it again by itself, 20-heal.mjs)
-      return send(res, 202, publicJob(runJob(job, j => (starting ? startMain(j, keep.map(String)) : stopMain(j).then(() => markBrainLeftDown(false))))));
+      return send(res, 202, publicJob(runJob(job, async j => { markBrainDesired(starting); return starting ? startMain(j, keep.map(String)) : stopMain(j); })));
     }
     if (req.method === 'GET' && path === '/chats') {
       const mine = chatData().conversations.filter(c => c.login === viewer.login);

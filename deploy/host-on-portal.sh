@@ -144,6 +144,9 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 # (found by the gap analysis, 2026-11-11).
 LOCK_BUILD="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("build", ""))' "$HERE/service/workflows.lock.json" 2>/dev/null || true)"
 [ "$LOCK_BUILD" = "$API_BUILD" ] || { echo "service/workflows.lock.json is for build ${LOCK_BUILD:-unknown}, but this code is build $API_BUILD. Run node test/lock.mjs (the whole suite) first; installing now would switch every workflow off." >&2; exit 1; }
+# The API hash alone misses UI, worker and config edits. Check the exact tested source tree too.
+# pull.sh supplies a source manifest for its no-.git archive; the verifier hashes its files and root tree itself.
+python3 -I "$HERE/tools/qualify-install.py" "$HERE" >/dev/null || exit 1
 # What this update is, in plain words (optional, NOTE='…'). The new build puts it on its update record as it starts.
 NOTE="${NOTE:-}" python3 -I -c 'import json, os, sys; json.dump({"build": sys.argv[1], "note": os.environ["NOTE"][:600]}, open(sys.argv[2], "w"))' "$API_BUILD" "$STAGE/update-note.json" 2>/dev/null \
   || printf '{"build":"%s","note":""}\n' "$API_BUILD" > "$STAGE/update-note.json"

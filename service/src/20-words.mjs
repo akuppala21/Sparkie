@@ -95,7 +95,7 @@ async function restartWord(via) {
     try {
       const keep = (await mainPlan()).steps.filter(s => s.kind === 'stop').map(s => s.container);
       job = claimed([MAIN.node], 'starting Sparkie’s model', () => newJob('main-start', { node: MAIN.node, model: MAIN.title || MAIN.served }));
-      runJob(job, j => startMain(j, keep));
+      runJob(job, j => { markBrainDesired(true); return startMain(j, keep); });
     } catch (e) { return `Sparkie’s model ${gone ? 'is gone from Docker' : 'isn’t running'}, and it can’t be started right now: ${String(e.message).split('\n')[0].slice(0, 300)} Nothing was changed.`; }
     audit({ via, actor: 'owner', action: 'start_sparkie', args: { ...x, word: '/restart sparkie' }, ok: true, outcome: 'started', operation: job.id });
     return `Sparkie’s model ${gone ? 'was gone from Docker' : 'wasn’t running'}, so it’s starting again from its saved setup (${MAIN.title || MAIN.served}). Nothing else on ${sparkName(mainNode() || { id: MAIN.node })} is stopped for it. It takes a few minutes to load; /status shows when its server responds.`;

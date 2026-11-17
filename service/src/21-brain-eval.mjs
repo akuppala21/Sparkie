@@ -37,6 +37,7 @@ const brainInUse = () => (MAIN ? maskDeep({ key: brainKey(MAIN), setup: MAIN.id,
 function evalRecordProblem(r) {
   const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi, text = (v, max) => typeof v === 'string' && v.length <= max;
   if (!r || typeof r !== 'object' || Array.isArray(r) || r.kind !== 'spark-console-eval') return 'kind "spark-console-eval" (the record test/eval.mjs writes)';
+  if (r.serving?.verified === false) return 'a verified serving brain identity';
   if (!/^[0-9a-f]{64}$/.test(String(r.reads))) return 'reads: what the brain read in the build that ran (64 hex digits)';
   if (!/^[0-9a-f]{64}$/.test(String(r.set))) return 'set: the case set’s version (64 hex digits)';
   if (!/^[0-9a-f]{12}$/.test(String(r.build))) return 'build: the build that answered (12 hex digits)';

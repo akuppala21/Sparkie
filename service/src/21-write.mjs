@@ -75,8 +75,8 @@ async function writeOld(node, place) {
 // python3), then checking what it displaced: not the file as read, it is exchanged back, "changed since it was read".
 // From the exchange on, what was displaced is never removed unchecked: ended before the check (its time, a cancel, a
 // stop), the program exchanges back, and if that fails says where it is; an exchange back that fails is said the same
-// way, exit 5. Where this libc or filesystem has no exchange (or no python3, in a box), it compares once more just
-// before one move. old.hold and old.late, folders (tests only, never set by code): the program waits in the first
+// way, exit 5. Where this libc or filesystem has no exchange (or no python3, in a box), replacement is refused;
+// a compare followed by a move could overwrite a concurrent edit. old.hold and old.late, folders (tests only, never set by code): the program waits in the first
 // after staging, in the second just before the publishing call itself, after its last compare, as a test's second
 // writer needs it to.
 function writeProgram(rel, old) {
@@ -110,7 +110,7 @@ sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUP
     : ['ti=$(stat -c %i -- "$t") || exit 1', 'd=$t; t=', late, 'xchg "$d" "$p"; r=$?',
       // (exchanged: d holds what was at the name; the file as read goes, anything else goes back)
       `if [ $r = 0 ]; then if ${same('$d')}; then k=$d; d=; rm -f -- "$k"; else xchg "$d" "$p" || { echo "write_file: the file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as ${at}." >&2; d=; exit 5; }; k=$d; d=; rm -f -- "$k"; ${changed}; fi`,
-      `elif [ $r = 4 ] || [ $r = 127 ]; then t=$d; d=; ${same('$p')} || ${changed}; ${late}; mv -fT -- "$t" "$p" || exit 1; t=`,
+      `elif [ $r = 4 ] || [ $r = 127 ]; then t=$d; d=; ${same('$p')} || ${changed}; echo "write_file: this system cannot replace a file without risking another edit, so nothing was written." >&2; exit 4`,
       'else t=$d; d=; exit 1; fi'];
   // (ended between the exchange and its check: exchanged back, so what was at the name is there again; if that fails,
   // where it is kept is said. No exchange yet: d is only the staged text)

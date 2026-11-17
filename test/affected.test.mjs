@@ -136,7 +136,13 @@ describe('pick', () => {
     assert.match(pickNow(() => put(top, 'service/src/50-new.mjs', SMALL('fresh'))).why, /^a part was added: 50-new\.mjs/);
     assert.match(pickNow(() => rmSync(join(top, 'service/src/41-p1.mjs'))).why, /^a part was removed: 41-p1\.mjs/);
     // Not a part, a test or a document, and nothing in the map: all.
-    assert.match(pickNow(() => appendFileSync(join(top, 'public/app.js'), '// changed\n')).why, /^public\/app\.js is not in the map/);
+    const ui = pickNow(() => appendFileSync(join(top, 'public/app.js'), '// changed\n'), { maps: [] });
+    assert.equal(ui.all, false);
+    assert.ok(ui.files.includes('test/page.test.mjs'));
+    assert.ok(ui.files.includes('test/page-preview.test.mjs'));
+    assert.ok(ui.files.includes('test/door.test.mjs'));
+    assert.ok(!ui.files.includes('test/install.test.mjs'));
+    assert.equal(pickNow(() => put(top, 'public/new.js', 'new file')).all, true);
   });
 
   test('no map for the base or before it answers all; so do more than 8 parts and a function most test files run', () => {
@@ -182,15 +188,15 @@ describe('the landing pick (--landing, what tools/land.mjs uses)', () => {
     assert.deepEqual(most.files, withShort(...TESTS.slice(0, 9)));
   });
 
-  test('comments alone, and a whole new function at the top level, add nothing; new top-level code is still all', () => {
+  test('comments alone add nothing; new functions require coverage before a narrow pick', () => {
     const comment = () => edit(top, 'service/src/30-alpha.mjs', '// alpha\n', '// alpha, said better\n// over two lines\n');
     assert.equal(pickNow(comment).all, true);
     assert.deepEqual(pickNow(comment, landing).files, withShort());
     const fresh = () => edit(top, 'service/src/30-alpha.mjs', '}\n\nfunction two', '}\n\n// A new one.\nfunction added(x) {\n  return x;\n}\n\nfunction two');
     assert.equal(pickNow(fresh).all, true);
     const r = pickNow(fresh, landing);
-    assert.deepEqual(r.files, withShort());
-    assert.match(r.why, /^1 new function \(run by the changed callers' tests\)/);
+    assert.equal(r.all, true);
+    assert.match(r.why, /^new functions have no measured coverage yet/);
     // A new function and a call of it at the top level: that call runs in every test.
     const called = () => edit(top, 'service/src/30-alpha.mjs', '}\n\nfunction two', '}\n\nfunction added(x) {\n  return x;\n}\nadded(1);\n\nfunction two');
     assert.match(pickNow(called, landing).why, /^a changed line outside any function: 30-alpha\.mjs line \d+/);

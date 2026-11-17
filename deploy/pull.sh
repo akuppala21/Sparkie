@@ -670,6 +670,10 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     chmod 700 "$W/guard-bin/$pg"
   done
 
+  # The archive's installer checks exact-tree qualification itself, including UI, worker and config.
+  # Keep the manifest outside the archive: its root hash must equal the lock, and every unpacked file is checked.
+  g ls-tree -r -z "$c" > "$W/install-source-tree" || refuse "The tested source manifest couldn't be read."
+
   # Its own installer, on this Spark: no routes (no tailscale, sudo or ssh), the note built here. If work is running,
   # the installer asks on this terminal first (here pull.sh has asked already when a build answers); ASSUME_YES=1
   # skips the question, and with no terminal nothing changes.
@@ -678,7 +682,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   echo "Installing tree $WANT (commit ${c:0:12}, build $code_build) with its own installer …"
   local ay="${ASSUME_YES:-}"
   [ -z "$ARMED" ] || ay=1
-  ( cd "$W/tree" && export PATH="$W/guard-bin:$PATH" && NOTE="$note" SKIP_ROUTES=1 ASSUME_YES="$ay" \
+  ( cd "$W/tree" && export PATH="$W/guard-bin:$PATH" && NOTE="$note" SKIP_ROUTES=1 ASSUME_YES="$ay" SPARK_INSTALL_MANIFEST="$W/install-source-tree" \
       bash deploy/host-on-portal.sh local ${STAND_IN:+"$STAND_IN"} ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"

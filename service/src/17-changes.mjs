@@ -850,6 +850,7 @@ function restartJob(viewer, ctx, spark, container, model) {
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
     // (a start Docker didn't answer in time may have started it all the same: stopped again below, looked at, W-6)
     if (r.code && !unanswered(r)) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+    await captureStartedReceipts(j).catch(e => note(j, `Couldn’t record this start for automatic clean-up: ${e.message}`));
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');

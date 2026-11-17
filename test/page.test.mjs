@@ -189,3 +189,133 @@ test('a change\'s line under the reply says what its own outcome says: "Started"
 test('removing an agent says that nothing it started is cancelled (R9)', () => {
   assert.match(APP, /title: `Remove \$\{k\.name\}\?`, description: 'Its key stops working right away\. Nothing it started is cancelled: its operations and saved workflows finish\. Your other agents keep working\.'/);
 });
+
+// Focused behavioral checks run the shipped functions, with only transport, timers and drawing replaced.
+function uiFunction(name, indent = '') {
+  const re = new RegExp(`^${indent}(?:async )?function ${name}\\([^\\n]*\\) \\{\\n[\\s\\S]*?^${indent}\\}`, 'm');
+  const found = APP.match(re);
+  assert.ok(found, `${name} exists`);
+  return found[0];
+}
+
+test('transport loss is a separate observation, and the next job poll can report completion', async () => {
+  const terminal = new Set(['completed', 'failed', 'interrupted', 'partial', 'cancelled']);
+  const svcJobs = new Map(), notices = [];
+  let polls = 0;
+  const job = { id: 'j1', type: 'deploy', status: 'running', step: 'Starting' };
+  const context = {
+    state: { svcJobs, recentJobs: [], following: new Map() }, SVC_LABEL: {}, Date, num: Number.isFinite,
+    underWay: j => !terminal.has(j.status), jobPercent: () => null,
+    dismissedToasts: new Set(), $: () => null, h: () => null, sleep: async () => {},
+    toast: (text, options) => notices.push({ text, ...options }), runLive: () => {},
+    loadJobs: () => {}, loadLibrary: () => {}, loadMain: () => {}, loadStatus: () => {},
+    capi: async () => { if (++polls === 1) throw Object.assign(new Error('network'), { missing: true }); return { ...job, status: 'completed' }; },
+  };
+  const follow = vm.runInNewContext(`${uiFunction('followServiceJob')}\nfollowServiceJob`, context);
+  assert.equal((await follow(job)).status, 'completed');
+  assert.equal(polls, 2);
+  assert.ok(!notices.some(n => /failed/i.test(n.text)), JSON.stringify(notices));
+  assert.equal(svcJobs.get(job.id).status, 'completed');
+  assert.equal(svcJobs.get(job.id).connection, undefined);
+
+  polls = 0; notices.length = 0;
+  context.capi = async () => { polls++; throw Object.assign(new Error('gone'), { status: 404 }); };
+  const unknown = await follow(job);
+  assert.equal(polls, 30, 'a missing job retries a bounded number of reads');
+  assert.equal(unknown.status, 'running', 'absence never invents a terminal failure');
+  assert.match(unknown.connection, /outcome is unknown/);
+  assert.ok(!notices.some(n => /failed/i.test(n.text)));
+});
+
+test('fresh terminal job results supersede stale local observations, including old false failures', () => {
+  const state = { recentJobs: [{ id: 'j1', status: 'completed', createdAt: '2026-11-16' }],
+    svcJobs: new Map([['j1', { id: 'j1', status: 'failed', connection: 'Connection lost', createdAt: '2026-11-16' }]]) };
+  const jobs = vm.runInNewContext(`${uiFunction('activityJobs')}\nactivityJobs()`, { state, underWay: j => j.status === 'running' });
+  assert.equal(jobs[0].status, 'completed');
+  assert.equal(jobs[0].connection, null);
+});
+
+test('chat GET recovery follows a jobless answer across a failed read without posting a turn', async () => {
+  const c = { conv: { id: 'sc_one', replying: true, messages: [] }, sending: false, waiting: true };
+  let watching = null, reads = 0, draws = 0;
+  const context = vm.createContext({ c, here: () => true, activityJobs: () => [], underWay: () => false,
+    conversationReadDelay: conv => conv.replying ? 2000 : null, waitForRead: async () => {}, loadJobs: async () => {},
+    capi: async (path, method = 'GET') => {
+      assert.equal(method, 'GET'); assert.equal(path, 'chats/sc_one');
+      if (++reads === 1) throw new Error('offline');
+      return { id: 'sc_one', replying: reads < 3, messages: reads < 3 ? [] : [{ role: 'assistant', content: 'Saved final answer' }] };
+    },
+    applySaved: saved => { c.conv = saved; c.waiting = Boolean(saved.replying); draws++; },
+  });
+  vm.runInContext(`let watching = null; ${uiFunction('watchOps', '  ')}; watchOps('sc_one');`, context);
+  await new Promise(setImmediate);
+  assert.equal(reads, 3);
+  assert.equal(draws, 2);
+  assert.equal(c.waiting, false);
+  assert.equal(c.conv.messages[0].content, 'Saved final answer');
+});
+
+test('an incomplete stream retains its partial answer and requests GET recovery with one POST', async () => {
+  for (const broken of ['eof', 'reader-error']) {
+    const conv = { id: 'sc_one', messages: [] }, c = { conv, spark: null, draft: 'question' };
+    let posts = 0, follows = 0;
+    const context = {
+      c, state: { main: { data: { node: 'spark1' } } }, disposed: false, layout: { isConnected: true },
+      ta: { value: 'question' }, subjectNode: () => null, fleetSnapshot: () => 'snapshot', grow: () => {},
+      drawComposer: () => {}, drawHead: () => {}, drawMessages: () => {}, drawSoon: () => {}, loadConsoleChats: () => {},
+      here: () => true, watchOps: () => follows++, toast: () => assert.fail('transport must retain the incomplete reply'),
+      capi: async () => { throw new Error('offline'); },
+      streamChat: async (path, body, event) => {
+        posts++; assert.equal(path, 'chats/sc_one/messages');
+        event({ type: 'delta', text: 'Partial answer' });
+        if (broken === 'reader-error') throw new Error('reader disconnected');
+      },
+    };
+    const send = vm.runInNewContext(`${uiFunction('sendConsole', '  ')}\nsendConsole`, context);
+    await send('question');
+    assert.equal(posts, 1);
+    assert.equal(follows, 1);
+    assert.equal(c.conv.replying, true);
+    const reply = c.conv.messages.at(-1);
+    assert.equal(reply.content, 'Partial answer');
+    assert.equal(reply.streaming, true);
+    assert.equal(reply.reconnecting, true);
+  }
+});
+
+test('delayed approvals are read when their digits open, and open choices keep resolution current', () => {
+  const delay = vm.runInNewContext(`${uiFunction('conversationReadDelay')}\nconversationReadDelay`);
+  const conv = { messages: [{ opensAt: new Date(11000).toISOString(), choices: [{ state: 'open' }] }] };
+  assert.equal(delay(conv, 10000), 1050);
+  assert.equal(delay(conv, 11000), 5000, 'expiry and a Telegram resolution remain polled');
+  conv.messages[0].choices[0].state = 'gone';
+  assert.equal(delay(conv, 12000), null, 'resolved approval stops reads');
+  assert.equal(delay({ replying: true, messages: [] }, 12000), 2000, 'no operation is needed to follow a reply');
+  assert.match(APP, /type \$\{m\.pair\}, then press \$\{d\.yes\}/);
+  assert.match(APP, /viewCleanup\.push\(\(\) => \{[\s\S]*?cancelReadWait\?\.\(\);[\s\S]*?c\.waiting = false;[\s\S]*?removeEventListener\('visibilitychange', onVisible\)/);
+});
+
+test('hub identity is independent of the public hostname and pair capacity excludes protected or unverified links', () => {
+  const h = (tag, props, ...kids) => ({ tag, props, kids: kids.flat(Infinity).filter(x => x != null && x !== false) });
+  const state = { boot: { hubId: 'spark1', computeIds: ['spark2', 'spark3'] }, connections: { portalUrl: 'https://custom.example/', nodes: [{ alias: 'old-host', id: 'spark2' }] } };
+  const f = vm.runInNewContext(`${uiFunction('portalHostId')}\n${uiFunction('pairRow')}\n({portalHostId, pairRow})`, {
+    state, h, icon: () => h('i'), roomFor: () => 180, workloads: () => [], node: id => ({ id }), nodeName: id => id,
+  });
+  assert.equal(f.portalHostId(), 'spark1');
+  assert.doesNotMatch(textOf(f.pairRow({ a: 'spark1', b: 'spark3', tested: true })), /fits a model/);
+  assert.doesNotMatch(textOf(f.pairRow({ a: 'spark2', b: 'spark3', tested: false })), /fits a model/);
+  assert.match(textOf(f.pairRow({ a: 'spark2', b: 'spark3', tested: false })), /unverified/);
+  assert.match(textOf(f.pairRow({ a: 'spark2', b: 'spark3', tested: true })), /fits a model up to about 180 GB/);
+  assert.doesNotMatch(uiFunction('linkMap'), /Direct cables that work/);
+  assert.match(uiFunction('linkMap'), /'tested' : 'unverified'/);
+  assert.match(APP, /stat\('Containers running', 'box'\)/);
+  assert.match(APP, /busySparks\.reduce\(\(t, n\) => t \+ \(n\.runningContainers \|\| \[\]\)\.length, 0\)/);
+});
+
+test('only an explicit healthy power-off record makes an unreachable Spark peacefully asleep', () => {
+  const condition = vm.runInNewContext(`${uiFunction('condition')}\ncondition`, { state: { status: {} }, isStale: () => false, workloads: () => [] });
+  assert.equal(condition({ reachable: false, state: 'offline' }), 'offline');
+  assert.equal(condition({ reachable: false, state: 'offline', asleep: true }), 'offline');
+  assert.equal(condition({ reachable: false, state: 'offline', asleep: true, poweredOff: { at: 'now' } }), 'asleep');
+  assert.equal(condition({ reachable: false, state: 'offline', asleep: true, poweredOff: { problem: 'shutdown failed' } }), 'offline');
+});

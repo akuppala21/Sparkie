@@ -67,7 +67,10 @@ function desiredAfter(job) {
 // loading it), is marked too, in the same tick: the run takes its receipt when that ends, so the wish outlives it.
 const ownersAsk = (viewer, ctx) => !viewer?.agentKey && !ctx?.agent && !ctx?.agentId && !ctx?.selfTest && ['page', 'api', 'sparkie', 'telegram'].includes(ctx?.via);
 function desiredWish(keys) {
-  for (const j of jobs.values()) if ((j.ranHere || []).some(k => keys.includes(k)) || (j.node && j.container && keys.includes(`${j.node}/${j.container}`))) j.ownersWish = true;
+  for (const j of jobs.values()) if ((j.ranHere || []).some(k => keys.includes(k)) || (j.node && j.container && keys.includes(`${j.node}/${j.container}`))) {
+    j.ownersWish = true;
+    try { savedRunReceipts(j); } catch (e) { console.error(`Couldn’t keep the owner’s wish with the pending start: ${e.message}`); }
+  }
   try {
     const d = readKept(DESIRED_FILE);
     if (!d || !Array.isArray(d.running)) return;

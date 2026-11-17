@@ -47,6 +47,7 @@ export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worke
   /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//];
 // Everything starts and answers, sign-in works, the installer can still read the service.
 export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'internet', 'sparkie', 'install', 'go-back'].map(n => `test/${n}.test.mjs`);
+export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
 const MOST = 0.5;          // a function run by more than this share of the test files: everything
 const MAX_PARTS = 8;       // more parts changed than this: everything
@@ -258,7 +259,7 @@ export function choose({ map, changes, oldText, newText, missed = [], landing = 
         if (landing && old.slice(...gone).every((l, k) => isComment(l, oldB[gone[0] + k]))
           && now.split('\n').slice(...came).every((l, k) => isComment(l, nowB[came[0] + k]))) continue;
         const f = ownerOf(fns, old, h);
-        if (!f && landing && h.n === 0 && onlyNewFunctions(nowB.slice(...came))) { added++; continue; }
+        if (!f && landing && h.n === 0 && onlyNewFunctions(nowB.slice(...came))) return all(`new functions have no measured coverage yet: ${part}`);
         if (!f) return all(`a changed line outside any function: ${part} line ${h.s}`);
         owners.set(f.key, f);
       }
@@ -272,6 +273,7 @@ export function choose({ map, changes, oldText, newText, missed = [], landing = 
   if (parts.size > MAX_PARTS) return all(`${parts.size} parts changed (more than ${MAX_PARTS})`);
   const picked = new Set(SHORT_CHECK);
   for (const f of owners.values()) {
+    if (!f.tests.length || f.tests.some(i => !map.tests[i])) return all(`${f.part} ${f.name} has no reliable measured test coverage`);
     if (!landing && f.tests.length > map.tests.length * MOST) return all(`${f.part} ${f.name} is run by ${f.tests.length} of ${map.tests.length} test files`);
     for (const i of f.tests) if (map.tests[i]) picked.add(map.tests[i]);
   }
@@ -298,6 +300,12 @@ export function pick({ top = gitTop(), base = 'main', to = null, maps = findMaps
   const own = changesBetween(top, baseCommit, to);
   if (!own.length) return { all: false, files: [], fns: [], why: `nothing changed against ${base}` };
   if (own.every(c => isDoc(c.path))) return { all: false, files: [DOCS_TEST], fns: [], why: 'documents only: the documents test alone' };
+  // UI-only edits have a bounded integration surface even before a service coverage map exists.
+  // New public files and combined service changes still take the ordinary conservative route.
+  if (own.some(c => /^public\/(app\.js|styles\.css|index\.html)$/.test(c.path))
+    && own.every(c => (c.status === 'M' && /^public\/(app\.js|styles\.css|index\.html)$/.test(c.path)) || isDoc(c.path) || isTest(c.path))) {
+    return { all: false, files: [...new Set([...UI_CHECK, ...own.filter(c => isTest(c.path) && c.status !== 'D').map(c => c.path), ...(own.some(c => isDoc(c.path)) ? [DOCS_TEST] : [])])].sort(), fns: [], why: 'UI changes: browser contracts, API and access integration' };
+  }
   const tested = lastTested(top, baseCommit, maps);
   if (!tested) return { all: true, files: null, fns: [], why: `no map for ${base} or the ${HISTORY} commits before it (no whole run has recorded one yet)` };
   const r = choose({

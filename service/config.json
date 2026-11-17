@@ -36,6 +36,7 @@
     }
   },
   "main": {
+    "startOnInstall": true,
     "presets": {
       "aphex": {
         "node": "spark1",

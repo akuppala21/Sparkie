@@ -14,6 +14,7 @@ One small change at a time onto `main`: its affected tests on a compute Spark, t
   - `node tools/land.mjs --status`: the last landings and whole runs of `main`; it records whole runs that ended.
 - `SPARK_TEST_OUT=<folder>` chooses whose queue runs the step's tests (the `spark-test-runs*` folders beside the work
   folders); `SPARK_LAND_TIP_OUT` the queue for the whole run after (the main queue when not set).
+- UI-only edits use page, API and access checks even before a service coverage map exists. New functions and functions with no measured coverage still require a whole run.
 - To see a pick first: `node tools/affected.mjs pick --landing` (the files on stdout, why on stderr).
 - To see what the step rewords that is the owner's (a contract requirement or acceptance test, a Rule paragraph, a
   glossary meaning): `node tools/check-docs.mjs --meaning main`, by id with the old and new words (`--json` for a

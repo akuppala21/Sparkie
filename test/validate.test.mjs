@@ -356,3 +356,39 @@ test('going back to the last good build: none on the stand-in fleet, so it says 
   assert.deepEqual((await api('/rollback')).json, { available: false, stamp: null });
   assert.equal((await api('/rollback', { method: 'POST', body: {} })).status, 404);
 });
+
+// A-28: exercise the restoration boundary with terminal failures and a wait deadline, without a long real wait.
+const validationPart = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'service', 'src', '18-workflows.mjs'), 'utf8');
+const restoreValidationSource = /^async function restoreValidation\([^]*?^\}/m.exec(validationPart)?.[0];
+for (const terminal of ['failed', 'cancelled', 'running', 'missing']) {
+  test(`validation restoration ${terminal}: no success claim, and earlier work stays on the recovery record`, async () => {
+    const notes = [], job = {};
+    const restore = new Function('claimSparks', 'stopChecked', 'nodeById', 'runAction', 'waitJob', 'note', 'sparkName', 'maskSecrets', `${restoreValidationSource}\nreturn restoreValidation;`)(
+      () => () => {}, async () => 'stopped', id => ({ id }), async () => ({ operation: 'restore' }),
+      async () => terminal === 'missing' ? undefined : { status: terminal, error: terminal === 'failed' ? 'engine refused the start' : null },
+      (_j, text) => notes.push(text), node => node.id, String);
+    await assert.rejects(restore(job, {}, {}, 'spark3', 'sc-validation', ['sc-earlier']), /Earlier work still needs restoration/);
+    assert.deepEqual(job.stoppedHere, ['spark3/sc-earlier']);
+    assert.equal(job.notBack[0].items[0], 'spark3/sc-earlier');
+    assert.match(job.cleanUp, /sc-earlier wasn’t started again on spark3/);
+    assert.ok(!notes.some(line => /^Started sc-earlier again/.test(line)), notes.join('\n'));
+  });
+}
+test('validation cannot confirm its test-model stop: no earlier GPU work is restarted, and both are retained', async () => {
+  let starts = 0;
+  const job = {};
+  const restore = new Function('claimSparks', 'stopChecked', 'nodeById', 'runAction', 'note', 'sparkName', 'maskSecrets', `${restoreValidationSource}\nreturn restoreValidation;`)(
+    () => () => {}, async () => 'unknown', id => ({ id }), async () => { starts++; }, () => {}, node => node.id, String);
+  await assert.rejects(restore(job, {}, {}, 'spark3', 'sc-validation', ['sc-earlier']), /stop couldn’t be confirmed/);
+  assert.equal(starts, 0);
+  assert.deepEqual(job.ranHere, ['spark3/sc-validation']);
+  assert.deepEqual(job.stoppedHere, ['spark3/sc-earlier']);
+});
+test('validation restoration completed: only verified earlier work is removed from the recovery record', async () => {
+  const notes = [], job = {};
+  const restore = new Function('claimSparks', 'stopChecked', 'nodeById', 'runAction', 'waitJob', 'note', `${restoreValidationSource}\nreturn restoreValidation;`)(
+    () => () => {}, async () => 'stopped', id => ({ id }), async () => ({ operation: 'restore' }), async () => ({ status: 'completed' }), (_j, text) => notes.push(text));
+  await restore(job, {}, {}, 'spark3', 'sc-validation', ['sc-earlier']);
+  assert.deepEqual(job.stoppedHere, []);
+  assert.deepEqual(notes, ['Started sc-earlier again']);
+});

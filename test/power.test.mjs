@@ -887,3 +887,105 @@ describe('a model across two Sparks', { concurrency: 1 }, () => {
     } finally { await agentSettings({ halted: false }); }
   });
 });
+
+const powerPart = readFileSync(join(REPO, 'service', 'src', '21-power.mjs'), 'utf8');
+const powerFn = name => new RegExp(`^async function ${name}\\([^]*?^\\}`, 'm').exec(powerPart)?.[0];
+const cancelAtBoundary = j => { if (j.cancelled) throw Object.assign(new Error('Cancelled by the owner'), { cancelled: true }); };
+for (const failure of ['write refused', 'missing entry']) {
+  test(`A-32: parked-state ${failure} leaves hardware on and attempts compensation`, async () => {
+    const changes = [], job = {}, key = 'spark4/sc-earlier';
+    const deps = {
+      pausedCheck() {}, sparksWords: ids => ids.join(' and '), step() {}, note() {}, nodeById: id => ({ id }),
+      powerLook: async () => ({ answers: true, inUse: [], apps: [], boxes: [] }), sudoReady: async () => true,
+      plugUnproven: async () => null, powerBoxesEnd: async () => {}, copyBeforeOff: async () => {},
+      inventory: async () => ({ sparks: [] }), powerPlan: () => ({ models: [{ at: 'spark4', container: 'sc-earlier', sparks: ['spark4'] }] }),
+      cancelCheck: cancelAtBoundary, stopContainer: async j => { j.stoppedHere = [key]; changes.push('stop'); }, stoppedForSure: async () => {},
+      parkDesired: () => { if (failure === 'write refused') throw new Error('disk full'); return []; },
+      desired: () => ({ running: [] }), keyOf: x => `${x.spark}/${x.container}`, unpark: async (_j, stopped) => { assert.deepEqual(stopped, [key]); changes.push('compensate'); },
+      shutDownSpark: async () => { changes.push('shutdown'); }, offRecord: () => { changes.push('record off'); },
+    };
+    const off = new Function(...Object.keys(deps), `${powerFn('powerOffJob')}\nreturn powerOffJob;`)(...Object.values(deps));
+    await assert.rejects(off(job, ['spark4'], {}, 'asked'), /parked workloads couldn’t be saved.*nothing was shut down/);
+    assert.deepEqual(changes, ['stop', 'compensate']);
+  });
+}
+test('A-33: cancellation while hardware boots clears the stale off record, leaves it on and ends cancelled', async () => {
+  const job = {}, changes = [], off = { spark4: {} };
+  const deps = {
+    powerOnOne: async j => { changes.push('plug on'); j.cancelled = 'owner'; },
+    powerState: () => ({ off }), step() {}, note: (_j, line) => changes.push(line), sparksWords: ids => ids.join(' and '),
+    inventory: async () => ({ sparks: [{ id: 'spark4', dockerOk: true }] }),
+    offRecord: id => { delete off[id]; changes.push('off record cleared'); }, fleetEvent() {}, POWER_WHY: {}, cancelCheck: cancelAtBoundary,
+  };
+  const wake = new Function(...Object.keys(deps), `${powerFn('powerOnSparks')}\nreturn powerOnSparks;`)(...Object.values(deps));
+  await assert.rejects(wake(job, ['spark4'], 'asked'), e => e.cancelled === true);
+  assert.deepEqual(off, {});
+  assert.equal(changes[0], 'plug on');
+  assert.ok(changes.some(x => /parked workloads were not started/.test(x)));
+});
+test('A-33: a cancelled restore handoff starts no parked workload', async () => {
+  let reads = 0;
+  const restore = new Function('cancelCheck', 'desired', `${powerFn('bringBackParked')}\nreturn bringBackParked;`)(
+    cancelAtBoundary, () => { reads++; return { running: [] }; });
+  await assert.rejects(restore({ cancelled: 'owner' }, ['spark4']), e => e.cancelled === true);
+  assert.equal(reads, 0);
+});
+// Run the action's real overlap decision before any plug or workload call can be made.
+const powerOnActionAt = powerPart.indexOf("  name: 'power_on',");
+const powerOnRunAt = powerPart.indexOf('  run: ', powerOnActionAt) + '  run: '.length;
+const powerOnRunSource = powerPart.slice(powerOnRunAt, powerPart.indexOf('\n  },\n});', powerOnRunAt) + '\n  }'.length);
+function overlapAction(going) {
+  const deps = { powerTargets: input => input.sparks, powerState: () => ({ off: {} }), jobs: new Map([['wake', going]]),
+    sparksWords: ids => ids.join(' and '), HttpError: class extends Error { constructor(status, words) { super(words); this.status = status; } } };
+  return new Function(...Object.keys(deps), `return (${powerOnRunSource});`)(...Object.values(deps));
+}
+test('A-34: an existing wake covers the whole request before its operation can be reused', async () => {
+  const run = overlapAction({ id: 'wake', status: 'running', type: 'power-on', nodes: ['spark3', 'spark4'] });
+  const out = await run({ sparks: ['spark4'] }, {}, {});
+  assert.equal(out.outcome, 'already-starting');
+  assert.equal(out.operation, 'wake');
+});
+test('A-34: wake 3 followed by wake 3+4 refuses the partial overlap and names the unhandled work', async () => {
+  const run = overlapAction({ id: 'wake', status: 'running', type: 'power-on', node: 'spark3' });
+  await assert.rejects(run({ sparks: ['spark3', 'spark4'] }, {}, {}), e => e.status === 409 && /spark3 and spark4 again.*other Sparks were not turned on/.test(e.message));
+});
+test('wake then requested start then unrelated parked restore: cleanup still owns only the requested model', async () => {
+  const stepSource = readFileSync(join(REPO, 'service', 'src', '18-step-jobs.mjs'), 'utf8');
+  const modelSource = readFileSync(join(REPO, 'service', 'src', '18-job-model.mjs'), 'utf8');
+  const lift = (source, name) => new RegExp(`^(?:async )?function ${name}\\([^]*?^\\}`, 'm').exec(source)[0];
+  const operations = new Map(), events = [], parked = { spark: 'spark3', container: 'sc-unrelated', model: 'unrelated', parked: true };
+  const stepEnd = new Function('jobs', lift(stepSource, 'stepOpEnd') + '\nreturn stepOpEnd;')(operations);
+  const restoreDeps = {
+    cancelCheck: cancelAtBoundary, desired: () => ({ running: [parked] }), consoleOff: () => false,
+    sparksWords: ids => ids.join(' and '), step() {}, note() {}, parkDesired() {}, keyOf: x => `${x.spark}/${x.container}`,
+    workflowStatus: () => ({ state: 'active' }), receiptsHeld: async () => [], healOwner: () => ({}),
+    runAction: async () => {
+      events.push('restore unrelated');
+      operations.set('restore', { id: 'restore', status: 'completed', ranHere: ['spark3/sc-unrelated'] });
+      return { outcome: 'started', operation: 'restore' };
+    },
+    stepOpEnd: stepEnd, jobs: operations,
+  };
+  const bringBackParked = new Function(...Object.keys(restoreDeps), `${powerFn('bringBackParked')}\nreturn bringBackParked;`)(...Object.values(restoreDeps));
+  let end;
+  const wakeDeps = {
+    sparksWords: ids => ids.join(' and '), claimed: (_ids, _words, make) => make(),
+    newJob: (type, meta) => { const j = { id: 'wake', type, status: 'running', ...meta }; operations.set(j.id, j); return j; },
+    runJob: (j, work) => { end = work(j).then(() => { j.status = 'completed'; }); }, pausedCheck() {},
+    powerOnSparks: async () => { events.push('wake'); }, cancelCheck: cancelAtBoundary, step() {}, note() {},
+    jobs: operations, bringBackParked,
+  };
+  const powerThen = new Function(...Object.keys(wakeDeps), `${lift(powerPart, 'powerThen')}\nreturn powerThen;`)(...Object.values(wakeDeps));
+  const out = powerThen({}, {}, ['spark3'], 'requested', async () => {
+    events.push('start requested');
+    operations.set('requested', { id: 'requested', status: 'completed', ranHere: ['spark3/sc-requested'] });
+    return { outcome: 'started', operation: 'requested' };
+  });
+  await end;
+  assert.deepEqual(events, ['wake', 'start requested', 'restore unrelated']);
+  assert.equal(operations.get(out.operation).inner, 'requested');
+  const startedBy = new Function('jobs', 'sparkIdOf', `${lift(stepSource, 'startedBy')}\nreturn startedBy;`)(operations, String);
+  assert.deepEqual(startedBy('start_model', {}, out).map(x => `${x.spark}/${x.container}`), ['spark3/sc-requested']);
+  const jobModel = new Function(`${lift(modelSource, 'jobModel')}\nreturn jobModel;`)();
+  assert.deepEqual(jobModel('start_model', {}, out), { name: 'requested' });
+});

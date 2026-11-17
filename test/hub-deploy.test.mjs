@@ -502,6 +502,18 @@ exec bash -c "$*"
   const MAIN_AT = '.local/state/spark-console/main.json';
   const swapped = (m, from, to) => JSON.parse(JSON.stringify(m).replaceAll(`"node":"${from}"`, `"node":"${to}"`));
 
+  test('migration starts the copied brain only on explicit request and preserves an explicit Stop', () => {
+    for (const stopped of [false, true]) {
+      const f = fleet(), saved = { current: 'lib-q', ...(stopped ? { desiredRunning: false } : {}) };
+      f.put('spark2', MAIN_AT, JSON.stringify(saved));
+      const r = f.copy(['2', '1', '--start-brain']);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const after = JSON.parse(readFileSync(f.at('spark1', MAIN_AT), 'utf8'));
+      assert.equal(after.desiredRunning, !stopped);
+      assert.equal(Boolean(after.leftDown), !stopped);
+    }
+  });
+
   test('main.json on the new hub names it: a saved setup’s Spark and a route to the old hub’s loopback move; another Spark, a title, a tailnet route stay', () => {
     const f = fleet();
     f.put('spark2', MAIN_AT, JSON.stringify(MAIN), 0o600);

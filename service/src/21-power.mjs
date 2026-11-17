@@ -452,7 +452,14 @@ async function powerOffJob(j, ids, ctx, why, boxYes = false) {
   j.stoppedHere = [];
   j.parkedHere = stopped;
   let parked = [];
-  try { parked = parkDesired(stopped, true); } catch (e) { note(j, `The list of what should be running couldn’t be marked: ${e.message}`); }
+  try {
+    parkDesired(stopped, true);
+    parked = desired(true).running.filter(x => x.parked && stopped.includes(keyOf(x))).map(keyOf);
+    if (stopped.filter(k => !/-part2$/.test(k)).some(k => !parked.includes(k))) throw new Error('the saved list is missing a stopped workload');
+  } catch (e) {
+    await unpark(j, stopped, pairHeads);
+    throw new Error(`The parked workloads couldn’t be saved (${e.message}), so nothing was shut down. Starting them again was attempted; the log says what came back.`);
+  }
   const pairs = pairWords(plan, ids);
   if (pairs) note(j, pairs);
   if (j.cancelled) { await unpark(j, stopped, pairHeads); cancelCheck(j); }
@@ -608,16 +615,21 @@ async function powerOnSparks(j, ids, why, noSwitch = false) {
     offRecord(id, null);
     fleetEvent({ type: 'spark-powered-on', spark: id, why: POWER_WHY[why] || why });
   }
+  // Once switched on, leave the hardware safely on; cancellation ends before any workload handoff.
+  if (j.cancelled) note(j, 'The wake was cancelled. Powered-on Sparks stay on; parked workloads were not started.');
+  cancelCheck(j);
 }
 // What was parked on these Sparks comes back now that they're on (all of a model's Sparks on): as self-healing brings
 // things back, through the same actions, never stopping anything else. One that doesn't come back is held, with why.
 // skip: entries only unparked, not started (the one a start just tried: it failed, so it shows as held, with why).
 async function bringBackParked(j, ids, skip = null) {
+  cancelCheck(j);
   const list = desired().running.filter(x => x.parked && (x.sparks || [x.spark]).some(id => ids.includes(id)) && !(x.sparks || [x.spark]).some(consoleOff));
   const skipped = skip ? list.filter(skip) : [];
   if (skipped.length) try { parkDesired(skipped.map(keyOf), false); } catch {}
   const results = [];
   for (const x of list.filter(y => !skipped.includes(y))) {
+    cancelCheck(j);
     const where = sparksWords(x.sparks || [x.spark]);
     step(j, `Bringing back ${x.container} on ${where}`);
     try { parkDesired([keyOf(x)], false); } catch {}
@@ -627,18 +639,22 @@ async function bringBackParked(j, ids, skip = null) {
     // (a saved workflow's run that started it keeps it as its own once it is back: A-22)
     const held = await receiptsHeld([keyOf(x)]).catch(() => []);
     try {
+      cancelCheck(j);
       if (st?.state === 'untested') throw new Error('the workflow that brings it back hasn’t passed Spark Console’s tests');
       const out = x.app ? await runAction('keep_running', healOwner(), { spark: x.spark, container: x.container }, ctx)
         : x.sparks ? await runAction('start_model', healOwner(), { model: x.model, sparks: x.sparks, ...extra }, ctx)
           : await runAction('restart_model', healOwner(), { spark: x.spark, container: x.container, ...extra }, ctx);
       if (out?.operation) {
-        const done = await waitJob(out.operation, 45 * 60000);
+        // This restore has its own id; j.inner stays the requested start's ownership link.
+        const done = await stepOpEnd(j, out.operation, 45 * 60000);
+        cancelCheck(j);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'it didn’t start').split('\n')[0]);
       } else if (!['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
       if (held.length) await receiptsBroughtBack(held, out?.operation ? jobs.get(out.operation) : null).catch(() => {});
       note(j, `${x.container} is back on ${where}`);
       results.push(x.container);
     } catch (e) {
+      if (e?.cancelled || j.cancelled) throw e;
       // (masked, then cut, as every healing reason: R7)
       const why = maskSecrets(String(e.message).split('\n')[0]).slice(0, 300);
       note(j, `${x.container} didn’t come back: ${why}`);
@@ -657,8 +673,11 @@ action({
   }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     const ids = powerTargets(input, viewer), st = powerState();
-    const going = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && (j.nodes || [j.node]).some(id => ids.includes(id)));
+    const waking = [...jobs.values()].filter(j => j.status === 'running' && j.type === 'power-on');
+    const going = waking.find(j => ids.every(id => (j.nodes || [j.node]).includes(id)));
     if (going) return { outcome: 'already-starting', operation: going.id, sparks: going.nodes || [going.node], step: going.step, note: 'It’s already being turned on; nothing new was done.', next: `wait_operation {"id":"${going.id}"} to follow it.` };
+    const overlap = waking.find(j => (j.nodes || [j.node]).some(id => ids.includes(id)));
+    if (overlap) throw new HttpError(409, `${sparksWords(overlap.nodes || [overlap.node])} is already being turned on. Wait for operation ${overlap.id}, then ask to turn on ${sparksWords(ids)} again; the other Sparks were not turned on by this request.`);
     const parked = desired().running.filter(x => x.parked && (x.sparks || [x.spark]).some(id => ids.includes(id)));
     const answering = await Promise.all(ids.map(id => answersNow(nodeById(id))));
     if (answering.every(Boolean) && !ids.some(id => st.off[id]) && !parked.length) return { outcome: 'already', sparks: ids, note: `${sparksWords(ids)} ${ids.length > 1 ? 'are' : 'is'} on and answering.` };
@@ -679,6 +698,7 @@ action({
       await powerOnSparks(j, ids, why, why === 'outside');
       // (what comes back starts through its own operations, which claim these Sparks themselves)
       j.release?.();
+      cancelCheck(j);
       const back = await bringBackParked(j, ids);
       if (back.length) note(j, `Back: ${back.join(', ')}`);
     });
@@ -729,6 +749,7 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
     j.handedOver = true;
     let started = false;
     try {
+      cancelCheck(j);
       step(j, `Starting ${what}`);
       // (no conversation: this operation posts the one result; poweredOn counts the wakes this start has had, R56)
       const out = await go({ ...ctx, poweredOn: (ctx.poweredOn || 0) + 1, conv: null, onQuestion: null });
@@ -763,7 +784,8 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
       // What else was parked there comes back now, after what was asked for, whether that started or not (never
       // stopping anything: one that doesn't fit is held, with why). What was asked for, if it didn't start, is only
       // unparked: held, with why, never parked for good on a Spark that is on.
-      const back = await bringBackParked(j, need, started ? null : asked).catch(e => { note(j, `Bringing back what was parked there: ${maskSecrets(String(e.message))}`); return []; });
+      if (j.cancelled) cancelCheck(j);
+      const back = await bringBackParked(j, need, started ? null : asked).catch(e => { if (e?.cancelled || j.cancelled) throw e; note(j, `Bringing back what was parked there: ${maskSecrets(String(e.message))}`); return []; });
       if (back.length) note(j, `Back: ${back.join(', ')}`);
     }
   });

@@ -112,17 +112,18 @@ fi
 `;
 }
 // Shell (bash, $dir a cache entry): $hfreal, the entry's own folder (the folders above it resolved, the entry itself not),
-// and $nl, a line break.
-const HF_OWN = `hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}; nl=$'\\n'`;
+// $hfblobs, the trusted hub-wide blob folder, and $nl, a line break.
+const HF_OWN = `hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}; hfblobs=$(readlink -f ${HF_HUB})/blobs; nl=$'\\n'`;
 // Shell (bash, after HF_OWN): `each` for every file or link under "$dir/<under>", with $f its path there and $t where it
 // leads. The one rule for links in a cache entry (R17), for a start (hfMounts) and a copy to another Spark (copyModel):
-// a link leads to a plain file, and out of the entry's own folder only for a weight file. A copy hands the bytes over, so
+// a link leads to a readable plain file in this entry or the hub's shared blobs; other outside links are weights only. A copy hands the bytes over, so
 // there a weight file that leads out must also be `min` bytes or more (no key or settings file is 16 MiB). Anything
 // else, or a comma, quote or line break in a name or target, stops the script with one line naming the file.
 function hfEachFile(under, each, min = 0) {
   return `while IFS= read -r -d '' f; do f=\${f#./}; t=$(readlink -f "$dir/${under}/$f"); say="\${f//$nl/ } in the Hugging Face cache copy of \${dir##*/models--}"
     case "\${t}/${under}/$f" in *[,\\"]*|*"$nl"*) echo "$say has a comma, quote or line break in its name or where it links, which Spark Console doesn’t take." >&2; exit 1 ;; esac
-    case "$t" in "$hfreal"/*) [ -f "$t" ] || { echo "$say links to something that isn’t a file (\${t//$nl/ })." >&2; exit 1; } ;;
+    case "$t" in "$hfreal"/*) [ -f "$t" ] && [ -r "$t" ] || { echo "$say links to something that isn’t a file (\${t//$nl/ })." >&2; exit 1; } ;;
+      "$hfblobs"/*) [ ! -L "$dir" ] && [ -f "$t" ] && [ -r "$t" ] || { echo "$say does not lead to a readable shared cache file." >&2; exit 1; } ;;
       *) case "$f" in *.safetensors|*.gguf|*.bin|*.pt|*.pth) [ -f "$t" ]${min ? ` && [ -n "$(find "$t" -size +${min - 1}c 2>/dev/null)" ]` : ''} ;; *) false ;; esac || { echo "$say links outside the model’s folder (to \${t//$nl/ }). ${min ? 'A copy to another Spark' : 'A start'} follows such a link only for a weight file (.safetensors, .gguf, .bin, .pt or .pth) that is a plain file${min ? ` of at least ${min / 2 ** 20} MiB` : ''}." >&2; exit 1; } ;; esac
     ${each}
   done < <(cd "$dir/${under}" && find . \\( -type l -o -type f \\) -print0)`;

@@ -96,6 +96,7 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'service/config.json': { text: `{"nodes":[{"id":"spark2","host":"local","ip":"${SPARK2_IP}"},{"id":"spark3","host":"spark3.test"}],"user":"standin"}\n` },
     'service/catalog.json': { text: '[]\n' }, 'service/worker.py': { text: '# stand-in worker\n' },
     'deploy/host-on-portal.sh': { text: installer, mode: '100755' },
+    'tools/qualify-install.py': { text: read(REPO, 'tools', 'qualify-install.py') },
     'deploy/update-guard.sh': { text: read(REPO, 'deploy', 'update-guard.sh'), mode: '100755' },
     'deploy/go-back.sh': { text: read(REPO, 'deploy', 'go-back.sh'), mode: '100755' },
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },

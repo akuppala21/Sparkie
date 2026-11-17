@@ -476,7 +476,12 @@ function sparkPlaces(text, kinds = ['start']) {
     }
     const words = CHANGE_WORDS.flatMap(([kind, re]) => [...s.matchAll(new RegExp(re.source, 'gi'))].map(m => ({ kind, at: m.index }))).sort((x, y) => x.at - y.at);
     // (two kinds at one word, "set up": two clauses with the same text)
-    const cut = words.map(w => ({ kind: w.kind, at: w.at, end: words.find(x => x.at > w.at)?.at ?? s.length, named: new Set(), places: new Set() }));
+    // A destination just before a verb belongs to that request, including after a join between requests.
+    const starts = words.map(w => {
+      const prefix = /(?:^|,\s*(?:and\s+)?|\band\s+|\bthen\s+)((?:on|onto|at|in|across|over|for)\s+(?:the\s+)?spark\d+(?:\s*(?:,|and|&|\+)\s*spark\d+)*\s*,?\s*)$/i.exec(s.slice(0, w.at));
+      return { ...w, before: Boolean(prefix), at: prefix ? w.at - prefix[1].length : w.at };
+    });
+    const cut = starts.map(w => ({ kind: w.kind, before: w.before, at: w.at, end: starts.find(x => x.at > w.at)?.at ?? s.length, named: new Set(), places: new Set() }));
     for (const g of s.matchAll(/\bspark\d+\b(?:\s*(?:,|and|&|\+|or)?\s*\bspark\d+\b)*/g)) {
       const ids = g[0].match(/spark\d+/g), pre = s.slice(0, g.index), post = s.slice(g.index + g[0].length);
       for (const id of ids) named.add(id);
@@ -485,13 +490,13 @@ function sparkPlaces(text, kinds = ['start']) {
       for (const id of ids) { if (ruled) out.add(id); if (from) source.add(id); if (or) either.add(id); }
       const near = words.filter(w => w.at < g.index).pop(), mine = near && kinds.includes(near.kind) && !ruled && !or && !ids.some(id => either.has(id)) && !(kinds.includes('start') && (from || !place));
       for (const id of ids) if (mine) after.add(id);
-      const own = cut.filter(c => c.at < g.index && g.index < c.end);
+      const own = cut.filter(c => c.at <= g.index && g.index < c.end);
       if (!own.length) loose = true;
       for (const c of own) for (const id of ids) { c.named.add(id); if (place && !ruled && !from && !or) c.places.add(id); }
       if (!place || ruled || from || or) { doubt = true; continue; }
       for (const id of ids) places.add(id);
     }
-    for (const c of cut) clauses.push({ kind: c.kind, text: s.slice(c.at, c.end), named: [...c.named], places: [...c.places] });
+    for (const c of cut) clauses.push({ kind: c.kind, before: c.before, text: s.slice(c.at, c.end), named: [...c.named], places: [...c.places] });
   }
   return { named: [...named], places: [...places], after: [...after], out: [...out], source: [...source], either: [...either], doubt, clauses, loose };
 }
@@ -589,27 +594,32 @@ async function sparkieCheck(name, input, ctx) {
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
   const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
-    // Where it lands is the owner's to say (A-20), in this message only (sparkPlaces): one Spark named as a place and
-    // nothing else ("start gemma on Spark 4") is where it starts, whatever the call says; no Spark named at all, Spark
-    // Console places it (the call's Spark is dropped); the Sparks of a start across Sparks all named as places, as the
-    // call has them. Several orders that each bring something up (start or keep) each take the one place their own
-    // words name: every Spark in a clause (sparkPlaces), each clause naming one as a place, and one start clause naming
-    // the model ("start gpt-oss-20b on Spark 3, then run wl-y on Spark 4": Spark 3). Anything else (one order naming two
-    // Sparks, one ruled out or doubtful, "3 or 4", "the other spark", a stop or restart beside it, a call across Sparks
-    // the words don't match) is a button, never at once: it shows the place the words settle after the start word, else
-    // the call's.
-    const p = sparkPlaces(ctx.request ?? saidText, ['start']), places = p.places;
+    // Each recognized request owns its model and destinations. Resolve that binding before placement, including
+    // destinations before the verb. Unclear mixed requests keep a button, with only that clause's destinations.
+    const p = sparkPlaces(ctx.request ?? saidText, ['start']);
     const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
-    // (the model's name read as tracesToRequest reads it: every word of it, or squashed into one)
     const modelWords = [...tokensOf(String(out.model || ''))], namesIt = c => modelWords.length > 0 && modelWords.every(t => tokensOf(c.text).has(t) || squash(c.text).includes(t.replace(/\./g, '')));
     const startClauses = p.clauses.filter(c => c.kind === 'start' && namesIt(c));
-    const eachOwn = !p.loose && p.clauses.every(c => ['start', 'keep'].includes(c.kind) && c.named.length === 1 && c.places.length === 1) && startClauses.length === 1;
+    const own = startClauses.length === 1 ? startClauses[0] : p.clauses.length === 1 && p.clauses[0].kind === 'start' ? p.clauses[0] : null;
+    const onlyStarts = p.clauses.every(c => ['start', 'keep'].includes(c.kind));
     let settled = false;
-    if (!p.named.length && !p.doubt) { delete out.spark; delete out.sparks; settled = true; }
-    else if (!p.doubt && places.length === 1) { out.spark = places[0]; delete out.sparks; settled = true; }
-    else if (!p.doubt && places.length > 1 && Array.isArray(out.sparks) && same(out.sparks, places)) { delete out.spark; settled = true; }
-    else if (!p.doubt && places.length > 1 && eachOwn && !Array.isArray(out.sparks)) { out.spark = startClauses[0].places[0]; delete out.sparks; settled = true; }
-    else if (p.after.length === 1) { out.spark = p.after[0]; delete out.sparks; }
+    // Bind to this model's request before considering placement. Another request's destination is never evidence.
+    if (own) {
+      if (!own.named.length) {
+        if (!p.doubt) { delete out.spark; delete out.sparks; }
+        settled = !p.doubt && !p.named.length;
+      } else if (own.places.length === 1) {
+        const mismatch = Array.isArray(out.sparks) && !same(out.sparks, own.places);
+        out.spark = own.places[0]; delete out.sparks;
+        settled = !p.doubt && own.named.length === 1 && onlyStarts && (!own.before || p.clauses.length === 1) && !mismatch;
+      } else if (!p.doubt && own.places.length > 1 && same(own.named, own.places) && Array.isArray(out.sparks) && same(out.sparks, own.places)) {
+        delete out.spark;
+        settled = onlyStarts && (!own.before || p.clauses.length === 1);
+      }
+    } else if (Array.isArray(out.sparks)) {
+      // No unique request owns this pair. Keep the unresolved choice, without proposing an invented pair.
+      delete out.sparks; delete out.spark;
+    }
     return { clear: asked && settled && await namesModel(out, saidText), input: out };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).

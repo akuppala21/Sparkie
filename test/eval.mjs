@@ -114,18 +114,22 @@ import { pathToFileURL } from 'node:url';
 import http from 'node:http';
 import https from 'node:https';
 import { TEST_DIR } from './start-mock.mjs';
-import { brainSent, brainReadsOf } from './lock.mjs';
+import { brainSent, brainReadsOf, shippedHub } from './lock.mjs';
 import { mask, turnCalls, gradeRun, diskSnapshot, railOf, FLEET_SKIP } from './eval-grade.mjs';
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
 // A run with a run that was no result (the chat failed, or the practice console's rail wasn't checked, twice) is saved
 // under this kind, which --store and the console refuse: it is never the brain's eval.
 const BROKEN_KIND = 'spark-console-eval-broken';
+const DIAGNOSTIC_KIND = 'spark-console-eval-diagnostic';
 
 // --store <file>: only send a saved record to the console, as the owner (Tailscale says who you are), and say what it said.
-const STORE = arg('store', null), CONSOLE = String(arg('console', 'https://akspark1.tailab9aa9.ts.net:8443/console/api')).replace(/\/$/, '');
+const endpointConfig = JSON.parse(readFileSync(join(resolve(arg('tree', join(TEST_DIR, '..'))), 'service', 'config.json'), 'utf8'));
+const DEFAULT_CONSOLE = `${String(endpointConfig.origin).replace(/\/$/, '')}${endpointConfig.apiMount || '/console/api'}`;
+const STORE = arg('store', null), CONSOLE = String(arg('console', DEFAULT_CONSOLE)).replace(/\/$/, '');
 if (STORE) {
   const record = JSON.parse(readFileSync(STORE, 'utf8')), origin = arg('origin', new URL(CONSOLE).origin);
+  if (record?.kind === DIAGNOSTIC_KIND || record?.serving?.verified === false) { console.error('Not kept: the serving brain identity was not verified. This is a diagnostic run only.'); process.exit(1); }
   if (record?.kind === BROKEN_KIND) { console.error(`Not kept: that run isn't a score: ${record.broken?.length || 'some'} of its runs were no result (${(record.broken || []).map(b => `${b.case} run ${b.run}`).join(', ')}). Its results file has them.`); process.exit(1); }
   if (record?.memorySwitches?.off?.length) { console.error(`Not kept: that run had memory additions switched off (${record.memorySwitches.off.join(', ')}), so it measures them, not this build as it runs. Its results file has it.`); process.exit(1); }
   const r = await fetch(`${CONSOLE}/main/eval`, { method: 'POST', signal: AbortSignal.timeout(30000), headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin }, body: JSON.stringify(record) })
@@ -158,6 +162,7 @@ const OFF = String(arg('memory-off', '')).split(',').map(s => s.trim()).filter(B
 if (OFF.some(s => !MEMORY_SWITCHES.includes(s))) { console.error(`--memory-off takes a list of: ${MEMORY_SWITCHES.join(', ')}.`); process.exit(1); }
 const TREE = arg('tree', null) ? resolve(arg('tree')) : null;
 if (TREE && !existsSync(join(TREE, 'test', 'start-mock.mjs'))) { console.error(`--tree ${TREE}: no test/start-mock.mjs there.`); process.exit(1); }
+const HUB = shippedHub(TREE || join(TEST_DIR, '..'));
 const { startMock } = await import(TREE ? pathToFileURL(join(TREE, 'test', 'start-mock.mjs')).href : './start-mock.mjs');
 const ONLY = arg('only', null)?.split(',');
 const SET_NAME = arg('set', null);
@@ -341,13 +346,13 @@ if (!STAND_IN) {
 // What the brain reads in the tree that answers, and its build: one stand-in console of it, as the lock is written. And
 // the actions that build counts as changes: its own table (GET /actions, kind "change"), never a second list here.
 async function markOf() {
-  const fleet = await startMock();
+  const fleet = await startMock({ hub: HUB });
   try {
     const { build } = await (await fetch(`${fleet.base}/health`)).json();
     const catalog = await fetch(`${fleet.base}/actions`).then(r => r.json()).catch(() => null);
     const changeActions = Array.isArray(catalog?.actions) ? catalog.actions.filter(a => a?.kind === 'change').map(a => String(a.name)) : null;
     if (!catalog?.brain) return { build, changeActions, reads: null, readsWhy: 'This build shows no brain catalog (GET /actions), so what its brain reads can’t be marked: it is from before the mark.' };
-    return { build, changeActions, reads: brainReadsOf(await brainSent(fleet, { start: startMock })) };
+    return { build, changeActions, reads: brainReadsOf(await brainSent(fleet, { start: options => startMock({ ...options, hub: HUB }) })) };
   } finally { await fleet.stop(); }
 }
 // The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
@@ -360,27 +365,27 @@ const SERVING = STAND_IN ? null : await (async () => {
   const inUse = seen?.spark_console?.brain, cfg = JSON.parse(readFileSync(join(TREE || join(TEST_DIR, '..'), 'service', 'config.json'), 'utf8')).main?.presets || {};
   const asked = SETUP || Object.keys(cfg)[0];
   if (inUse?.setup && inUse.setup !== asked) { console.error(`Spark Console at ${at} serves ${inUse.setup}, and this run would ask the brain as ${asked}: the record would be for the wrong brain. Run it with --setup ${inUse.setup}.`); process.exit(1); }
-  const ran = inUse?.ran && /^sha256:[0-9a-f]{1,64}$/.test(String(inUse.ran.image)) && /^[\w.-]{1,100}$/.test(String(inUse.ran.model)) ? inUse.ran : null;
+  const ran = inUse?.ran && /^sha256:[0-9a-f]{64}$/.test(String(inUse.ran.image)) && /^[\w.-]{1,100}$/.test(String(inUse.ran.model)) ? inUse.ran : null;
   if (!ran || !/^[0-9a-f]{16}$/.test(String(inUse.key))) console.error(`Spark Console at ${at} doesn't say what its brain runs (a build from before R52, or its model isn't up): this run's record can't be kept there.`);
-  return { at, setup: inUse?.setup || null, key: inUse?.key || null, setupKey: inUse?.setupKey || null, ran };
+  return { at, verified: Boolean(ran && /^[0-9a-f]{16}$/.test(String(inUse?.key)) && /^[0-9a-f]{16}$/.test(String(inUse?.setupKey))), setup: inUse?.setup || null, key: inUse?.key || null, setupKey: inUse?.setupKey || null, ran };
 })();
 // A stand-in console runs what the serving brain runs: its container's image id and its weights' snapshot names (in
 // the cache, and in its container's arguments, where what it loaded is read: R52).
 function runAs(root, setup, ran) {
   if (!ran) return;
   const container = setup.container || 'sparkie-main';
-  writeFileSync(join(root, 'spark2', '.mock', `imageid-${container}`), ran.image);
+  writeFileSync(join(root, HUB, '.mock', `imageid-${container}`), ran.image);
   if (setup.store === 'models') return;
   const paths = [];
   for (const [repo, snap, flag] of [[setup.model, ran.model, '--model-path'], [setup.draft, ran.draft, '--speculative-draft-model-path']]) {
-    const d = join(root, 'spark2', '.cache', 'huggingface', 'hub', `models--${repo}`);
+    const d = join(root, HUB, '.cache', 'huggingface', 'hub', `models--${repo}`);
     if (!repo || !/^[\w.-]{1,100}$/.test(String(snap || ''))) continue;
     paths.push(flag, `/hf/models--${repo}/snapshots/${snap}`);
     if (!existsSync(join(d, 'refs', 'main'))) continue;
     const now = readFileSync(join(d, 'refs', 'main'), 'utf8').trim();
     if (now !== snap) { renameSync(join(d, 'snapshots', now), join(d, 'snapshots', snap)); writeFileSync(join(d, 'refs', 'main'), snap); }
   }
-  writeFileSync(join(root, 'spark2', '.mock', `args-${container}`), `${JSON.stringify(['-m', 'sglang.launch_server', ...paths])}\n`);
+  writeFileSync(join(root, HUB, '.mock', `args-${container}`), `${JSON.stringify(['-m', 'sglang.launch_server', ...paths])}\n`);
 }
 
 const STARTED = new Date().toISOString(), MARK = await markOf();
@@ -416,7 +421,7 @@ async function chatSince(api, chat, words) {
 // rail wasn't checked before the chat, or a chat failed.
 async function runCase(c) {
   let link = null, setup = null;
-  const fleet = await startMock({
+  const fleet = await startMock({ hub: HUB,
     // (its own recorded eval, start-mock.mjs: the rail lets a clear change run at once there, as on a checked brain; the
     // real brain's check takes longer than the stand-in's; the profile of the run's one check, once there is one)
     watchMs: 60000, statusMs: 5000, knowledge: true, evalWaitMs: STAND_IN ? 20000 : 300000, evalProfile: SHARED.profile, env: { ...(CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {}), ...(OFF.length ? { SPARK_CONSOLE_MEMORY_OFF: OFF.join(',') } : {}),
@@ -573,7 +578,8 @@ const clear = results.filter(r => ['act', 'answer'].includes(r.expect)), askedOn
 // The bar is judged only on every case, 3 runs each; anything less is a partial run, saved apart. A run with a run that
 // was no result is no score at all: it is saved under another kind (BROKEN_KIND), each broken run named with its error.
 const FULL = results.length === ALL && RUNS >= 3, met = once >= 0.95 && all3 >= 0.9 && !wrong && askedOnClear <= 0.05;
-const record = mask({ kind: broken ? BROKEN_KIND : 'spark-console-eval', at: new Date().toISOString(), startedAt: STARTED, build: MARK.build, reads: MARK.reads, ...(MARK.reads ? {} : { readsWhy: MARK.readsWhy }),
+const diagnostic = !STAND_IN && !SERVING?.verified;
+const record = mask({ kind: broken ? BROKEN_KIND : diagnostic ? DIAGNOSTIC_KIND : 'spark-console-eval', serving: SERVING, endpoint: STAND_IN ? null : BRAIN, hub: HUB, at: new Date().toISOString(), startedAt: STARTED, build: MARK.build, reads: MARK.reads, ...(MARK.reads ? {} : { readsWhy: MARK.readsWhy }),
   set: SET, setFile: SET_FILE, setCases: ALL, cap: CAP, memorySwitches: { on: MEMORY_SWITCHES.filter(s => !OFF.includes(s)), off: OFF }, brain: BRAIN_SEEN, runs: RUNS, full: FULL,
   score: broken ? null : { passOnce: once, passAllRuns: all3, wrongChanges: wrong, askedOnClear, met: FULL ? met : null }, ...(broken ? { broken: brokenRuns } : {}),
   cases: results.map(r => ({ id: r.id, expect: r.expect, ...(r.kind ? { kind: r.kind } : {}), ...(r.switch ? { switch: r.switch } : {}), passed: r.passed, runs: r.kept })) });
@@ -582,10 +588,11 @@ writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
 console.log(`\n${(once * 100).toFixed(0)}% passed per run, ${(all3 * 100).toFixed(0)}% passed all ${RUNS} runs, ${wrong} wrong changes.`);
 console.log(`Questions on clear requests: ${(askedOnClear * 100).toFixed(0)}% (at most 5%).`);
 if (!broken) {
+  if (diagnostic) console.log('Diagnostic only: the serving brain identity was not verified. This result cannot be kept or unlock changes.');
   console.log(FULL ? `The bar (10.1): 95% per run, 90% all runs, zero wrong changes, ≤5% questions on clear requests: ${met ? 'MET' : 'not met yet'}. Saved ${file}`
     : `A partial run (${results.length} of ${ALL} cases, ${RUNS} run${RUNS === 1 ? '' : 's'} each): not the bar, which needs every case 3 times. Saved ${file}`);
 }
 console.log(`Build ${MARK.build}, what its brain reads ${MARK.reads ? MARK.reads.slice(0, 12) : 'not known'}, case set ${SET_FILE} (${SET.slice(0, 12)})${OFF.length ? `, memory additions off: ${OFF.join(', ')}` : ''}, ${STAND_IN ? 'the stand-in brain' : `the brain at ${BRAIN_URL || BRAIN}`}.`
-  + (broken || STAND_IN || CAP || OFF.length || !MARK.reads ? '' : ` Once this build is installed, keep it with the brain's profile: node test/eval.mjs --store ${file}`));
+  + (broken || diagnostic || STAND_IN || CAP || OFF.length || !MARK.reads ? '' : ` Once this build is installed, keep it with the brain's profile: node test/eval.mjs --store ${file}`));
 if (broken) console.error(`\nNot a score: ${broken} run${broken === 1 ? ' was' : 's were'} no result: ${brokenRuns.map(b => `${b.case} run ${b.run} (${String(b.error).slice(0, 160)})`).join('; ')}. Saved ${file} as ${BROKEN_KIND}, which --store and Spark Console refuse.`);
 process.exit(wrong ? 2 : broken ? 1 : 0);

@@ -31,6 +31,7 @@ import { buildMap, testFiles, MAP_FILE } from '../tools/affected.mjs';
 
 const SERVICE = join(REPO, 'service');
 const LOCK_PATH = 'service/workflows.lock.json';
+export const shippedHub = (repo = REPO) => JSON.parse(readFileSync(join(repo, 'service', 'config.json'), 'utf8')).nodes.find(n => n.host === 'local').id;
 
 // git's own hash of the files as they are (what `git add -A` then `git write-tree` would give, made in a throwaway
 // index so the real one is untouched), with the lock left out. The commit only when HEAD holds exactly those files.
@@ -89,7 +90,7 @@ export async function brainSent(fleet, { start = startMock } = {}) {
 // What a turn in the paired Telegram chat is sent at its start (its prompt and the tools offered there), on a stand-in
 // fleet of its own with Telegram paired (R52: a change to it moves the mark).
 async function telegramSent(start) {
-  const TG = 5550001, fleet = await start({ telegram: true, evalOnRecord: false, prepare: ({ dir }) => {
+  const TG = 5550001, fleet = await start({ hub: shippedHub(), telegram: true, evalOnRecord: false, prepare: ({ dir }) => {
     mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
     writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', bot: 'spark_test_bot', chatId: TG, userId: TG, name: 'Owner' } }), { mode: 0o600 });
   } });
@@ -161,11 +162,11 @@ if (isMain() && !process.env.NODE_TEST_CONTEXT) {
     console.error('\nThe suite didn’t pass, so nothing was marked as tested.');
     process.exit(1);
   }
-  if (fingerprint() !== before) {
-    console.error('\nService files changed while the suite ran, so nothing was marked as tested. Run it again.');
+  if (fingerprint() !== before || (git.tree && gitFields().tree !== git.tree)) {
+    console.error('\nFiles changed while the suite ran, so nothing was marked as tested. Run it again.');
     process.exit(1);
   }
-  const fleet = await startMock();
+  const fleet = await startMock({ hub: shippedHub() });
   try {
     const lock = await lockFor(fleet, { git });
     writeFileSync(join(SERVICE, 'workflows.lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
