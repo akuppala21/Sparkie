@@ -249,7 +249,7 @@ test('a start line written but not synced: the change is refused and its end is 
 const cutLines = (dir = T.fleet.journalDir) => readdirSync(dir).filter(f => f.endsWith('.jsonl')).sort()
   .flatMap(f => readFileSync(join(dir, f), 'utf8').split('\n').filter(Boolean)).filter(l => { try { JSON.parse(l); return false; } catch { return true; } });
 test('a write the disk takes only in part, with room left: the line and the record’s text are written to their end', { timeout: 120000 * SLOW }, async () => {
-  const words = `short-once ${'the disk took only half at first. '.repeat(30)}`;
+  const words = `short-once ${'the disk took only half at first. '.repeat(30)}and then the rest.`;
   writeFileSync(join(T.fleet.dir, 'journal-short'), '');
   try {
     await ok('find_recipes', { query: 'short-once' }, keys.look.token);
