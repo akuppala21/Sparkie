@@ -1,5 +1,5 @@
 /* ───────── the sorter's places: which paths and names are ways in, risky or the helper's (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // What a path a command names is, for the sorter (20-sort.mjs): one of the ways in (lockout), the root helper or its sudo

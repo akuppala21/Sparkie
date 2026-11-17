@@ -103,11 +103,12 @@ test('work started later is marked later, so root refuses it, whatever it runs; 
     'at -f /tmp/repair.sh now + 2 minutes', "batch <<< '/opt/tools/repair'", `printf '* * * * * root python3 -c "import repair"\\n' > /etc/cron.d/repair`,
     "printf '[Service]\\nExecStart=/opt/tools/repair\\n' > /etc/systemd/system/repair.service", 'systemctl enable --now repair.timer',
     // (and spellings of our own: any systemd-run, any at or crontab, a unit's drop-in, a user unit, a timer started)
-    'systemd-run --wait touch /tmp/x', 'systemd-run --scope ls', 'echo hi | at now', 'crontab /tmp/c', 'crontab -r', "echo '* * * * * x' | crontab -",
+    'systemd-run --wait touch /tmp/x', 'systemd-run --scope ls', 'echo hi | at now', 'crontab /tmp/c', "echo '* * * * * x' | crontab -",
     "tee /etc/systemd/system/docker.service.d/override.conf <<'EOF'\n[Service]\nEnvironment=HTTP_PROXY=http://10.0.0.1:3128\nEOF",
     'cp /tmp/x.timer ~/.config/systemd/user/', 'echo x >> /var/spool/cron/crontabs/root', 'systemctl start backup.timer'];
   assert.deepEqual(each(LATER, r => (r.later && typeof r.later === 'string' ? null : 'no later')), []);
-  assert.deepEqual(each(['crontab -l', 'systemctl list-timers', 'atq', 'systemctl restart docker', "sed -i 's/a/b/' /etc/systemd/journald.conf", 'systemctl daemon-reload',
+  // (crontab -r takes every job away: nothing starts later; L1 of the sorter's final read)
+  assert.deepEqual(each(['crontab -l', 'crontab -r', 'systemctl list-timers', 'atq', 'systemctl restart docker', "sed -i 's/a/b/' /etc/systemd/journald.conf", 'systemctl daemon-reload',
     'cat /etc/crontab', 'systemctl status cron'], r => (r.later ? `later: ${r.later}` : null)), []);
 });
 

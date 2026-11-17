@@ -1,5 +1,5 @@
 /* ───────── the sorter's programs: what each one it knows does (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, editors, the shell's

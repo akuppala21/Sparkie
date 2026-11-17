@@ -87,6 +87,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R72](rules/R72.md) | partly | `test/ladder.test.mjs`; `test/runner.test.mjs`; `test/runner-fixes.test.mjs` | falls short today: its file says where |
 | [R73](rules/R73.md) | partly | `test/door-repeat.test.mjs` | falls short today: its file says where |
 | [R74](rules/R74.md) | partly | `test/intent-own.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”); `test/fix-intent.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”) | falls short today: its file says where |
+| [R75](rules/R75.md) | partly | `test/sort-read.test.mjs`; `test/sort-root.test.mjs`; `test/sort.test.mjs`; `test/sort-close.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 

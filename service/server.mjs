@@ -12885,7 +12885,7 @@ for (const [n, to] of [['chgrp', 'chown'], ['gunzip', 'gzip'], ['bunzip2', 'bzip
 // A word chmod or chattr reads as a mode, not an option (chmod -x f, chattr +i f).
 const SORT_MODES = { chmod: /^[-+=][rwxXstugoa,+=-]*$/, chattr: /^[-+=][aAcCdDeFijmPsStTux]+$/ };
 /* ───────── the sorter's places: which paths and names are ways in, risky or the helper's (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // What a path a command names is, for the sorter (20-sort.mjs): one of the ways in (lockout), the root helper or its sudo
@@ -13200,7 +13200,7 @@ function sortSee(words, ctx, r) {
   }
 }
 /* ───────── the sorter's programs: what each one it knows does (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, editors, the shell's
@@ -13791,7 +13791,7 @@ async function recallAnswer({ about, id, kind, spark, when, since, until, limit 
     ...(notes.length ? { notes } : {}) });
 }
 /* ───────── the sorter's programs that reach the network or another machine (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the network's own tools (ip, arp, ss), the
@@ -14049,7 +14049,7 @@ function sortShape(items, ctx) {
   return why ? { why: `It is not of the plain shape a command run at once has: ${why}.`, brace } : null;
 }
 /* ───────── how bash reads a command: words, pipelines, here-documents (for the sorter) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). It reads as bash does, and anything it
@@ -14247,7 +14247,7 @@ function sortSedSafe(s) {
   return true;
 }
 /* ───────── the sorter: what one command on a Spark is (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // sortCommand(command, {at, root, dir, home, hosts, brain, written, protect}) says what one command for run is before anything runs, from its
@@ -15390,7 +15390,7 @@ async function tgApproveRoute(req) {
   return telegramView();
 }
 /* ───────── the sorter's tools that set a Spark up: packages, git, builds, services (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the package managers (apt, dpkg, pip, conda,
