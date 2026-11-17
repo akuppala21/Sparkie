@@ -30,27 +30,19 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blank } from './parts.mjs';
+import { blank, ALWAYS_PARTS, LANDING_ALWAYS_PARTS } from './parts.mjs';
+// (the two lists of parts live in parts.mjs, with the check tools/make.mjs runs on them: make loads only tools that can
+// run nothing, and this one runs git)
+export { ALWAYS_PARTS, LANDING_ALWAYS_PARTS, checkAffected } from './parts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const MAP_FILE = 'test/affected-map.json';
 const PART = /^service\/src\/(\d{2}-[a-z0-9-]+\.mjs)$/;
-// Sign-in, lock-out safety, Sparkie's own rules and the one way to change a Spark: any change here runs everything.
-export const ALWAYS_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads', '17-changes',
-  '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `${p}.mjs`);
+// Sign-in, lock-out safety, Sparkie's own rules and the one way to change a Spark: any change to these, or to one of
+// ALWAYS_PARTS (in parts.mjs), runs everything.
 export const ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^service\/config\.json$/, /^deploy\//,
   /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//, /^\.github\//];
-// What every test depends on: all, even in a landing.
-export const LANDING_ALWAYS_PARTS = ['03-identity', '03-secrets', '22-passkey', '22-sessions', '25-backup-and-start'].map(p => `${p}.mjs`);
-// Each part the two lists name, by its file name, must be in service/src/: one renamed or folded into another would
-// drop off them in silence, and a change to it would stop running everything. tools/make.mjs runs this with the
-// documents' checks, so a missing one fails there.
-export function checkAffected(root = ROOT) {
-  const src = join(root, 'service', 'src'), have = new Set(existsSync(src) ? readdirSync(src) : []);
-  const own = readFileSync(fileURLToPath(import.meta.url), 'utf8'), lineOf = p => own.slice(0, own.indexOf(`'${p.slice(0, -4)}'`)).split('\n').length;
-  return [...new Set([...ALWAYS_PARTS, ...LANDING_ALWAYS_PARTS])].filter(p => !have.has(p)).map(p => ({ check: 'affected', file: 'tools/affected.mjs', line: lineOf(p),
-    message: `names ${p} (${[ALWAYS_PARTS.includes(p) && 'ALWAYS_PARTS', LANDING_ALWAYS_PARTS.includes(p) && 'LANDING_ALWAYS_PARTS'].filter(Boolean).join(', ')}), which service/src/ doesn’t have: a change to it would no longer run everything. Name the part it is now` }));
-}
+// What every test depends on: all, even in a landing (and LANDING_ALWAYS_PARTS, in parts.mjs).
 export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^deploy\//, /^test\/lib\.mjs$/,
   /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//];
 // Everything starts and answers, sign-in works, the installer can still read the service.
