@@ -1040,15 +1040,16 @@ test('f2 R-4: a name from earlier is asked as a pattern, as a bare word after cd
   const q = await turn(chat, 'What does notes/f2howto.txt on Spark 3 say?', [[RUN('cat notes/f2howto.txt')]]);
   assert.deepEqual(q.tools.map(x => [x.name, x.ok]), [['run', true]], JSON.stringify(q.tools));
   const pad = `touch ${Array.from({ length: 33 }, (_, i) => `notes/f2pad${i}.x`).join(' ')}`;
-  for (const [what, command, why] of [
+  for (const [what, command, why, said] of [
     ['a pattern', 'echo changed > notes/f2v1.tx[t]', /\nAsked because it names notes\/f2v1\.tx, which came from [^\n]+ \(read \d\d:\d\d\), not from your words\.\n/],
     ['a bare word after cd', 'cd notes && echo changed > f2bare', /\nAsked because it names [^\n]*f2bare, which came from [^\n]+ \(read \d\d:\d\d\), not from your words\.\n/],
     ['past 32 names', pad, /\nAsked because it names more than 32 things, so not all of them could be looked for in what was read earlier in this chat\.\n/],
-    ['the command’s own text', 'chmod -R 700 notes/f2keep', /\nAsked because it names [^\n]+, which came from [^\n]+ \(read \d\d:\d\d\), not from your words\.\n/]]) {
-    const r = await turn(chat, words, [[RUN(command)]]);
+    // (its one path typed by the owner: only the command's own text came from the read)
+    ['the command’s own text', 'chmod -R 700 notes/f2keep', /\nAsked because it names chmod -R 700 notes\/f2keep, which came from [^\n]+ \(read \d\d:\d\d\), not from your words\.\n/, 'ok, fix notes/f2keep on spark 3']]) {
+    const r = await turn(chat, said || words, [[RUN(command)]]);
     const no = r.choices.find(x => x.label === 'No');
     assert.ok(no, `${what}: asked, not run: ${JSON.stringify(r.tools.map(x => [x.name, x.ok, x.outcome]))}`);
-    assert.match(String(sentBack(words)[0]?.question), why, `${what}: ${String(sentBack(words)[0]?.question).slice(0, 600)}`);
+    assert.match(String(sentBack(said || words)[0]?.question), why, `${what}: ${String(sentBack(said || words)[0]?.question).slice(0, 600)}`);
     await choose(chat, no.id);
   }
   assert.equal(text('notes/f2v1.txt'), 'the owner’s own lines\n');
