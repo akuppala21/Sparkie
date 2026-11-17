@@ -337,10 +337,40 @@ describe('install_update', { concurrency: 1 }, () => {
   test('a result whose way back couldn’t put the build from before back whole is told as that, never as “the build from before is back”', async () => {
     const chat = await newChat(), tree = 'f'.repeat(12);
     writeFileSync(join(STATE, 'update-asked.json'), JSON.stringify({ tree, build: tree, conv: chat, channel: null, at: new Date(Date.now() - 2000).toISOString() }), { mode: 0o600 });
-    const why = 'the build from before couldn\'t be put back whole, and its copy is kept (make room if the disk is full, then run bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand); nothing confirmed the new build through the real address in time; the build answering now is ' + tree;
+    const why = 'the build from before couldn\'t be put back whole, and its copy is kept (make room if the disk is full, then run bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand); if it can never go back, bash ~/.local/share/spark-console/update-guard/update-guard.sh disarm keeps the build that runs now (the build from before can then be had only from an install snapshot); nothing confirmed the new build through the real address in time; the build answering now is ' + tree;
     writeFileSync(join(STATE, 'update-result.json'), JSON.stringify({ tree, build: tree, result: 'not kept', why, at: new Date().toISOString() }));
-    await waitFor(async () => (await chatMessages(chat)).some(m => m.content === `The install of tree ${tree} wasn’t kept, and the build from before couldn’t be put back whole yet: ${why}`),
+    await waitFor(async () => (await chatMessages(chat)).some(m => m.content === `The install of tree ${tree} wasn’t kept, and its way back is still armed: the build from before isn’t back. ${why}`),
       { timeout: 30000, what: 'said in its chat' });
     assert.ok(!(await chatMessages(chat)).some(m => /so the build from before is back/.test(String(m.content || ''))));
+  });
+
+  // (the final read of round two, S-3: the timer's put-back and one by hand write their own reason first, and the chat
+  // read only pull.sh's words. Now both scripts mark the result, and the chat reads the mark)
+  test('a result whose way back stays armed is told as that from its mark, whoever wrote it (the timer’s put-back too), with both ways on', async () => {
+    for (const [tree, why] of [['c'.repeat(12), 'nothing confirmed the new build through the real address in time; The build from before the update couldn\'t be put back whole: it couldn\'t be copied back (is the disk full?), so this run changed none of its files. Its copy is kept, and the way back stays armed. To go on: put it back again'],
+      ['d'.repeat(12), 'nothing confirmed the new build through the real address in time; said in other words']]) {
+      const chat = await newChat();
+      writeFileSync(join(STATE, 'update-asked.json'), JSON.stringify({ tree, build: tree, conv: chat, channel: null, at: new Date(Date.now() - 2000).toISOString() }), { mode: 0o600 });
+      writeFileSync(join(STATE, 'update-result.json'), JSON.stringify({ tree, build: tree, result: 'not kept', why, wayBackArmed: true, at: new Date().toISOString() }));
+      const told = await waitFor(async () => (await chatMessages(chat)).find(m => String(m.content || '').startsWith(`The install of tree ${tree} wasn’t kept`)), { timeout: 30000, what: 'said in its chat' });
+      assert.ok(told.content.startsWith(`The install of tree ${tree} wasn’t kept, and its way back is still armed: the build from before isn’t back. ${why} `), told.content);
+      assert.match(told.content, /bash ~\/\.local\/share\/spark-console\/update-guard\/update-guard\.sh put-back hand.*bash ~\/\.local\/share\/spark-console\/update-guard\/update-guard\.sh disarm/);
+      assert.doesNotMatch(told.content, /so the build from before is back/);
+    }
+  });
+
+  // (S-4: nothing in the service looked at a way back left armed)
+  test('a way back still armed after its time is on the needs-you list, with both ways on; one armed just now is not', async () => {
+    const g = join(HOME, '.local', 'share', 'spark-console', 'update-guard');
+    const needs = async () => (await api('/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner || [];
+    const guard = at => writeFileSync(join(g, 'guard'), `tree=aaaaaaaaaaaa\nbuild=bbbbbbbbbbbb\nfrom=cccccccccccc\npgid=2147483646\nboot=x\nat=${at}\n`);
+    mkdirSync(g, { recursive: true });
+    try {
+      guard(Math.floor(Date.now() / 1000) - 3600);
+      const line = (await needs()).find(l => /way back is still armed/.test(l));
+      assert.match(line || '', /^An update’s way back is still armed since \d{4}-\d\d-\d\d \d\d:\d\d: the build from before isn’t back\. On Spark 2, put it back again .*update-guard\.sh put-back hand\. Or, if it can never go back, keep the build that runs now: bash \S+update-guard\.sh disarm/, JSON.stringify(await needs()));
+      guard(Math.floor(Date.now() / 1000));
+      assert.ok(!(await needs()).some(l => /way back is still armed/.test(l)), 'not while its timer may still put it back');
+    } finally { rmSync(g, { recursive: true, force: true }); }
   });
 });
