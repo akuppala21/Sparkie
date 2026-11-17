@@ -56,10 +56,12 @@ echo "$HUB|$HUB_SAYS|$HUB_N|$HUB_HOST|$HUB_URL|$COMPUTE|$(spark_of akuppala@${SP
   });
 
   test('no file under deploy/ holds a Spark’s address, its Tailscale name or the words “Spark 2”, but hub.env', () => {
+    // (each Spark's own address; Tailscale's fixed ones, 100.64.0.0/10 and 100.100.100.100, are no Spark's)
+    const NAMED = new RegExp(['akspark\\d', '\\bSpark 2\\b', '\\bSPARK2\\b', ...Object.values(SPARKS).map(a => `\\b${a.replaceAll('.', '\\.')}\\b`)].join('|'));
     for (const f of readdirSync(DEPLOY)) {
       if (f === 'hub.env' || NOT_YET.includes(f)) continue;
       readFileSync(join(DEPLOY, f), 'utf8').split('\n').forEach((l, i) => {
-        assert.doesNotMatch(l, /akspark\d|\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\bSpark 2\b|\bSPARK2\b/, `deploy/${f}:${i + 1}`);
+        assert.doesNotMatch(l, NAMED, `deploy/${f}:${i + 1}`);
       });
     }
   });
