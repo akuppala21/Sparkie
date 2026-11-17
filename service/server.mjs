@@ -5441,18 +5441,43 @@ const GENERIC = new Set(['sc', 'the', 'a', 'an', 'model', 'models', 'on', 'it', 
 // "across", "from", "to" ("start gemma on 3", "across 3 and 4", "3+4") when it's a real Spark and isn't a count ("on 2
 // GPUs", "to 4 bits"). (2026-11-11: "start gemma on 3" ran wherever there was room.)
 const BARE_SPARKS = /\b(on|across|onto|over|between|from|to)\s+(\d)((?:\s*(?:,|and|&|\+|or)\s*\d)*)\b(?!\s*(?:sparks?|gpus?|nodes?|machines?|boxes|x\b|mins?|minutes?|hours?|days?|secs?|seconds?|%|gb\b|tb\b|k\b|bits?|b\b|parts?|times?|of\b|\.\d))/g;
-const sparkNames = text => String(text).toLowerCase().replace(/sparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g,
-  (m, first, rest) => ` ${[first, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
-  .replace(BARE_SPARKS, (m, prep, first, rest) => {
-    const ids = [first, ...(rest.match(/\d/g) || [])];
-    return ids.every(d => NODES.some(n => n.id === `spark${d}`)) ? ` ${prep} ${ids.map(d => `spark${d}`).join(' ')} ` : m;
-  });
+// Other ways a Spark is said (S4): "spark four", "spark #4", "spark no 4", "spark number 4", "the fourth spark", "4th
+// spark", "s4" after "on" (or to, onto, at, in, across, from), and "spark" typed one letter off with its number
+// ("sprak 4", "spakr 4", "sp4rk 4"; never a word of its own, like "spare 4").
+const sparkNames = (() => {
+  const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9 };
+  const NOT_TYPO = new Set(['spare', 'spar', 'spars', 'stark', 'shark', 'spank', 'spork', 'sparky', 'spade', 'spat', 'span', 'spa']);
+  function typo(w) {
+    if (w === 'spark' || w.length < 4 || w.length > 6 || !/^[s5]/.test(w) || NOT_TYPO.has(w)) return false;
+    // (one letter off: one changed, added, dropped, or two side by side swapped)
+    const a = w, b = 'spark', d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+    return d[a.length][b.length] === 1;
+  }
+  const NUM = String.raw`(?:\d+|one|two|three|four|five|six|seven|eight|nine)\b`;
+  const spelled = t => t
+    .replace(/\b(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|[1-9](?:st|nd|rd|th))\s+spark\b/g, (m, o) => ` spark ${NUMBER[o] || parseInt(o, 10)} `)
+    .replace(new RegExp(String.raw`\b([a-z0-9]{3,6})(?=[\s_-]*(?:#\s*|no\.?\s*|num(?:ber)?\.?\s*|nr\.?\s*)?${NUM})`, 'g'), w => (typo(w) ? 'spark' : w))
+    .replace(new RegExp(String.raw`\b(sparks?)[\s_-]*(?:#|no\.?|num(?:ber)?\.?|nr\.?)\s*(${NUM})`, 'g'), '$1 $2')
+    .replace(/\b(sparks?)[\s_-]+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, s, n) => `${s} ${NUMBER[n]}`)
+    .replace(/\b(on|onto|to|at|in|across|from)\s+(?:s|sp|spk)(\d)\b/g, '$1 spark $2');
+  return text => spelled(String(text).toLowerCase()).replace(/sparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g,
+    (m, first, rest) => ` ${[first, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
+    .replace(BARE_SPARKS, (m, prep, first, rest) => {
+      const ids = [first, ...(rest.match(/\d/g) || [])];
+      return ids.every(d => NODES.some(n => n.id === `spark${d}`)) ? ` ${prep} ${ids.map(d => `spark${d}`).join(' ')} ` : m;
+    })
+})();
 const tokensOf = text => new Set(sparkNames(normQuotes(text)).split(/[^a-z0-9.]+/).flatMap(t => [t, t.replace(/\./g, '')]).filter(t => t.length >= 2 && !GENERIC.has(t)));
 // "Can you start gemma?" is a request; "can gemma run on Spark 3?", "should I stop it?" and "if it crashes, restart it"
-// aren't.
-const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
+// aren't. (After hey, hi, ok: one more word of greeting, never a name: "hey bob, can you restart Spark 3" is to Bob.)
+const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:(?:sparkie|there|so|then|now|cool|great|thanks|also)[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
 // "Do not …" and "didn't …" are statements, not questions.
-const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
+const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+(?:not|me\s+a)\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
 // Turning a Spark itself off or on: the phrase names the Spark(s) it switches, and powerSparksSaid reads them from it.
 // (a Spark followed by 's is whose, not what is switched: "turn off Spark 3's model" names no Spark to power off)
 const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*`;
@@ -5562,66 +5587,127 @@ function ownSentences(text) {
   });
   return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
 }
-// Where an order puts its verb (A-18, S-3): a change word of any kind asks for a change only as the first word the
-// owner says to Sparkie in that sentence, after nothing but a short closed list of openers: a greeting or a joining
-// word (ORDER_LEAD), a place or a manner ("on Spark 3,", "Spark 3:", "as root on Spark 3,"), or a request to Sparkie
-// ("can you", "I want you to", "go ahead and", "let's"). A later part after a comma, "and" or "then" counts only when
-// the sentence itself began as an order ("pull the repo on spark 3 and build it"). An order has no subject of its own:
-// "I used to build …", "my colleague says to fix …", "the cron job tries to update …" ask for nothing, and neither
-// does a word used as a noun ("Update: …", "the build is slow", "Try as I might"). A statement and an order in one
-// sentence ("The loader on Spark 3 is broken, fix it.") is a button; said as two sentences, it runs. One function, for
-// every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call orderAt(sentence, at)).
-const ORDER_LEAD = String.raw`(?:(?:ok|okay|alright|right|well|so|and|but|also|now|then|next|first|second|third|finally|lastly|afterwards|after\s+that|yes|yep|yeah|sure|great|good|cool|nice|perfect|thanks|thank\s+you|actually|instead|just|simply|quickly|please|pls|plz|kindly|hey|hi|hello|sparkie|@sparkie)\b[\s,:!–—-]*)`;
-const ORDER_WHERE = String.raw`(?:as\s+root\b[\s,:–—-]*|(?:on|in|at)\s+(?:the\s+)?sparks?[\s_-]*\d+\b[\s,:–—-]*|sparks?[\s_-]*\d+\s*[:,–—-]\s*|(?:on|in|at)\s+\d\b\s*[,:]\s*)`;
-const ORDER_YOU = String.raw`(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*|i\s+(?:want|need)\s+you\s+to\s+|i(?:'d|\s+would)\s+like\s+you\s+to\s+|you\s+(?:can|may|should|could)\s+(?:now\s+)?|go\s+ahead\s+and\s+|let(?:'s|s|\s+us)\s+)`;
-const ORDER_OPEN = new RegExp(`^\\s*(?:${ORDER_LEAD}|${ORDER_WHERE}|${ORDER_YOU})*`, 'i');
-// (the verbs an order's sentence may open with, so a part after "and" or "then" is an order too; "don't …" opens one)
-const ORDER_OPENERS = /^(?:(?:don't|do\s+not|never)\s+)?(?:fix|install|set|change|edit|build|clean|update|try|start|stop|restart|run|rerun|launch|relaunch|deploy|redeploy|serve|load|use|kill|cancel|abort|undo|revert|roll|save|write|test|check|pull|clone|fetch|download|grab|get|copy|move|rename|make|create|add|remove|delete|open|close|cd|go|take|put|turn|switch|swap|replace|bring|spin|fire|boot|wake|power|shut|free|clear|unload|reboot|upgrade|configure|enable|disable|apply|patch|rebuild|reinstall|compile|commit|push|merge|checkout|reset|tidy|unpack|unzip|extract|point|keep|sync|find|look|research|search|refresh|compare|forget|remember|note|read|show|list|tell|see|view|print|watch|wait|give|ask|let|have|do)\b/i;
-const ORDER_JOIN = new RegExp(`(?:[,;]|\\band\\b|\\bthen\\b)\\s*(?:${ORDER_LEAD})*$`, 'i');
+// Where an order puts its verb (A-18, S-3, W1, W2; the net's F7, F8): a change word of any kind asks for a change only
+// as the first word the owner says to Sparkie in that sentence, after nothing but a short closed list of openers: marks
+// before the first letter ("-", "*", "(", "#1", "1)", "/", "…", an emoji), a greeting or a joining word (ORDER_LEAD), a
+// place or a manner ("on Spark 3,", "on 3", "Spark 3:", "Spark 3 start …", "for Spark 3,", "in Spark 3's firewall,",
+// "as root", "with root on Spark 3,", "use root to", "gemma on 4,"), or a request to Sparkie ("can you", "I want you
+// to", "go ahead (and)", "let's", "please do", "we need to", "time to"). A later part counts only when the sentence
+// itself began as an order, with a plain command verb (ORDER_OPENERS: never a talk verb such as remember, note, wait,
+// ask, let, go, get, keep, look, see, tell, show, check, find, read, list), and comes after a comma, "and", "then",
+// "&", "+", "after that", a list's "2)", the earlier order's place ("stop qwen on 3 start gemma on 4") or a verb and one
+// or two words ("stop qwen start gemma"). An order has no subject of its own: "I used to build …", "my colleague says to
+// fix …" ask for nothing. Never as a noun or a report: "Update: …", "Try as I might", "restart of …", "start-up",
+// "build.sh", "build's broken", a word that says what the thing did or is ("Build fails", "update stuck on Spark 3",
+// "build is green", "Restart required"; "fix broken links" is still an order), an adjective before a noun with its own
+// verb ("open ports on Spark 3 are a risk"); never told of: a past time in its clause ("… yesterday", "last week",
+// "earlier", "ago", "before" at the end, "already" before and or but), or the change's outcome joined on ("… and it still
+// fails", ", still asks …", "but it doesn't work"). A statement and an order in one sentence ("The loader on Spark 3 is
+// broken, fix it.") is a button; said as two sentences, it runs. One function, for every reader of the owner's words as
+// an ask (changeIntent; netAsks, 21-net.mjs, calls orderAt(sentence, at)).
+const ORDER_LEAD = String.raw`(?:(?:ok|okay|k|kk|alright|right|well|so|and|but|also|now|then|next|first|second|third|finally|lastly|afterwards|after\s+that|yes|yep|yeah|sure|great|good|cool|nice|perfect|thanks|thank\s+you|thx|ty|actually|instead|just|simply|quickly|quick|please\s+do|please|pls|plz|kindly|hey|hi|hello|yo|oh|ah|no|btw|morning|gm|there|buddy|mate|dude|bro|wait|do\s+it|sparkie|@sparkie)\b[\s,:!–—-]*)`,
+  ORDER_MARKS = String.raw`(?:[-*•·(\[/…~]+\s*|#\d{1,2}\s+|\d{1,2}[.)]\s+|(?:[\uD83C-\uD83E][\uDC00-\uDFFF]|[\u2600-\u27BF\uFE0F\u200D])+\s*)`;
+const ORDER_WHERE = String.raw`(?:(?:sudo\s+)?(?:pip3?|python3?\s+-m\s+pip|npm|pnpm|yarn|apt(?:-get)?|uv(?:\s+pip)?|conda|cargo|snap|brew)\s+|(?:as|with)\s+root\b(?:\s+on\s+(?:the\s+)?sparks?[\s_-]*\d+\b)?[\s,:–—-]*|use\s+root\s+(?:to|and)\s+|(?:on|in|at|for)\s+(?:the\s+)?sparks?[\s_-]*\d+\b(?:'s(?:\s+[\w.-]+){1,2}\s*[,:–—-])?[\s,:–—-]*|sparks?[\s_-]*\d+\b\s*[:,–—-]?\s*|(?:on|in|at|for)\s+\d\b\s*[,:–—-]?\s*|[\w.-]+\s+on\s+(?:sparks?[\s_-]*)?\d\b\s*[,:–—-]\s*)`;
+const ORDER_YOU = String.raw`(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*(?:please\s+)?|(?:i\s+)?(?:want|need)\s+(?:you|u)\s+to\s+|i(?:'d|d|\s+would)\s+like\s+(?:you|u)\s+to\s+|(?:you|u)\s+(?:can|may|should|could)\s+(?:now\s+)?|go\s+ahead\s+(?:and\s+)?|go\s+(?:and\s+)?|let(?:'s|s|\s+us)\s+|please\s+do\s+|do\s+me\s+a\s+fav(?:ou?)r\s+(?:and\s+)?|(?:(?:i|we)\s+)?(?:need\s+to|gotta)\s+|we\s+should\s+|time\s+to\s+|try\s+(?:to|and)\s+)`;
+const ORDER_OPEN = new RegExp(`^\\s*(?:${ORDER_MARKS}|${ORDER_LEAD}|${ORDER_WHERE}|${ORDER_YOU})*`, 'i');
+// (the plain command verbs an order's sentence may open with, so a part after "and" or "then" is an order too; "don't
+// …" opens one; never a verb that opens talk, W2)
+const ORDER_OPENERS = /^(?:(?:don't|do\s+not|never)\s+)?(?:(?:sudo\s+)?(?:git|pip3?|npm|pnpm|yarn|apt(?:-get)?|docker|uv|conda|cargo|snap|systemctl|mkdir|rm|cp|mv)|fix|install|set|change|edit|build|clean|update|try|start|stop|restart|run|rerun|launch|relaunch|deploy|redeploy|serve|load|use|kill|cancel|abort|undo|revert|roll|save|write|test|pull|clone|fetch|download|grab|copy|move|rename|make|create|add|remove|delete|open|close|cd|take|put|turn|switch|swap|replace|bring|spin|fire|boot|wake|power|shut|free|clear|unload|reboot|upgrade|configure|enable|disable|apply|patch|rebuild|reinstall|compile|commit|push|merge|checkout|reset|tidy|unpack|unzip|extract|point|sync|research|search|refresh|compare|forget|allow|block)\b/i;
+const ORDER_JOIN = new RegExp(`(?:[,;&+]|\\band\\b|\\bthen\\b|\\bafter\\s+that\\b|\\b\\d{1,2}[.)]|\\bon\\s+(?:the\\s+)?(?:sparks?[\\s_-]*)?\\d+\\b)\\s*(?:${ORDER_LEAD}|${ORDER_YOU})*$`, 'i');
 // (a quote mark before it, not an apostrophe inside a word)
 const ORDER_QUOTE = /["“”‘]|(?:^|\s)'|'(?:\s|$)/;
-const WORK_NOUN = /^\s+(?:is|are|was|were|has|have|had|seems?|looks?|keeps?|broke|failed|did|didn't|does|doesn't|isn't|wasn't|log|logs|folder|script|scripts|output|step|time)\b/i;
-// (a word used as a noun: "Update: …", "Try as I might"; for a work word also "the fix for …", "build 42", WORK_NOUN)
-const ORDER_NOUN = /^\s*[:#]|^\s+as\b/, WORK_NOUN_MORE = /^\s+(?:of|for)\b|^\s+\d/;
+// What after a change word makes it a noun or a report (W1): a thing's word ("build log", "edit mode", "build error"), …
+const WORK_NOUN = /^\s+(?:log|logs|folder|script|scripts|output|step|time|mode|error|errors)\b/i,
+  // … what the thing did or is, whatever follows ("Build fails …", "build's broken", "build is green", "fix didnt work") …
+  ORDER_REPORT = /^(?:'s\b|\s+(?:is|are|was|were|has|had|seems|looks|keeps|broke|fails|failed|hangs|hung|crashes|crashed|breaks|works|worked|passes|passed|takes|took|times\s+out|timed\s+out|went|goes|did|didn't|didnt|does|doesn't|doesnt|isn't|isnt|wasn't|wasnt|won't|wont|can't|cant|never|still|landed|succeeded|died|froze|stalled|failing|crashing|hanging|erroring|working|passing|pending|stalling|freezing|looping|misbehaving)\b)/i,
+  // … a state, when what follows is nothing, a stop mark, a small word or a time ("build broken on Spark 3", "update
+  // stuck", "Restart required"; "fix broken links", "install updated drivers" are orders) …
+  ORDER_STATE = /^\s+(?:broken|stuck|done|complete|completed|finished|available|fine|ok|okay|green|red|ready|missing|(?!(?:need|feed|seed|speed|bed|red|shed|bleed|breed|weed|embed)\b)[a-z]{3,}ed)(?:\s*$|\s*[,.;!?:)]|\s+(?:on|in|at|for|with|by|from|to|again|still|now|today|yesterday|since|after|before|when|and|but|so|btw|already|too|lol|though|tho|anymore|yet|here|there|over|ever|as|because)\b)/i,
+  // … or an adjective before a noun that takes its own verb ("open ports on Spark 3 are a risk", "kill switch is on") …
+  ORDER_ADJ = /^\s+(?!(?:the|a|an|my|your|his|her|our|their|its|it|them|this|that|these|those|all|every|each|some|any|no|what|whatever|which|who|everything|anything|something|nothing|there|here|me|us|him|you|i|we|he|she|they)\b)[\w.-]+(?:\s+(?!(?:what|whatever|which|that|who|where|when|while|it|them|this|these|those|there|here|as|because|cause|cuz|coz|cos|since|so|if|and|but|or|then|i|you|we|he|she|they)\b)[\w'.-]+){0,5}?\s+(?:are|is|was|were|aren't|isn't|wasn't|weren't)\b/i,
+  // (told of, not asked, F7: a past time or a someday ("eventually", "at some point") in its own clause, or the change's
+  // outcome joined on)
+  ORDER_PAST = /\b(?:eventually|at\s+some\s+point|some\s*day|sometime|one\s+of\s+these\s+days|in\s+the\s+future|down\s+the\s+(?:road|line)|yesterday|(?<!\bfor\s+the\s+)last\s+(?:night|week|weekend|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|earlier|(?:days?|weeks?|months?|hours?|minutes?|years?)\s+ago)\b|\bbefore\s*$|\balready\s+(?:and|but)\b/i,
+  ORDER_OUTCOME = /(?:\b(?:and|but)\b|[,;–—-])\s*(?:(?:it|that|this|they|he|she|i)(?:'s|\s+is|\s+are)?\s+)?(?:still\s+(?:fails?|failing|asks?|asking|doesn't|doesnt|didn't|didnt|isn't|isnt|won't|wont|can't|cant|broken|the\s+same|not|no)|(?:doesn't|doesnt|does\s+not|didn't|didnt|did\s+not)\s+(?:work|help|fix|change)|no\s+luck|nothing\s+changed)\b/i,
+  // (a verb that asks to look first may open an order too, "read the workflows, then run night mode", "check the logs and
+  // restart gemma", but only when nothing between it and the next part tells of someone or something: a subject, a "how",
+  // "why", "whether", a "would", "said", "used", "tried": "Read this: we pull the repo and install …", W2)
+  ORDER_LOOK_FIRST = /^(?:read|check|look\s+(?:at|over|through|into)|find|list|show|get|fetch|open|view|print)\b/i,
+  ORDER_TOLD_OF = /\b(?:i|we|you|he|she|they|someone|somebody|everyone|nobody|people|how|why|what|whether|when|where|who|which|if|would|will|could|should|can|might|may|must|used|had|has|have|was|were|is|are|am|did|does|do|said|says|told|tells|wants|wanted|tried|tries|asked|asks|thinks|recommends|suggests|wrote|sent|broke|fixed|i'm|it's|he's|she's|that's|there's|we're|they're)\b/i,
+  // (two orders with no joining word: a command verb and one or two words, then the next verb)
+  ORDER_RUN_ON = new RegExp(String.raw`^(?:${ORDER_OPENERS.source.replace(/^\^/, '')})\s+(?:(?!(?:to|that|when|if|i|you|we|he|she|they|is|was|are|were|will|would|and|or|but|so|because|as|for|of|with|from|it's)\b)[\w.:/-]+\s+){1,2}$`, 'i');
+// (a word used as a noun: "Update: …", "Try as I might", "restart of …", "stop nothing", "start-up", "restart.sh",
+// "build/"; for a work word also "the fix for …", "build 42", "change in the config")
+const ORDER_NOUN = /^\s*[:#]|^\s+(?:as(?!\s+root\b)|of|nothing)\b|^(?:\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css)\b|\/|_|-(?:on|up|off|in|out|[a-z]{3,})\b)/i, WORK_NOUN_MORE = /^\s+(?:for\b|\d|in\s+the\b)/i;
 // (a match that opens with a noun, "run the self-test", "run it on whatever is best": the sentence must open as an order)
 const ORDER_NOUN_START = /^(?:self[\s-]?tests?|whatever\s+is\s+best)/i;
-// Whether the change word at this match is where an order puts it (kind: changeIntent's, for a work word's nouns).
-// m is a match ({index, 0: the word}), or the word's index alone (netAsks: orderAt(sentence, at)).
+// Whether the change word at this match is where an order puts it (kind: changeIntent's, for a work word's nouns; null
+// from netAsks). m is a match ({index, 0: the word}), or the word's index alone (netAsks: orderAt(sentence, at)).
 function orderAt(sentence, m, kind = null) {
-  if (typeof m === 'number') m = { index: m, 0: /^\S*/.exec(sentence.slice(m))[0] };
-  const pre = sentence.slice(0, m.index), post = sentence.slice(m.index + m[0].length, m.index + m[0].length + 30);
-  if (!/\s/.test(m[0].trim()) && (ORDER_NOUN.test(post) || (kind === 'work' && (WORK_NOUN.test(post) || WORK_NOUN_MORE.test(post))))) return false;
-  const open = ORDER_OPEN.exec(sentence)[0].length;
-  if (ORDER_NOUN_START.test(m[0])) return !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
-  if (!pre.slice(open).trim()) return true;
-  return ORDER_JOIN.test(pre.slice(-80)) && !ORDER_QUOTE.test(pre) && ORDER_OPENERS.test(sentence.slice(open));
+  // (the word itself: "Add-on" is "Add" with "-on" after it)
+  if (typeof m === 'number') m = { index: m, 0: /^(?:[A-Za-z']+|\S*)/.exec(sentence.slice(m))[0] };
+  const pre = sentence.slice(0, m.index), rest = sentence.slice(m.index + m[0].length);
+  // (a noun or a report: one word, and what stands right after it)
+  const noun = (word, after, k) => !/\s/.test(word.trim()) && (ORDER_NOUN.test(after) || ORDER_REPORT.test(after) || ORDER_STATE.test(after) || ORDER_ADJ.test(after)
+    || (WORK_NOUN.test(after) && !(/^(?:fix|clean)/i.test(word) && /^\s+errors?\b/i.test(after)))
+    || ((k === 'work' || k === null) && /^\s+for\b/i.test(after)) || (k === 'work' && WORK_NOUN_MORE.test(after)));
+  const ahead = rest.slice(0, 200);
+  if (noun(m[0], ahead.slice(0, 80), kind) || ORDER_PAST.test(ahead.split(/[,;–—]|\b(?:and|but|then|so|because)\b/i)[0]) || ORDER_OUTCOME.test(ahead)) return false;
+  // (the sentence began as an order: after its openers, a plain command verb that is not itself a noun or a report;
+  // read once a sentence, with where its first quote mark is, so a long one stays short work)
+  if (orderAt.seen?.sentence !== sentence) {
+    const open = ORDER_OPEN.exec(sentence)[0].length, first = sentence.slice(open, open + 120), verb = /^\S*/.exec(first)[0], q = sentence.search(ORDER_QUOTE);
+    orderAt.seen = { sentence, open, quote: q < 0 ? Infinity : q, look: ORDER_LOOK_FIRST.test(first), began: ORDER_OPENERS.test(first) && !noun(verb, first.slice(verb.length, verb.length + 80), null) };
+  }
+  const { open, quote, look } = orderAt.seen, quoted = quote < m.index;
+  const began = orderAt.seen.began || (look && pre.length - open < 200 && !ORDER_TOLD_OF.test(pre.slice(open).replace(ORDER_LOOK_FIRST, '').replace(ORDER_JOIN, '')));
+  if (ORDER_NOUN_START.test(m[0])) return !quoted && began;
+  if (ORDER_OPEN.exec(pre)[0].length === pre.length) return true;
+  return (ORDER_JOIN.test(pre.slice(-80)) || (pre.length - open < 200 && ORDER_RUN_ON.test(pre.slice(open)))) && !quoted && began;
 }
 // A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
-// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
-// it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
-const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|scratch\s+that|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
-const OFF_FILL = String.raw`(?:oh|ok|okay|no|nope|sorry|hmm+|um+|uh+|actually|please)`;
-const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
-// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one after a comma or a dash.
+// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.", "nvm", "nah", "no", "jk") calls off
+// every kind asked before it in the message (C-6, C1). Read piece by piece from the end of the sentence's last 160
+// characters, so it stays short. After a comma, a dash or "…" any of them; after a space only one that can mean nothing
+// else (OFF_SURE: "stop gemma nvm", "… jk dont", "… actually dont").
+const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|dont(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|nvm|nah|nope|no|jk|j\/k|just\s+kidding|scratch\s+that|scrap\s+that|ignore\s+(?:that|this|it|me)|disregard(?:\s+(?:that|this|it))?|(?:i\s+)?changed\s+my\s+mind|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
+const OFF_FILL = String.raw`(?:oh|ok|okay|sorry|my\s+bad|oops|lol|haha|hmm+|um+|uh+|actually|please)`;
+const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!…–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:…–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
+const OFF_SURE = /^(?:don't|dont|do\s+not|never\s*mind|nevermind|nvm|nah|jk|j\/k|just\s+kidding|scratch\s+that|scrap\s+that|ignore\s+(?:that|this|it|me)|disregard(?:\s+(?:that|this|it))?|(?:i\s+)?changed\s+my\s+mind|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it))/i;
+// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one.
 function calledOff(sentence) {
-  let rest = sentence.slice(-160), word = false, sep = '';
+  let rest = sentence.slice(-160), word = false, sure = false, sep = '';
   // ("stop it now - don't wait" asks for it at once)
-  if (/\b(?:don't|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
-  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
+  if (/\b(?:don't|dont|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
+  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sure ||= OFF_SURE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
   if (!word) return null;
   if (!rest.trim()) return sentence.length <= 160 ? 'only' : null;
-  return /[,;:–—-]/.test(sep) ? 'tail' : null;
+  return /[,;:…–—-]/.test(sep) || sure ? 'tail' : null;
 }
+// A question though its words are an order's: it ends in "?" and no "can you" (or "could", "would", "will") asked it, or
+// it ends in "or not", "yes or no", "or what", ", right", "good idea", "which is better" (Q1).
+const ORDER_ASKED_BACK = /(?:\b(?:or\s+not|yes\s+or\s+no|or\s+what|good\s+idea|which\s+(?:is|one\s+is|would\s+be)\s+better)|,\s*right)\s*$/i;
+const ORDER_YOU_ANY = new RegExp(ORDER_YOU, 'gi');
+// A note's heading on its own, the rest of the message being the note: "Note to self;", "todo list", "reminders:".
+const ORDER_NOTE = /^\s*(?:note\s+to\s+self|notes?|to-?\s?do(?:\s+list)?|todos|reminders?|memo|checklist|agenda)\s*[:;,.!–—-]*\s*$/i;
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
+  let notes = false;
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    // (after a note's own heading, "Note to self;", "todo list", "reminder", the rest of the message is that note: W1)
+    if (notes) continue;
+    if (ORDER_NOTE.test(raw)) { notes = true; continue; }
+    // (the owner's own slash words are answered by code, 20-words.mjs: never a change asked of Sparkie)
+    if (/^\s*\/(?:status|pause|restart\s+sparkie|stop|undo(?:\s+update)?|allowed\b.*|putback|help)\s*$/i.test(raw)) continue;
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
+    // (asked of Sparkie: "can you …" first, or after other openers: "thanks, can you stop gemma?")
+    const asksYou = polite || /\b(?:can|could|would|will)\s+(?:you|u|ya)\b/i.test(ORDER_OPEN.exec(sentence)[0]);
     const callOff = calledOff(sentence);
     if (asked.size && callOff === 'only') { for (const k of asked) { negated.add(k); worded.add(k); } continue; }
     if (KEEP.test(sentence)) negated.add('stop');
-    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
+    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence) || (/\?\s*$/.test(raw) && !asksYou) || ORDER_ASKED_BACK.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
     const here = new Set();
     for (const [kind, re] of CHANGE_FORMS) for (const m of sentence.matchAll(re)) if (NEGATOR.test(sentence.slice(Math.max(0, m.index - 50), m.index))) { negated.add(kind); worded.add(kind); }
     for (const [kind, re] of CHANGE_WORDS) {
@@ -5629,7 +5715,8 @@ function changeIntent(text) {
         const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
         if (!NEGATOR.test(pre) && !off && !orderAt(sentence, m, kind)) continue;
         if (NEGATOR.test(pre) || off) { negated.add(kind); worded.add(kind); }
-        else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre)) here.add(kind);
+        // (whether, if, should, can … before it, but not in a request's own words: "thanks, can you stop gemma", "we should")
+        else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre.replace(ORDER_YOU_ANY, ' '))) here.add(kind);
       }
     }
     for (const k of here) asked.add(k);
@@ -5694,32 +5781,81 @@ const REFUSE = /^\s*(no|nope|nah|don't|dont|do not|cancel|never ?mind|wait|leave
 // Which of Spark Console's models on that Spark the words point to: the one with the most of its name's words, and no
 // tie ("stop qwen coder" picks sc-qwen3-coder over sc-qwen-vl; plain "stop qwen" picks neither, so it's a button).
 function pickContainer(name, spark, text) {
+  const [a, b] = containersSaid(spark, text);
+  return a && (!b || a.score > b.score || (name === 'stop_model' && a.running && !b.running)) ? a.name : null;
+}
+// Every container Spark Console started on that Spark that shares a word with the words (what the watcher last saw can
+// lag a start or restart by a minute; a stop of one that isn't running changes nothing): the best match first, and on a
+// tie the one running.
+function containersSaid(spark, text) {
   const said = [...tokensOf(text)].filter(t => !/^spark\d+$/.test(t));
   const near = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  // Every container Spark Console started there (what the watcher last saw can lag a start or restart by a minute; a
-  // stop of one that isn't running changes nothing): the best match, and on a tie the one running.
-  const scored = Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
+  return Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
     .map(w => ({ name: w.name, running: Boolean(w.running), score: [...tokensOf(String(w.name).replace(/^sc-/, ''))].filter(t => !/^part\d$/.test(t) && said.some(x => near(x, t))).length }))
     .filter(x => x.score > 0).sort((x, y) => y.score - x.score || y.running - x.running);
-  const [a, b] = scored;
-  return a && (!b || a.score > b.score || (name === 'stop_model' && a.running && !b.running)) ? a.name : null;
+}
+// Where this message puts a change (A-20; only this message, never the one before): each Spark it names, as a place
+// ("on Spark 4", "to 4", "onto", "at", "in", "for", "switch Spark 4 to …", or "Spark 4:" / "Spark 4 start …" first) or
+// not; ruled out ("not on Spark 3", "don't use Spark 3", "never … Spark 3", "without", "avoid": up to three words
+// before it in its own clause;
+// "but Spark 3", right before it; "except", "instead of", "rather than", "other than", "besides": before it or before
+// "on"); a source ("from Spark 3", "off Spark 3": ruled out for a start); one of "3 or 4" (either). Doubtful for a start:
+// any of those, one named but not as a place ("Spark 3 is full"), and a Spark said in a way no id fits ("the other
+// spark", "both sparks", "across both", "node 4", "the 4th one", "on #4", a sentence ending in "there"). `after`: the
+// Sparks a change of these kinds names after its own word, the nearest change word before them in the sentence (what
+// settles it: "stop qwen on Spark 3 and start gemma on Spark 4" settles Spark 3 for the stop, Spark 4 for the start; for
+// a start only as a place).
+const PLACE_BEFORE = /\b(?:on|onto|to|into|at|in|across|over|for|switch|swap|load|use)\s+(?:the\s+)?$/, PLACE_SOURCE = /\b(?:from|off)\s+(?:the\s+)?$/;
+const PLACE_RULED_OUT = /(?:\bbut\s+(?:the\s+)?|\b(?:except|instead\s+of|rather\s+than|other\s+than|besides|apart\s+from)\s+(?:(?:on|in|at|the)\s+){0,2}|(?:\b(?:not|never|without|avoid|dont|cant|wont|isnt|arent|didnt)\b|n't\b)(?:\s+[\w'#]+){0,3}\s+)$/;
+const PLACE_UNSURE = /\bsparks?\b(?![\s_-]*(?:console|\d))|\b(?:across|on)\s+both\b|\b(?:nodes?|box(?:es)?|machines?|servers?|hosts?)\s*#?\s*\d\b|\bthe\s+\d(?:st|nd|rd|th)\s+one\b|\b(?:on|to|onto)\s+#\d\b|(?<!\b(?:hi|hey|hello)\s+)\bthere\s*$/;
+function sparkPlaces(text, kinds = ['start']) {
+  const named = new Set(), places = new Set(), after = new Set(), out = new Set(), source = new Set(), either = new Set();
+  let doubt = false;
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    // (a host name's letters before it, "akspark4", are part of the name; a Spark's bare number after a word that rules
+    // it out, "on spark 4 not 3", is that Spark)
+    const typed = raw.replace(/\b[a-z]{1,6}(?=sparks?[\s_-]*\d)/gi, '').replace(/\b(not|but|except|instead\s+of|rather\s+than|other\s+than)\s+(?:on\s+)?(\d)\b(?!\s*(?:gpus?|hours?|mins?|minutes?|days?|times?|bits?|gb|%))/gi, (m, w, d) => (NODES.some(n => n.id === `spark${d}`) ? `${w} spark ${d}` : m));
+    const s = sparkNames(typed).replace(/\s+/g, ' ');
+    if (PLACE_UNSURE.test(s)) doubt = true;
+    // ("3 or 4": sparkNames reads both, so the "or" is looked for in the words as typed)
+    for (const m of raw.matchAll(/\b(?:on\s+|sparks?[\s_-]*)\d+(?:\s*(?:,|and|&|\+|or)\s*(?:sparks?[\s_-]*)?\d+)*\s*\bor\b\s*(?:sparks?[\s_-]*)?\d+\b/gi)) {
+      for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) { either.add(t); doubt = true; }
+    }
+    const words = CHANGE_WORDS.flatMap(([kind, re]) => [...s.matchAll(new RegExp(re.source, 'gi'))].map(m => ({ kind, at: m.index }))).sort((x, y) => x.at - y.at);
+    for (const g of s.matchAll(/\bspark\d+\b(?:\s*(?:,|and|&|\+|or)?\s*\bspark\d+\b)*/g)) {
+      const ids = g[0].match(/spark\d+/g), pre = s.slice(0, g.index), post = s.slice(g.index + g[0].length);
+      for (const id of ids) named.add(id);
+      const first = ORDER_OPEN.exec(pre)[0].length === pre.length && /^\s*(?:[:,–—-]|(?:start|run|launch|deploy|load|serve|spin|fire|boot|put|bring|use)\b)/.test(post);
+      const place = PLACE_BEFORE.test(pre) || first, ruled = PLACE_RULED_OUT.test(pre), from = PLACE_SOURCE.test(pre), or = /\bor\b/.test(g[0]);
+      for (const id of ids) { if (ruled) out.add(id); if (from) source.add(id); if (or) either.add(id); }
+      const near = words.filter(w => w.at < g.index).pop(), mine = near && kinds.includes(near.kind) && !ruled && !or && !ids.some(id => either.has(id)) && !(kinds.includes('start') && (from || !place));
+      for (const id of ids) if (mine) after.add(id);
+      if (!place || ruled || from || or) { doubt = true; continue; }
+      for (const id of ids) places.add(id);
+    }
+  }
+  return { named: [...named], places: [...places], after: [...after], out: [...out], source: [...source], either: [...either], doubt };
 }
 // Whether a change is exactly what the words named: every word of the model, the one container they point to (or
 // "everything on Spark N", said in this message), and only Sparks they named.
 function tracesToRequest(name, input, saidText, request = saidText) {
   const said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText))), has = t => said.has(t) || flat.includes(t.replace(/\./g, ''));
-  const namedSparks = [...said].filter(t => /^spark\d+$/.test(t));
+  // (the Sparks this message names, never the one before's, and not one it rules out or names as "3 or 4": "stop gemma
+  // on 4" after "gemma on Spark 3 is slow" names Spark 4 only; "stop gemma, not on Spark 3" names none it allows, A-20)
+  // (several named: the one the change's own words settle, "stop qwen on Spark 3 and start gemma on Spark 4")
+  const here = sparkPlaces(request, ACTION_KIND[name] || []), alone = here.named.filter(id => !here.out.includes(id) && !here.either.includes(id));
+  const allowed = here.after.length ? here.after : here.named.length === 1 && alone.length === 1 ? alone : [];
   if (input.model && ![...tokensOf(input.model)].every(has)) return false;
   if (input.container) {
-    const allOn = [...normQuotes(request).toLowerCase().matchAll(/\b(?:everything|all(?:\s+(?:of\s+)?(?:the\s+)?(?:models?|containers?))?)\s+(?:that's\s+|that\s+is\s+)?(?:running\s+)?on\s+spark[\s_-]*(\d+)\b|\b(?:free\s+up|clear(?:\s+out)?)\s+spark[\s_-]*(\d+)\b/g)].map(m => `spark${m[1] || m[2]}`);
+    const allOn = [...sparkNames(normQuotes(request)).matchAll(/\b(?:everything|all(?:\s+(?:of\s+)?(?:the\s+)?(?:models?|containers?))?)\s+(?:that's\s+|that\s+is\s+)?(?:running\s+)?on\s+spark(\d+)\b|\b(?:free\s+up|clear(?:\s+out)?)\s+spark(\d+)\b/g)].map(m => `spark${m[1] || m[2]}`);
     if (!allOn.includes(input.spark) && pickContainer(name, input.spark, saidText) !== input.container) return false;
   }
   for (const id of [input.spark, ...(input.sparks || [])].filter(Boolean)) {
-    if (name === 'start_model' ? !said.has(id) : namedSparks.length && !namedSparks.includes(id)) return false;
+    if (name === 'start_model' ? !said.has(id) : here.named.length && !allowed.includes(id)) return false;
   }
-  // (no Spark named: the container the words point to must be on the call's Spark alone, so the call's Spark never
-  // picks between two, A-20)
-  if (!namedSparks.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && pickContainer(name, n.id, saidText))) return false;
+  // (this message names no Spark: the container the words point to must be on the call's Spark alone, so the call's
+  // Spark never picks between two, A-20: no container of the console's on another Spark shares a word with them, T1)
+  if (!here.named.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && containersSaid(n.id, saidText).length)) return false;
   return true;
 }
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
@@ -5794,14 +5930,19 @@ async function sparkieCheck(name, input, ctx) {
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
   const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
-    // Where it lands is the owner's to say (A-20): one Spark named is where it starts, whatever the call says; with
-    // more named, the call has to pick one of them, else it is a button; with none named, Spark Console places it.
-    const named = [...said].filter(t => /^spark\d+$/.test(t));
-    if (out.sparks && !out.sparks.every(id => said.has(id))) delete out.sparks;
-    if (!out.sparks && named.length === 1) out.spark = named[0];
-    else if (out.spark && !said.has(out.spark)) delete out.spark;
-    const settled = out.sparks || out.spark || named.length < 2;
-    return { clear: asked && Boolean(settled) && await namesModel(out, saidText), input: out };
+    // Where it lands is the owner's to say (A-20), in this message only (sparkPlaces): one Spark named as a place and
+    // nothing else ("start gemma on Spark 4") is where it starts, whatever the call says; no Spark named at all, Spark
+    // Console places it (the call's Spark is dropped); the Sparks of a start across Sparks all named as places, as the
+    // call has them. Anything else (two Sparks, one ruled out or doubtful, "3 or 4", "the other spark") is a button,
+    // never at once: it shows the place the words settle after the start word, else the call's.
+    const p = sparkPlaces(ctx.request ?? saidText, ['start']), places = p.places;
+    const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+    let settled = false;
+    if (!p.named.length && !p.doubt) { delete out.spark; delete out.sparks; settled = true; }
+    else if (!p.doubt && places.length === 1) { out.spark = places[0]; delete out.sparks; settled = true; }
+    else if (!p.doubt && places.length > 1 && Array.isArray(out.sparks) && same(out.sparks, places)) { delete out.spark; settled = true; }
+    else if (p.after.length === 1) { out.spark = p.after[0]; delete out.sparks; }
+    return { clear: asked && settled && await namesModel(out, saidText), input: out };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).
   if (name === 'remember' || name === 'forget_memory') return { clear: memoryClear(name, out, ctx, asked), input: out };
@@ -5889,6 +6030,8 @@ function powerSparksSaid(re, text) {
   for (const m of normQuotes(text).matchAll(new RegExp(re.source, 'gi'))) for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) ids.add(t);
   return ids;
 }
+// The outcomes of a call that ran nothing on a Spark (no `ranOn` in its audit line, R25).
+const RAN_NOTHING = new Set(['already', 'already-starting', 'question', 'refused', 'declined', 'noroom', 'asked', 'look', 'needs-ok']);
 // ctx says who's asking (via: 'sparkie' | 'agent' | …, actor: a name, request: their words, canChange).
 // Agents (Sparkie, outside agents, auto-restart) pause themselves after many changes in an hour or three failed
 // operations in a row; the owner looks at Activity and resumes them. The owner's own failed work (POST /actions, their
@@ -6053,8 +6196,9 @@ async function runAction(name, viewer, args, ctx = {}) {
       ? { ...ctx.plan, workflow: out.workflow, title: workflowById(out.workflow).title, version: out.workflowVersion || ctx.plan.version,
         inputs: ctx.plan.inputs.map(i => (i.source === 'chosen' && i.name === 'spark' && Array.isArray(out.sparks) ? { name: 'sparks', value: out.sparks.join(' + '), source: 'chosen' } : i)) }
       : ctx.plan;
-    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20)
-    const ranOn = Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
+    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20;
+    // none for a call that ran nothing: already so, a question, refused)
+    const ranOn = RAN_NOTHING.has(out?.outcome) ? null : Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
     audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started, ...(ranOn ? { ranOn } : {}),
       ...(plan ? { plan } : {}) });
     journalCalled(jid, name, input, args, ctx, { out, ms: Date.now() - started });
@@ -6825,7 +6969,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // v3.1): pressed or picked by its id, never by a typed "yes".
 // whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
 // paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
+// brain: what Sparkie is handed in place of text, when the ask shows the owner something the brain must not be handed as
+// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2).
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, brain = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -6833,7 +6979,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   // shows its button and nobody else may answer it, so it hands back no choice ids. It says how the owner says yes.
   if (ownerOnly && !ctx.onQuestion && ctx.via !== 'page') {
     const yes = choices.find(c => c.call)?.label;
-    return { outcome: 'question', question: text, choices: choices.slice(0, 4).map(c => ({ label: c.label, choice: null })),
+    return { outcome: 'question', question: typeof brain === 'string' ? brain : text, choices: choices.slice(0, 4).map(c => ({ label: c.label, choice: null })),
       note: `Only the owner can answer this one, from Spark Console, and nothing was done. There’s no choice to send back: the owner asks Sparkie for it in their own chat there${yes ? ` (“${yes}”)` : ''} and presses the button it shows, or does it on the page. Tell them that.` };
   }
   if (ctx.validating) choices = choices.map(c => (c.call ? { ...c, call: { ...c.call, args: { ...c.call.args, __validate: ctx.validating } } } : c));
@@ -6861,7 +7007,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
-    return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),
+    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map(c => c.label),
       note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
         : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
   }
@@ -9741,27 +9887,66 @@ function cameFrom(things, ownerMessages, reads, answers) {
   }
   return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
 }
-// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
-function dangerJournalText(id, max) {
-  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
-  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
-    if (!line.includes(`"id":"${id}"`)) continue;
-    const r = jParse(line);
-    if (r?.id !== id || !Array.isArray(r.o)) continue;
-    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
-    let fd;
-    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
-    // (and a record the journal itself cut at its size counts as not all searched)
-    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
+// Where each read's long text is ({month, o, cut}) by its id (R-9): from the journal's own index of its newest records
+// (jBodyAt), else in one pass over the months its reads were made in (each read's month and the one before, newest
+// first), every id looked for at once in the raw bytes (no line decoded but a wanted one's), the pass held to
+// DANGER_SCAN bytes. What a pass finds joins the index, so a later request reads it with no pass.
+const DANGER_SCAN = 256 * 2 ** 20, DANGER_ID = Buffer.from('{"id":"j_');
+function dangerJournalWhere(reads) {
+  const where = new Map(), want = new Set(), months = new Set();
+  for (const r of reads) {
+    const id = String(r?.id || '');
+    if (!/^j_[0-9a-f]{12}$/.test(id)) continue;
+    const b = jBodyAt(id);
+    if (b) { where.set(id, b); continue; }
+    want.add(id);
+    const m = /^(\d{4})-(\d{2})/.exec(String(r.at || ''));
+    if (m) months.add(`${m[1]}-${m[2]}`).add(Number(m[2]) === 1 ? `${Number(m[1]) - 1}-12` : `${m[1]}-${String(Number(m[2]) - 1).padStart(2, '0')}`);
   }
-  return null;
+  let left = DANGER_SCAN;
+  for (const f of journalFiles().filter(x => !months.size || months.has(x.slice(8, 15)))) {
+    if (!want.size || left <= 0) break;
+    let fd;
+    try { fd = openSync(`${JOURNAL_DIR}/${f}`, 'r'); } catch { continue; }
+    try {
+      const buf = Buffer.alloc(4 << 20);
+      let rest = Buffer.alloc(0);
+      for (let n; want.size && left > 0 && (n = readSync(fd, buf, 0, buf.length, null)) > 0;) {
+        left -= n;
+        const data = rest.length ? Buffer.concat([rest, buf.subarray(0, n)]) : buf.subarray(0, n), last = data.lastIndexOf(10);
+        const whole = last < 0 ? 0 : last + 1;
+        for (let i = data.indexOf(DANGER_ID); i >= 0 && i < whole; i = data.indexOf(DANGER_ID, i + 1)) {
+          const id = data.toString('latin1', i + 7, i + 21);
+          if (!want.has(id)) continue;
+          const end = data.indexOf(10, i), r = jParse(data.toString('utf8', i, end < 0 ? whole : end));
+          if (r?.id !== id || !Array.isArray(r.o)) continue;
+          const at = { month: f.slice(8, 15), o: r.o, cut: Boolean(r.cut) };
+          where.set(id, at);
+          jBodies.set(id, at);
+          want.delete(id);
+        }
+        rest = Buffer.from(data.subarray(whole));
+      }
+    } finally { closeSync(fd); }
+  }
+  return where;
+}
+// A read's long text, read back from the journal where dangerJournalWhere found it (never shown; only searched by cameFrom).
+function dangerJournalText(at, max) {
+  if (!at || !Array.isArray(at.o)) return null;
+  const [offset, length] = at.o, n = Math.max(0, Math.min(length, max));
+  let fd;
+  try { fd = openSync(jFile(at.month, 'out'), 'r'); } catch { return null; }
+  // (and a record the journal itself cut at its size counts as not all searched)
+  try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(at.cut) }; } finally { closeSync(fd); }
 }
 // What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
 function dangerReadsLoaded(reads) {
   let left = DANGER_READ_BYTES, cut = false;
-  const out = [];
-  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
-    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
+  const out = [], list = [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS);
+  const where = dangerJournalWhere(list.filter(r => typeof r.text !== 'string'));
+  for (const r of list) {
+    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(where.get(String(r.id)), left);
     // (a read whose text can't be read back was not searched, and the ask says so)
     if (!got) { cut = true; continue; }
     out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
@@ -10900,6 +11085,10 @@ const J_LARGE = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_JOURNAL_NEEDS_BYTE
 const JOURNAL_REFUSED = 'Couldn’t write the record of this change on Spark 2 (its disk may be full), so nothing was changed. Free some space there, then ask again.';
 // When a write last failed and last worked (the needs-you line), and the changes a restart cut off (for a day).
 let journalProblem = null, journalWorked = 0, journalCut = null, journalDirSet = false;
+// Where the newest records' long texts are, by id ({month, o, cut}), as journal() wrote them: a read kept on a chat is
+// read back from here with no pass over the journal (R-9, 20-came-from.mjs). The newest 4,096; empty after a restart.
+const jBodies = new Map(), J_BODIES = 4096;
+const jBodyAt = id => jBodies.get(String(id)) || null;
 const journalId = () => `j_${randomBytes(6).toString('hex')}`;
 // The names a record is about (Sparks, models, containers, a failure), for search. Masked before the cut, with 200
 // characters past it, so a key across the cut is hidden whole (as audit does).
@@ -11010,6 +11199,7 @@ function journal(kind, fields = {}, body = null) {
       throw e;
     } finally { closeSync(fd); }
     journalWorked = Date.now();
+    if (Array.isArray(rec.o)) { jBodies.set(id, { month, o: rec.o, cut: Boolean(rec.cut) }); if (jBodies.size > J_BODIES) jBodies.delete(jBodies.keys().next().value); }
     return id;
   } catch (e) {
     if (!journalProblem || journalProblem.at < journalWorked) console.error(`The journal couldn’t be written: ${e.code || e.message}.`);
@@ -11840,12 +12030,18 @@ function audit(entry) {
 // arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
 // same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
 // runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
-// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
-// once until its work truly ends, not when the door stops waiting for it.
+// arguments as the action's own check reads them (checkInput: "Spark 3" and "spark3" are one call; arguments it refuses
+// as sent, and the action refuses them), never on the JSON-RPC id, which restarts with each client session. A call
+// keeps its slot of the three at once until its work truly ends, not when the door stops waiting for it.
 const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
 const doorWork = new Map();
+// (the keys in any order, nested ones too: run_workflow's inputs)
 const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
-const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+function doorKey(agent, a, args) {
+  let read = args ?? {};
+  try { read = checkInput(a.input, args, a.name); } catch {}
+  return createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(read)])).digest('hex');
+}
 // (still going: the call itself, or the operation its answer names)
 const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
@@ -11948,7 +12144,7 @@ async function mcpDoor(req, res, viewer) {
       // when it lands; a call that can change something is never told to try again (R73).
       // (the timer is cleared once the work answers, so it never rejects later)
       let timer;
-      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. While it is still going, the same call with the same arguments, sent again, waits on it and answers with its result. Once it has ended, the same call runs again, so look first: recall {kind: "call"} shows how this one ended; an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
       let value;
       try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));
@@ -16435,11 +16631,11 @@ async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null
 // a change and named the Spark, and nothing was read since): the sorter, the wall, the pause, the rail (R52), the
 // copies and the journal all still apply, and the run's record says gate "go-ahead". Never ahead (aheadWhyNot), and so
 // never offered: an agent's change; Spark 2 or a Spark holding the brain; root; a key read or sent; a script (its hash
-// is for one press); what an earlier command of the task fetched or wrote; what came from what Sparkie read (R54's
-// "came from"), in this request or an earlier message of the chat (workEarlier); a dangerous ask's kinds; anything the
-// sorter calls risky, lock-out, open or not done; a protected folder; a change that runs with --home or --open after
-// its yes; an install (the sorter's installs); the GPU; a reach beyond the Spark itself (another Spark, the home
-// network, the internet).
+// is for one press); what an earlier command of the task fetched or wrote; a thing that came from what Sparkie read
+// (R54's "came from": an address, a whole path, a package), in this request or anywhere earlier in the chat (its reads,
+// answers, notices and agents' messages, workChatEarlier); a dangerous ask's kinds; anything the sorter calls risky,
+// lock-out, open or not done; a protected folder; a change that runs with --home or --open after its yes; an install
+// (the sorter's installs); the GPU; a reach beyond the Spark itself (another Spark, the home network, the internet).
 // "Always allow" (A9b) is the same kind kept across tasks: one list in agent-settings.json (`allowed`, 50 at most), added
 // only by the owner's press of that answer on the page while a passkey is set up (the press needs it; Telegram never
 // shows that answer), taken away by /allowed off. In the owner's chats it stands in for the naming of the Spark and for
@@ -16490,8 +16686,9 @@ const aheadWords = (e, at) => (e.command != null ? 'this same command' : `“${e
 const aheadWritten = (sorted, written) => (Array.isArray(written) ? written : []).some(w => typeof w === 'string'
   && ((sorted?.placed || []).some(p => aheadIn(p, w.replace(/\/+$/, ''))) || (sorted?.wide || []).some(p => aheadIn(p, w.replace(/\/+$/, '')) || aheadIn(w, p))));
 // Why a command may never run on a go-ahead, or null. f: {agent, hub, brain, root, written, from (cameFrom's answer),
-// earlier (workEarlier's reason), reached (protected folders), outside (runnerOutside: --open or --home after the yes),
-// widen (runnerWiden)}; the sorter's own installs, gpu and reach too.
+// reached (protected folders), outside (runnerOutside: --open or --home after the yes), widen (runnerWiden)}; the
+// sorter's own installs, gpu and reach too. (A plain name a read showed is not one: the go-ahead is the owner's own
+// press for the task's plain changes, contract 8.14, so a task's next edit of a file its look showed runs on it, R-8.)
 function aheadWhyNot(sorted, command, f) {
   if (f.agent) return 'an agent asked for it';
   if (f.hub) return 'it is on Spark 2';
@@ -16501,9 +16698,6 @@ function aheadWhyNot(sorted, command, f) {
   if (sorted?.scripts?.length) return 'it runs a script, whose text can change after a yes';
   if (aheadWritten(sorted, f.written)) return 'it uses what an earlier command of this task fetched or wrote';
   if (f.from?.lines?.length || f.from?.cut) return 'part of it came from what Sparkie read';
-  // (a name from an earlier read or answer of this chat that no message of the owner's there holds: workEarlier's own
-  // reason, 21-ladder.mjs, so a go-ahead is never gentler than no go-ahead)
-  if (f.earlier) return String(f.earlier);
   if (sorted?.kinds?.includes('lockout')) return 'it could lock you out';
   if (sorted?.kinds?.length) return `it ${sorted.kinds.includes('delete') ? 'deletes what can’t be put back' : 'names the brain'}, which is a dangerous ask`;
   if (sorted?.class !== 'change') return sorted?.class === 'lockout' ? 'it could lock you out' : sorted?.class === 'notdone' ? 'it is never done' : sorted?.open ? 'it needs what the run wall hides' : 'the sorter calls it risky';
@@ -16515,17 +16709,15 @@ function aheadWhyNot(sorted, command, f) {
   if (reach.size) return `it reaches ${reach.has('fleet') ? 'another Spark of this fleet' : reach.has('home') ? 'your home network' : 'the internet'}`;
   return null;
 }
-// The facts for aheadWhyNot, from the request (ctx) and the Spark; the chat's earlier answers and what was read go to
-// cameFrom (20-came-from.mjs), as for the dangerous ask; and every read and answer of this chat, with the owner's words
-// in all of it, to workEarlier (21-ladder.mjs), as for a change with no go-ahead.
+// The facts for aheadWhyNot, from the request (ctx) and the Spark; everything earlier in this chat that a thing could
+// come from (its reads, this request's too, Sparkie's answers, notices and agents' messages: workChatEarlier,
+// 21-ladder.mjs, loaded once a request) goes to cameFrom (20-came-from.mjs), as for the dangerous ask.
 function aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen) {
-  const answers = conv.messages.filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
   // (a command that names no thing came from nowhere: nothing to look for, nor a read to load)
-  const things = dangerThings(command);
+  const things = dangerThings(command), e = things.length ? workChatEarlier(conv, ctx) : null;
   return aheadWhyNot(sorted, command, { agent: Boolean(ctx.agent || ctx.agentId || viewer?.agentKey || conv.agent), hub: node.host === 'local',
     brain: brainSparks().includes(node.id), root: Boolean(ctx.root), written: ctx.written,
-    from: things.length ? cameFrom(things, dangerOwnerWords(conv), dangerReadsLoaded(ctx.reads), answers) : null,
-    earlier: workEarlier(node, ctx, command, dir),
+    from: e ? cameFrom(things, dangerOwnerWords(conv), e.reads, e.answers) : null,
     reached: runnerProtected(sorted, dir), outside: runnerOutside(sorted, command, dir, topDirs), widen: runnerWiden(node, command, widen, sorted) });
 }
 // The owner's own chat this call is in (Sparkie's turn in it, the owner viewing), or null.
@@ -20375,13 +20567,17 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const starts = `It starts in ${dir}.`;
   const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_CHECKED} ${HUB_WALL}`;
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
+  // (the command and code's lines first; the scripts' text last, in the room the page shows, and never to the brain:
+  // workScriptText, workScriptBrain, 21-ladder.mjs, R-2, R-5)
+  const base = [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
+    'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
+  const hubText = (a, b) => (b.length ? `${a}\n${b.join('\n')}` : a);
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: [...workScriptLines(scripts), ...workScriptRecordLines(scripts)] } })
-    : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
-      'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
-      ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts), ...workScriptText(scripts)].join('\n'),
-    [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+    : question(viewer, ctx, hubText(base, workScriptText(scripts, WORK_ASK_MOST - base.length - 1)),
+    [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true, brain: hubText(base, workScriptBrain(scripts)) });
   // (kept under the yes button's own id, as the ladder keeps its asks: the press reads it back, workRecord)
   workRecord(call.args, { spark: node.id, command, dir, wall: 'hub', sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
   return out;
@@ -20479,19 +20675,33 @@ function workWrote(ctx, sorted) {
 }
 
 // The names a command gives that a later message's follow-up may have taken from what was read (P-5's "the message
-// before"): the dangerous ask's things (addresses, whole paths, packages: dangerThings) and each word of the command
-// with a / or a . inside (a file, a relative path, a host), never a program run by its bare name nor an option; and the
-// folder it starts in, when it isn't the usual one. Each name with its other spellings: a path without ~/, $HOME/ or the
-// home folder before it, and a file's own name. A bare word (a service's or a process's name) is not looked for.
-function workNames(node, command, dir) {
-  const home = `/home/${node?.user || CONFIG.user}/`, out = new Map();
-  const forms = p => {
-    let rel = p.replace(/^(?:~|\$HOME|\$\{HOME\})\//, '').replace(/^(?:\.\/)+/, '');
-    if (rel.startsWith(home)) rel = rel.slice(home.length);
-    const base = rel.split('/').filter(Boolean).pop() || '';
-    return [...new Set([p, rel, /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(base) ? base : ''])].filter(f => f.length >= 3);
+// before"), each {forms, own, blind}: forms, the spellings looked for in what was read; own, those that make it the
+// owner's when their words hold one. They are the dangerous ask's things (addresses, whole paths, packages:
+// dangerThings); each word of the command with a / or a . inside (a file, a relative path, a host), never a program run
+// by its bare name nor an option; every place the sorter says it writes or removes (placed, overwrites, wide), a bare
+// word too, as the sorter joins it to a cd before it (R-4); the folder it starts in, when it isn't the usual one; and
+// the command's own text and each of its parts between &&, ;, | and a line's end, 12 signs or more with a space. Each
+// path also without ~/, $HOME/ or the home before it, joined to the start folder when it is relative, and by its own
+// name (a file's, or a place's). A pattern (* ? [ {) is looked for by its plain pieces of 3 signs or more; with none it
+// is blind (R-4).
+const WORK_GLOB = /[*?[\]{}]/;
+function workNames(node, command, dir, sorted = null) {
+  const home = `/home/${node?.user || CONFIG.user}/`, start = String(dir || RUNNER_DIR), out = new Map();
+  const strip = p => { let r = p.replace(/^(?:~|\$HOME|\$\{HOME\})\//, '').replace(/^(?:\.\/)+/, ''); if (r.startsWith(home)) r = r.slice(home.length); return r; };
+  const spell = (p, place) => {
+    const rel = strip(p), base = rel.split('/').filter(Boolean).pop() || '';
+    const joined = /^(?:\/|~|\$HOME|\$\{HOME\})/.test(p) ? '' : strip(`${start}/${p.replace(/^(?:\.\/)+/, '')}`);
+    return [...new Set([p, rel, joined, place || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(base) ? base : ''])].filter(f => f.length >= 3);
   };
-  const add = w => { const f = forms(w); if (f.length && !out.has(w)) out.set(w, f); };
+  const add = (w, place = false) => {
+    if (!w || out.has(w)) return;
+    const forms = spell(w, place);
+    if (!WORK_GLOB.test(w)) { if (forms.length) out.set(w, { forms, own: forms }); return; }
+    // (a pattern: its plain pieces, each spelled as a name is; none of 3 signs or more, and it is blind; the owner's
+    // words are read for the pattern as written, however short)
+    const pieces = [...new Set(forms.flatMap(f => f.split(/[*?[\]{}]+/)).filter(x => x.length >= 3 && /[A-Za-z0-9]/.test(x)))];
+    out.set(w, { forms: pieces, own: [...new Set([w, ...forms])], blind: !pieces.length });
+  };
   for (const t of dangerThings(command)) add(t);
   // (the first word of each command, past NAME=value, is its program; the word after < or > is a file)
   let program = true;
@@ -20500,31 +20710,61 @@ function workNames(node, command, dir) {
     const set = /^[A-Za-z_]\w*=/.test(t.w), first = program && !set;
     if (!set) program = false;
     const w = t.w.replace(/^[A-Za-z_]\w*=/, '').replace(/^--?[\w-]+=/, '');
-    if ((first && !w.includes('/')) || w.startsWith('-') || !/[A-Za-z]/.test(w) || /[\s$`]/.test(w.replace(/^\$(?:HOME|\{HOME\})\//, ''))) continue;
-    if (w.includes('/') || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(w)) add(w);
+    if ((first && !w.includes('/')) || w.startsWith('-') || (!/[A-Za-z]/.test(w) && !WORK_GLOB.test(w)) || /[\s$`]/.test(w.replace(/^\$(?:HOME|\{HOME\})\//, ''))) continue;
+    if (w.includes('/') || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(w) || WORK_GLOB.test(w)) add(w);
   }
-  if (dir && dir !== RUNNER_DIR && dir !== '~') add(String(dir));
-  return [...out.values()].slice(0, 32);
+  for (const p of [...(sorted?.placed || []), ...(sorted?.overwrites || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && p) add(p, true);
+  if (dir && dir !== RUNNER_DIR && dir !== '~') add(/^(?:~|\/)/.test(String(dir)) ? String(dir) : `~/${dir}`, true);
+  // (the command's own text, and each part of it: a command quoted from earlier counts as read, contract 8.5)
+  const text = String(command || '').trim(), parts = text.split(/&&|\|\||[;|&\n]/).map(x => x.trim());
+  for (const x of [text, ...parts]) if (x.length >= 12 && /\s/.test(x) && !out.has(x)) out.set(x, { forms: [x], own: [x] });
+  return [...out.values()];
+}
+// What this chat holds that a change may have been taken from, for workEarlier: chatEarlier's reads and Sparkie's
+// answers (14-chats.mjs), with the chat's notices and agents' messages as reads of their own (R-4: a press's notice can
+// quote a command's last line). Loaded once a request, while nothing new was read or said (R-9).
+const workEarlierSeen = new WeakMap();
+function workChatEarlier(conv, ctx) {
+  const key = `${conv.id}|${(conv.reads || []).length}|${(ctx?.reads || []).length}|${(conv.messages || []).length}`, was = ctx && typeof ctx === 'object' ? workEarlierSeen.get(ctx) : null;
+  if (was?.key === key) return was.e;
+  const e = chatEarlier(conv, ctx), seen = new Set([...e.reads, ...e.answers].map(x => String(x.text ?? '')));
+  const more = (conv.messages || []).filter(m => (m.notice || (m.role === 'user' && m.from)) && m.content && !seen.has(String(m.content)))
+    .slice(-40).map(m => ({ label: m.notice ? 'a notice in this chat' : 'an agent’s message in this chat', at: m.createdAt, text: String(m.content) }));
+  const out = { reads: [...more, ...e.reads], answers: e.answers };
+  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e: out });
+  return out;
+}
+// The owner's words in this chat, as they are and with ~/, $HOME/ and the home taken off every path, so a name typed
+// one way and run another is still theirs (R-10).
+function workOwnWords(conv, node) {
+  const own = (conv.messages || []).filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content || '')).join('\n').toLowerCase();
+  const home = `/home/${node?.user || CONFIG.user}/`.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [own, own.replace(new RegExp(`(?:~|\\$home|\\$\\{home\\}|${home.slice(0, -1)})/`, 'g'), '')];
 }
 // 3 across this chat's messages (contract 8.5, "a command quoted from an earlier answer counts as read"): a change that
-// names what an earlier read or an earlier answer of Sparkie's holds, and no message of the owner's in this chat does, is
-// asked; a name the owner typed in any of their messages here is theirs. Why, or null. (chatEarlier, 14-chats.mjs;
-// cameFrom, 20-came-from.mjs, the dangerous ask's line 4, searched the same way.)
-function workEarlier(node, ctx, command, dir) {
+// names what an earlier read, answer, notice or agent's message holds, and no message of the owner's in this chat does,
+// is asked; a name the owner typed in any of their messages here is theirs. So is one past the first 32 names, or a
+// pattern with no plain piece, when the chat holds anything earlier: they can't all be looked for. Why, or null.
+// (chatEarlier, 14-chats.mjs; cameFrom, 20-came-from.mjs, the dangerous ask's line 4, searched the same way.)
+const WORK_NAMES = 32;
+function workEarlier(node, ctx, command, dir, sorted = null) {
   const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
   if (!conv) return null;
-  const own = (conv.messages || []).filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content || '')).join('\n').toLowerCase();
-  const theirs = workNames(node, command, dir).filter(forms => !forms.some(f => dangerWhole(own, f.toLowerCase())));
+  const owns = workOwnWords(conv, node);
+  const theirs = workNames(node, command, dir, sorted).filter(n => !n.own.some(f => owns.some(o => dangerWhole(o, f.toLowerCase()))));
   if (!theirs.length) return null;
-  const e = chatEarlier(conv, ctx);
+  const e = workChatEarlier(conv, ctx);
   if (!e.reads.length && !e.answers.length) return null;
-  const all = [...new Set(theirs.flat())], from = cameFrom(all, [], e.reads, e.answers);
+  if (theirs.length > WORK_NAMES) return `it names more than ${WORK_NAMES} things, so not all of them could be looked for in what was read earlier in this chat`;
+  const blind = theirs.find(n => n.blind);
+  if (blind) return `it names a pattern (${dangerPlain(blind.own[0], 120)}) with no plain piece to look for in what was read earlier in this chat`;
+  const all = [...new Set(theirs.flatMap(n => n.forms))], from = cameFrom(all, [], e.reads, e.answers);
   const line = from.lines[0];
   if (line) {
     const name = all.filter(f => line.startsWith(`${f}: `)).sort((a, b) => b.length - a.length)[0] || '';
     return `it names ${dangerPlain(name, 120)}, which came from ${line.slice(name.length + 2)}, not from your words`;
   }
-  if (from.cut) return `it names ${dangerPlain(theirs[0][0], 120)}, which isn’t in your words, and what was read earlier in this chat couldn’t all be searched`;
+  if (from.cut) return `it names ${dangerPlain(theirs[0].own[0], 120)}, which isn’t in your words, and what was read earlier in this chat couldn’t all be searched`;
   return null;
 }
 
@@ -20566,7 +20806,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
     if (ahead) return null;
     if (!tokensOf(ctx.said || ctx.request || '').has(node.id)) return `your words don’t name ${sparkName(node)}`;
     if (ctx.readOutside) return 'Sparkie read text from outside first';
-    const earlier = workEarlier(node, ctx, command, dir);
+    const earlier = workEarlier(node, ctx, command, dir, sorted);
     if (earlier) return earlier;
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
@@ -20623,8 +20863,11 @@ function workScriptPaths(scripts, dir, command) {
   const first = moves === 1 && toks[0]?.w === 'cd' && typeof toks[1]?.w === 'string' && toks[2]?.op === '&&' ? toks[1].w : null;
   const base = inside || words.some(w => WORK_TOLD.test(w)) ? null : moves === 0 ? dir : first !== null && workPlainName(first) ? (ok(first) ? first : `${dir}/${first}`).replace(/\/+$/, '') : null;
   const paths = [], unpinned = [];
+  // (with that first cd, a script counts as read from its folder only where every operator between them is &&: after
+  // ;, ||, & or a line's end bash may run it from the start folder, as the part before & runs apart, R-7)
+  const chained = s => toks.some(t => t.w === s) && toks.every((t, k) => t.w !== s || toks.slice(2, k).every(x => x.w !== undefined || x.op === '&&'));
   for (const s of scripts) {
-    if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null)) { unpinned.push(s); continue; }
+    if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null) || (!ok(s) && first !== null && moves === 1 && !chained(s))) { unpinned.push(s); continue; }
     const p = ok(s) ? s : `${base}/${s.replace(/^(?:\.\/)+/, '')}`;
     if (!paths.includes(p)) paths.push(p);
   }
@@ -20688,25 +20931,55 @@ function workWrittenFirst(sorted, path) {
 }
 const workWrittenLine = p => `It runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`;
 const WORK_WRITTEN_KEY = 'Not run: it runs a script this same command writes, so its text can’t be shown or pinned before you say yes, and a key goes only to code you are shown. Write or download the script first, then ask to run it with the key. Nothing was asked or run.';
-// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
-// 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
-// (runnerPins, 21-runner.mjs), and run by its path.
-const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'] : []);
+// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs by
+// path: 21-hub.mjs): read again after the Spark's claim is taken, then copied by the root helper, hashed and bound over
+// its path for the whole run (--script, runChange), and checked once more by the unit's own first lines (runnerPins,
+// 21-runner.mjs). When the command also runs a script that isn't pinned, the line says which ones run from the copy.
+function workPinLines(scripts) {
+  const sums = Object.values(scripts?.sums || {});
+  if (!sums.some(h => typeof h === 'string')) return [];
+  const others = sums.some(h => h === null) || scripts?.unpinned?.length || scripts?.written?.length;
+  return [others ? 'Each script shown here with its hash runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again. Any other script it runs is read from its path as it runs.'
+    : 'Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'];
+}
+// One line of a script on the button (R-1, R-5), after "│ ": a sign that doesn't show (a control, a zero-width or a
+// right-to-left sign, a terminal's escape) as a marked code, ⟨U+001B⟩; each part between ;, &, | and && masked apart, as
+// every ask is, so the mask never takes what follows a separator (the whole line's mask when a kept key's value crosses
+// one), and marked when the mask hid part of it; cut at 300 signs, saying how many more.
+const WORK_LINE = 300;
+function workScriptLine(l) {
+  const coded = String(l).replace(/(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/gu, c => `⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩`);
+  let masked = coded.split(/(&&|\|\||[;|&])/).map((x, i) => (i % 2 ? x : maskSecrets(x))).join('');
+  // (a kept key's value across a separator: the whole line's mask; a shape the mask reads greedily never spans one)
+  if (hideKeys(masked) !== masked) masked = maskSecrets(coded);
+  const signs = [...masked], cut = Math.max(0, signs.length - WORK_LINE);
+  return `│ ${cut ? signs.slice(0, WORK_LINE).join('') : masked}${cut ? ` ⟨… ${cut} more sign${cut === 1 ? '' : 's'} not shown⟩` : ''}${masked !== coded ? ' ⟨part of this line is hidden⟩' : ''}`;
+}
+// What the page shows of an ask at most (chatAsks keeps its first 8,000 signs, 14-chats.mjs): the script text gives
+// way to the rest, saying how much it left out.
+const WORK_ASK_MOST = 8000;
 // Each pinned script's text on a plain button (P-5): its first WORK_TEXT_LINES lines as the ask's look read them, each
-// after "│ " (as a command's own lines are, workCommandText), then how many more; the whole text as read is one journal
-// record, which the button names (workScriptRecord). Masked as every ask is.
-function workScriptText(scripts) {
-  const out = [], h = scripts?.sums || {};
+// after "│ " (workScriptLine: masked, marked, cut), then how many more; the whole text as read is one journal record,
+// which the button names whenever any of it isn't shown (workScriptRecord). room: the signs it may take (the rest of the
+// ask comes first, R-5); past it, one line says how many lines were left out and where all of it is.
+function workScriptText(scripts, room = Infinity) {
+  const out = [], h = scripts?.sums || {}, rec = scripts?.record, where = rec ? `: all of it as read is record ${rec} (recall {"id":"${rec}"} reads it)` : '';
+  let used = 0, left = 0;
+  const put = (line, keep = 220) => { if (left || used + line.length + 1 > room - keep) return false; out.push(line); used += line.length + 1; return true; };
   for (const [p, t] of Object.entries(scripts?.texts || {})) {
     const lines = t.text.split(/\r\n|[\r\n\v\f\x85\u2028\u2029]/);
     if (lines.at(-1) === '') lines.pop();
-    const more = Math.max(0, (t.whole ? lines.length : t.lines) - WORK_TEXT_LINES), whole = t.whole ? '' : `, read to its first ${WORK_TEXT / 1024} KB`;
-    out.push(`The script ${p} as read for this ask (${t.lines} line${t.lines === 1 ? '' : 's'}${whole}, SHA-256 ${String(h[p]).slice(0, 12)}…), each line after │:`,
-      ...lines.slice(0, WORK_TEXT_LINES).map(l => `│ ${l.slice(0, 300)}`),
-      ...(more ? [`│ … and ${more} more line${more === 1 ? '' : 's'}${scripts.record ? `: all of it as read is record ${scripts.record} (recall {"id":"${scripts.record}"} reads it)` : ''}.`] : []));
+    const shown = lines.slice(0, WORK_TEXT_LINES).map(workScriptLine), more = Math.max(0, (t.whole ? lines.length : t.lines) - WORK_TEXT_LINES);
+    const whole = t.whole ? '' : `, read to its first ${WORK_TEXT / 1024} KB`, cut = more || !t.whole || shown.some(l => l.includes(' more sign') && / ⟨… \d+ more signs? not shown⟩/.test(l));
+    if (!put(`The script ${p} as read for this ask (${t.lines} line${t.lines === 1 ? '' : 's'}${whole}, SHA-256 ${String(h[p]).slice(0, 12)}…), each line after │:`)) { left += shown.length + more; continue; }
+    for (const [i, l] of shown.entries()) if (!put(l)) { left += shown.length - i + more; break; }
+    if (!left && cut) put(`│ … ${more ? `and ${more} more line${more === 1 ? '' : 's'}` : t.whole ? 'part of a line isn’t shown here' : 'and the rest past its first 256 KB'}${where}.`, 0);
   }
+  if (left) out.push(`│ … ${left} more line${left === 1 ? '' : 's'} of the script${Object.keys(scripts?.texts || {}).length === 1 ? '' : 's'} aren’t shown on this button, for room${where}.`);
   return out;
 }
+// What Sparkie is told of the scripts' text in place of it (R-2): the owner was shown it; the brain is not handed it.
+const workScriptBrain = scripts => { const n = Object.keys(scripts?.texts || {}).length; return n ? [`The owner is shown the text of ${n === 1 ? 'the script' : `the ${n} scripts`} it runs on the button; it isn’t sent here: to read a script, read its file.`] : []; };
 // The scripts' texts as the ask read them, kept whole in one journal record (masked as a look's output is), so the
 // button can name it; its id on scripts.record. None when no script's text was read.
 function workScriptRecord(node, ctx, scripts) {
@@ -20747,8 +21020,10 @@ function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topD
 function workScriptLines(scripts) {
   const { sums = {}, unpinned = [], unread = null, written = [] } = scripts, not = n => `It runs ${n}; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen.`;
   const first = written.slice(0, 4).map(p => workWrittenLine(String(p).slice(0, 120)));
+  // (no file it could read there: a folder run as a script, a file not there yet or one it can't read, R-3)
+  const none = p => `It runs ${p}, which isn’t a file that could be read there as you’re asked (a folder, a file not there yet, or one it can’t read): its text can’t be shown or pinned, and a key is refused for it.`;
   if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`, ...first];
-  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120))), ...first];
+  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : none(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120))), ...first];
 }
 
 // The folder a change starts in, as run took it (~ or a folder under it, no . or .. part: 21-work.mjs), on both asks.
@@ -20759,7 +21034,8 @@ const workStartsIn = dir => `It starts in ${dir}.`;
 // (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script;
 // its path is whole, so no folder line)
 // more: code's own lines after these (a command given keys, 21-run-keys.mjs), kept above a framed command.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '') {
+// brain: the text Sparkie is handed, the scripts' lines left out (R-2).
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '', brain = false) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
   // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
@@ -20767,8 +21043,11 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts)), ...(spec ? [] : workScriptText(scripts))];
-  return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted, scripts), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
+  if (spec) return `${[...spec.lines(at), ...lines].join('\n')}${more}`;
+  // (the command, code's lines and a key's lines first; the scripts' text last, in the room left, R-5)
+  const base = workCommandText(`Run this on ${at}?`, command, lines, more), text = brain ? workScriptBrain(scripts) : workScriptText(scripts, WORK_ASK_MOST - base.length - 1);
+  return text.length ? `${base}\n${text.join('\n')}` : base;
 }
 // The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
 // Sparks' buttons: Spark 2's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
@@ -20785,9 +21064,12 @@ function workCommandText(head, command, lines, more = '') {
 // What it runs that the command doesn't show, by the sorter's own words (unshown: a script fed by a redirect or a pipe,
 // -m module, a build tool's or a package's own scripts, start-file variables): one line on either ask, nothing when the
 // sorter says nothing. Never a reason to ask by itself.
-function workUnshownLines(sorted) {
+function workUnshownLines(sorted, scripts = null) {
   const u = sorted?.unshown;
   if (!u) return [];
+  // (nor "the file x.sh" when the button shows that very file's text, R-12)
+  const file = typeof u === 'string' ? /^the file (.+)$/.exec(u)?.[1] : null;
+  if (file && Object.keys(scripts?.texts || {}).some(p => p === file || p.endsWith(`/${file.replace(/^(?:\.\/)+/, '')}`))) return [];
   const w = typeof u === 'string' ? u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '').slice(0, 200) : '';
   return [`What runs is in a file this button doesn’t show${w ? ` (${w})` : ''}.`];
 }
@@ -20811,6 +21093,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const scripts = spec ? { sums: spec.sums } : workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command, sorted)), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
   // (a key goes only to a script pinned by its hash, R51: one whose text isn't, or couldn't be read, is refused)
   if (keys.length && scripts.written?.length) throw new HttpError(409, WORK_WRITTEN_KEY);
+  // (nor to one that is no file it could read there: a folder run as a script, a file not there yet, R-3)
+  const none = Object.entries(scripts.sums || {}).find(([, h]) => h === null)?.[0];
+  if (keys.length && none) throw new HttpError(409, `Not run: it runs ${dangerPlain(none, 120)}, which isn’t a file that could be read there (a folder, a file not there yet, or one it can’t read), so its text can’t be shown or pinned, and a key goes only to code you are shown. Run a script file by its name with the key, and ask again. Nothing was asked or run.`);
   if (keys.length && (scripts.unread || scripts.unpinned?.length)) throw new HttpError(409, RUNKEY_SCRIPT_UNPINNED);
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
@@ -20831,7 +21116,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
-        { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
+        { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}),
+        // (Sparkie is handed the ask without the scripts' lines, R-2: the owner reads them on the button)
+        ...(spec ? {} : { brain: workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted), true) }) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [],
     gone: more.gone?.length ? more.gone.map(x => String(x.path)) : dangerous.includes('delete') ? true : null, at: Date.now() });
@@ -20844,13 +21131,35 @@ const workPressCovers = (sorted, ctx) => !(sorted?.kinds || []).some(k => ['dele
 // An installer run from an address as it is fetched (curl … | sh, wget -O- … | bash, bash <(curl …), sh -c "$(curl …)"):
 // no ask can show or pin what it runs, so it is answered how to do it instead (P-5): download it to a file, one change;
 // then run the file, asked with its text shown and pinned. Read from the command's words as bash splits them: a fetcher
-// whose pipeline ends in a shell or an interpreter (past sudo, env and their kin), or a shell or an interpreter handed a
-// fetcher's output by <( … ), $( … ) or backticks. A pipe into an interpreter handed its code another way (-c, -m, -e,
-// a file) hands it data (curl … | python3 -m json.tool), and is no installer.
-const WORK_FETCHERS = /^(?:curl|wget|fetch|aria2c)$/, WORK_INTERP = /^(?:(?:ba|da|z|k|a|mk|fi)?sh|python[\d.]*|perl|ruby|node|php|source|\.)$/;
+// whose pipeline ends in a shell or an interpreter (past sudo, env, their kin and a "("), or a shell, an interpreter or
+// eval handed a fetcher's output by <( … ), < <( … ), $( … ) or backticks. What the pipe hands is code unless the
+// interpreter is given its code another way (workReadsPipe, R-6): for a shell only -c does that (-e, -x, -o pipefail
+// are options; -s, - and /dev/stdin read the pipe whatever follows); for python, perl, ruby or node -c, -e or -m does,
+// and so does a file (curl … | python3 -m json.tool reads data).
+const WORK_FETCHERS = /^(?:curl|wget|fetch|aria2c)$/, WORK_INTERP = /^(?:(?:ba|da|z|k|a|mk|fi)?sh|python[\d.]*|perl|ruby|node|php|source|\.)$/, WORK_SHELL = /^(?:ba|da|z|k|a|mk|fi)?sh$/;
 const WORK_FETCHRUN = 'Not run: it runs code it fetches from the network as it runs, so no ask could show you that code or pin it. Download it to a file first (for example: curl -fsSL -o install.sh <address>), then run that file: the download is one change, and the run is asked with the file’s text shown and pinned. Nothing ran.';
+// Whether the interpreter at t[j] reads its code from what comes in on its input.
+function workReadsPipe(t, j) {
+  const shell = WORK_SHELL.test(String(t[j].w).split('/').pop());
+  for (let k = j + 1; t[k] && t[k].w !== undefined; k++) {
+    const w = t[k].w;
+    if (w === '-' || w === '/dev/stdin' || /^\/dev\/fd\/0$|^\/proc\/self\/fd\/0$/.test(w)) return true;
+    if (w === '--') return shell ? !(t[k + 1] && t[k + 1].w !== undefined) : false;
+    if (shell && /^[-+][A-Za-z]+$/.test(w)) {
+      if (w.startsWith('-') && w.includes('c')) return false;
+      if (w.startsWith('-') && w.includes('s')) return true;
+      if (/o/.test(w.slice(1))) k++;
+      continue;
+    }
+    if (!shell && /^-[A-Za-z]*[cemE]/.test(w)) return false;
+    if (w.startsWith('-')) continue;
+    return false;
+  }
+  return true;
+}
 function workFetchRun(command) {
   const t = shellWords(String(command)), base = w => String(w).split('/').pop(), word = j => t[j] && t[j].w !== undefined;
+  const fetches = w => /(?:\$\(|`)\s*(?:\S*\/)?(?:curl|wget|fetch|aria2c)\b/.test(w);
   let fetched = false;
   for (let i = 0; i < t.length; i++) {
     const x = t[i];
@@ -20858,17 +21167,13 @@ function workFetchRun(command) {
     if (word(i) && WORK_FETCHERS.test(base(x.w))) fetched = true;
     if (x.op === '|' && fetched) {
       let j = i + 1;
-      while (word(j) && (/^(?:sudo|doas|env|nice|nohup|time|command|exec|stdbuf|ionice|timeout)$/.test(base(t[j].w)) || /^-|^[A-Za-z_]\w*=|^\d+[smhd]?$/.test(t[j].w))) j++;
-      // (an interpreter handed code by -c, -m, -e or a file reads what comes in as data, not code; -s or - reads code)
-      if (word(j) && WORK_INTERP.test(base(t[j].w))) {
-        let k = j + 1, data = false;
-        for (; word(k); k++) if (/^-(?:\w*[cme]\w*)$/.test(t[k].w) && !/^-s$/.test(t[k].w) || (!t[k].w.startsWith('-') && t[k].w !== '-')) { data = true; break; }
-        if (!data) return true;
-      }
+      while (t[j]?.op === '(' || (word(j) && (/^(?:sudo|doas|env|nice|nohup|time|command|exec|stdbuf|ionice|timeout)$/.test(base(t[j].w)) || /^-|^[A-Za-z_]\w*=|^\d+[smhd]?$/.test(t[j].w)))) j++;
+      if (word(j) && WORK_INTERP.test(base(t[j].w)) && workReadsPipe(t, j)) return true;
     }
-    if (word(i) && WORK_INTERP.test(base(x.w))) {
+    if (word(i) && (WORK_INTERP.test(base(x.w)) || x.w === 'eval')) {
       if (t[i + 1]?.op === '<' && t[i + 2]?.op === '(' && word(i + 3) && WORK_FETCHERS.test(base(t[i + 3].w))) return true;
-      for (let j = i + 1; word(j); j++) if (/(?:\$\(|`)\s*(?:\S*\/)?(?:curl|wget|fetch|aria2c)\b/.test(t[j].w)) return true;
+      if (t[i + 1]?.op === '<' && t[i + 2]?.op === '<' && t[i + 3]?.op === '(' && word(i + 4) && WORK_FETCHERS.test(base(t[i + 4].w))) return true;
+      for (let j = i + 1; word(j); j++) if (fetches(t[j].w)) return true;
     }
   }
   return false;
@@ -20884,6 +21189,17 @@ function workKeyCode(sorted) {
   if (!list.length) return;
   const said = list.slice(0, 3).map(u => u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 120)).join('; ');
   throw new HttpError(409, `Not run: it runs code the command doesn’t show (${said}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+}
+// Nor to a command the sorter couldn't read all of (its unreadable, R-3: a loop, a test, a function, a shell it reads
+// another way), nor to one that runs a program it doesn't know (its unknownProgram), whose scripts it can't tell. Until
+// the sorter gives unreadable, its own words for such a doubt stand in for it.
+const WORK_DOUBT = /\bthe sorter (?:does not|doesn’t|doesn't|could not|couldn’t) read|\bthe sorter reads only bash/;
+function workKeyDoubt(sorted) {
+  const u = sorted?.unreadable, said = s => String(s).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160);
+  const doubt = Array.isArray(u) ? u.filter(Boolean).map(said).join('; ') : typeof u === 'string' && u ? said(u) : u === true ? 'part of it'
+    : u === undefined && sorted?.class === 'risky' && WORK_DOUBT.test(String(sorted?.why || '')) ? said(sorted.why) : '';
+  if (doubt) throw new HttpError(409, `Not run: the sorter couldn’t read all of this command (${doubt}), so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+  if (typeof sorted?.unknownProgram === 'string' && sorted.unknownProgram) throw new HttpError(409, `Not run: it runs “${said(sorted.unknownProgram)}”, a program the sorter doesn’t know, so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Run a script by its name with the key (bash x.sh, python3 x.py), and ask again. Nothing ran.`);
 }
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
 // refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
@@ -20922,7 +21238,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
   if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
   // (then code it runs unseen, workKeyCode: after the walls' own refusal, whose words come first)
-  if (keys.length) workKeyCode(sorted);
+  if (keys.length) { workKeyCode(sorted); workKeyDoubt(sorted); }
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
   // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
@@ -23612,6 +23928,32 @@ function runnerMemoryCap(available) {
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
+// write_file's answer when its program didn't end well (21-write.mjs, writeProgram): ended before it finished, whether
+// it was written isn't known; exit 5, it was written: another program's edit came between its read and the exchange,
+// and the exchange back failed, so the name holds the new text and the other text is kept beside it, where the
+// program's last line says (wroteOver, a field of its own: the chat and the journal tell it from a refusal); any other
+// end, nothing was written, in the program's own last line.
+function runnerWriteAnswer(exit, last) {
+  const line = maskSecrets(String(last || '')).replace(/^write_file:\s*/, '');
+  if (exit == null) return { notWritten: `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` };
+  if (exit === 5) return { wroteOver: line ? `${line[0].toUpperCase()}${line.slice(1, 400)}` : 'It was written over another program’s edit made after it was read, which couldn’t be put back: the name holds the new text, and the other text is kept beside it.' };
+  return { notWritten: `Nothing was written: ${maskSecrets(last || `exit ${exit}`).slice(0, 300)}` };
+}
+// The pinned scripts handed to the root helper's --script ("<sha256>:<path>"), each once: two spellings of one file
+// (run.sh from ~/work and /home/<owner>/work/run.sh) are one script, which the helper would refuse as named twice
+// (R-11). Only what the helper copies: ~/ and a file, or a whole path, in the owner's home (workHelperPins).
+function runnerScripts(pins, node) {
+  const home = `/home/${node?.user || CONFIG.user}/`, seen = new Set(), out = [];
+  for (const [p, h] of Object.entries(pins || {})) {
+    if (!/^[0-9a-f]{64}$/.test(String(h)) || !workHelperPins(p, node)) continue;
+    const whole = p.startsWith('~/') ? `${home}${p.slice(2)}` : p;
+    if (seen.has(whole)) continue;
+    seen.add(whole);
+    out.push(`${h}:${p}`);
+  }
+  return out;
+}
+
 // The folders at the top of the home a change names that are there now, real and not ~/bin (one look): a write inside
 // one is inside the plain wall's writable folders, not at the top (R63). null when the look gave no whole answer: never
 // "none is there", which would widen the wall.
@@ -23716,7 +24058,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // (its pinned scripts: the helper's own copies, bound over their paths for the whole run (--script, P-5); the unit's
     // own first lines check them once more, a second check of those same copies, R72)
     const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
-    const scripts = pins && !as ? Object.entries(pins).filter(([p, h]) => /^[0-9a-f]{64}$/.test(String(h)) && workHelperPins(p, node)).map(([p, h]) => `${h}:${p}`) : [];
+    const scripts = as ? [] : runnerScripts(pins, node);
     const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, scripts, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
@@ -23779,6 +24121,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
+      ...(as?.result && a.exit === 5 ? { wroteOver: true } : {}),
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
     const cannot = sorted.deletes && lost.length ? `No copy was kept of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removed or overwrote (notKept says which and why), as its ask said: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` : null;
@@ -23795,7 +24138,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
       // (after an end the console can't know, or at the time limit, it may have been written)
-      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
+      ...(as?.result ? (a.exit === 0 ? as.result : runnerWriteAnswer(a.exit, last)) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back;
       // said in notes too, which the press's notice carries, 14-chats.mjs)

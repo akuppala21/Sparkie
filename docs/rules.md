@@ -75,5 +75,5 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R71](rules/R71.md): The lock-out net, the console's half (A13b, `21-net.mjs`; on: `NET_ON`).
 - [R72](rules/R72.md): What the runner asks for itself, and what the press checks (moved from R61 on 2026-11-15; R61 is `run` with a change and the runner, R54 the dangerous ask).
 - [R73](rules/R73.md): The agent door's own handling of a tool call (`mcpDoor`; Astra's A-25, 2026-11-16).
-- [R74](rules/R74.md): Which of the owner's own words ask for a change (`changeIntent`, R25's first half; C-1, C-6, S-3, A-18).
+- [R74](rules/R74.md): Which of the owner's own words ask for a change (`changeIntent`, R25's first half; C-1, C-6, S-3, A-18; the final read of 2026-11-16: W1, W2, Q1, C1, R1, and the net's F7, F8), …
 - [R75](rules/R75.md): Where the sorter can't tell, the stricter side (R55's classes, R64's shape; the final reads and F1, 2026-11-16).

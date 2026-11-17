@@ -464,6 +464,27 @@ test('A-19: an exchange back that fails says what is at the name and where the o
   assert.deepEqual([readFileSync(f, 'utf8'), readFileSync(kept, 'utf8')], [WANTED, NEWER]);
 });
 
+// The write builder's line, routed to the runner: after exit 5 the runner answered "Nothing was written: …", which is
+// untrue: the name holds the new text. Its answer (runnerWriteAnswer, 21-runner.mjs) now carries the program's own
+// line as wroteOver, a field of its own; the program here is the real one, reaching exit 5 as the test above does.
+test('A-19: the runner’s answer to exit 5 says what is at the name and where the other text is (wroteOver), never “Nothing was written”', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('back-fails-answer'), f = join(d, 'notes.txt'), hold = join(d, 'hold'), count = join(d, 'count');
+  const env = shimmed(d, 'python3', `n=$(cat ${shq(count)} 2>/dev/null || echo 0); echo $((n + 1)) > ${shq(count)}; [ "$n" = 0 ] || exit 1`);
+  writeFileSync(f, BEFORE);
+  const r = await held(['bash', '-c', liftWrite()('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER), env);
+  assert.equal(r.code, 5, r.err);
+  const fn = /^function runnerWriteAnswer\(exit, last\) \{[\s\S]*?\n\}$/m.exec(readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8'))?.[0];
+  assert.ok(fn, 'runnerWriteAnswer is in 21-runner.mjs');
+  const answer = new Function('maskSecrets', `${fn}\nreturn runnerWriteAnswer;`)(t => String(t));
+  const said = answer(r.code, r.err.split('\n').pop());
+  assert.equal(said.notWritten, undefined, JSON.stringify(said));
+  assert.ok(String(said.wroteOver).startsWith('The file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as /'), JSON.stringify(said));
+  const kept = /and what was there is kept as (\/\S+\.write_file\.\w+)\.$/.exec(said.wroteOver)?.[1];
+  assert.deepEqual([readFileSync(f, 'utf8'), readFileSync(kept, 'utf8')], [WANTED, NEWER], 'the name holds the new text, the other text is where the answer says');
+  assert.deepEqual([answer(3, 'write_file: the file changed since it was read here, so nothing was written.'), answer(null, '')],
+    [{ notWritten: 'Nothing was written: write_file: the file changed since it was read here, so nothing was written.' }, { notWritten: 'Whether it was written isn’t known: it was ended before it finished.' }]);
+});
+
 // S-11: a disk with no hard links (a FAT or exFAT one): `ln` fails though nothing is at the name, as an ln first on
 // the PATH makes it.
 test('A-19: where the disk has no hard links, a new file is made only if nothing is at the name, and a file made meanwhile stays theirs', { timeout: 60000 * SLOW }, async () => {
