@@ -187,9 +187,10 @@ test('change answers: a planted sentence reaches no change’s answer to Sparkie
   const failed = await waitFor(async () => { const j = (await api(`/jobs/${op}`)).json; return j?.status && j.status !== 'running' && j; }, { timeout: 180000 * SLOW, what: 'the start to end' });
   assert.equal(failed.status, 'failed', JSON.stringify(failed));
   // After it, a change on the owner's words runs at once; after operation_log it is asked.
-  const f = await ownerSays(chat2, 'it failed, so fix the notes on spark 3', [[RUN('echo fixed > notes/c3class-a.txt')]]);
-  assert.equal(f.r.tools[0]?.tail, 'exit 0', JSON.stringify(f.r.tools));
-  const o = await ownerSays(chat2, 'look at why it failed, then fix the notes on spark 3', [[{ name: 'operation_log', arguments: { id: op } }], [RUN('echo fixed > notes/c3class-b.txt')]]);
+  const f = await ownerSays(chat2, 'fix the notes on spark 3', [[RUN('echo fixed > notes/c3class-a.txt')]]);
+  assert.equal(f.r.tools[0]?.tail, 'exit 0', `${JSON.stringify(f.r.tools)} ${JSON.stringify(f.back).slice(0, 1500)}`);
+  const o = await ownerSays(chat2, 'read the log of that start, then fix the notes on spark 3', [[{ name: 'operation_log', arguments: { id: op } }], [RUN('echo fixed > notes/c3class-b.txt')]]);
   assert.equal(o.r.tools.at(-1)?.tail, 'Asked first, with a button: nothing ran yet.', JSON.stringify(o.r.tools));
+  assert.match(String(o.back[0]?.question), /\nAsked because Sparkie read text from outside first\./, JSON.stringify(o.back).slice(0, 1500));
   assert.ok(!existsSync(at3('notes/c3class-b.txt')), 'nothing ran');
 });
