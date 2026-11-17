@@ -167,13 +167,17 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const starts = `It starts in ${dir}.`;
   const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_CHECKED} ${HUB_WALL}`;
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
+  // (the command and code's lines first; the scripts' text last, in the room the page shows, and never to the brain:
+  // workScriptText, workScriptBrain, 21-ladder.mjs, R-2, R-5)
+  const base = [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
+    'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
+  const hubText = (a, b) => (b.length ? `${a}\n${b.join('\n')}` : a);
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
       facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: [...workScriptLines(scripts), ...workScriptRecordLines(scripts)] } })
-    : question(viewer, ctx, [...hubCommandLines(command), `Asked because ${why}.`, starts, net,
-      'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
-      ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts), ...workScriptText(scripts)].join('\n'),
-    [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+    : question(viewer, ctx, hubText(base, workScriptText(scripts, WORK_ASK_MOST - base.length - 1)),
+    [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true, brain: hubText(base, workScriptBrain(scripts)) });
   // (kept under the yes button's own id, as the ladder keeps its asks: the press reads it back, workRecord)
   workRecord(call.args, { spark: node.id, command, dir, wall: 'hub', sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
   return out;
