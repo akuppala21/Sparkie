@@ -139,7 +139,8 @@ if [ -n "$base" ]; then PATH="\${PATH#*:}" find "\${args[@]}" | sed 's#.*/##'; e
   const S = join(IN, 'service');
   writeFileSync(join(S, 'dig.mjs'), '// stand-in dig.mjs\n');
   writeFileSync(join(S, 'passkey.mjs'), '// stand-in passkey.mjs\n');
-  writeFileSync(join(S, 'config.json'), '{"nodes":[],"user":"x"}\n');
+  // (its hub, Spark 2, as when these cases were written: install.sh names the hub from the build's config.json)
+  writeFileSync(join(S, 'config.json'), '{"nodes":[{"id":"spark2","host":"local"}],"user":"x"}\n');
   writeFileSync(join(S, 'catalog.json'), '[]\n');
   writeFileSync(join(S, 'worker.py'), '# stand-in worker\n');
   writeFileSync(join(S, 'workflows.lock.json'), '{}\n');

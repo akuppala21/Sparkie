@@ -12,7 +12,7 @@
 // protected container stopped, healing acting against a power-off made on purpose.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, readdirSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync, mkdtempSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -224,10 +224,21 @@ describe('power_off refuses, changing nothing', () => {
     const bin = mkdtempSync(join(tmpdir(), 'power-setup-')), log = join(bin, 'ssh.log'), sent = join(bin, 'remote.sh');
     // (a stand-in ssh: notes each call, keeps the script sent for the far side, and gives a machine id; never connects)
     writeFileSync(join(bin, 'ssh'), `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\ncase "$*" in *machine-id*) echo 0123abcd ;; *'cat >'*) cat > ${JSON.stringify(sent)} ;; esac\nexit 0\n`, { mode: 0o755 });
-    const setup = (args, env = {}) => spawnSync('bash', [join(REPO, 'deploy', 'power-setup.sh'), ...args], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: bin, ...env }, encoding: 'utf8' });
+    // (the test's own hub, Spark 2 as when this was written: a copy of the script beside its own deploy/hub.env; the last
+    // case's hub is at 100.64.0.2, as SPARK2=u@100.64.0.2 made it before the hub came from hub.env)
+    const HUB = 'HUB=spark2\nHUB_NAME=akspark2\nLOGIN=akuppala\nTAILNET=tailab9aa9.ts.net\nspark2=100.79.155.126\nspark3=100.122.49.9\nspark4=100.109.240.15\n';
+    const copy = (name, hub) => {
+      const d = join(bin, name);
+      mkdirSync(d);
+      for (const f of ['power-setup.sh', 'hub.sh']) writeFileSync(join(d, f), readFileSync(join(REPO, 'deploy', f)));
+      writeFileSync(join(d, 'hub.env'), hub);
+      return join(d, 'power-setup.sh');
+    };
+    const SCRIPT = copy('hub2', HUB), SCRIPT_U = copy('hub-u', HUB.replace('LOGIN=akuppala', 'LOGIN=u').replace('spark2=100.79.155.126', 'spark2=100.64.0.2'));
+    const setup = (args, script = SCRIPT) => spawnSync('bash', [script, ...args], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: bin }, encoding: 'utf8' });
     try {
-      for (const [args, env] of [[['100.79.155.126']], [['akuppala@100.79.155.126']], [['akspark2']], [['localhost']], [['100.122.49.9', '100.64.0.2'], { SPARK2: 'u@100.64.0.2' }]]) {
-        const r = setup(args, env);
+      for (const [args, script] of [[['100.79.155.126']], [['akuppala@100.79.155.126']], [['akspark2']], [['localhost']], [['100.122.49.9', '100.64.0.2'], SCRIPT_U]]) {
+        const r = setup(args, script);
         assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
         assert.match(r.stderr, /^Refused: \S+ is Spark 2\. It runs Spark Console and Sparkie and is never set up to shut down\.$/m);
       }

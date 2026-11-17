@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs a tested build of Spark Console on Spark 2 from GitHub, without the Mac (design C 2.3; R29, R30). Run it on
-# Spark 2, in a terminal, as the user Spark Console runs as. It needs no sudo, never calls tailscale or ssh, and uses
+# Installs a tested build of Spark Console on the hub from GitHub, without the Mac (design C 2.3; R29, R30). Run it on
+# the hub, in a terminal, as the user Spark Console runs as. It needs no sudo, never calls tailscale or ssh, and uses
 # no key but the GitHub read token it keeps. Every install copies it to ~/.local/share/spark-console/, once the new
 # build is kept, so the build that is installed is the one that judges the next.
 #
@@ -203,7 +203,7 @@ sha12() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -
 # is allowed only under test/mock/root/ (the stand-in fleet's Hugging Face caches, which only travel inside the source
 # copy, where a link stays a link), and only with a relative target that, read from the link's own folder, stays under
 # test/mock/root/, or an absolute target under /hf/ with no .. in it (that cache's path inside a model's container; on
-# Spark 2 it points at nothing).
+# the hub it points at nothing).
 links_ok() {
   python3 -I -c 'import os, sys
 f = sys.stdin.buffer.read().split(b"\0")
@@ -455,11 +455,11 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   }
   # (the stand-in fleet marks a program missing with ~/.mock/off-path-<program>, as the console's own look reads it)
   if ! command -v git >/dev/null 2>&1 || { [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -e "$HOME/.mock/off-path-git" ]; }; then
-    out 'no git' "git isn't installed on Spark 2 where Spark Console looks for it."; return 0
+    out 'no git' "git isn't installed on this Spark where Spark Console looks for it."; return 0
   fi
   read -r ib it ic <<<"$(installed)"
   ir=$(reads_of "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || true)
-  s=$(from_secrets) && [ -d "$REPO" ] || { out 'not set up' "The install from GitHub isn't set up on Spark 2: $ME setup <owner>/<repository>"; return 0; }
+  s=$(from_secrets) && [ -d "$REPO" ] || { out 'not set up' "The install from GitHub isn't set up on this Spark: $ME setup <owner>/<repository>"; return 0; }
   read -r REPO_NAME AUTH <<<"$s"
   FETCH_ERR=''
   if ! fetch "$(url_for "$REPO_NAME")" "$AUTH" 2>/dev/null; then
@@ -577,7 +577,7 @@ install() {
   W=$(mktemp -d "${TMPDIR:-/tmp}/spark-console-pull.XXXXXX")
   trap 'rm -rf "$W"' EXIT
   mkdir "$W/tree"
-  # (never the eval's held-out set: it tests a brain, so it is not unpacked on Spark 2 even for these minutes, R47)
+  # (never the eval's held-out set: it tests a brain, so it is not unpacked on the hub even for these minutes, R47)
   g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - --exclude='test/eval/memory-held-out.json' || refuse "git archive of tested/$WANT failed."
   [ -z "$(find "$W/tree" ! -type f ! -type d ! -type l -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a file or a link."
   # (and what was unpacked is the tree, file by file: the same names, each one's kind (a file or a link) and a file's
@@ -714,8 +714,8 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
             if [ "$(door_get "${pg%/}/app.js")" != 200 ] || ! grep -qF "const BUILD = '$newui';" "$W/door.body"; then ok='' signin="its page's script (${pg%/}/app.js) isn't the new page's"; break; fi
           done
         fi
-        # (sign-in through the real address only where it can answer: through Funnel. From Spark 2 over the tailnet the
-        # request carries Spark 2's own address, which the console refuses on every path but /health and /v1/)
+        # (sign-in through the real address only where it can answer: through Funnel. From the hub over the tailnet the
+        # request carries the hub's own address, which the console refuses on every path but /health and /v1/)
         if [ -n "$ok" ] && [ "$last" = ok ] && { [ "$(door_get /console/api/whoami)" != 200 ] || ! grep -q '"access"' "$W/door.body"; }; then ok='' signin="its sign-in (/console/api/whoami) doesn't answer"; fi
         # (and on its socket as a visitor from the internet, on both legs: whoami's signin is what it was before the
         # install, and when a passkey can sign in, its sign-in begins)

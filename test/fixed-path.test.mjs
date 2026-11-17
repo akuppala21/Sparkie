@@ -126,7 +126,7 @@ test('deploy/plugs.sh: its part on Spark 2 runs Python with -I, so a json.py in 
   const sh = readFileSync(join(REPO, 'deploy', 'plugs.sh'), 'utf8');
   const remote = /read -r -d '' REMOTE <<'REMOTE_EOF' \|\| true\n([\s\S]*?)\nREMOTE_EOF/.exec(sh)?.[1] || '';
   const defs = remote.slice(0, remote.indexOf('\ncase "$ACTION" in'));
-  assert.ok(defs.includes('spark2_mac()'), 'the remote part’s functions');
+  assert.ok(defs.includes('hub_mac()'), 'the remote part’s functions');
   const dir = mkdtempSync(join(tmpdir(), 'scfp-home-')), ran = join(dir, 'ran');
   try {
     writeFileSync(join(dir, 'json.py'), `open(${JSON.stringify(ran)}, 'w').close()\n`);
@@ -134,7 +134,7 @@ test('deploy/plugs.sh: its part on Spark 2 runs Python with -I, so a json.py in 
     spawnSync('python3', ['-c', 'import json'], { cwd: dir });
     assert.ok(existsSync(ran), 'a plain python3 imports ./json.py on this machine');
     rmSync(ran);
-    const r = spawnSync('bash', ['-c', `${defs}\nspark2_mac`, 'plugs-remote', 'status'], { cwd: dir, env: { ...process.env, HOME: dir }, encoding: 'utf8' });
+    const r = spawnSync('bash', ['-c', `${defs}\nhub_mac`, 'plugs-remote', 'status'], { cwd: dir, env: { ...process.env, HOME: dir }, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!existsSync(ran), 'plugs.sh imported ~/json.py');
   } finally { rmSync(dir, { recursive: true, force: true }); }

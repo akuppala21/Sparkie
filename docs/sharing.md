@@ -16,7 +16,7 @@ Identity comes from Tailscale: Tailscale Serve tells Spark Console who's asking.
 
 ## Without Tailscale (2026-11-09, contract 4.10)
 
-`bash spark-console/deploy/open-to-internet.sh` opens the main address (`https://akspark2.<tailnet>.ts.net:8443/`) to
+`bash spark-console/deploy/open-to-internet.sh` opens the main address (`https://akspark1.<tailnet>.ts.net:8443/`) to
 the internet with Tailscale Funnel; `--undo` closes it again. Only port 8443's Funnel switch changes. From the
 internet, nobody gets past the fleet page until they sign in:
 - **A browser:** Sign in → **Use passkey** (Face ID, Touch ID). It stays signed in until 60 days after its last use.
@@ -41,14 +41,14 @@ bash spark-console/deploy/open-apps-to-internet.sh --undo   # closes it again
 
 It changes only port 10000 (never 443 or 8443), stops if something else is there, and running it twice is harmless.
 Within a minute, wherever Spark Console gives an app's link, the first is the door's
-(`https://akspark2.<tailnet>.ts.net:10000/console/api/open/<spark>/<app>`) and the second, "on your tailnet", the
+(`https://akspark1.<tailnet>.ts.net:10000/console/api/open/<spark>/<app>`) and the second, "on your tailnet", the
 direct one. Open the door's link on a device signed in to Spark Console. **One browser runs one app at a time**:
 opening another while the first is in use asks first, and "Switch anyway" closes the first app's connections; a tab of it
 left open would then send its saves to the new app, so close that tab first. Only you get through it, and after Spark Console restarts or updates, open the app again from its link.
 
 ## One portal, one address, with Sign in
 
-**One address:** `https://akspark2.<tailnet>.ts.net:8443/` (`origin` in `service/config.json`). On your tailnet it
+**One address:** `https://akspark1.<tailnet>.ts.net:8443/` (`origin` in `service/config.json`). On your tailnet it
 opens for you; from the internet, when it's open (above), it shows the fleet and **Sign in**. What you see depends only
 on who you are:
 

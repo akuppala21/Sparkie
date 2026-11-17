@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Read-only check of what each Spark supports for remote power off / wake-up. Changes nothing.
 #   bash spark-console/deploy/power-check.sh
-# Runs on Spark 2 over SSH, and from there on Spark 3 and 4 (Spark 2 reaches them without a password).
+# Runs on the hub over SSH, and from there on every compute Spark (the hub reaches them without a password). Which Spark
+# is the hub, and the others' addresses, come from deploy/hub.env: Spark 3's address, for one, is
+#   sed -n 's/^spark3=//p' spark-console/deploy/hub.env
 set -euo pipefail
-HOST="${SPARK2:-akuppala@100.79.155.126}"
-PEERS="${PEERS:-100.122.49.9 100.109.240.15}"
+. "$(dirname "$0")/hub.sh"
+HOST="$HUB_HOST"
+PEERS=''; NAMES=''
+for s in $COMPUTE; do PEERS="$PEERS $(addr_of "$s")"; NAMES="$NAMES, $(says_of "$s")"; done
+PEERS=${PEERS# } NAMES=${NAMES#, }
 
 read -r -d '' CHECK <<'EOF' || true
 echo "=== $(hostname)  ($(cat /sys/class/dmi/id/sys_vendor 2>/dev/null) $(cat /sys/class/dmi/id/product_name 2>/dev/null), BIOS $(cat /sys/class/dmi/id/bios_version 2>/dev/null))"
@@ -25,8 +30,8 @@ for h in /sys/class/hwmon/hwmon*; do printf '    hwmon %s: %s\n' "$(basename "$h
 echo "  passwordless poweroff: $(sudo -n -l /usr/bin/systemctl poweroff >/dev/null 2>&1 && echo yes || echo no)"
 EOF
 
-echo "Checking from Spark 2 ($HOST) …"
+echo "Checking from $HUB_SAYS, the hub ($HOST), then from there on the compute Sparks: $NAMES …"
 ssh -o ConnectTimeout=10 "$HOST" "bash -s" <<<"$CHECK"
 for p in $PEERS; do
-  ssh -o ConnectTimeout=10 "$HOST" "ssh -o BatchMode=yes -o ConnectTimeout=8 $p 'bash -s'" <<<"$CHECK" || echo "=== $p: couldn't reach it from Spark 2"
+  ssh -o ConnectTimeout=10 "$HOST" "ssh -o BatchMode=yes -o ConnectTimeout=8 $p 'bash -s'" <<<"$CHECK" || echo "=== $p: couldn't reach it from $HUB_SAYS"
 done

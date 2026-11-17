@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Opens Spark Console's app door (https://akspark2…ts.net:10000) to the internet with Tailscale Funnel, so the apps
+# Opens Spark Console's app door (https://<the hub>…ts.net:10000) to the internet with Tailscale Funnel, so the apps
 # Spark Console keeps running (Open WebUI, Jupyter, code-server, ComfyUI…, on any Spark but the brain's) open from your
 # phone or laptop without Tailscale, once you're signed in to Spark Console (R40). Run it once from your Mac; sudo may
-# ask for your Spark 2 password. Running it again changes nothing.
+# ask for the hub's password (deploy/hub.env names the hub). Running it again changes nothing.
 #
 #   bash spark-console/deploy/open-apps-to-internet.sh           open the app door
 #   bash spark-console/deploy/open-apps-to-internet.sh --undo    close it (apps open on your tailnet only, as before)
@@ -12,11 +12,12 @@
 # stops if port 10000 already serves something else, or if the installed build's door doesn't turn away a visitor who
 # isn't signed in.
 set -euo pipefail
-HOST="${SPARK2:-akuppala@100.79.155.126}"
-URL="${SPARK_CONSOLE_URL:-https://akspark2.tailab9aa9.ts.net:8443}"
+. "$(dirname "$0")/hub.sh"
+HOST="$HUB_HOST"
+URL="$HUB_URL"
 case "${1:-}" in '') MODE=open ;; --undo) MODE=undo ;; *) echo "Usage: bash $0 [--undo]" >&2; exit 2 ;; esac
 
-# The part that runs on Spark 2, sent along with the command (nothing is written there first).
+# The part that runs on the hub, sent along with the command (nothing is written there first).
 read -r -d '' REMOTE <<'EOF' || true
 MODE="$1"
 set -euo pipefail

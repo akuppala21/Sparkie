@@ -135,11 +135,11 @@ NET_SYSTEM='/etc/ssh /etc/sudoers /etc/sudoers.d /etc/sudo.conf /etc/passwd /etc
   /etc/systemd/system/multi-user.target.wants/tailscaled.service'
 # (by name under /etc/systemd/system, never the whole folder: the guard's own restart unit is written there after the
 # copy. A path that is not there when copied is put back as not there: /etc/nologin made inside the window goes.)
-# ... the owner's (with the owner's service manager's units: on Spark 2, the console's) ...
+# ... the owner's (with the owner's service manager's units: on the hub, the console's) ...
 NET_HOME='.ssh/authorized_keys .ssh/authorized_keys2 .ssh/config .bashrc .profile .bash_profile .bash_login .bash_logout .bash_aliases
   .pam_environment .config/systemd/user'
-# ... the owner's linger file (without it the owner's service manager, and on Spark 2 the console, stops at log-out),
-# and, where Spark Console's state folder is (Spark 2), its sign-in files (SIGNIN, but the sockets and sessions.json:
+# ... the owner's linger file (without it the owner's service manager, and on the hub the console, stops at log-out),
+# and, where Spark Console's state folder is (the hub), its sign-in files (SIGNIN, but the sockets and sessions.json:
 # losing sessions is a sign-in again, not a lock-out, and they change by themselves).
 # A path that may stand in a unit setting: no space, quote, %, $, backslash or colon; no . or .. part.
 SAFE='^(/[A-Za-z0-9._@+-]+)+$'
@@ -432,7 +432,7 @@ hide_home() {
   # real folder only, as .ssh's safe files are)
   p="$h/.ollama/models"
   if [[ " ${TMPFS[*]} " == *" $h/.ollama "* ]] && [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p" && safe_path "$p"; then BACK+=("$p"); fi
-  # Spark Console's state folder (on Spark 2 only), the same way in both walls: hidden, and its plain files put back
+  # Spark Console's state folder (on the hub only), the same way in both walls: hidden, and its plain files put back
   # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
   # way or write the brain's memory, and no look or change reads what was said). Each by its start, so their copies
   # stay hidden too; and no file the console is writing now (<name>.<pid>.tmp: half-written, and renamed away soon).
@@ -474,7 +474,7 @@ lists() {
     hide_home "$home"
   done < "$R/etc/passwd"
   # (and old password hashes, systemd's and apt's secrets, WireGuard's and Wi-Fi's keys, and the memory of programs that
-  # crashed: after the console crashes on Spark 2, every key it held; Docker's data also where its settings put it)
+  # crashed: after the console crashes on the hub, every key it held; Docker's data also where its settings put it)
   for p in /run /root /etc/ssl/private /etc/netplan /etc/NetworkManager/system-connections /var/lib/tailscale \
            /var/lib/docker /var/lib/containerd /var/lib/spark-console /var/backups /etc/security/opasswd \
            /var/lib/systemd/credential.secret /etc/apt/auth.conf /etc/apt/auth.conf.d /etc/wireguard /etc/wpa_supplicant \

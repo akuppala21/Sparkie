@@ -5,7 +5,7 @@
 #       Copies what an install changes (the page, the service and its unit, the by-hand files, the watchdog, the
 #       source) to ~/.local/share/spark-console/update-guard/, with a copy of this script, and arms one timer in the
 #       owner's systemd (spark-console-update-guard.timer, 30 minutes) that runs this put-back. The timer is enabled,
-#       so after a restart of Spark 2 it is armed again and fires 30 minutes after the user's services start. It is the
+#       so after a restart of the hub it is armed again and fires 30 minutes after the user's services start. It is the
 #       one timer this adds, it lives for one install, and it is gone after either ending.
 #   update-guard.sh disarm      the new build was confirmed through the real address: timer and copy gone. Also the way
 #       on when a copy can never go back: the build that runs now stays, and the build from before can then be had
@@ -177,7 +177,7 @@ with os.fdopen(fd, "w") as f: json.dump(d, f)
 os.replace(tmp, path)' "$STATE/update-result.json" "$tree" "$build" "$1" "${2:-no}" 2>/dev/null
 }
 # kept <what happened>: the build from before isn't back. The copy, its guard file and its timer stay (the timer fires
-# again after a restart of Spark 2), and both ways on are said.
+# again after a restart of the hub), and both ways on are said.
 kept() {
   say "$1 Its copy is kept, and the way back stays armed. To go on: $WAYS."
   result "$why; $1 Its copy is kept, and the way back stays armed. To go on: $WAYS." yes
