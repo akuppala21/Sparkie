@@ -542,8 +542,9 @@ const atOncePart = async words => {
   // (mended, and put back whole: what each test does last when nothing else closed the guard, and here on a failure)
   const close = async () => { await pressing.catch(() => {}); if (NET_OPEN_STATES.includes(newest()?.state)) { if (copy && !existsSync(copy)) writeFileSync(copy, KEYS_LINE, { mode: 0o600 }); await say(chat, '/putback').catch(() => {}); } keysReset(); writeFileSync(aliases, was); };
   try {
-    // (the guard armed: its pending mark and its timer both there, the helper writing one a moment before the other)
-    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && timerWaits(newest().id), { every: 50, what: 'the guard armed, its timer waiting' });
+    // (the command running, past the helper's own arming, which checks its timer waits after writing it: the key added.
+    // Taken away before that, the timer makes the helper refuse the call, and nothing runs)
+    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && timerWaits(newest().id) && keysNow().includes(ADDED), { every: 50, what: 'the command running inside the armed guard' });
     copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
     rmSync(copy);
     rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
@@ -609,7 +610,7 @@ test('a way in lost after it and a put-back the helper could not finish (its ref
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let copy = null, g;
   try {
-    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
+    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && keysNow().includes(ADDED), { every: 100, what: 'the command running inside the armed guard' });
     copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
     assert.ok(existsSync(copy), 'the copy of the key, made first');
     rmSync(copy);
