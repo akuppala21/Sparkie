@@ -382,19 +382,48 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 }
 
 // It didn't start: what was set aside gets its name back and starts again. It's taken off this start's lists, so
-// putting the rest back (putBack) doesn't stop it again as one of this start's parts.
-async function asideBack(job) {
-  const held = [];
+// putting the rest back (putBack) doesn't stop it again as one of this start's parts. Before that the new container of
+// its own name is stopped and looked at (W-1), and nothing else this start ran there may still run (A-23); otherwise it
+// stays set aside, and the new one stays on `ranHere`, so putBack's checked stop and its words cover both. A pair set
+// aside goes back whole or not at all (W-7). After putBack's own stops (`afterStops`) it only looks.
+// One whose start again failed stays on `stoppedHere` and is said (W-3, job.notBack).
+async function asideBack(job, afterStops = false) {
+  const ready = new Map();
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
-    // (never beside a part this start ran on that Spark that isn't known to have stopped: it stays set aside, and the
-    // put-back looks again once its own stops are done, A-23)
-    if ((await runningOn(job, a.node, x)).length) { held.push(a); continue; }
-    const r = await run(nodeById(a.node), `docker stop --time 20 ${q(a.name)} >/dev/null 2>&1; docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} && docker start ${q(a.name)} >/dev/null`, { timeout: 120000 });
-    job.ranHere = (job.ranHere || []).filter(y => y !== x);
-    job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
-    consoleStopped.delete(x);
-    note(job, r.code ? `Couldn’t start ${a.name} on ${a.node} again (it’s there as ${a.aside}); start it from Spark Console.` : `Started ${a.name} on ${a.node} again`);
+    ready.set(a, afterStops ? !(await runningOn(job, a.node)).length
+      : !(await runningOn(job, a.node, x)).length && (await stopChecked(nodeById(a.node), a.name)) === 'stopped');
+  }
+  const held = [], all = job.asideHere || [];
+  for (const u of backUnits(all.map(a => `${a.node}/${a.name}`))) {
+    const parts = u.items.map(x => all.find(a => `${a.node}/${a.name}` === x));
+    if (parts.some(a => !ready.get(a))) { held.push(...parts); continue; }
+    const back = [];
+    for (const a of parts) {
+      const x = `${a.node}/${a.name}`;
+      const r = await run(nodeById(a.node), `docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} || exit 3; docker start ${q(a.name)} >/dev/null || exit 4`, { timeout: 120000 });
+      job.ranHere = (job.ranHere || []).filter(y => y !== x);
+      consoleStopped.delete(x);
+      if (!r.code) {
+        job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
+        note(job, `Started ${a.name} on ${a.node} again`);
+        back.push(a);
+        continue;
+      }
+      const at = sparkName(nodeById(a.node) || { id: a.node }), there = r.code === 4 ? '' : r.code === 3 ? ` (it’s there as ${a.aside})` : ` (Docker didn’t answer: it may be there as ${a.aside})`;
+      note(job, `Couldn’t start ${a.name} on ${a.node} again${there}; start it from Spark Console.`);
+      (job.notBack ||= []).push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : `${a.name} couldn’t be started again on ${at}${there}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, and it is owed as the pair, W-7)
+    if (u.model && back.length < parts.length) {
+      for (const a of back) {
+        consoleStopped.set(`${a.node}/${a.name}`, Date.now());
+        (job.stoppedHere ||= []).push(`${a.node}/${a.name}`);
+        if ((await stopChecked(nodeById(a.node), a.name)) === 'stopped') note(job, `Stopped ${a.name} on ${a.node} again: its other part didn’t start`);
+      }
+    }
   }
   job.asideHere = held;
 }
@@ -439,6 +468,8 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
     const r = await run(nodeById(m.node), clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix }), { timeout: 120000 });
+    // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
+    if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     if (r.code) { await stopAll(); throw new Error(`Docker couldn’t start the part on ${m.node}: ${r.err || r.out}`); }
     (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     // Started again on purpose (as a one-Spark start does): an earlier stop of this part no longer counts as "stopped

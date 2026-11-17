@@ -8,7 +8,8 @@
 // it starts and says so, below that it fails after three tries and puts back what it stopped, and the fix's next
 // context is never under 16,384; a rejected setting is dropped by name and the result says so; a stop is
 // checked; from the owner's chat the first restart asks once (a button, not a typed "yes"), one that doesn't answer is
-// stopped again, and the next validates it.
+// stopped again, and the next validates it. stop_model's version holds every name its look at a saved workflow's receipt
+// reads (A-22), but the ways to a Spark.
 //
 // Workflows (docs/contract.md, section 6): every change is a named workflow with a version (a fingerprint of its code),
 // and runs only once that version is tested (the suite passed with it: workflows.lock.json) and validated (a run on the
@@ -78,6 +79,21 @@ describe('the list', () => {
     assert.deepEqual(v.workflows.map(w => w.id).sort(), Object.keys(all).sort());
     const health = (await api('/health')).json;
     assert.deepEqual(health.workflows, Object.fromEntries(Object.keys(all).map(id => [id, 'needs-validation'])));
+  });
+
+  // (a version holds what decides the workflow's answer: stop_model's look at a saved workflow's receipt reads the
+  // receipt's fields and the list of what should be running; only the ways to a Spark stay off the list, W-11)
+  test('stop_model\'s version holds every name its look at a run\'s receipt reads, but the ways to a Spark', () => {
+    const src = readFileSync(join(REPO, 'service', 'server.mjs'), 'utf8');
+    const list = /\{ id: 'stop_model',[\s\S]*?code: \(\) => \[([^\]]*)\]/.exec(src)[1].split(',').map(x => x.trim());
+    const body = name => (new RegExp(`^(?:async )?function ${name}\\b[\\s\\S]*?^}`, 'm').exec(src) || new RegExp(`^const ${name} = .*$`, 'm').exec(src))[0];
+    const defined = new Set([...src.matchAll(/^(?:async )?function ([A-Za-z_$][\w$]*)|^const ([A-Za-z_$][\w$]*) =/gm)].map(m => m[1] || m[2]));
+    const ways = new Set(['run', 'nodeById', 'sparkName', 'q']);
+    for (const fn of ['startedStill', 'receiptOf', 'RECEIPT_LOOK']) {
+      assert.ok(list.includes(fn), fn);
+      const used = [...new Set([...body(fn).matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map(m => m[1]))].filter(n => n !== fn && defined.has(n) && !ways.has(n));
+      for (const n of used) assert.ok(list.includes(n), `${fn} reads ${n}, which isn’t on stop_model’s list`);
+    }
   });
 });
 
@@ -224,8 +240,9 @@ describe('done means it answers, and known problems are fixed', () => {
       id = r.json.id;
       const w = await finished(r.json.id);
       assert.equal(w.status, 'failed', JSON.stringify(w));
-      assert.match(w.error, /^It didn’t start: it ran out of memory while loading \(3 attempts\)\. Even a short context didn’t fit \(16,384 tokens, the shortest it is cut to without asking\)/, w.error);
-      assert.ok(w.recentLog.some(l => /Starting it with a shorter context \(32,768 tokens, then 16,384; never shorter without asking\)\. \(attempt 3 of 3\)/.test(l)), w.recentLog.join('\n'));
+      // (W-14: no "without asking" where no ask follows, and the one way on that runs it shorter, a setup that sets it)
+      assert.match(w.error, /^It didn’t start: it ran out of memory while loading \(3 attempts\)\. Even a short context didn’t fit \(16,384 tokens, the shortest Spark Console cuts it to by itself\): it needs a Spark with more free memory, or a smaller version of the model\. To run it with a shorter context, start it with a setup that sets one itself \(a recipe setup, or its own spark\.json\): a setup’s own context is never made longer\.$/m, w.error);
+      assert.ok(w.recentLog.some(l => /Starting it with a shorter context \(32,768 tokens, then 16,384, the shortest Spark Console cuts it to by itself\)\. \(attempt 3 of 3\)/.test(l)), w.recentLog.join('\n'));
       const args = readFileSync(mock('spark4', 'last-run-args'), 'utf8').split('\n');
       assert.equal(args[args.findLastIndex(a => a === '--context-length' || a === '--max-model-len') + 1], '16384', args.join(' '));
       assert.notEqual(stateOf('spark4', `sc-${NEMO}`), 'running', 'nothing of it runs');
