@@ -1,5 +1,5 @@
 /* ───────── the sorter's programs: what each one it knows does (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, editors, the shell's
@@ -63,9 +63,12 @@ function sortInterp(args, ctx, r, x, name) {
   if (codes.length) { sortUnshown(r, `the code a ${name} one-liner runs and loads (a module from the folder it starts in, a file it reads as code), which the sorter does not read`); sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
+  if (mod && !mod.unknown && /^(?:torch\.distributed\.(?:run|launch)|pytest)$/.test(mod.text)) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`, true); SORT_HANDLERS[mod.text === 'pytest' ? 'pytest' : 'torchrun'](o.plain, ctx, r, x, mod.text); return fin(); }
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`); sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); } else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { sortUnshown(r, `the code ${name} runs`); if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { sortUnshown(r, `the ${name} code a $ or a command names`); if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
+  // (a folder run as Python: its __main__.py and what that imports, which no hash pins)
+  if (file && file.text !== '-' && key === 'python' && !/\.py[cwz]?$/.test(file.text)) sortUnshown(r, `what ${name} runs from ${file.text} (a folder's __main__.py, or a file with no .py name), which no hash pins`);
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (x.opaque) { sortUnshown(r, `the ${name} code it reads from its input`); unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`); }
   if (typeof x.stdin === 'string') { sortUnshown(r, `the ${name} code its here-text holds and what it loads, which the sorter does not read`); sortScan(x.stdin, ctx, r, true, 'seen'); }
@@ -80,7 +83,7 @@ function sortInterp(args, ctx, r, x, name) {
 }
 // An awk program that starts or writes something: system, a pipe (not ||), a library loaded, or a print or printf sent
 // to a file; a comparison ($3 > 100) and plain getline from its input run nothing else.
-const sortAwkRuns = t => /\bsystem\b|@(?:load|include)\b|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(String(t));
+const sortAwkRuns = t => { const s = String(t).replace(/\\\n/g, ' ').replace(/"(?:[^"\\]|\\.)*"/g, '""'); return /\bsystem\b|@(?:load|include)\b|@\w+\s*\(|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(s); };
 const sortDoubts = name => () => unsure(`It uses the shell’s ${sortQ(name)}, which can change what later words run.`);
 // Built-ins that set a name (declare, read, printf -v, getopts, unset): each name is an assignment; a name with [ (an
 // index bash works out as arithmetic, running what is in it) or a value worked out as arithmetic (-i) is a doubt.
@@ -118,11 +121,15 @@ const sortZip = (a, ctx, r, x, name) => {
 const sortBecome = (a, ctx, r, x, name) => {
   r.answer = 'set root';
   raise(r, 'risky', `${sortQ(name)} becomes another user: a command becomes root only by setting root, so it is answered “set root”.`);
-  const c = a.findIndex(w => /^-c$|^--command$/.test(w.text));
-  if (c < 0 || !a[c + 1] || a[c + 1].unknown) return;
+  const c = a.findIndex(w => /^-c$|^--command$/.test(w.text)), dd = a.findIndex(w => w.text === '--'), p = a.filter(w => !w.text.startsWith('-'));
   const was = ctx.root;
   ctx.root = true;
-  try { sortInline(a[c + 1].text, ctx, r, `${name} -c`); } finally { ctx.root = was; }
+  // (what it runs as the other user: -c's text, the program after --, sg's command; S2)
+  try {
+    if (c >= 0) { if (!a[c + 1] || a[c + 1].unknown) { sortUnshown(r, `what ${name} -c runs, from a $ or a command`); return; } sortInline(a[c + 1].text, ctx, r, `${name} -c`); }
+    else if (dd >= 0 && a[dd + 1]) sortProgram(a.slice(dd + 1), ctx, r, x);
+    else if (name === 'sg' && p[1]) { if (p[1].unknown) sortUnshown(r, 'what sg runs, from a $ or a command'); else sortInline(p[1].text, ctx, r, 'sg'); }
+  } finally { ctx.root = was; }
 };
 // Where a program that writes under names it picks puts them: the folder given, or the folders it may start in.
 const sortInto = (dir, ctx, r) => (dir ? sortTouch(dir, ctx, r, true) : [...ctx.cwds].forEach(d => sortTouch({ text: d ?? '', unknown: d == null, subs: [] }, ctx, r, true)));
@@ -160,8 +167,11 @@ const SORT_HANDLERS = {
     if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
       if (!p || p.unknown) { sortUnshown(r, `the ${name} program a $ or a command makes`); unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`); }
+      // (getline from a file reads it: a change, as before)
+      if (/\bgetline\b[^;{}\n]*</.test(String(p.text).replace(/"(?:[^"\\]|\\.)*"/g, '""'))) raise(r, 'change', `The ${sortQ(name)} program reads a file with getline.`);
       if (sortAwkRuns(p.text)) { sortUnshown(r, `what the ${name} program starts or writes (system, a pipe, an output file), which the sorter does not read`); sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
+    ctx.srcs.push(...a.slice(files.length || inline.length ? o.end : o.end + 1).filter(w => !w.unknown && !/^[A-Za-z_]\w*=/.test(w.text)).map(w => w.text));
     return files.length || inline.length ? o.end : o.end + 1;
   },
   sed(a, ctx, r) {
@@ -192,6 +202,7 @@ const SORT_HANDLERS = {
       }
       (scripts.length ? files : scripts).push(a[k]);
     }
+    ctx.srcs.push(...files.filter(f => f && !f.unknown).map(f => f.text));
     if (scripts.some(s => !s || s.unknown)) unsure('A sed script comes from a $ or a command, so the sorter can’t read it.');
     if (inPlace) {
       raise(r, 'change', 'sed -i rewrites the files it names.');
@@ -249,7 +260,8 @@ const SORT_HANDLERS = {
     if (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' '))) return raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.');
     if (!a.some(w => /^-\w*[er]/.test(w.text))) sortUnshown(r, 'the jobs the crontab file or its input holds');
     raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.');
-    sortLaterWords(ctx, r, 'crontab', x);
+    // (crontab -r takes every job away: nothing starts later, L1)
+    if (!a.some(w => /^-\w*r$/.test(w.text))) sortLaterWords(ctx, r, 'crontab', x);
   },
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
@@ -265,6 +277,7 @@ const SORT_HANDLERS = {
     raise(r, 'change', 'dd copies raw bytes.');
     for (const w of a) {
       const m = /^(if|of)=(.*)$/.exec(w.text);
+      if (m?.[1] === 'if' && !w.unknown) ctx.srcs.push(m[2]);
       if (!m || m[1] === 'if') continue;
       if (w.unknown) unsure('dd names a file through a $ or a command.');
       r.deletes = true;
@@ -298,6 +311,7 @@ const SORT_HANDLERS = {
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
     // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
     const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
+    if (packs) ctx.srcs.push(...o.plain.filter(w => !w.unknown).map(w => w.text));
     for (const w of o.plain) sortTouch(w, ctx, r, false, false, packs && !o.has('remove-files'));
     for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, packs, !packs && !o.has('delete') && o.has('x', 'extract', 'get'));
     if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }
@@ -351,7 +365,10 @@ const SORT_HANDLERS = {
       for (let k = 0; k < t.length; k++) { if (takes.test(t[k])) k++; else if (!t[k].startsWith('-')) pats.push(t[k]); }
       const full = n === 'pkill' && t.some(s => /^-\w*f|^--full$/.test(s)), exact = t.some(s => (n === 'pkill' ? /^-\w*x|^--exact$/ : /^-\w*e|^--exact$/).test(s)) || (n === 'killall' && !t.some(s => /^-\w*r|^--regexp$/.test(s)));
       const ci = t.some(s => /^-\w*[iI]|^--ignore-case$/.test(s)), user = t.some(s => /^-(?:u|U|-uid|-euid|-user)$/.test(s));
-      for (const p of pats.length ? pats : user ? ['.'] : []) {
+      // (as root a name can be any process's; one chosen by user, group, session, terminal or a pid file can't be told; L3)
+      if (ctx.root) lock('as root may kill any process, a way in among them');
+      else if (!pats.length && t.some(s => /^-[uUgGPstF]|^--(?:uid|euid|user|group|pgroup|parent|session|terminal|pidfile|ns)/.test(s))) lock('kills by user, group, session or a pid file, which may be a way in');
+      else for (const p of pats.length ? pats : user ? ['.'] : []) {
         // (only a short pattern of plain signs, with at most three * or +, is read: it can't make the sorter slow)
         const safe = p.length <= 200 && /^[\w .:/@=,^$[\]-]*$/.test(p.replace(/\.[*+]/g, '')) && (p.match(/[*+]/g) || []).length <= 3 && !/\[[^\]]*$/.test(p);
         let re = null;
@@ -362,9 +379,16 @@ const SORT_HANDLERS = {
     }
     sortOpen(ctx, r, `${sortQ(n)} needs the processes the run wall hides.`);
   }])),
+  // (a network driver taken out of the kernel cuts the network, a way in: L3)
+  ...Object.fromEntries(['modprobe', 'rmmod'].map(n => [n, (a, ctx, r) => {
+    const out = n === 'rmmod' || a.some(w => /^-\w*r$|^--remove$/.test(w.text)), mods = a.filter(w => !w.text.startsWith('-'));
+    if (out && (!mods.length || mods.some(w => w.unknown || /^(?:r8169|r8152|e1000e?|igb|igc|ixgbe|i40e|ice|mlx[45]_\w+|bnxt\w*|tg3|atlantic|virtio_net|tun|tap|bridge|bonding|8021q|veth|macvlan|vxlan|wireguard|ipv6|nf_\w+|x_tables|ip_tables|ip6_tables|iptable_\w+|ip6table_\w+|nft_\w+|nf_tables|br_netfilter|cdc_\w+|ath\w*|iwlwifi|iwlmvm|brcmfmac|mt7\w+|rtw\w+|qmi_wwan|usbnet)$/.test(w.text)))) return raise(r, 'lockout', `${sortQ(n)} takes a network driver out of the kernel (or one it can't name): the network, a way in, stops.`);
+    raise(r, 'risky', `${sortQ(n)}: the kernel, a driver, firmware or a release upgrade.`);
+  }])),
   // (init scripts and their tools are systemctl by another name; telinit and init change the run level)
   'invoke-rc.d': (a, ctx, r, x) => SORT_HANDLERS.service(a.filter(w => !w.text.startsWith('-')), ctx, r, x),
-  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-')); return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
+  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-'));
+    if (!/^(?:disable|remove)$/.test(p[1]?.text ?? '')) r.later ??= `update-rc.d ${p[0]?.text ?? ''} starts an init script at every boot, outside this command and the net`; return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
   ...Object.fromEntries(['telinit', 'init'].map(n => [n, (a, ctx, r) => {
     const v = a.find(w => !w.text.startsWith('-'));
     if (!v || v.unknown || /^(?:[1sS]|single|rescue|emergency)$/.test(v.text)) return (r.lasting ??= `${n} to one user stops the net’s own timer with everything else, so only a restart puts it back.`), raise(r, 'lockout', `${sortQ(n)} ${sortQ(v?.text ?? '')} takes the Spark to one user, or a level the sorter can't read: SSH and the network stop.`);

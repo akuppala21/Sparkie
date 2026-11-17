@@ -87,6 +87,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R72](rules/R72.md) | partly | `test/ladder.test.mjs`; `test/runner.test.mjs`; `test/runner-fixes.test.mjs` | falls short today: its file says where |
 | [R73](rules/R73.md) | partly | `test/door-repeat.test.mjs` | falls short today: its file says where |
 | [R74](rules/R74.md) | partly | `test/intent-own.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”, “final read 2”, “S4”, “A-20”); `test/fix-intent.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”, “A-20”) | falls short today: its file says where |
+| [R75](rules/R75.md) | partly | `test/sort-read.test.mjs`; `test/sort-root.test.mjs`; `test/sort.test.mjs`; `test/sort-close.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -180,7 +181,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 8.11 | no test yet |  | T15, T51, T74, T130, T131: no test holds them yet |
 | 8.12 | no test yet |  | T88: no test holds it yet |
 | 8.13 | no test yet |  | T90, T92: no test holds them yet |
-| 8.14 | partly | `test/sort.test.mjs` (“the table: each command gets its class, with the reason in plain words”) | holds part of T127: “code sorts a command on Spark 2, a final delete, a root script and code piped from the network into a shell as risky (never at once, so no go-ahead covers …”; T91, T124, T125: no test holds them yet |
+| 8.14 | partly | `test/sort.test.mjs` (“the table: each command gets its class, with the reason in plain words”) | holds part of T127: “code sorts a command on Spark 2, a final delete and code piped from the network into a shell as risky (never at once, so no go-ahead covers them), a root …”; T91, T124, T125: no test holds them yet |
 | 8.15 | no test yet |  | T91, T124: no test holds them yet |
 | 8.16 | no test yet |  | T126: no test holds it yet |
 | 8.17 | built | `test/tg-approve.test.mjs` | holds T128 |

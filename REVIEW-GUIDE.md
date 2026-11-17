@@ -53,9 +53,9 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
 1. **`AGENTS.md`.** The front door: the layout, how to work, the rules that are never broken, one card per task.
 2. **`docs/architecture.md`.** The diagram (the root helper, the box, the ladder and the lock-out net are on it),
    one sentence followed from chat to a running model, one command followed to a Spark, and the known traps.
-3. **`docs/rules.md`.** One line per rule, R1 to R74 (there is no R44). Each rule's file in `docs/rules/` says why,
+3. **`docs/rules.md`.** One line per rule, R1 to R75 (there is no R44). Each rule's file in `docs/rules/` says why,
    where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
-   R55 and R60 to R74.
+   R55 and R60 to R75.
 4. **`docs/how/`.** One card per kind of work. For this review: `docs/how/call-the-root-helper.md`,
    `docs/how/raise-a-dangerous-ask.md`, `docs/how/find-why-a-change-was-refused.md`,
    `docs/how/run-the-brain-eval.md`, `docs/how/land-a-step.md`.
@@ -119,7 +119,7 @@ with the files it touches copied first so undo can put them back. Anything else 
 command, or the dangerous ask: its own message, built by code, with two digits to type after the press. A command
 that removes or overwrites a file that could not be copied first is the dangerous ask too. A press says what
 really happened: "done" only for a command that ran and ended with exit 0. Changes in one round run one after
-another, in order. `/undo` puts back only the chat's newest change. Rules R55, R64 (the sorter), R61 (the ladder,
+another, in order. `/undo` puts back only the chat's newest change. Rules R55, R64, R75 (the sorter), R61 (the ladder,
 the runner), R72 (the press), R63 (the walls), R54 (the ask), R25 and R74 (whose words), R34. Parts: `20-sort.mjs`,
 `20-shell.mjs`, `20-shape.mjs`, `20-options.mjs`, `20-places.mjs`, `20-programs.mjs`, `20-tools.mjs`,
 `20-remote.mjs`, `20-tables.mjs`, `20-uses.mjs`; `21-ladder.mjs`, `21-runner.mjs`, `21-copies.mjs`,
@@ -305,7 +305,7 @@ on Spark 2; a root script on input; adding a Spark from chat (it waits for Spark
 waits for real runs); a reviewer for Sparkie's own proposals; removing a kept key from chat.
 
 **Judgements that stay.** Three places decide by word lists, and a word list is never complete: the sorter (R55,
-R64), whether the owner's words ask for work (`changeIntent`, R25), and whether they ask for a lock-out change
+R64, R75), whether the owner's words ask for work (`changeIntent`, R25), and whether they ask for a lock-out change
 (`netAsks`, R71). Where one cannot tell, it takes the stricter side: a risky class, a button, a refusal that says
 how to ask ("set PasswordAuthentication no in sshd_config on Spark 3" is refused so). The misses the other way
 are what section 9 asks you to find (items 2, 3 and 4).
@@ -521,13 +521,13 @@ R63; `test/root-helper.test.mjs`.
 - The one-time command: something that can write the owner's home changes what root installs, between the check
   and the move. It now proves the sudo line without the password sudo cached.
 
-**2. The sorter.** `service/src/20-sort.mjs` and the nine parts beside it (section 4.1); R55, R64;
-`test/sort.test.mjs`, `test/sort-close.test.mjs`.
-- Where it cannot tell, it now takes the stricter class (the last part of R64's Rule): a container that reaches
+**2. The sorter.** `service/src/20-sort.mjs` and the nine parts beside it (section 4.1); R55, R64, R75;
+`test/sort.test.mjs`, `test/sort-close.test.mjs`, `test/sort-root.test.mjs`, `test/sort-read.test.mjs`.
+- Where it cannot tell, it now takes the stricter class (R75), and a doubt in one part no longer stops the read: a container that reaches
   the host, a way-in process killed by a pattern, a host that may be Spark 2, a container named only by an id or
   a `$` (it may be the brain's). Its lists of programs and words can never be complete. Find a command it calls a
   plain change that changes a way in, runs code fetched by the same command, or writes what a program outside the
-  wall later runs. R55's and R64's Today list the misses we know (an interpreter's one-liner is a change by design).
+  wall later runs. R55's, R64's and R75's Today list the misses we know (an interpreter's one-liner is a change by design).
 - A string its reader (`shellLex`, `shellParse` in `20-shell.mjs`) and real bash read differently.
 - A "look" that is not one. A look has root's read rights: find a secret the hidden list (R63) misses. What a look
   prints goes to the brain and the journal.
@@ -631,7 +631,7 @@ beside it. It was left as written. The rules are the record of what was built.
 | Milestone | Became | Not built, or held back |
 |---|---|---|
 | 1 Ground | R29, R46, R47; `21-selftest.mjs`, `21-guide.mjs`, `21-brain-eval.mjs`; the tools in section 3 | |
-| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, R71, R72, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
+| 2 Commander | R42, R43, R51, R54, R55, R60, R61, R63, R64, R65, R68, R70, R71, R72, R75, and R1 for Spark 2; the helper; the groups of section 4.1 from "Look" to "Root" | The fresh visit for the hub and for sign-in changes |
 | 3 Memory | R45, R48, R59; `20-memory.mjs` and the four parts beside it, `20-recall.mjs`, `20-digest.mjs`, `20-lessons.mjs` | |
 | 4 No laptop, lighter hub | R58, R32, R23, R33, R49, R37; `21-updates.mjs`, `20-beat.mjs`, `20-state-copy.mjs`, `22-putback.mjs` | Clearing Spark 2 is a script the owner runs (`deploy/clear-spark2.sh`) |
 | 5 On its own, any brain | R50, R52, R66, R62, R67, R69; `14-tasks.mjs`, `21-brain-rail.mjs`, `21-box.mjs`, `21-selfchange.mjs` | Self-change is off; the coding trial waits for the owner |
