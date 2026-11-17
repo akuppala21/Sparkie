@@ -93,7 +93,9 @@ const memoryNow = async () => (await call(look, 'memory', {})).value.entries;
 const forgetAll = async () => { for (const e of await memoryNow()) await api('/actions/forget_memory', { method: 'POST', body: { id: e.id } }); };
 test('forget_memory runs at once only when the owner says to forget that very line; a question, "don\'t forget", quoted words or another line give a button', { timeout: 180000 * SLOW }, async () => {
   const OTHER = 'Spark 3 is where models go', SAID = 'forget that Spark 4 is on Wi-Fi';
-  const seed = async text => (await call(act.token, 'remember', { text, kind: 'fact' })).value.id;
+  // (the owner's own lines, kept by their own call: a button about an agent's line says it by who noted it and its id,
+  // never its words, F2 C1, inside-reads.test.mjs)
+  const seed = async text => (await api('/actions/remember', { method: 'POST', body: { text, kind: 'fact' } })).json.id;
   const other = await seed(OTHER), line = await seed(WIFI);
   const forget = async (words, id) => {
     script([{ match: `^${esc(words)}$`, calls: [{ name: 'forget_memory', arguments: { id } }] }]);

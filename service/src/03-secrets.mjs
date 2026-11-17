@@ -36,12 +36,28 @@ function secretsWrite(change) {
   const dir = SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
-  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
+  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`, text = Buffer.from(JSON.stringify(next, null, 2));
   // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
-  // the new one, never a short one that can't be read, R23)
-  const fd = openSync(tmp, 'w', 0o600);
-  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(tmp, SECRETS_FILE);
+  // the new one, never a short one that can't be read, R23. Only a whole file takes its place: on a nearly full disk a
+  // write takes in only part and says so, so it is written until every byte is in, then read back and compared. Anything
+  // less throws, leaves the secrets file as it was, and leaves nothing under the temporary name.)
+  try {
+    const fd = openSync(tmp, 'w', 0o600);
+    try {
+      for (let at = 0; at < text.length;) {
+        const n = writeSync(fd, text, at, text.length - at);
+        if (!(n > 0)) throw new Error('the disk took no more of the secrets file');
+        at += n;
+      }
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    const back = readFileSync(tmp);
+    if (!back.equals(text)) throw Object.assign(new Error(`only ${back.length} of ${text.length} bytes of the secrets file reached the disk as written`), { code: 'ESHORT' });
+    renameSync(tmp, SECRETS_FILE);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch {}
+    throw e;
+  }
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });
   return next;

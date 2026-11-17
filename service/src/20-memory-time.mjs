@@ -11,7 +11,9 @@
 //   own words (common words left out), takes that line's place, and the result says which ("instead of"). An agent's
 //   line never takes an owner's line's place: it joins it, and nothing new is kept.
 // - The other live lines about the same names come back on the result (two at most, newest first), so the brain and
-//   the owner see at once a line the new one may make untrue ("I also have: … Still true?").
+//   the owner see at once a line the new one may make untrue ("I also have: … Still true?"). Only lines whose words may
+//   steer the caller (the owner's, and the caller's own): an agent's line is counted and pointed at (recall gives it,
+//   an outside read), never quoted, as remember is a change and its result no read from outside (R26, F2 C1).
 const NEAR_SHARE = 0.8, ALSO_MAX = 2;
 // Whether one of the additions of design G 3 is switched off for this run: the brain eval's switches (test/eval.mjs),
 // on the stand-in fleet only, as the picker's (memoryPicking). Whether a line is past its day is memoryEnded's
@@ -64,22 +66,34 @@ function memorySaidAgain(text, about, lines) {
   }
   return best;
 }
-// The other live lines about the names of a line just kept, from the names index: two at most, newest first.
+// Whether a line's words may go back to whoever wrote `by` (a new line's writer, lineBy): the owner's lines, and the
+// writer's own. Anyone else's (an agent's, to the owner's turn) is said by who noted it and its id, never quoted.
+const memoryQuoted = (e, by) => e?.by === 'owner' || e?.by === by;
+const memoryNoted = e => `the line ${e.by || 'an agent'} noted (${e.id})`;
+// The other live lines about the names of a line just kept, from the names index: two at most, newest first, of those
+// memoryQuoted lets back; `noted`, the ids of the others (an agent's lines, on the owner's turn), newest first.
 function memoryAlso(entry) {
-  if (memoryOffFor('time') || !entry.about?.length) return [];
+  if (memoryOffFor('time') || !entry.about?.length) return { also: [], noted: [] };
   try {
     const seen = new Set([entry.id]), out = [];
     for (const n of entry.about) for (const e of memoryLinesAbout(n)) if (!seen.has(e.id) && memoryLive(e)) { seen.add(e.id); out.push(e); }
-    return out.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, ALSO_MAX).map(e => ({ id: e.id, text: e.text, at: e.at, by: e.by }));
+    const newest = out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return { also: newest.filter(e => memoryQuoted(e, entry.by)).slice(0, ALSO_MAX).map(e => ({ id: e.id, text: e.text, at: e.at, by: e.by })),
+      noted: newest.filter(e => !memoryQuoted(e, entry.by)).map(e => e.id) };
   } catch (e) {
     console.error(`The other lines about what a memory line names weren’t read (${e.message}).`);
-    return [];
+    return { also: [], noted: [] };
   }
 }
+// The count of an agent's lines about it, and where they are (code's words; recall is an outside read): R26, F2 C1.
+const memoryNotedWords = ids => (ids.length === 1 ? `1 line an agent noted is about it too, not quoted here (not the owner’s words): recall {"id": "${ids[0]}"} gives it, as text from outside.`
+  : ids.length ? `${ids.length} lines an agent noted are about it too, not quoted here (not the owner’s words): recall gives each by its id (${ids.slice(0, 4).join(', ')}${ids.length > 4 ? ', …' : ''}), as text from outside.` : null);
 // How a kept line is said back: "I’ll remember: …", what it took the place of, its end, and the other lines to check.
-function memorySaid(line, { until = null, gone = null, also = [] } = {}) {
-  const others = also.map(a => `“${a.text}” (${String(a.at).slice(0, 10)})`).join(' and ');
-  return `I’ll remember: ${line}${until ? ` (until ${memoryDayWords(until)})` : ''}${gone ? ` (instead of: ${gone.text})` : ''}${others ? `${/[.!?]$/.test(line) ? '' : '.'} I also have: ${others}. Still true?` : ''}`;
+// (`by`: the new line's writer; a line it replaced is quoted only when memoryQuoted lets it back)
+function memorySaid(line, { until = null, gone = null, also = [], noted = [], by = 'owner' } = {}) {
+  const others = also.map(a => `“${a.text}” (${String(a.at).slice(0, 10)})`).join(' and '), dot = /[.!?]$/.test(line) ? '' : '.';
+  const instead = gone ? (memoryQuoted(gone, by) ? ` (instead of: ${gone.text})` : ` (instead of ${memoryNoted(gone)})`) : '';
+  return `I’ll remember: ${line}${until ? ` (until ${memoryDayWords(until)})` : ''}${instead}${others ? `${dot} I also have: ${others}. Still true?` : ''}${noted.length ? `${others ? '' : dot} ${memoryNotedWords(noted)}` : ''}`;
 }
 // A day as the owner reads it at a glance: "Friday 20 November", with the year when it isn't this one.
 function memoryDayWords(day) {

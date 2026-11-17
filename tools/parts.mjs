@@ -33,6 +33,22 @@ export const BANDS = [
   { from: 22, to: 24, areas: ['ways in'], what: 'ways in' },
   { from: 25, to: 25, areas: ['start'], what: 'start-up, always last' },
 ];
+// The parts any change to which runs every test file (tools/affected.mjs reads these two lists): sign-in, lock-out
+// safety, Sparkie's own rules and the one way to change a Spark; and, even in a landing, what every test depends on.
+// They are here, with their check, because tools/make.mjs runs the check and loads only tools that can run nothing.
+export const ALWAYS_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads', '17-changes',
+  '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `${p}.mjs`);
+export const LANDING_ALWAYS_PARTS = ['03-identity', '03-secrets', '22-passkey', '22-sessions', '25-backup-and-start'].map(p => `${p}.mjs`);
+// Each part the two lists name, by its file name, must be in service/src/: one renamed or folded into another would
+// drop off them in silence, and a change to it would stop running everything. tools/make.mjs runs this with the
+// documents' checks, so a missing one fails there.
+export function checkAffected(root = ROOT) {
+  const src = join(root, 'service', 'src'), have = new Set(existsSync(src) ? readdirSync(src) : []);
+  const own = readFileSync(fileURLToPath(import.meta.url), 'utf8'), lineOf = p => own.slice(0, own.indexOf(`'${p.slice(0, -4)}'`)).split('\n').length;
+  return [...new Set([...ALWAYS_PARTS, ...LANDING_ALWAYS_PARTS])].filter(p => !have.has(p)).map(p => ({ check: 'affected', file: 'tools/parts.mjs', line: lineOf(p),
+    message: `names ${p} (${[ALWAYS_PARTS.includes(p) && 'ALWAYS_PARTS', LANDING_ALWAYS_PARTS.includes(p) && 'LANDING_ALWAYS_PARTS'].filter(Boolean).join(', ')}), which service/src/ doesn’t have: a change to it would no longer run everything. Name the part it is now` }));
+}
+
 // Parts outside their band today, numbered before the bands existed. Moving one changes load order, so it waits for its
 // own step; this list may only shrink.
 export const BAND_TODAY = {

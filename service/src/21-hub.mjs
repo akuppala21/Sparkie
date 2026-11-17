@@ -136,6 +136,10 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
+  // (a change still open there, its put-back unfinished say: refused before it is asked, as root's is, never asked and
+  // its press then refused)
+  const open = netOpenOn(node.id);
+  if (open) throw new HttpError(409, `${netOpenWords(open, sparkName(node))} Nothing was asked or run.`);
   // (no root helper on Spark 2, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
   // nothing is asked)
   const first = await netHelperFirst(node);
