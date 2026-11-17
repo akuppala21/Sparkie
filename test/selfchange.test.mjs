@@ -335,6 +335,9 @@ describe('propose_update', { concurrency: 1 }, () => {
       box({ 'service/src/21-web.mjs': `${part}// A proposal’s comment, from the box.\n// And a third one.\n` });
       const s = await pressed(selfChat, 'send your code proposal');
       assert.match(s.says, new RegExp(`The push to sparkie/${selfId} was refused, so nothing was sent`), s.says);
+      // (git's and GitHub's own words go to Spark Console's log, never into the answer: final read, the change answers)
+      assert.match(s.says, /git’s own words are in Spark Console’s log \(service_logs, console, on Spark 2\)\./, s.says);
+      assert.doesNotMatch(s.says, /rejected|failed to push|fetch first|non-fast-forward|hint:/, s.says);
       assert.equal(git(GH, ['rev-parse', branch]), elsewhere, 'GitHub’s branch was not moved');
       assert.equal(git(COPY, ['rev-parse', `refs/sparkie/${selfId}`]), selfHead, 'the copy’s ref is back where it was');
     } finally {
