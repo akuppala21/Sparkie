@@ -506,6 +506,9 @@ describe('powering a Spark off and on', { concurrency: 1 }, () => {
         r = await act('power_off', { spark: 'spark4' });
         assert.equal(r.status, 409, r.text);
         assert.match(r.json.error, /^Spark 4 isn’t answering, and its plug can’t be read \(/);
+        // (the plug controller's own words are outside text: the answer points at fleet_status's wall, final read)
+        assert.match(r.json.error, /\(fleet_status’s wall for it says why\), so nothing was changed\./);
+        assert.doesNotMatch(r.json.error, /isn’t answering the controller/);
       } finally { n4.available = true; }
       assert.deepEqual(commandsSince(before), []);
       // (2.5 W from a reading that lags: it comes back while its plug is watched, and is never cut)

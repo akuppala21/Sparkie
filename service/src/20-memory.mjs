@@ -205,12 +205,13 @@ function eraseLine(id, viewer, ctx) {
 // Whether the chat holds text that isn't the owner's own typing: an agent's message (or the chat is one an agent
 // started), a notice of Spark Console's (a result, a report, a pressed command's last line), a dangerous ask, or a read
 // from outside it keeps (conv.reads). Sparkie's answers there may quote any of them. A chat that can't be read counts.
+// (chatOutsideMessage, 14-chats.mjs: the same messages chatEarlier searches)
 // (asked only for a line that would be the owner's: an agent's own line rides ahead of nobody's words, R26)
 function memoryChatOutside(ctx) {
   if (!ctx.conv) return false;
   try {
     const conv = chatData().conversations.find(c => c.id === ctx.conv);
-    return !conv || Boolean(conv.agent) || (Array.isArray(conv.reads) && conv.reads.length > 0) || (conv.messages || []).some(m => m.from || m.notice || m.danger);
+    return !conv || Boolean(conv.agent) || (Array.isArray(conv.reads) && conv.reads.length > 0) || (conv.messages || []).some(chatOutsideMessage);
   } catch { return true; }
 }
 const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 'them', 'you', 'your', 'yours', 'yourself', 'itself', 'wants', 'want', 'wanted',

@@ -3754,11 +3754,13 @@ function outcomeText(label, out, agentChat = false) {
 // written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
 // these words in its history. null for any other result. (The net's, Spark 2's and root's carry their own, note.)
 function pressRan(label, out, agentChat = false) {
-  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
+  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'wroteOver', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
   const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';
   const tail = String(out.tail || '').split('\n'), last = tail.length > 1 ? s(tail.slice(0, -1).join(' ')).slice(0, 200) : '';
   const said = out.ran === false ? (out.why ? s(out.why) : 'nothing ran.')
     : out.notWritten ? (typeof out.notWritten === 'string' ? s(out.notWritten) : `Nothing was written to ${s(out.notWritten.path)}: ${s(out.notWritten.why).replace(/\.$/, '')}.`)
+      // (write_file's exit 5: written, over another program's edit; the program's own line says where the other text is)
+      : out.wroteOver ? s(out.wroteOver)
       : out.exit === 0 || (out.wrote && out.exit === undefined) ? `done.${out.ended ? ` ${s(out.ended)}` : ''}`
         : Number.isInteger(out.exit) ? `it ran and failed, with exit code ${out.exit}.${last ? ` Its last line: “${last}”.` : ''}`
           : s(out.ended || out.cut || 'Whether it finished isn’t known.');
@@ -3845,16 +3847,17 @@ function pressSaid(x, c, conv, ctx, by) {
     return { out: { outcome: 'error', error: e.message }, content: `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}` };
   }
 }
-// A press's notice in its chat. (An ask with lines its button shows whole, write_file's: the chat file keeps them
-// masked, R7, and the owner's page gets them whole, from memory, chatWholeShown.) The message as the page gets it.
+// A press's notice in its chat, keys hidden whatever it says (an ask again holds a script's lines, final read R-1). (An
+// ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page gets
+// them whole, the rest masked as the asks are, from memory, chatWholeShown.) The message as the page gets it.
 function pressPost(conv, content, asked) {
-  const whole = asked?.whole?.length ? content : null;
-  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  const kept = maskSecrets(content), whole = asked?.whole?.length ? askShown(content, asked.whole) : kept;
+  const message = { role: 'assistant', content: kept, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
-  if (whole) chatWhole.set(message, whole);
+  if (whole !== kept) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  return whole ? { ...message, content: whole } : message;
+  return whole !== kept ? { ...message, content: whole } : message;
 }
 // A press still running at the press's time, ended: its result posted in its chat from its own fields (pressRan), and
 // told in the paired chat for a press made there (tgRanLine); the parked task it answered woken. (The net says its own
@@ -3878,10 +3881,12 @@ const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.g
 const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
 // A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
 // shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+// (the page's copy of an ask: the lines its button shows whole as they are, every other line masked)
+const askShown = (text, whole) => String(text).split('\n').map(l => ((whole || []).includes(l) ? l : maskSecrets(l))).join('\n');
 function chatAsks(asked, message) {
   const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
   if (!list.length) return message;
-  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  const whole = list.map(q => ({ group: q.group, text: askShown(q.question.slice(0, 8000), q.whole) }));
   message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
   if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
   return message;
@@ -3898,14 +3903,23 @@ function chatReadsKeep(conv, ctx) {
 }
 // What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
 // (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
-// dangerReadsLoaded ([{label, at, text, cut}]); answers, Sparkie's own earlier answers in the chat ([{at, text}]),
-// which can quote what was read. Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
+// dangerReadsLoaded ([{label, at, text, cut}]); answers ([{at, text, label?}]): Sparkie's own earlier answers in the
+// chat, which can quote what was read (no label), and every message chatOutsideMessage marks, each with a label of
+// code's (final read C3): an agent's message, a notice with what it quotes, a dangerous ask's text. (A carry-on line is
+// code's words and the owner's own request.)
+// Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
 function chatEarlier(conv, ctx = {}) {
   const byId = new Map();
   for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
-  const answers = (conv?.messages || []).filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  const answer = m => m.role === 'assistant' && !m.notice && !m.danger;
+  const answers = (conv?.messages || []).filter(m => m.content && (answer(m) || chatOutsideMessage(m))).map(m => ({ at: m.createdAt, text: String(m.content),
+    ...(answer(m) ? {} : { label: m.from ? `a message from the agent ${dangerPlain(m.from, 60) || 'that started this chat'}` : 'Spark Console’s notice in this chat' }) }));
   return { reads: dangerReadsLoaded([...byId.values()]), answers };
 }
+// A message of a chat that is neither the owner's own typing nor Sparkie's own answer: an agent's message, a notice of
+// Spark Console's (a result, a report, a pressed command's last line, an ask asked again), a dangerous ask. One test for
+// both: chatEarlier searches these, and memoryChatOutside (20-memory.mjs) counts a chat holding one as outside text.
+const chatOutsideMessage = m => Boolean(m?.from || m?.notice || m?.danger);
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',
@@ -5049,12 +5063,21 @@ function taskEnded(conv, t, how) {
     // (only a task begun there, R32; never when its way in is gone: Telegram unpaired or paired with someone else is told
     // nothing of it)
     const tg = how !== 'gone' && t.channel === 'telegram';
-    conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, jobs: (t.jobs || []).slice(-20) }];
+    // (and which pairing it is owed to: a report waiting for its next try goes to that chat only, final read C4)
+    conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, ...(tg ? { tgMark: t.tg || tgPairingMark() } : {}), jobs: (t.jobs || []).slice(-20) }];
     saveChats();
     setTimeout(() => taskReportsDue(conv.id), TASK_REPORT_MS).unref?.();
   } catch (e) { console.error(`A task’s report: ${e.message}`); }
 }
 // The reports owed in a chat: written in it once, told on Telegram once, then taken off.
+// A report's next try, one timer a report (in memory: after a restart the start-up tick sets it again from tgNext).
+const taskReportTimers = new Set();
+function taskReportLater(id, task, ms) {
+  const key = `${id} ${task}`;
+  if (taskReportTimers.has(key)) return;
+  taskReportTimers.add(key);
+  setTimeout(() => { taskReportTimers.delete(key); taskReportsDue(id).catch(e => console.error(`A task’s report: ${e.message}`)); }, Math.max(0, ms) + 50).unref?.();
+}
 // One at a time a chat (a send waits on Telegram, and a tick that came meanwhile, the start-up's or a retry's, would
 // take a report in flight off the list): one that comes while another runs goes again a second later.
 const taskReportsBusy = new Set();
@@ -5073,17 +5096,24 @@ async function taskReportsNow(id) {
       conv.updatedAt = new Date().toISOString();
       saveChats();
     }
+    // (each on its own schedule: a tick for another report of this chat leaves one whose next try isn't due, and one is
+    // set for it when none is, as after a restart, C9)
+    if (r.tg && !r.told && r.tgNext && Date.parse(r.tgNext) > Date.now()) { taskReportLater(conv.id, r.task, Date.parse(r.tgNext) - Date.now()); continue; }
     if (r.tg && !r.told) {
+      // (owed to another pairing than the chat paired now: never sent there, dropped, said in the journal, C4)
+      if (r.tgMark && r.tgMark !== tgPairingMark()) { r.told = true; tellDropped('report', { task: r.task, chat: conv.id, tries: Number(r.tgTries) || 0, err: 'another pairing' }); continue; }
       // (marked before the send, so two ticks never send it twice; put back on a failure for now and tried again on a
       // later tick, with a growing wait, TELL_TRIES in all; one that never will, or past them, is dropped and said in
       // the journal: A-8, 20-tell.mjs)
       r.told = true;
+      delete r.tgNext;
       saveChats();
       const got = await tellTry('result', taskReportText(conv, r, true), { last: true }).catch(() => 'later');
       r.tgTries = (Number(r.tgTries) || 0) + 1;
       if (got === 'later' && r.tgTries < TELL_TRIES) {
         r.told = false;
-        setTimeout(() => taskReportsDue(conv.id).catch(e => console.error(`A task’s report: ${e.message}`)), tellWait(r.tgTries)).unref?.();
+        r.tgNext = new Date(Date.now() + tellWait(r.tgTries)).toISOString();
+        taskReportLater(conv.id, r.task, tellWait(r.tgTries));
       } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
@@ -5958,9 +5988,10 @@ async function sparkieCheck(name, input, ctx) {
   }
   if (name === 'run_workflow') {
     const w = findSaved(String(out.name || ''));
-    if (!w) throw new HttpError(404, `No saved workflow called “${String(out.name || '').slice(0, 80)}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    // (to the brain a saved workflow is its id, and its title and inputs' words are `workflows`': savedNamed, 18-workflows.mjs)
+    if (!w) throw new HttpError(404, savedMissing(out.name || '', null, ctx));
     const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})) && !(k === 'model' && w.best?.model));
-    if (missingInputs.length) throw new HttpError(400, `“${w.title}” needs ${missingInputs.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    if (missingInputs.length) throw new HttpError(400, `${savedNamed(w, null, ctx, true)} needs ${missingInputs.join(', ')}: workflows says what each is.`);
     // (every word counts here, one-letter ones and bare Spark numbers too: "run coding mo" isn't "coding mode", and
     // a value "4" must be said as 4 or Spark 4)
     const plain = t => new Set(sparkNames(normQuotes(String(t))).split(/[^a-z0-9.]+/).flatMap(x => [x, x.replace(/\./g, '')]).filter(Boolean));
@@ -6970,7 +7001,8 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
 // paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
 // brain: what Sparkie is handed in place of text, when the ask shows the owner something the brain must not be handed as
-// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2).
+// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2; a saved workflow's title, savedNamed);
+// a choice's `brain` is its label there.
 function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, brain = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
@@ -7007,14 +7039,15 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
-    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map(c => c.label),
+    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map((c, i) => choices[i]?.brain || c.label),
       note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
         : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
   }
   return out;
 }
 // What a change does, in plain words, for its button.
-function changeLabel(name, input) {
+// (brain: the words Sparkie's brain gets, a saved workflow by its id; the page's button keeps its title)
+function changeLabel(name, input, brain = false) {
   const sp = id => sparkName(nodeById(id) || { id });
   const where = input.sparks ? ` across ${input.sparks.map(sp).join(' + ')}` : input.spark ? ` on ${sp(input.spark)}` : '';
   const what = input.model || input.container || 'it';
@@ -7026,12 +7059,13 @@ function changeLabel(name, input) {
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
-    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    const f = findSaved(String(input.workflow || '')), w = String((brain ? f?.id : f?.title) || input.workflow || '').slice(0, 80);
     return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
   }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
-    return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
+    const f = findSaved(String(input.name || ''));
+    return `Run the saved workflow “${String((brain ? f?.id : f?.title) || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
   }
   if (name === 'keep_running') {
     const c = String(input.container || 'it').slice(0, 80);
@@ -7072,8 +7106,8 @@ function changeLabel(name, input) {
 // because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
 // for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
 function propose(viewer, ctx, name, input, because = null) {
-  const label = `${changeLabel(name, input)}${input.__validate ? ' (its first run, which validates it)' : ''}`;
-  const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  const first = input.__validate ? ' (its first run, which validates it)' : '', label = `${changeLabel(name, input)}${first}`, said = `${changeLabel(name, input, true)}${first}`;
+  const out = question(viewer, ctx, `${label}?`, [{ label, brain: said, call: { action: name, args: input } }], 'proposal', { brain: `${said}?` });
   return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
@@ -8802,6 +8836,14 @@ const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].ma
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
   savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}), ...(w.best ? { best: w.best } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
+// A saved workflow named in a change's answer (run_workflow, compare_models, forget_workflow): its title and its inputs'
+// words are free text whoever saved it wrote, an agent too, and a change's answer never counts as text read from
+// outside (R26). To Sparkie's brain (a turn's call, `via` sparkie) it is named by its id, and `workflows` (a read,
+// outside) has the rest; a call that is no Sparkie turn (the owner's page or API, an agent's own, a press) keeps the
+// title (final read, the change answers).
+const savedOwnCall = (viewer, ctx) => !/^sparkie/.test(String(ctx?.via || ''));
+const savedNamed = (w, viewer, ctx, start = false) => (savedOwnCall(viewer, ctx) ? `“${w.title}”` : `${start ? 'The' : 'the'} saved workflow ${w.id}`);
+const savedMissing = (name, viewer, ctx) => `No saved workflow called “${String(name).slice(0, 80)}”. ${savedOwnCall(viewer, ctx) ? `Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.` : 'workflows lists the saved ones.'}`;
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
 function stepArgs(st) {
@@ -8846,7 +8888,7 @@ const OWN_RECORD_READS = new Set(['fleet_events', 'workloads', 'spark_diagnostic
 // or off (21-power.mjs) works whether it answers now or not, so a Spark that is off doesn't stop those steps.
 const TOUCHES_SPARKS = new Set(['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'test_changes', 'undo_update', 'power_off', 'power_on']);
 const POWER_STEPS = new Set(['power_off', 'power_on']);
-async function checkSteps(w, inputs, inv) {
+async function checkSteps(w, inputs, inv, said = true) {
   if (checkFailsForTest()) throw new Error('the check failed (test)');
   const changed = new Set(), lines = [], turnedOn = new Set();
   const sparkOn = id => inv.sparks.find(x => x.id === id);
@@ -8890,7 +8932,8 @@ async function checkSteps(w, inputs, inv) {
       if (lib) { line(onDisk(lib)); continue; }
       if (REPO_RE.test(args.model)) { line({ result: 'checked when reached', why: 'it isn’t on disk, so it would download first' }); continue; }
       let found;
-      try { found = await resolveModelName(args.model, inv); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+      // (the model's words are the step's, free text: said in code's words in a change's answer, final read)
+      try { found = await resolveModelName(args.model, inv); } catch (e) { line({ result: 'cannot run', why: said ? e.message : e.status === 404 ? 'nothing on disk or in the recipes matches the model it names' : 'the model it names couldn’t be looked up now' }); continue; }
       line(found.lib ? onDisk(found.lib) : found.choices ? { result: 'checked when reached', why: 'several models match; it will ask which one' }
         : { result: 'checked when reached', why: 'it isn’t on disk, so it would download first' });
       continue;
@@ -8957,18 +9000,19 @@ action({
   run: async (input, viewer, ctx) => {
     // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
     const saved = ctx.compare?.workflow || findSaved(input.name);
-    if (!saved) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    if (!saved) throw new HttpError(404, savedMissing(input.name, viewer, ctx));
     let w = saved;
+    const own = savedOwnCall(viewer, ctx), named = savedNamed(saved, viewer, ctx, true);
     const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
     // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
     const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
     if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
-    if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    if (missing.length) throw new HttpError(400, own ? `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.` : `${named} needs ${missing.join(', ')}: workflows says what each is.`);
     // (Sparkie's own model, given or kept by a compare, runs the brain's view of it, as the compare ran it: its {model}
     // start and stop steps left out; refused in the compare's words when the brain can't be asked)
     if (!ctx.compare && 'model' in (w.inputs || {}) && compareIsBrain(given.model ?? '')) {
       const why = compareBrainWhy();
-      if (why) throw new HttpError(409, `“${w.title}” can’t run with Sparkie’s own model: ${why}.`);
+      if (why) throw new HttpError(409, `${named} can’t run with Sparkie’s own model: ${why}.`);
       w = compareBrainView(w);
     }
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
@@ -8976,12 +9020,12 @@ action({
     let check = null, skipped = null;
     try {
       const inv = await Promise.race([inventory(null), sleep(30000).then(() => { throw new Error('the look at the Sparks took over 30 seconds'); })]);
-      check = await checkSteps(w, given, inv);
+      check = await checkSteps(w, given, inv, own);
     } catch (e) { skipped = String(e.message).slice(0, 200); }
     const blocked = check?.find(l => l.result === 'cannot run');
     if (blocked) {
       const would = check.filter(l => l.result === 'goes').map(l => l.step);
-      throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
+      throw new HttpError(409, `${named} can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     if (usedBest) job.usedBest = usedBest;
@@ -9036,18 +9080,18 @@ action({
         await runEndWell(j, ran, viewer, ctx, w.title);
       } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { runsRan.delete(j.id); letSleep(j); savedRunDone(j); }
     });
-    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
+    return { outcome: 'started', operation: job.id, workflow: own ? w.title : w.id, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
 });
 action({
   name: 'forget_workflow', title: 'Forget a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner wants one of their saved workflows gone. Changes nothing on the Sparks.',
   input: { type: 'object', properties: { name: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, from workflows (saved).' } }, required: ['name'], additionalProperties: false },
-  run: async input => {
+  run: async (input, viewer, ctx) => {
     const w = findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”.`);
     writeSaved(savedWorkflows().filter(x => x.id !== w.id));
-    return { outcome: 'forgotten', workflow: w.title };
+    return { outcome: 'forgotten', workflow: savedOwnCall(viewer, ctx) ? w.title : w.id };
   },
 });
 
@@ -9852,9 +9896,11 @@ function dangerWhole(text, thing) {
   return false;
 }
 // "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
-// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
-// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
-// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of the chat's other messages
+// (answers). A pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never
+// shown; the newest 40 and 64 MB in all), answers [{at, text, label?}]: Sparkie's earlier answers, no label (the newest
+// 20), and the chat's other messages that aren't the owner's own, each with its label (all of them: chatEarlier,
+// 14-chats.mjs). A label is built by code and never quotes its source.
 function cameFrom(things, ownerMessages, reads, answers) {
   const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
   const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
@@ -9867,7 +9913,9 @@ function cameFrom(things, ownerMessages, reads, answers) {
     budget -= text.length;
     searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
   }
-  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const all = [...(answers || [])].sort(newest), labelled = a => typeof a?.label === 'string' && a.label;
+  const said = [...all.filter(a => !labelled(a)).slice(0, DANGER_ANSWERS), ...all.filter(labelled)].sort(newest)
+    .map(a => ({ at: a.at, what: labelled(a) ? dangerPlain(a.label, 120) || 'an earlier message in this chat' : 'Sparkie’s earlier answer', lower: String(a.text ?? '').toLowerCase() }));
   const lines = [], labels = [], list = [...(things || [])];
   // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
   if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
@@ -9883,7 +9931,7 @@ function cameFrom(things, ownerMessages, reads, answers) {
     if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
     const a = r === null ? null : seek(said, t);
     if (a === null) { cut = true; break; }
-    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+    if (a) { lines.push(`${thing}: ${a.what} (${dangerHhmm(a.at)})`); labels.push(a.what); }
   }
   return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
 }
@@ -12935,12 +12983,13 @@ function eraseLine(id, viewer, ctx) {
 // Whether the chat holds text that isn't the owner's own typing: an agent's message (or the chat is one an agent
 // started), a notice of Spark Console's (a result, a report, a pressed command's last line), a dangerous ask, or a read
 // from outside it keeps (conv.reads). Sparkie's answers there may quote any of them. A chat that can't be read counts.
+// (chatOutsideMessage, 14-chats.mjs: the same messages chatEarlier searches)
 // (asked only for a line that would be the owner's: an agent's own line rides ahead of nobody's words, R26)
 function memoryChatOutside(ctx) {
   if (!ctx.conv) return false;
   try {
     const conv = chatData().conversations.find(c => c.id === ctx.conv);
-    return !conv || Boolean(conv.agent) || (Array.isArray(conv.reads) && conv.reads.length > 0) || (conv.messages || []).some(m => m.from || m.notice || m.danger);
+    return !conv || Boolean(conv.agent) || (Array.isArray(conv.reads) && conv.reads.length > 0) || (conv.messages || []).some(chatOutsideMessage);
   } catch { return true; }
 }
 const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 'them', 'you', 'your', 'yours', 'yourself', 'itself', 'wants', 'want', 'wanted',
@@ -15528,7 +15577,6 @@ async function tellTry(why, text, { buttons = null, to = null, pre = null, tail 
   const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return 'never';
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return 'later'; }
-  if (later) tellResults.push(now);
   const silent = later && now - tellOwnerAt > TELL_QUIET_MS;
   let failed = null;
   for (const [i, p] of parts.entries()) {
@@ -15537,10 +15585,13 @@ async function tellTry(why, text, { buttons = null, to = null, pre = null, tail 
     if (sent !== true) failed ||= sent || 'unreachable';
   }
   audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok: !failed });
+  // (a result counts toward the hour's six only when it went: tries that failed use none of them, final read C7)
+  if (later && !failed) tellResults.push(now);
   return !failed ? 'sent' : TELL_NEVER.has(failed) ? 'never' : 'later';
 }
 // Telegram's answers that will never turn into a send (tgCall's codes): a token refused (401, 404), a request refused
-// (400, 403: the chat gone, the bot blocked), Telegram off here.
+// (400, 403: the chat gone, the bot blocked), Telegram off here. Tried again: 429 (slow down) and 409 ("in-use": another
+// program is reading the bot's updates, which says nothing about this message; it can stop), and no answer.
 const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
 // A result that must reach the paired chat (a task's report, an operation's line, a press's late result): a send that
 // failed for now is tried again a few times with a growing wait (A-8: tgSend's own three tries span seconds), one that
@@ -15548,10 +15599,12 @@ const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
 const TELL_TRIES = 4, TELL_RETRY_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_TELL_RETRY_MS) || 60000;
 const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
 const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
-// In memory (a restart forgets the tries left): an operation's line, a press's late result.
-async function tellAgain(why, text, opts, what, fields = {}, n = 1) {
+// In memory (a restart forgets the tries left): an operation's line, a press's late result. Each try goes only to the
+// pairing it was meant for (mark, taken at the first: final read C4); paired with another since, it is dropped.
+async function tellAgain(why, text, opts, what, fields = {}, n = 1, mark = tgPairingMark()) {
+  if (mark !== tgPairingMark()) { tellDropped(what, { ...fields, tries: n - 1, err: 'another pairing' }); return 'never'; }
   const got = await tellTry(why, text, opts).catch(() => 'later');
-  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1).catch(() => {}), tellWait(n)).unref?.(); return got; }
+  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1, mark).catch(() => {}), tellWait(n)).unref?.(); return got; }
   if (got !== 'sent') tellDropped(what, { ...fields, tries: n, err: got });
   return got;
 }
@@ -16895,7 +16948,9 @@ echo looked`, { timeout: 20000 });
 }
 // What a container that's there was made with, against what was asked: a container keeps its image, ports, volumes and
 // settings, so any that differ are said, never quietly dropped. (Setting values aren't repeated: only their names.)
-function appDiffers(look, input) {
+// (said: the container's own volumes and command, free text from the Spark, for a call that is no Sparkie turn; to the
+// brain code's words, and `workloads` with detail has them: a change's answer is no outside read, R26, savedOwnCall)
+function appDiffers(look, input, said = true) {
   const out = [];
   if (input.image && input.image !== look.image) out.push(`its image is ${look.image || 'unknown'}, not ${input.image}`);
   if (input.port && look.ports.length) {
@@ -16903,7 +16958,7 @@ function appDiffers(look, input) {
     if (!look.ports.some(b => b.port === h && (!input.port.includes(':') || b.inside === i))) out.push(`its port is ${[...new Set(look.ports.map(b => `${b.port}:${b.inside}`))].join(', ')}, not ${input.port}`);
   }
   const vols = input.volumes ?? (input.image ? [] : null);
-  if (vols && [...vols].sort().join(',') !== [...look.volumes].sort().join(',')) out.push(`its volumes are ${look.volumes.join(', ') || 'none'}, not ${vols.join(', ') || 'none'}`);
+  if (vols && [...vols].sort().join(',') !== [...look.volumes].sort().join(',')) out.push(said ? `its volumes are ${look.volumes.join(', ') || 'none'}, not ${vols.join(', ') || 'none'}` : `its volumes aren’t ${vols.join(', ') || 'none'} (workloads with detail has its own)`);
   const env = (input.env || []).filter(e => !look.env.includes(e));
   if (env.length) out.push(`its settings don’t have ${env.map(e => e.split('=')[0]).join(', ')} as asked`);
   // (with an image named, gpu and once not said mean without; a command is compared only when one is said: Docker gives
@@ -16911,7 +16966,7 @@ function appDiffers(look, input) {
   const gpu = input.gpu ?? (input.image ? false : null), once = input.once ?? (input.image ? false : null);
   if (gpu !== null && gpu !== look.gpu) out.push(look.gpu ? 'it uses the GPU' : 'it doesn’t use the GPU');
   if (once !== null && once !== look.job) out.push(look.job ? 'it’s a job that runs once' : 'it isn’t a job that runs once');
-  if (input.command && JSON.stringify(input.command) !== JSON.stringify(look.cmd)) out.push(`its command is ${look.cmd.length ? commandWords(look.cmd).join(' ') : 'its image’s own'}, not ${commandWords(input.command).join(' ')}`);
+  if (input.command && JSON.stringify(input.command) !== JSON.stringify(look.cmd)) out.push(said ? `its command is ${look.cmd.length ? commandWords(look.cmd).join(' ') : 'its image’s own'}, not ${commandWords(input.command).join(' ')}` : `its command isn’t ${commandWords(input.command).join(' ')} (workloads with detail has its own)`);
   return out;
 }
 // A command's words as they may be shown: each masked (a key shape), and the value after a secret-named flag hidden
@@ -17224,7 +17279,7 @@ action({
     if (ctx.via === 'watcher' && !desired().running.some(x => x.app && keyOf(x) === key)) return { outcome: 'already', spark, container, note: `${container} is no longer on the list of what should be running, so it wasn’t started.` };
     // A container that's there keeps the image, ports, volumes and settings it was made with: asked for with others, it
     // is refused and told what differs, never quietly started as it was.
-    const differs = state === 'missing' ? [] : appDiffers(look, input);
+    const differs = state === 'missing' ? [] : appDiffers(look, input, savedOwnCall(viewer, ctx));
     if (differs.length) {
       throw new HttpError(409, `There’s already a container called ${container} on ${at}, and ${differs.join('; ')}. A container keeps what it was made with, so nothing was started or changed. To keep that one as it is, ask without the image, port, volumes or settings; for a new app, pick another name.`);
     }
@@ -19081,22 +19136,23 @@ function compareBrainView(w) {
   return { ...w, steps, approved };
 }
 // Why a candidate's run of saved workflow w would not reach its job (see above), or null. A job made before is known
-// from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken.
-async function compareWontReach(w) {
-  const wont = await compareStepWont(w);
+// from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken. (named: how the answer
+// names it, savedNamed: its title only for the owner's own call, final read)
+async function compareWontReach(w, named = `“${w.title}”`) {
+  const wont = await compareStepWont(w, named);
   if (wont) return wont;
   // (with no job made from an image nothing is scored, and the last candidate stays running; with no start of {model}
   // before the last job every candidate's job asks the same model)
   const last = w.steps.map((st, i) => (jobFromImage(st.action, stepArgs(st)) ? i : -1)).filter(i => i >= 0).pop();
-  if (last === undefined) return `“${w.title}” runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
+  if (last === undefined) return `${named} runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
   if (!w.steps.slice(0, last).some(st => ['start_model', 'restart_model'].includes(st.action) && placeholders(st.args).includes('model'))) {
-    return `“${w.title}” starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
+    return `${named} starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
   }
   return null;
 }
-async function compareStepWont(w) {
+async function compareStepWont(w, named = `“${w.title}”`) {
   for (const [i, st] of w.steps.entries()) {
-    const a = stepArgs(st), n = `Step ${i + 1} of “${w.title}”`, job = jobFromImage(st.action, a);
+    const a = stepArgs(st), n = `Step ${i + 1} of ${named}`, job = jobFromImage(st.action, a);
     if (job && placeholders(st.args).length) return `${n} is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`;
     const own = job ? (Array.isArray(a.env) ? a.env : []).map(e => String(e).split('=')[0]).find(k => ['SPARK_MODEL_NAME', 'SPARK_MODEL_URL'].includes(k)) : null;
     if (own) return `${n} is a job that names its own ${own}, so every candidate’s run would ask that one model. Save it without ${own}: each candidate’s job is handed it.`;
@@ -19216,14 +19272,14 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
 }
 // The owner's pick after a compare: keeps that candidate of the last compare of this workflow.
 function compareKeep(w, keep, viewer, ctx) {
-  const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false);
-  if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of “${w.title}”, so nothing was kept.`);
+  const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false), named = savedNamed(w, viewer, ctx);
+  if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of ${named}, so nothing was kept.`);
   if (ctx.channel && !ctx.ownerConfirmed) {
-    const label = `Keep ${r.model} for “${w.title}”`;
+    const label = `Keep ${r.model} for ${named}`;
     return question(viewer, ctx, `${label}? That one waits for you in Spark Console.`, [{ label, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
   }
   compareKeepOn(w, compareBest(r, w.compared.sample), null);
-  return { outcome: 'kept', workflow: w.title, model: r.model, note: `${r.model} is kept for “${w.title}”: a run of it with no model given uses it.` };
+  return { outcome: 'kept', workflow: savedOwnCall(viewer, ctx) ? w.title : w.id, model: r.model, note: `${r.model} is kept for ${named}: a run of it with no model given uses it.` };
 }
 
 action({
@@ -19237,22 +19293,23 @@ action({
   }, required: ['workflow'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
     const w = findSaved(input.workflow);
-    if (!w) throw new HttpError(404, `No saved workflow called “${input.workflow}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `“${w.title}” has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step; its job gets the model in SPARK_MODEL_NAME).`);
+    if (!w) throw new HttpError(404, savedMissing(input.workflow, viewer, ctx));
+    const named = savedNamed(w, viewer, ctx, true);
+    if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `${named} has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step; its job gets the model in SPARK_MODEL_NAME).`);
     if (input.keep !== undefined) {
       if (input.candidates !== undefined || input.sample !== undefined) throw new HttpError(400, 'Give keep alone, with the workflow.');
       return compareKeep(w, input.keep, viewer, ctx);
     }
     if (!input.candidates) throw new HttpError(400, 'Missing argument: candidates.');
     // (one a candidate's run would not reach: refused by name before anything starts)
-    const wont = await compareWontReach(w);
+    const wont = await compareWontReach(w, named);
     if (wont) throw new HttpError(409, wont);
     const cands = [...new Set(input.candidates.map(String))].sort((a, b) => compareIsBrain(b) - compareIsBrain(a));
-    if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of “${w.title}” is running already. Its scores are posted when it ends.`);
+    if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of ${savedNamed(w, viewer, ctx)} is running already. Its scores are posted when it ends.`);
     const sample = input.sample ?? 10;
     const job = newJob('compare', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     runJob(job, j => compareRun(j, w, cands, sample, viewer, ctx));
-    return { outcome: 'started', operation: job.id, workflow: w.title, candidates: cands, sample,
+    return { outcome: 'started', operation: job.id, workflow: savedOwnCall(viewer, ctx) ? w.title : w.id, candidates: cands, sample,
       next: `wait_operation {"id":"${job.id}"}` };
   },
 });
@@ -20720,19 +20777,17 @@ function workNames(node, command, dir, sorted = null) {
   for (const x of [text, ...parts]) if (x.length >= 12 && /\s/.test(x) && !out.has(x)) out.set(x, { forms: [x], own: [x] });
   return [...out.values()];
 }
-// What this chat holds that a change may have been taken from, for workEarlier: chatEarlier's reads and Sparkie's
-// answers (14-chats.mjs), with the chat's notices and agents' messages as reads of their own (R-4: a press's notice can
-// quote a command's last line). Loaded once a request, while nothing new was read or said (R-9).
+// What this chat holds that a change may have been taken from, for workEarlier and a go-ahead's check: chatEarlier's
+// reads, Sparkie's answers, and the chat's notices and agents' messages (chatOutsideMessage, each by its label, final
+// read C3; R-4: a press's notice can quote a command's last line). Loaded once a request, while nothing new was read or
+// said (R-9).
 const workEarlierSeen = new WeakMap();
 function workChatEarlier(conv, ctx) {
   const key = `${conv.id}|${(conv.reads || []).length}|${(ctx?.reads || []).length}|${(conv.messages || []).length}`, was = ctx && typeof ctx === 'object' ? workEarlierSeen.get(ctx) : null;
   if (was?.key === key) return was.e;
-  const e = chatEarlier(conv, ctx), seen = new Set([...e.reads, ...e.answers].map(x => String(x.text ?? '')));
-  const more = (conv.messages || []).filter(m => (m.notice || (m.role === 'user' && m.from)) && m.content && !seen.has(String(m.content)))
-    .slice(-40).map(m => ({ label: m.notice ? 'a notice in this chat' : 'an agent’s message in this chat', at: m.createdAt, text: String(m.content) }));
-  const out = { reads: [...more, ...e.reads], answers: e.answers };
-  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e: out });
-  return out;
+  const e = chatEarlier(conv, ctx);
+  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e });
+  return e;
 }
 // The owner's words in this chat, as they are and with ~/, $HOME/ and the home taken off every path, so a name typed
 // one way and run another is still theirs (R-10).
@@ -22515,18 +22570,19 @@ async function powerLook(node) {
   const kept = new Set(desired().running.filter(x => x.app).map(keyOf)), inUse = [], apps = [], boxed = powerBoxesIn(node, r.out), found = [];
   for (const [name, protect, ours, app, job, role] of fields(r.out, 'power')) {
     if (!name) continue;
-    if (role === 'main' || isProtected(name, protect)) inUse.push(`${name} (protected)`);
+    if (role === 'main' || isProtected(name, protect)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (protected)`);
     else if (ours === '1') continue;
     // (Spark Console's own box: said and ended by an asked power-off, 21-power-box.mjs; one it doesn't have open is said)
     else if (boxed.known.has(name)) found.push(boxed.known.get(name));
-    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${name} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
-    else if (app === '1' && job === '1') inUse.push(`${name} (a job that hasn’t ended)`);
+    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
+    else if (app === '1' && job === '1') inUse.push(`${nameShown(name, 'workloads') || 'a container'} (a job that hasn’t ended)`);
     else if (app === '1' && kept.has(`${node.id}/${name}`)) apps.push(name);
-    else inUse.push(`${name} (started outside Spark Console)`);
+    else inUse.push(`${nameShown(name, 'workloads') || 'a container'} (started outside Spark Console)`);
   }
   await powerBoxFiles(node, found);
   return { answers: true, inUse, apps, boxes: found };
 }
+// (each container by its name as shown, nameShown: a long one is said, and workloads has it)
 const inUseWords = (node, list) => `${sparkName(node)} is in use: ${list.join(', ')} ${list.length > 1 ? 'run' : 'runs'} there. Spark Console never stops those, so nothing was changed. Stop ${list.length > 1 ? 'them' : 'it'} first, or turn ${sparkName(node)} off by hand.`;
 // The shutdown needs exactly the two commands deploy/power-setup.sh lets the owner's account run without a password.
 const SUDO_CHECK = `sudo -n -l /usr/bin/systemctl poweroff >/dev/null 2>&1 && sudo -n -l /usr/bin/systemctl stop nvidia-persistenced >/dev/null 2>&1 && printf 'sudo\\tok\\n'`;
@@ -22654,7 +22710,9 @@ action({
     // or stuck, and its power is never cut from here.
     for (const l of looks.filter(x => !x.answers)) {
       const w = await freshWall(l.id).catch(e => ({ answering: false, problem: e.message }));
-      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (${w.problem || 'no reading'}), so nothing was changed.`);
+      // (the plug controller's own words are outside text, and a change's answer is no outside read, R26: why is in
+      // fleet_status's wall for that Spark)
+      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (fleet_status’s wall for it says why), so nothing was changed.`);
       if (w.on === false) { l.plugOff = true; continue; }
       if (!(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, but its plug shows ${w.watts ?? '?'} W: it is powered on but not answering, so its power is not cut from here. Look at it there.`);
     }
@@ -22958,7 +23016,7 @@ action({
     // One that draws power but doesn't answer is on (or starting): said now, and nothing is switched.
     for (const [i, id] of ids.entries()) {
       if (answering[i]) continue;
-      const w = await freshWall(id).catch(e => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (${e.message}), so nothing was switched.`); });
+      const w = await freshWall(id).catch(() => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (fleet_status’s wall for it says why), so nothing was switched.`); });
       if (!w.answering) throw new HttpError(409, `${sparkWord(id)}’s plug isn’t answering the plug controller, so it can’t be turned on from here.`);
       if (w.on === true && !(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) {
         throw new HttpError(409, `${sparkWord(id)}’s plug shows ${w.watts ?? '?'} W, so it is powered on but not answering. Nothing was switched: it may still be starting; if it stays like this, look at it there.`);
@@ -24682,7 +24740,10 @@ async function selfSend(viewer, ctx, input) {
   if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, commit, open.head]);
   await selfPush(open.id).catch(async e => {
     if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, open.head, commit]).catch(() => {});
-    throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent: ${maskSecrets(e.message).slice(0, 300)}`);
+    // (git's and GitHub's own words are outside text, and a change's answer is no outside read, R26: they go to Spark
+    // Console's own log, which service_logs reads, and the answer says what happened in code's words)
+    console.error(`The push to ${open.branch} was refused: ${maskSecrets(e.message).slice(0, 600)}`);
+    throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent. git’s own words are in Spark Console’s log (service_logs, console, on Spark 2).`);
   });
   const sent = again ? pushes : pushes + 1;
   const repo = selfGithub().repo, owner = repo.split('/')[0];
@@ -25633,6 +25694,8 @@ function tgRanLine(r) {
   }
   if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
   if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
+  // (write_file's exit 5: written, over another program's edit; where the other text is kept is said in Spark Console)
+  if (r?.wroteOver) return `It was written over another program’s edit made after it was read: the name holds the new text, and what was there is kept beside it. ${more}`;
   if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
   if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
   return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;

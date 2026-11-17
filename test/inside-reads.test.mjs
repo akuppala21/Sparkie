@@ -294,7 +294,10 @@ test('a chat keeps what its turns read from outside (conv.reads), for the turns 
   // (chatEarlier, lifted: the chat's reads and this request's, once each, loaded; Sparkie's earlier answers)
   const src = readFileSync(join(REPO, 'service', 'src', '14-chats.mjs'), 'utf8'), m = /^function chatEarlier\(conv, ctx = \{\}\) \{[\s\S]*?\n\}$/m.exec(src);
   assert.ok(m, 'chatEarlier in 14-chats.mjs');
-  const earlier = new Function(`const dangerReadsLoaded = rs => rs.map(r => ({ label: r.label, at: r.at, text: 'read ' + r.id }));\n${m[0]}\nreturn chatEarlier;`)();
+  // (with the one test for a chat's messages that aren't the owner's typing, chatOutsideMessage, beside it)
+  const outside = /^const chatOutsideMessage = [^\n]*$/m.exec(src)?.[0];
+  assert.ok(outside, 'chatOutsideMessage in 14-chats.mjs');
+  const earlier = new Function(`const dangerReadsLoaded = rs => rs.map(r => ({ label: r.label, at: r.at, text: 'read ' + r.id }));\nconst dangerPlain = (s, n) => String(s ?? '').slice(0, n);\n${outside}\n${m[0]}\nreturn chatEarlier;`)();
   const e = earlier(conv, { reads: [conv.reads[0], { id: 'j_000000000002', label: 'Recall', at: '2026-11-16T00:00:00Z' }] });
   assert.deepEqual(e.reads.map(r => r.text), [`read ${read.id}`, 'read j_000000000002']);
   assert.ok(e.answers.length >= 2 && e.answers.every(a => typeof a.text === 'string' && a.at), JSON.stringify(e.answers).slice(0, 400));
