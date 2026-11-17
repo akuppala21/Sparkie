@@ -1,7 +1,7 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17. Completed hosted evidence below is through `c1a69b4684c9aa11cc084bbdf8fbabe2555372f6`;
-the following recovery-error, source-proof and test-fixture repairs await hosted checks.
+Source audit: 2026-11-17. Completed hosted evidence below is through `7bbed38ff40cd39c4545dd85706b410783520a9d`;
+its 23 selected test files passed. This update records that result without changing runtime code.
 This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
 new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
 
@@ -33,6 +33,13 @@ Hosted evidence is tied to its snapshot:
   the new context-publisher dependency. The next candidate corrects the guide and fixtures without removing any
   assertion. GitHub now installs zsh for the previously skipped backup-command portability case.
 
+- `7bbed38f`, [run `44074814751`](https://github.com/akuppala21/Sparkie/actions/runs/44074814751): **968/968 passed**,
+  no skipped tests, across three runners (126, 275 and 567), covering 23 selected files. All four previous failures
+  passed, as did the now-enabled zsh recovery case, fixed error-text regressions, source/manifest rollback cases and
+  all five new context-boundary cases. The longest test command took about 640 seconds. The optional browser job
+  was deliberately not selected; desktop and phone evidence remains tied to `56c72fa2`, whose UI is unchanged here.
+  This is a focused pass, not the complete release suite, a new release lock or an installed build.
+
 ## Current context-retry candidate
 
 T42 now has a private, one-use owner question after rollback and claim release. Explicit context is carried through
@@ -44,15 +51,15 @@ owner neither resumes an agent task nor interrupts a newer request. Activity lin
 Policy/intent and page checks passed on `56c72fa2`, alongside four of six context-start cases and the browser scenario.
 Both previously failing start cases and all four lifecycle regressions passed on `c1a69b46`. New boundary tests
 cover exhaustion publication, numeric download-first starts, between-rank deadline expiry and named/verified
-page-only setups; these await hosted execution. Wake-first propagation and copy-time expiry still need evidence. Focused checks can include browser flows. T45 and the other gates below remain open.
+page-only setups; all five passed on `7bbed38f`. Wake-first propagation and copy-time expiry still need evidence. Focused checks can include browser flows. T45 and the other gates below remain open.
 
 The general recovery review found stale cleanup authority in `saved-runs.json.prev`. The new patch reads only a valid
 primary, preserves corrupt bytes, reports an owner-visible problem, and keeps read failures from stopping a healthy
 live workflow. Backup and state restore omit both primary and previous record, including residue from older copies.
-Archive/restore and most new service regressions passed on `c1a69b46`; the live-record fixture correction awaits its rerun. This does not add deferred T45 recovery or solve a
+Archive/restore and most new service regressions passed on `c1a69b46`; the corrected live-record case passed on `7bbed38f`. This does not add deferred T45 recovery or solve a
 failed removal of an otherwise valid completed record. The targeted picker names source-fixture dependencies explicitly so service coverage cannot omit them. Fixed reader
 errors prevent corrupt file contents entering logs; the update guard now restores source and its sibling manifest
-together. These repairs and regressions passed independent source review and await hosted checks. Details and
+together. These repairs passed independent source review and their hosted regressions on `7bbed38f`. Details and
 stable findings A-43 through A-45: [findings-4.md](findings-4.md).
 
 ## Decisions carried forward
@@ -131,7 +138,7 @@ claims and live endpoint state in that handoff were not reverified by this audit
 | B4, migration weights | The move card and `deploy/REBUILD.txt` now copy link contents and require link/ownership checks. Prove snapshot shards are readable as the runtime user on the real hub; source instructions alone are insufficient. |
 | B5, first validation request | The CLI retries only its first body-free GET once after a transport failure. Received HTTP errors and mutations are not replayed. The targeted hosted regressions passed on the earlier candidate. |
 | B7, plug names | The script/card now use Spark numbers for mapped plugs and a unique Tapo label for unassigned setup. Controller ids stay internal; hub-rights and identity regressions await hosted results. |
-| C, T42/T45 | Rejected context flags stay protected. The OOM owner-question flow is now implemented with new regressions awaiting hosted execution and the remaining evidence listed above. Durable restoration after a Spark returns (T45) remains unbuilt. Do not close either finding from a similar test name. |
+| C, T42/T45 | Rejected context flags stay protected. The OOM owner-question flow and listed boundary regressions passed their focused checks; remaining evidence is listed above. Durable restoration after a Spark returns (T45) remains unbuilt. Do not close either finding from a similar test name. |
 | C, `/keep`, budgets | `/keep` is explicitly unbuilt in R71. The handoff's 200 GB download/100 GB hub-floor promises still need a tested implementation or owner-approved disposition. Existing generic disk floors are not proof of those numbers. |
 | C, delivery/update retries | Five result callers now reuse bounded in-memory Telegram retries, with hosted checks passing at bfd4fcab. Timer-triggered update recovery now keeps a three-attempt/30-minute budget across restarts; its focused hosted checks passed at e5aabcdc. Neither change promises durable or exactly-once Telegram delivery; direct-pull/manual recovery retains its existing path. |
 | C, root units/helper trust | Report the actual supported boundary. Do not expand the helper or bypass managed access restrictions to finish a demonstration. |

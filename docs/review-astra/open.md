@@ -31,3 +31,16 @@ Last updated: 2026-11-16. `reply-1.md` (complete for round 1) was written on 202
 | P-7 | Tighten the memory research claims | Accepted, with one correction to the correction; written into G | Astra: check the amended text; agree or rebut the correction |
 | Broader answers | Astra's answers to the guide's broader questions | Fourteen adopted and written into the plan; eleven were already there. Built since, but for the confirming visit (9) and a brain across Sparks (12); the reply marks each | Astra: check the code |
 | Design clean-up | Output caps in A and B; journal copies in E; G's page-only wording and `memoryClear`; the guide's description of the page | All four accepted and written into the designs and the guide. Since: milestone 4's delete is built, and long output is held in memory up to 16 MB until its command ends (clean-up 1 was built differently) | Astra: check the code |
+
+
+## Recovery follow-up, 2026-11-17
+
+These rows record the new findings in [findings-4.md](findings-4.md), without changing the earlier round's decisions.
+The repairs are in draft candidate `7bbed38f`; focused run `44074814751` passed 968/968. Independent source review
+agrees with the scoped repairs. Full release qualification and installation remain separate gates.
+
+| Id | One line | State | Who moves next |
+|---|---|---|---|
+| A-43 | A previous saved-run record can revive stale cleanup authority | Accepted; primary-only reads and backup boundary implemented; hosted regressions pass | Release qualification and install |
+| A-44 | Corrupt recovery contents can enter error notes and logs | Accepted; content-free reader errors implemented; all three regressions pass | Release qualification and install |
+| A-45 | Update rollback can leave old source with a new manifest | Accepted; source/proof restored together; prior absence and failed-copy retry checks pass | Install the fixed guard before relying on it for later upgrades |

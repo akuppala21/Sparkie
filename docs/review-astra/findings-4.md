@@ -20,7 +20,7 @@ restore, including old destination residue. Do not restore an older receipt just
 
 **Answer:** accepted and implemented in `c1a69b46`; independent source review agrees. Most invalid-primary service cases
 passed in run `44072357306`; the new live-corruption fixture reached an image-consent gate before receipt capture,
-so that case and its dependent cleanup check still need the corrected fixture run. All assertions are retained.
+so its fixture was corrected with every assertion retained. Both cases then passed on `7bbed38f` in run `44074814751`.
 `workloads-record.test.mjs`, `copy-signins.test.mjs` and existing recovery tests provide the portable checks.
 This does not close failed completion-record removal or T45 deferred recovery after an unreachable Spark returns.
 
@@ -38,7 +38,7 @@ attach the original exception as a cause. Keep the existing missing-file and sha
 
 **Answer:** accepted; current patch and `workloads-record-errors.test.mjs` independently reviewed. The regression
 forces an input-echoing parser and read error, disables pattern masking, and checks actual note/log callers and
-unchanged bytes. Hosted execution is pending; no actual secret disclosure is claimed as observed.
+unchanged bytes. All three error cases passed on `7bbed38f` in run `44074814751`; no actual secret disclosure is claimed as observed.
 
 ## A-45: update rollback restores source without its matching proof
 
@@ -54,7 +54,7 @@ update could restore the old source and lock while retaining the new manifest, t
 and require source/proof agreement before discarding the recovery copy. Keep recovery armed after a failed proof copy.
 
 **Answer:** accepted; the current repair and three additive `update-guard.test.mjs` regressions independently reviewed.
-Hosted execution is pending. The tests cover prior proof, prior absence, failed copy and successful later retry using
+All three cases passed on `7bbed38f` in run `44074814751`. They cover prior proof, prior absence, failed copy and successful later retry using
 the actual guard with a stand-in service manager. Real systemd behavior remains a separate check. The installed guard
 judges the next update, so an older installed guard retains its old behavior until this fixed guard is installed.
 
