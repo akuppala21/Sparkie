@@ -580,6 +580,8 @@ action({
       // (a job's two mounts checked again in the same command, as for a run again)
       const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
       if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
+      // (one Docker didn't answer in time may have started all the same: stopped again, looked at, and said, W-6)
+      if (r.code && unanswered(r)) { await appPutBack(j, node, container); throw new Error(`Docker didn’t answer the start of ${container} in time.`); }
       if (r.code) {
         // docker run makes the container before it starts it: one that never started (its port was taken) holds no data
         // or log, and left there it would stand in the way of the next try under this name. Only that one goes: still
