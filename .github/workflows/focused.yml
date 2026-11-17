@@ -8,6 +8,10 @@ on:
         description: Space-separated test/*.test.mjs files to run
         required: true
         type: string
+      browser:
+        description: Also check desktop and phone browser flows
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -54,5 +58,38 @@ jobs:
         with:
           name: focused-log-${{ github.run_attempt }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/focused.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser:
+    if: inputs.browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Install browser test tools outside the product
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.65.1
+          google-chrome --version
+      - name: Desktop and phone recovery flows
+        env:
+          SPARK_BROWSER_CHANNEL: chrome
+          SPARK_BROWSER_MODULE: ${{ runner.temp }}/browser/node_modules/playwright/index.mjs
+        run: |
+          set -euo pipefail
+          node tools/browser-check.mjs 2>&1 | tee "$RUNNER_TEMP/browser.log"
+      - name: Keep browser output even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-log-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser.log
           if-no-files-found: ignore
           retention-days: 7

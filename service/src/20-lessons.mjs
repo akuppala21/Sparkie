@@ -179,7 +179,7 @@ function passedOverAsk(viewer, ctx, args, m, placed, best) {
   const title = m.repo || m.name, { what, failed } = passedWords(best.passed[0]);
   if (ctx.via === 'watcher' || ctx.via === 'gateway') throw new HttpError(409, `${title}’s only setup here, ${what}, ${failed}, so it isn’t tried again by itself; the owner can ask for it.`);
   return question(viewer, ctx, `${title}’s only setup here, ${what}, ${failed}, with the same image, Sparks and start code. Try it again anyway?`, [
-    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
+    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { ...contextCarry(args, ctx), model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
       ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
     { label: 'No, leave it', call: null }]);
 }

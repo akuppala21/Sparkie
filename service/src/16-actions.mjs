@@ -1,7 +1,7 @@
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
 // Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74
-// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
@@ -527,6 +527,7 @@ function tracesToRequest(name, input, saidText, request = saidText) {
 // when the request left it open ("chosen", like the Spark with room). Shown as "how this was checked" (7.9).
 // The inputs a plan leaves out (PLAN_SKIP): one a line, in name order.
 const PLAN_SKIP = new Set([
+  '__contextRetryToken',
   '__validate',
   'allowBusy',
   'allowStop',
@@ -589,6 +590,34 @@ async function namesModel(input, saidText) {
 // What Sparkie may do straight away (contract 7.2, 8.1): the message asks for this kind of change and doesn't rule it
 // out, and the target is what the words name. Where a start runs: only Sparks the owner named; otherwise Spark Console
 // picks one with room.
+// A numeric context belongs only to this start's own clause. Quotes and pasted specifications are data, and a range,
+// condition or negation is not permission to choose a number. Context shorthand k means 1,024 tokens, never GB.
+function startContext(text) {
+  const s = normQuotes(ownSentences(text)).replace(/"[^"\n]*"|“[^”\n]*”|(?:^|[\s(])'[^'\n]*'/g, ' ');
+  const number = String.raw`[+-]?\d[\w.,]*(?:\s+(?:ki|mi|k|m))?`;
+  const context = String.raw`(?:context(?:[ -]+(?:length|window|tokens?))?|contextTokens|ctx(?:[ -]+size)?)`;
+  const flags = String.raw`(?:--context-length|--max-model-len|--max_seq_len|--ctx-size|-c)`;
+  const mentioned = new RegExp(String.raw`\b${context}\b|(?:^|\s)${flags}(?:\s|=|$)`, 'i').test(s);
+  const patterns = [
+    new RegExp(String.raw`\b${context}\b(?:\s+(?:of|to|at|is))?(?:\s*[:=]\s*|\s+)(?<value>${number})`, 'gi'),
+    new RegExp(String.raw`(?:^|\s)(?<value>${number})(?:[\s-]+tokens?)?(?:\s+of)?[\s-]+\b${context}\b`, 'gi'),
+    new RegExp(String.raw`(?:^|\s)${flags}(?:=|\s+)(?<value>${number})`, 'gi'),
+  ];
+  const values = new Set();
+  let unclear = mentioned && /\b(?:if|unless|whether|maybe|perhaps|provided|assuming|and|or|versus|vs|default|supports?|maximum|minimum|advertised|docs?|documentation|specifications?|specs?|says?|has)\b|\bat\s+(?:most|least)\b/i.test(s);
+  for (const re of patterns) for (const m of s.matchAll(re)) {
+    const raw = m.groups.value.trim().replace(/,$/, ''), parsed = /^([1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)(?:\s*(k|ki))?$/i.exec(raw);
+    const value = parsed ? Number(parsed[1].replace(/,/g, '')) * (parsed[2] ? 1024 : 1) : NaN;
+    const before = s.slice(0, m.index), after = s.slice(m.index + m[0].length);
+    if (!Number.isInteger(value) || value < 1 || value > 2147483647
+      || /\b(?:not|no|never|without|avoid|except|don't|do\s+not)(?:\s+[a-z]+){0,3}\s*$/i.test(before)
+      || /(?:\d[\w.,]*\s*)(?:or|and|to|\/|[-–—])\s*$/i.test(before)
+      || /^\s*(?:or|and|to|\/|[-–—])\s*\d/i.test(after)) unclear = true;
+    else values.add(value);
+  }
+  return { mentioned, unclear: unclear || (mentioned && values.size !== 1), tokens: !unclear && values.size === 1 ? [...values][0] : null };
+}
+
 async function sparkieCheck(name, input, ctx) {
   const intent = ctx.intent || { asked: [], negated: [], mixed: [] }, kinds = ACTION_KIND[name] || [];
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
@@ -596,7 +625,11 @@ async function sparkieCheck(name, input, ctx) {
   if (name === 'start_model') {
     // Each recognized request owns its model and destinations. Resolve that binding before placement, including
     // destinations before the verb. Unclear mixed requests keep a button, with only that clause's destinations.
-    const p = sparkPlaces(ctx.request ?? saidText, ['start']);
+    // A selected quoted setting remains unresolved after quoted data is removed. Mark it before clause reading
+    // removes longer quotes; the marker carries no number and stays bound to the model's own start clause.
+    const request = String(ctx.request ?? saidText).replace(/\b(with|using|at)\s+("[^"\n]*"|“[^”\n]*”|`[^`\n]*`|'[^'\n]*')/gi,
+      (whole, lead, quote) => /\b(?:context(?:Tokens)?|ctx)\b|--(?:context-length|max-model-len|max_seq_len|ctx-size)|(?:^|\s)-c(?:\s|=|$)/i.test(quote) ? `${lead} maybe context` : whole);
+    const p = sparkPlaces(request, ['start']);
     const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
     const modelWords = [...tokensOf(String(out.model || ''))], namesIt = c => modelWords.length > 0 && modelWords.every(t => tokensOf(c.text).has(t) || squash(c.text).includes(t.replace(/\./g, '')));
     const startClauses = p.clauses.filter(c => c.kind === 'start' && namesIt(c));
@@ -620,7 +653,14 @@ async function sparkieCheck(name, input, ctx) {
       // No unique request owns this pair. Keep the unresolved choice, without proposing an invented pair.
       delete out.sparks; delete out.spark;
     }
-    return { clear: asked && settled && await namesModel(out, saidText), input: out };
+    const context = startContext(own ? own.text : request);
+    // A number in another model's clause, or one invented by the brain, is only a proposal. A unique owner's number
+    // replaces even an omitted or mismatched tool argument before the first launch.
+    if (own && !context.unclear && context.tokens !== null) out.contextTokens = context.tokens;
+    const contextClear = own && !context.unclear && (context.tokens !== null || out.contextTokens === undefined);
+    return { clear: asked && settled && contextClear && await namesModel(out, saidText), input: out,
+      ...(!contextClear && context.mentioned && out.contextTokens === undefined
+        ? { clarification: 'Which context length should this model use? Ask again with one number of context tokens for that model. Nothing was started.' } : {}) };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).
   if (name === 'remember' || name === 'forget_memory') return { clear: memoryClear(name, out, ctx, asked), input: out };
@@ -797,6 +837,8 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;
+    // An ambiguous owner constraint cannot become an executable Start with an unstated default context.
+    if (check.clarification) return { outcome: 'question', question: check.clarification, choices: [], note: check.clarification };
     const was = workflowFor(name, input), wst = was && workflowStatus(was.id);
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));

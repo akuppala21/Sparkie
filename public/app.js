@@ -1466,7 +1466,20 @@ const noticeRow = n => h('div', { class: 'notice-row' }, icon('alert'),
     : /paused/i.test(n.text) && owner() ? [' ', h('button', { class: 'link-btn', type: 'button', onclick: openAgents }, 'Open Agents')] : null),
   n.workflows ? null : h('span', { class: 'muted' }, fmt.ago(Date.parse(n.at))));
 
-function jobRow(j, { onOpen, open = false } = {}) {
+// The failed operation stays failed. This link opens the owner's separate retry question; it approves nothing.
+function jobQuestionLink(j, onOpen) {
+  const chat = j.contextQuestion?.chat;
+  if (!owner() || typeof chat !== 'string' || !/^sc_[0-9a-f]{16}$/.test(chat)) return null;
+  const path = `sparkie/${chat}`;
+  return h('a', { class: 'btn ghost sm', href: `#/${path}`, onclick: e => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onOpen?.();
+    go(path);
+  } }, 'Review retry');
+}
+
+function jobRow(j, { onOpen, onQuestion, open = false } = {}) {
   const done = TERMINAL.has(j.status), failed = j.status === 'failed';
   const first = String(j.error || '').split('\n')[0];
   // Where it ran, unless the title already says ("Start X on Spark 3").
@@ -1480,7 +1493,7 @@ function jobRow(j, { onOpen, open = false } = {}) {
         (sub => sub ? h('div', { class: 'row-sub' }, sub) : null)([whoKey(j) === 'you' ? null : whoName(whoKey(j)), where, j.connection || first || (done ? (num(j.result?.found) ? `${plural(j.result.found, 'setup')} found` : null) : j.step || j.message)].filter(Boolean).join(' · ')))];
   const side = h('div', { class: 'row-side' },
       h('span', { class: 'muted num hide-sm' }, fmt.when(j.createdAt)),
-      j.status === 'interrupted' ? pill('Cut off', 'warn') : pill(j.connection ? 'Checking' : failed ? 'Failed' : done ? (j.status === 'cancelled' ? 'Cancelled' : j.status === 'partial' ? 'Partial' : 'Done') : 'Running', failed ? 'bad' : done ? 'good' : 'info'));
+      j.status === 'interrupted' ? pill('Cut off', 'warn') : pill(j.connection ? 'Checking' : failed ? 'Failed' : done ? (j.status === 'cancelled' ? 'Cancelled' : j.status === 'partial' ? 'Partial' : 'Done') : 'Running', failed ? 'bad' : done ? 'good' : 'info'), jobQuestionLink(j, onQuestion));
   if (onOpen) {
     const log = (j.log || []).join('\n');
     // What was asked for, in the words used (Auto-restart says what it saw instead).
@@ -1584,7 +1597,7 @@ async function openActivity(focusId) {
     const was = new Map(logs().map(([id, pre]) => [id, pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24 ? null : pre.scrollTop]));
     // Things Spark Console wants you to know (agents paused by themselves, an operation a restart cut off), last 7 days.
     const notes = who === 'all' ? [...heldRows(held, load), ...(state.notices || []).filter(n => !/should be running but isn’t/.test(n.text)).map(noticeRow)] : [];
-    redraw(list, ...notes, ...(jobs.length ? jobs.map(j => jobRow(j, { open: opened.has(j.id), onOpen: () => { if (opened.has(j.id)) opened.delete(j.id); else opened.add(j.id); draw(); } }))
+    redraw(list, ...notes, ...(jobs.length ? jobs.map(j => jobRow(j, { open: opened.has(j.id), onQuestion: () => activity.close(), onOpen: () => { if (opened.has(j.id)) opened.delete(j.id); else opened.add(j.id); draw(); } }))
       : [state.jobsError ? empty('alert', 'Couldn’t load Activity', state.jobsError)
         : all.length ? empty('activity', who === 'you' ? 'Nothing started by you lately' : `Nothing from ${whoName(who)} lately`, null)
           : empty('activity', 'Nothing yet', 'Models started and stopped, downloads and setup searches show up here, with their progress and logs.')]));
@@ -1597,7 +1610,7 @@ async function openActivity(focusId) {
     if (list.isConnected) draw();
   };
   const fold = owner() ? workflowsFold() : null;
-  drawer({
+  const activity = drawer({
     title: 'Activity',
     body: fold ? h('div', {}, list, fold) : list,
     foot: 'Select one to see its log. Only recent work is kept.',

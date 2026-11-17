@@ -1,5 +1,5 @@
 /* ───────── model library and deployments ───────── */
-// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs
+// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs, context-start.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 const INVENTORY_SCRIPT = `dir=${MODELS}
@@ -197,7 +197,7 @@ printf 'tsip\\t%s\\n' "$(tailscale ip -4 2>/dev/null | head -1)"`;
 
 // `probes` shares one GPU check per Spark and image across many plans (the deploy picker plans every model at once).
 // How a model runs, when a deploy names a setup (from Recipes) or a verified run: engine, image, flags and env.
-const withHow = (model, how) => (model && how ? { ...model, manifest: { ...(model.manifest || {}), engine: how.engine, image: how.image, args: how.args, env: how.env, cluster: { env: how.env }, ...(how.file ? { file: how.file } : {}) } } : model);
+const withHow = (model, how) => (model && how?.contextOnly ? { ...model, manifest: { ...(model.manifest || {}), args: how.args } } : model && how ? { ...model, manifest: { ...(model.manifest || {}), engine: how.engine, image: how.image, args: how.args, env: how.env, cluster: { env: how.env }, ...(how.file ? { file: how.file } : {}) } } : model);
 async function plan(modelName, nodeId, viewer, known = null, probes = null, how = null) {
   if (!NAME_RE.test(modelName || '')) throw new HttpError(400, 'Unknown model.');
   const node = nodeById(nodeId);

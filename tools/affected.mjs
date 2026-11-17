@@ -50,7 +50,7 @@ export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'interne
 export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
 // Direct-import tests do not execute server.mjs, so its coverage map cannot discover this edge.
-export const DIRECT_TESTS = { '13-ask.mjs': ['test/brain-ask.test.mjs'] };
+export const DIRECT_TESTS = { '17-context.mjs': ['test/context-policy.test.mjs'], '13-ask.mjs': ['test/brain-ask.test.mjs'] };
 const MOST = 0.5;          // a function run by more than this share of the test files: everything
 const MAX_PARTS = 8;       // more parts changed than this: everything
 const HISTORY = 500;       // how far back along base a map is looked for

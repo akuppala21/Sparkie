@@ -1,7 +1,7 @@
 /* ───────── Sparkie's chats ───────── */
 // Area: brain
 // Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46
-// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs, agent-words.test.mjs
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs, agent-words.test.mjs, context-start.test.mjs
 // Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 // Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
@@ -158,16 +158,17 @@ async function runChoice(viewer, conv, id, by) {
     if (x.id === id) x.state = 'picked';
     else if (x.group === c.group) x.state = 'gone';
   }
+  const contextDecision = contextDecisionFor(c.group);
   let asked = null, out, content;
   if (!c.action) {
     content = 'Okay, left as it is.';
     // (a No ends the carrying on of the request it was asked in: review after the loop, Later 3)
-    endTask(conv);
+    if (!contextDecision || !conv.task || conv.task.id === contextDecision.originTask) endTask(conv);
   } else {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
     // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
     // the page.
-    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false, ...(conv.task?.id ? { task: conv.task.id } : {}),
+    const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false, ...(conv.task?.id && (!contextDecision || conv.task.id === contextDecision.originTask) ? { task: conv.task.id } : {}),
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
       // (the button pressed: run's ladder keeps what its ask showed under it, 21-ladder.mjs)
       pressed: String(id),
@@ -180,17 +181,19 @@ async function runChoice(viewer, conv, id, by) {
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     // (what it ran answers within the press's time, or the press says it is still running and its end is posted here
     // when it comes, and told on Telegram for a press made there: pressLate. A root command may run 30 minutes.)
+    contextApprove(c, viewer, ctx);
     const settled = runAction(c.action, viewer, c.args, ctx).then(v => ({ v }), e => ({ e }));
     const first = await Promise.race([settled, sleep(CHAT_PRESS_MS).then(() => null)]);
     if (first) ({ out, content } = pressSaid(first, c, conv, ctx, by));
     else {
       out = { outcome: 'running' };
       content = `${c.label}: it is still running. Its result will be posted in this chat when it ends.`;
-      settled.then(x => pressLate(x, c, conv, ctx, by, () => asked));
+      settled.then(x => pressLate(x, c, conv, ctx, by, () => asked, contextDecision));
     }
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
+  contextChoiceResult(contextDecision, c.group, asked, out, !c.action);
   const message = pressPost(conv, content, asked);
   // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
   // agent's press, nor one of another request's button. One still running wakes it when it ends: pressLate)
@@ -232,9 +235,10 @@ function pressPost(conv, content, asked) {
 // A press still running at the press's time, ended: its result posted in its chat from its own fields (pressRan), and
 // told in the paired chat for a press made there (tgRanLine); the parked task it answered woken. (The net says its own
 // outcome in the chat already when it runs long, netTell: not said twice.) Never throws.
-function pressLate(x, c, conv, ctx, by, askedNow) {
+function pressLate(x, c, conv, ctx, by, askedNow, contextDecision = null) {
   try {
     const { out, content } = pressSaid(x, c, conv, ctx, by), asked = askedNow();
+    contextChoiceResult(contextDecision, c.group, asked, out, false);
     if (!(out?.net && out.note && conv.messages.slice(-8).some(m => m.notice && m.content === maskSecrets(out.note)))) pressPost(conv, content, asked);
     if (by.via === 'telegram') {
       const line = out.outcome === 'error' ? (/paused/i.test(out.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.')
@@ -325,7 +329,7 @@ function postResult(job) {
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
   // (a failure already on record as a lesson says so, from the lesson's typed fields: 20-lessons.mjs)
   const seen = job.status === 'failed' ? lessonSeenBefore(job) : null;
-  conv.messages.push({ role: 'assistant', content: `${content}${seen ? `\n${seen}` : ''}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status, ...(Array.isArray(job.choices) && job.choices.length ? { choices: job.choices } : {}) });
+  conv.messages.push({ role: 'assistant', content: `${content}${seen ? `\n${seen}` : ''}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status, ...(!job.contextQuestion && Array.isArray(job.choices) && job.choices.length ? { choices: job.choices } : {}) });
   conv.updatedAt = new Date().toISOString();
   saveChats();
   // Work started from Telegram reports there too, as a fixed line (20-tell.mjs).
@@ -355,7 +359,7 @@ function wakeWork(id) {
     const conv = chatData().conversations.find(c => c.id === id);
     // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
     // (or a carry-on turn that couldn't start is tried again: taskRetry, 14-tasks.mjs)
-    if (!conv?.task || conv.task.parked || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry || conv.task.answered || conv.task.retries)) return;
+    if (contextPark(conv) || !conv?.task || conv.task.parked || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry || conv.task.answered || conv.task.retries)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -649,6 +653,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
     taskPark(conv.task, asked);
   }
+  contextPark(conv); // A fast failed start may have posted its question before keepTask made this task.
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
   // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
   // posted while it answered, which finish() then wakes it for): the request is done, and its record goes, so neither

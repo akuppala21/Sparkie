@@ -29,7 +29,7 @@ Use static registrations checked at build time. A new capability brings its acti
 1. Pure feature rules: direct imports, explicit inputs, no fleet, no timer sleeps or network. Test the actual module, not a copied function extracted from a source string.
 2. Interface checks: schemas, authorization, cancellation, ownership receipts and state migration. Exercise the specific edges a change affects.
 3. Targeted integration: a small stand-in fleet only for changed orchestration behavior; relevant browser flows for UI/API changes.
-4. Release qualification: complete strict portable suite and browser checks on the exact frozen release, plus relevant real brain/hardware checks. A partial pass cannot label the release fully tested.
+4. Release qualification: complete strict portable suite and browser checks on the exact frozen release, plus relevant real brain/hardware checks. A partial pass cannot label the release fully tested. The manual focused GitHub workflow can optionally run the existing desktop/phone browser scenarios for UI changes.
 
 Affected-test selection should combine declared module/interface dependencies with measured coverage. Coverage alone cannot prove a new function is exercised. Missing or changed shared boundaries conservatively widen the checks. The current function map covers generated server.mjs only; direct imports must be included before relying on that map to select their tests.
 
@@ -43,7 +43,12 @@ behavior, power switching and cable topology cannot be qualified by a CPU mock r
 
 ## Incremental migration
 
-The first seam now exists: service/src/13-ask.mjs exposes its dependency-free request/response helpers to test/brain-ask.test.mjs. Existing declarations and integration tests remain. tools/affected.mjs explicitly associates those direct tests with this part, because generated-server coverage cannot discover that import. This is a test seam, not yet complete encapsulation.
+The first seam now exists: service/src/13-ask.mjs exposes its dependency-free request/response helpers to
+test/brain-ask.test.mjs. Existing declarations and integration tests remain. tools/affected.mjs explicitly
+associates those direct tests with this part, because generated-server coverage cannot discover that import. The
+same pattern now covers the context policy in service/src/17-context.mjs and test/context-policy.test.mjs:
+values and retry limits have explicit inputs, while approval and execution stay in the existing adapters. These
+are test seams, not yet complete encapsulation.
 
 Then isolate one read-only computation (fabric parsing/pair classification) or pure wake-selection decision behind explicit inputs and outputs. Keep SSH, storage writes, claims, timers and mutations in their current adapter while proving equivalence.
 

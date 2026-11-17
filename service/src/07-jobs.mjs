@@ -1,7 +1,7 @@
 /* ───────── jobs ───────── */
 // Area: ground
 // Rules: R7, R9, R13, R14, R15, R16, R21
-// Tests: change.test.mjs, state.test.mjs, pause.test.mjs, workloads-receipts.test.mjs
+// Tests: change.test.mjs, state.test.mjs, pause.test.mjs, workloads-receipts.test.mjs, context-start.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 const jobs = new Map();
@@ -87,6 +87,7 @@ function runJob(job, fn) {
   }).finally(() => {
     job.finishedAt = new Date().toISOString();
     job.release?.();
+    try { contextPublish(job); } catch (e) { note(job, `The context question couldn’t be shown: ${e.message}`); }
     // What agents see is fresh after anything changed, and the operation goes on the fleet's record.
     agentCache.clear();
     recordWorkflowRun(job);
@@ -205,6 +206,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     const measured = await memNow(node);
     const share = [...memoryShare(model, [measured ? { node: nodeId, steps: [], memory: { ...p.memory, ...measured } } : { ...p, node: nodeId }], keep), ...fixFlags(model, fix)];
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
+    contextCheck(job); // Copies, image pulls and fresh planning may have used the remaining retry time.
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
     if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);

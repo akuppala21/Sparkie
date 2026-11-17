@@ -27,6 +27,10 @@ try {
     const page = await context.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     let posts = 0, reads = 0, choices = 0, jobPolls = 0, opensAt = null;
+    let retryVisible = false, retryMutations = 0;
+    const retryChat = 'sc_1234567890abcdef', failedOp = '123456abcdef';
+    const retryJob = () => ({ id: failedOp, type: 'deploy', node: 'spark3', model: 'Example', status: 'failed',
+      error: 'The model ran out of memory.', createdAt: now(), log: [], contextQuestion: { chat: retryChat, choice: 'context-group' } });
     const id = 'sc_browser', op = '012345abcdef', now = () => new Date().toISOString();
     const job = () => ({ id: op, type: 'run', node: 'spark3', conv: id, status: jobPolls >= 2 ? 'completed' : 'running', step: 'Checking', createdAt: now(), log: [] });
     const saved = () => {
@@ -46,6 +50,7 @@ try {
     await page.route('**/console/api/**', async route => {
       const path = new URL(route.request().url()).pathname.replace('/console/api/', '');
       const method = route.request().method();
+      if (retryVisible && method !== 'GET') retryMutations++;
       const send = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
       if (path === 'bootstrap') return send({ viewer: { role: 'owner', login: 'owner@test' }, userName: 'Test Owner', hubId: 'spark1', computeIds: ['spark2', 'spark3', 'spark4'], nodes, passkeys: 1 });
       if (path === 'main') return send({ configured: true, healthy: true, title: 'Test brain', node: 'spark1' });
@@ -53,7 +58,10 @@ try {
       if (path === 'connections') return send({ portalUrl: 'https://custom.example/', nodes: [] });
       if (path === 'fabric') return send({ sparks: [], pairs: [] });
       if (path === 'models') return send({ library: [], sparks: [] });
-      if (path === 'jobs') return send({ jobs: choices ? [job()] : [], notices: [] });
+      if (path === `chats/${retryChat}`) return send({ id: retryChat, title: 'Start Example', replying: false,
+        messages: [{ role: 'assistant', content: 'Try again with 32,768 tokens?', createdAt: now(),
+          choices: [{ id: 'retry-choice', label: 'Try 32,768 tokens', state: 'open', group: 'context-group' }] }] });
+      if (path === 'jobs') return send({ jobs: [...(choices ? [job()] : []), ...(retryVisible ? [retryJob()] : [])], notices: [] });
       if (path === `jobs/${op}`) { jobPolls++; return jobPolls === 1 ? send({ error: 'temporary connection loss' }, 502) : send(job()); }
       if (path === 'chats' && method === 'POST') return send(saved(), 201);
       if (path === 'chats') return send({ chats: posts ? [{ id, title: 'Browser check', messageCount: 2, updatedAt: now() }] : [] });
@@ -94,6 +102,25 @@ try {
     assert.ok(jobPolls >= 2, 'job polling recovered from the interrupted request');
     assert.equal(await page.getByText(/A command on Spark 3 failed/).count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow');
+    assert.deepEqual(errors, []);
+    // T42: the failed operation's Activity link opens the owner's question without submitting its approval.
+    retryVisible = true;
+    await page.goto(base);
+    await page.getByRole('heading', { name: 'Home', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Activity', exact: true }).click();
+    const activity = page.getByRole('dialog', { name: 'Activity', exact: true });
+    await activity.getByRole('link', { name: 'Review retry', exact: true }).waitFor();
+    assert.match(await activity.locator(`[data-id="${failedOp}"]`).innerText(), /Failed/);
+    assert.match(await activity.locator(`[data-id="${failedOp}"]`).innerText(), /ran out of memory/);
+    await activity.getByRole('link', { name: 'Review retry', exact: true }).click();
+    await page.getByText('Try again with 32,768 tokens?', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Try 32,768 tokens', exact: true }).waitFor();
+    assert.equal(await activity.count(), 0, 'the Activity drawer closes when opening the question');
+    assert.equal(new URL(page.url()).hash, `#/sparkie/${retryChat}`);
+    assert.equal(retryMutations, 0, 'opening the question approves nothing and starts no work');
+    assert.equal(posts, 1);
+    assert.equal(choices, 1);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'retry question fits the viewport');
     assert.deepEqual(errors, []);
     await context.close();
     console.log(`Browser smoke passed: ${viewport.width}x${viewport.height}`);

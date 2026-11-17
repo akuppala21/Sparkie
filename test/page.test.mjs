@@ -319,3 +319,48 @@ test('only an explicit healthy power-off record makes an unreachable Spark peace
   assert.equal(condition({ reachable: false, state: 'offline', asleep: true, poweredOff: { at: 'now' } }), 'asleep');
   assert.equal(condition({ reachable: false, state: 'offline', asleep: true, poweredOff: { problem: 'shutdown failed' } }), 'offline');
 });
+
+// T42 (part): a failed start leads to its owner question without approving a retry or hiding the failure.
+test('a context retry link opens its owner chat and leaves the failed operation visible', () => {
+  const h = (tag, attrs, ...kids) => ({ tag, attrs, kids: kids.flat(Infinity).filter(x => x != null && x !== false) });
+  let isOwner = true, opened = 0, prevented = 0;
+  const visits = [];
+  const context = {
+    h, owner: () => isOwner, go: path => visits.push(path),
+    TERMINAL: new Set(['completed', 'failed', 'cancelled', 'partial', 'interrupted']),
+    jobLabel: () => 'Start a model', nodeName: id => id, jobTarget: () => '',
+    whoKey: () => 'you', whoName: () => 'You', num: Number.isFinite,
+    fmt: { when: () => 'Now' }, icon: name => h('i', {}, name),
+    pill: text => h('span', {}, text),
+  };
+  const { jobRow, jobQuestionLink } = vm.runInNewContext(
+    `${uiFunction('jobQuestionLink')}\n${uiFunction('jobRow')}\n({ jobRow, jobQuestionLink })`, context);
+  const job = { id: '0123456789ab', type: 'deploy', status: 'failed', error: 'The model ran out of memory.',
+    contextQuestion: { chat: 'sc_0123456789abcdef', choice: 'public-group' } };
+  const find = (el, tag) => typeof el === 'string' ? [] : [...(el.tag === tag ? [el] : []), ...el.kids.flatMap(k => find(k, tag))];
+  for (const options of [{}, { onOpen: () => {}, open: false }, { onOpen: () => {}, open: true }]) {
+    const row = jobRow(job, { ...options, onQuestion: () => opened++ });
+    assert.match(textOf(row), /Failed/);
+    assert.match(textOf(row), /The model ran out of memory/);
+    assert.doesNotMatch(textOf(row), /Done|Started/);
+    const [link] = find(row, 'a');
+    assert.equal(find(row, 'a').length, 1);
+    assert.equal(link.attrs.href, '#/sparkie/sc_0123456789abcdef');
+    assert.equal(textOf(link), 'Review retry');
+    assert.ok(find(row, 'button').every(button => !find(button, 'a').length), 'the link is outside the log button');
+    assert.equal(visits.length, opened, 'rendering never navigates or approves');
+    link.attrs.onclick({ button: 0, preventDefault: () => prevented++ });
+  }
+  assert.equal(opened, 3, 'Activity closes before opening the question');
+  assert.equal(prevented, 3);
+  assert.deepEqual(visits, Array(3).fill('sparkie/sc_0123456789abcdef'));
+  assert.equal(job.status, 'failed');
+  jobQuestionLink(job).attrs.onclick({ button: 0, ctrlKey: true, preventDefault: () => assert.fail('keep native new-tab navigation') });
+  assert.equal(visits.length, 3);
+  for (const chat of [undefined, '', '../outside', 'https://example.com', 'sc_<script>', {}]) {
+    assert.equal(jobQuestionLink({ contextQuestion: { chat } }), null);
+  }
+  assert.equal(jobQuestionLink({}), null);
+  isOwner = false;
+  assert.equal(jobQuestionLink(job), null, 'the owner decision is not offered in another role');
+});

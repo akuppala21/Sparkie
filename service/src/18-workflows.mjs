@@ -19,7 +19,10 @@
 // A version that's tested but not yet validated can be run by the owner on purpose, once, as its validation run; agents
 // can't run it. An untested version doesn't run at all.
 const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('worker.py', import.meta.url)), 'utf8'); } catch { return ''; } })();
-const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
+const CONTEXT_CODE = () => [CONTEXT_FLAGS, contextNumber, contextValue, contextOverride, contextPolicy, contextChange, contextAttempt, contextFreeze,
+  contextFingerprint, contextPrune, contextCarry, contextConsume, contextPrepare, contextBind, contextPark, contextPublish, contextCheck, contextDecisionFor, contextApprove, contextChoiceResult,
+  contextAlready, contextReplayHow, contextPageStart, withHow, engineOf, imageOf, question, sparkieMessageChoices, taskPark, taskAnswered, endTask, taskEnded, runChoice, pressLate, pressSaid, pressPost, keepTask, wakeWork, startContext, sparkieCheck];
+const START_CODE = () => [...CONTEXT_CODE(), startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
@@ -102,14 +105,14 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
     changes: 'Nothing on the Sparks. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps the setups it finds (each with its command, image and measured speed) in Recipes. A repo that isn’t in Recipes yet is added first.',
     takes: 'Under a minute.',
     failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next look tries it again.' }],
-    code: () => [digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage,
+    code: () => [runJob, contextPublish, digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage,
       cardSetups, cardText, addModel, versionOf, hfFixture, namedInFull] },
   { id: 'restart_model', action: 'restart_model', title: 'Restart a model as it was',
     when: 'One of Spark Console’s models on one Spark stopped or crashed, and the owner wants it back exactly as it was.',
@@ -118,7 +121,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
+    code: () => [contextPublish, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.

@@ -1,5 +1,5 @@
 /* ───────── one model across two linked Sparks ───────── */
-// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs
+// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs, context-start.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // NVIDIA's two-Spark method (build.nvidia.com/spark/vllm-cluster, advanced): native vLLM multi-node, one tensor-parallel
@@ -467,6 +467,7 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting each part use ${Math.round(Number(share[1]) * 100)}% of its Spark’s memory (what’s free on both)`);
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
+    contextCheck(job); // Each rank must still be inside the approved retry's shared deadline.
     const r = await run(nodeById(m.node), clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix }), { timeout: 120000 });
     // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
     if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);

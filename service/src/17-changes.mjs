@@ -1,7 +1,7 @@
 /* ───────── actions that change things: say it, and it's done (checked inside) ───────── */
 // Area: core
 // Rules: R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38
-// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs
+// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs, context-start.test.mjs
 // Owns: agent-settings.json (writers: setAgentSettings)
 // Timers: none        Wakes: none
 // Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is
@@ -95,7 +95,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
   // In one of the owner's own chats it is also asked in the paired Telegram chat (20-tg-approve.mjs, A10a).
-  if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
+  if (ownerOnly && ctx.conv && !danger && !ctx.noTelegramQuestion) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map((c, i) => choices[i]?.brain || c.label),
@@ -159,7 +159,7 @@ function changeLabel(name, input, brain = false) {
   if (name === 'run' && input.on === 'box') return `Open the box (a throw-away container on a compute Spark: no network, nothing of the Spark but its own folder) for: ${maskSecrets(String(input.command ?? ''))}`;
   // (a button shows all it would do: never cut, keys masked)
   if (name === 'save_file') return `Save ${String(input.path || 'a file')} in the shared folder${where} (${sizeWords(Buffer.byteLength(String(input.text ?? '')))})`;
-  return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}`;
+  return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}${name === 'start_model' && input.contextTokens !== undefined ? ` with exactly ${Number(input.contextTokens).toLocaleString('en-US')} context tokens` : ''}`;
 }
 // A change Sparkie suggests but wasn't clearly asked for: one button, which runs exactly this when pressed.
 // because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
@@ -400,13 +400,14 @@ function fixFlags(model, fix = {}) {
 // up to 3 attempts in all and not after 30 minutes. Then whatever was stopped to make room is put back.
 const FIX_WINDOW_MS = Number(process.env.SPARK_CONSOLE_FIX_WINDOW_MS || 30 * 60000);
 async function startWithFixes(job, m, placed, how, attempt) {
-  const began = Date.now(), tried = [];
+  const began = Date.now(), tried = [], context = contextStarts.get(job);
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which Spark Console no longer does by itself (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
-  else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
+  if (!context?.policy && how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which Spark Console no longer does by itself (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  else if (!context?.policy && how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
+      if (context) context.budget = contextAttempt(context.budget, Date.now(), Math.min(FIX_WINDOW_MS, 1800000));
       await attempt(how, fix);
       if (tried.length) {
         const gaveUp = [fix.contextCap ? `a context of ${fix.contextCap.toLocaleString('en-US')} tokens` : null,
@@ -421,13 +422,25 @@ async function startWithFixes(job, m, placed, how, attempt) {
       if (job.cancelled) { await putBack(job, m, placed); throw Object.assign(new Error(`Cancelled by ${job.cancelled}. ${job.cleanUp || 'What it had changed was put back.'}`), { cancelled: true }); }
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
-      const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      let next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      if (next && known.id === 'out-of-memory' && context?.policy) {
+        const cap = context.policy.tokens > 32768 ? 32768 : context.policy.tokens > CONTEXT_FLOOR ? CONTEXT_FLOOR : null;
+        next = cap ? { fix: { ...fix, contextCap: cap } } : null;
+      }
+      const change = next && contextChange(context?.policy, next.fix);
+      if (change) {
+        await putBack(job, m, placed);
+        if (change.tokens) context.proposed = change.tokens;
+        throw new Error(withOwed(job, change.unsupported ? 'The engine rejected the requested context setting. It was not removed.'
+          : `It ran out of memory at ${context.policy.tokens.toLocaleString('en-US')} context tokens. It was not retried with a shorter context.`));
+      }
       // (the context first cut to fit: the free memory then goes with the run that works, recordVerified's contextCut)
       if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
         if (!known && n > 1) throw new Error(withOwed(job, `It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`));
         if (!known) throw Object.assign(e, { message: withOwed(job, e.message) });
+        if (known.id === 'out-of-memory' && context?.policy) throw new Error(withOwed(job, `It ran out of memory at ${context.policy.tokens.toLocaleString('en-US')} context tokens. It was not retried with a shorter context.\n${e.message}`));
         throw new Error(withOwed(job, `It didn’t start: ${known.title}${n > 1 ? ` (${n} attempts)` : ''}. ${known.advice}\n${e.message}`));
       }
       // What the failed attempt said (its first line), kept: the next attempt replaces its containers and their logs.
@@ -438,11 +451,12 @@ async function startWithFixes(job, m, placed, how, attempt) {
     }
   }
 }
-function launch(viewer, ctx, m, placed, how) {
+function launch(viewer, ctx, m, placed, how, prepared = null) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
     model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
+  if (prepared) contextBind(job, prepared);
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
   return job;
 }
@@ -586,6 +600,9 @@ function runsWhereNamed(inv, name, spark, sparks) {
 // POST /actions call, or the label of a button they pressed. An agent's direct call carries no words, so it is asked.
 const namedInFull = (ctx, repo) => Boolean(repo) && String(ctx.said || ctx.request || '').toLowerCase().includes(String(repo).toLowerCase());
 async function startModel(args, viewer, ctx) {
+  if (args.__contextRetryToken) ({ args, ctx } = contextConsume(args, viewer, ctx));
+  ctx = { ...ctx, contextOrigin: ctx.contextOrigin || ctx.conv || null, contextOriginTask: ctx.contextOriginTask || ctx.task || null };
+  if (args.contextTokens !== undefined) { try { contextNumber(args.contextTokens); } catch (e) { throw new HttpError(400, e.message); } }
   if (args.spark && args.sparks) throw new HttpError(400, 'Give spark or sparks, not both.');
   // A model parked when Spark Console powered its Spark off (21-power.mjs) starts where it ran, unless another place was
   // named; a Spark Spark Console powered off is turned on first, in the same operation (contract 9.22).
@@ -596,10 +613,14 @@ async function startModel(args, viewer, ctx) {
   const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
   mustUse(viewer);
+  if (ctx.contextRetry) {
+    const current = await inventory(null), own = current.library.find(m => m.name === ctx.contextRetry.args.model);
+    if (!own || contextFingerprint(own, contextReplayHow(own, current, ctx.contextRetry, viewer, ctx)) !== ctx.contextRetry.fingerprint) throw new HttpError(409, 'The model or setup changed or cannot be checked. Ask for a new start; nothing was started.');
+  }
   if (!ctx.poweredOn) {
     // (a Spark being turned on for this very model: that operation, not a second one)
     const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
-    if (early) return alreadyStarting(early, model, viewer, ctx);
+    if (early) { contextAlready(early, args); return alreadyStarting(early, model, viewer, ctx); }
     const first = powerFirst(args, viewer, ctx);
     if (first) return first;
   }
@@ -619,16 +640,18 @@ async function startModel(args, viewer, ctx) {
     if (first) return first;
   }
   if (found.choices) {
-    return question(viewer, ctx, `“${model}” could be several models. Which one?`, found.choices.map(c => ({ label: c.label, call: { action: 'start_model', args: { model: c.model, ...(spark ? { spark } : {}), ...(sparks ? { sparks } : {}) } } })));
+    return question(viewer, ctx, `“${model}” could be several models. Which one?`, found.choices.map(c => ({ label: c.label, call: { action: 'start_model', args: { ...contextCarry(args, ctx), model: c.model, ...(spark ? { spark } : {}), ...(sparks ? { sparks } : {}) } } })));
   }
   if (found.lib) {
-    const m = found.lib, running = inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => ({ spark: sp.id, endpoint: d.endpoint })));
+    const m = found.lib;
+    if (ctx.contextRetry?.page) return contextPageStart(m, inv, args, viewer, ctx);
+    const running = inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => ({ spark: sp.id, endpoint: d.endpoint })));
     const going = startingNow([m.name, m.repo], spark ? [spark] : sparks);
-    if (going) return alreadyStarting(going, m.repo || m.name, viewer, ctx);
+    if (going) { contextAlready(going, args); return alreadyStarting(going, m.repo || m.name, viewer, ctx); }
     // Already running: anywhere when no Spark was named, or exactly where the request names it. (A start that names a
     // setup and a place goes on as before: which setup the running copy uses isn't known here.)
-    const there = !setup && runsWhereNamed(inv, m.name, spark, sparks);
-    if (running.length && ((!spark && !sparks) || there)) {
+    const there = !setup && args.contextTokens === undefined && runsWhereNamed(inv, m.name, spark, sparks);
+    if (!setup && args.contextTokens === undefined && running.length && ((!spark && !sparks) || there)) {
       // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
       if (ownersAsk(viewer, ctx)) desiredWish(inv.sparks.flatMap(sp => sp.deployments.filter(d => d.model === m.name && d.state === 'running' && !d.rank).map(d => `${sp.id}/${d.container}`)));
       return { outcome: 'already', model: m.repo || m.name, runningOn: there ? running.filter(r => r.spark === spark || sparks?.includes(r.spark)) : running, note: 'It’s already running; nothing changed.' };
@@ -650,7 +673,7 @@ async function startModel(args, viewer, ctx) {
       const across = placed.two ? `across ${placed.nodes.map(sp).join(' + ')}` : null;
       return question(viewer, ctx, `${placed.why}. Stop ${placed.containers.join(' and ')} so ${m.repo || m.name} can start ${across || 'there'}?`, [
         { label: across ? `Yes, stop ${placed.containers.join(', ')} on ${sp(placed.node)} and start it ${across}` : `Yes, stop ${placed.containers.join(', ')} on ${placed.node}`,
-          call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.node }), ...(setup ? { setup } : {}), allowStop: [...allowStop, ...placed.containers] } } },
+          call: { action: 'start_model', args: { ...contextCarry(args, ctx), model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.node }), ...(setup ? { setup } : {}), allowStop: [...allowStop, ...placed.containers] } } },
         { label: 'No, leave it running', call: null },
       ], 'question', { ownerOnly: true });
     }
@@ -668,17 +691,18 @@ async function startModel(args, viewer, ctx) {
     if (busy.length) {
       const names = busy.map(x => x.split('/').pop()).join(', ');
       return question(viewer, ctx, `${names} ${busy.length > 1 ? 'are' : 'is'} in use (it answered calls in the last 30 minutes, from ${usedRecently(busy[0]).by}). Stop it so ${m.repo || m.name} can start?`, [
-        { label: `Yes, stop ${names} and start ${m.repo || m.name}`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }), ...(setup ? { setup } : {}), allowStop, allowBusy: [...(args.allowBusy || []), ...busy] } } },
+        { label: `Yes, stop ${names} and start ${m.repo || m.name}`, call: { action: 'start_model', args: { ...contextCarry(args, ctx), model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }), ...(setup ? { setup } : {}), allowStop, allowBusy: [...(args.allowBusy || []), ...busy] } } },
         { label: 'No, leave it running', call: null },
       ]);
     }
     // (a setup that failed twice the same known way is passed over, and the result says so: B3, 20-lessons.mjs)
     const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library), passed: [] } : bestHowNow(m, placed, viewer, inv, (across || ctx).workflowVersion, args.tryPassedOver === true);
-    const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
+    const asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
     if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
+    const prepared = contextPrepare(m, best.how, args, placed, ctx), how = prepared.how;
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent.');
-    const job = launch(viewer, ctx, m, placed, how);
+    const job = launch(viewer, ctx, m, placed, how, prepared);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are the brain’s own)`);
     for (const line of passedOver) note(job, line);
     return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
@@ -688,11 +712,11 @@ async function startModel(args, viewer, ctx) {
   // model address: a call doesn't download models.
   if (ctx.via === 'gateway') throw new HttpError(409, `${found.repo || model} isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
   const fetching = startingNow([found.repo, ...(found.recipe?.variants || []).map(x => x.repo)], spark ? [spark] : sparks);
-  if (fetching) return alreadyStarting(fetching, fetching.model, viewer, ctx);
+  if (fetching) { contextAlready(fetching, args); return alreadyStarting(fetching, fetching.model, viewer, ctx); }
   if (sparks && found.outsideRecipes) throw new HttpError(409, `${found.repo} isn’t in Recipes, and only models from Recipes run across two Sparks.`);
   if (found.outsideRecipes && !confirmOutside && !namedInFull(ctx, found.repo)) {
     return question(viewer, ctx, `${found.repo} isn’t in your recipes. Download it from Hugging Face, add it to your recipes and start it with the best setup found for it (no code of its own)?`, [
-      { label: `Yes, download and start ${found.repo}`, call: { action: 'start_model', args: { model: found.repo, confirmOutside: true, ...(spark ? { spark } : {}) } } },
+      { label: `Yes, download and start ${found.repo}`, call: { action: 'start_model', args: { ...contextCarry(args, ctx), model: found.repo, confirmOutside: true, ...(spark ? { spark } : {}) } } },
       { label: 'No', call: null },
     ]);
   }
@@ -703,7 +727,7 @@ async function startModel(args, viewer, ctx) {
   mustUse(viewer);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
   const going = startingNow([v.repo, found.repo], spark ? [spark] : sparks);
-  if (going) return alreadyStarting(going, v.repo, viewer, ctx);
+  if (going) { contextAlready(going, args); return alreadyStarting(going, v.repo, viewer, ctx); }
   if (v.gated) throw new HttpError(409, `${v.repo} is gated on Hugging Face: sign in on ${target.id} (hf auth login) and accept its license, then ask again.`);
   const job = newJob('start-model', { model: v.repo, node: target.id, ...(pick.two ? { nodes: pick.nodes } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, total: v.sizeGB ? Math.round(v.sizeGB * 1e9) : null });
@@ -732,7 +756,9 @@ async function startModel(args, viewer, ctx) {
     }
     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
     await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
-    const best = bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true), how = best.how;
+    const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, fresh.library), passed: [] } : bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true);
+    const prepared = contextPrepare(m, best.how, args, placed, ctx), how = prepared.how;
+    contextBind(j, prepared);
     if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
     for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
@@ -751,6 +777,7 @@ action({
     model: { ...modelArg, pattern: '^[A-Za-z0-9][A-Za-z0-9._/:+ -]{0,199}$', description: 'The model, as the owner named it.' },
     spark: { ...sparkArg, description: 'Only if the owner said which Spark.' },
     sparks: { ...sparksArg, description: 'Only if the owner asked to run it across two Sparks, like ["spark3","spark4"].' },
+    contextTokens: { type: 'integer', minimum: 1, maximum: 2147483647, description: 'Exact context tokens, only when the owner asked for a context length (128k is 131072). A shorter retry needs the owner’s button.' },
     setup: { type: 'string', pattern: '^[a-z0-9]{4,32}$', description: 'A recipe setup id (recipe_detail), only if the owner chose one.' },
     choice: choiceArg,
   }, additionalProperties: false },

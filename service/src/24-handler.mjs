@@ -1,7 +1,7 @@
 /* ───────── the public page ───────── */
 // Area: ways in
 // Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
-// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
@@ -359,13 +359,19 @@ const handler = async (req, res) => {
         throw new HttpError(409, `Something is already changing on ${node}. Wait for it to finish.`);
       }
       mustUse(viewer);
+      if (body.contextTokens !== undefined) { try { contextNumber(body.contextTokens); } catch (e) { throw new HttpError(400, e.message); } }
       const release = claimSparks([node], `deploying ${model}`);
       try {
         const wf = pageWorkflow(req, 'start_model', owner);
-        const how = resolveHow(body, viewer, model, 1, (await inventory(null)).library);
+        const inv = await inventory(null), m = inv.library.find(x => x.name === model);
+        if (!m) throw new HttpError(404, 'That model is not on disk any more.');
+        const how = resolveHow(body, viewer, model, 1, inv.library);
+        const placed = { nodes: [node], stop: approved, keep: keep.map(String), two: false };
+        const prepared = contextPrepare(m, how, body, placed, { via: 'page' }, { body: { ...(body.setup ? { setup: body.setup } : {}), ...(body.verified ? { verified: body.verified } : {}), allowRemoteCode: body.allowRemoteCode === true }, keep: placed.keep, approved });
         const job = newJob('deploy', { model, node, by: viewer.login, setup: how?.setupId || null, ...wf });
         job.release = release;
-        return send(res, 202, publicJob(runJob(job, j => startWithFixes(j, { name: model }, { nodes: [node], stop: approved, two: false }, how,
+        contextBind(job, prepared);
+        return send(res, 202, publicJob(runJob(job, j => startWithFixes(j, m, { nodes: [node], stop: approved, two: false }, prepared.how,
           (h, fix) => deploy(j, model, node, viewer, keep.map(String), h, approved, fix)))));
       } catch (e) { release(); throw e; }
     }
@@ -387,13 +393,19 @@ const handler = async (req, res) => {
         throw new HttpError(409, 'Something is already changing on one of those Sparks. Wait for it to finish.');
       }
       mustUse(viewer);
+      if (body.contextTokens !== undefined) { try { contextNumber(body.contextTokens); } catch (e) { throw new HttpError(400, e.message); } }
       const release = claimSparks(nodes, `deploying ${model} across two Sparks`);
       try {
         const wf = pageWorkflow(req, 'start_model_across', owner);
-        const how = resolveHow(body, viewer, model, 2, (await inventory(null)).library);
+        const inv = await inventory(null), m = inv.library.find(x => x.name === model);
+        if (!m) throw new HttpError(404, 'That model is not on disk any more.');
+        const how = resolveHow(body, viewer, model, 2, inv.library);
+        const placed = { nodes: nodes, stop: approved, keep: keep.map(String), two: true };
+        const prepared = contextPrepare(m, how, body, placed, { via: 'page' }, { body: { ...(body.setup ? { setup: body.setup } : {}), ...(body.verified ? { verified: body.verified } : {}), allowRemoteCode: body.allowRemoteCode === true }, keep: placed.keep, approved });
         const job = newJob('deploy-cluster', { model, nodes, node: nodes[0], by: viewer.login, setup: how?.setupId || null, ...wf });
         job.release = release;
-        return send(res, 202, publicJob(runJob(job, j => startWithFixes(j, { name: model }, { nodes, stop: approved, two: true }, how,
+        contextBind(job, prepared);
+        return send(res, 202, publicJob(runJob(job, j => startWithFixes(j, m, { nodes, stop: approved, two: true }, prepared.how,
           (h, fix) => clusterDeploy(j, model, nodes, viewer, keep.map(String), h, approved, fix)))));
       } catch (e) { release(); throw e; }
     }

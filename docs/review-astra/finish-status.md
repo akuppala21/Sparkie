@@ -1,6 +1,7 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17, through `e5aabcdc8312957d901664a78947769ceb26fb5d`.
+Source audit: 2026-11-17. Completed hosted evidence below is through `e5aabcdc8312957d901664a78947769ceb26fb5d`;
+the subsequent context-retry candidate is implemented and awaiting hosted checks.
 This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
 new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
 
@@ -14,8 +15,22 @@ Hosted evidence is tied to its snapshot:
   broken-result refusal ordering and bounded terminal evidence capture without changing existing assertions or grades.
 - `e5aabcdc`, [run `44059936292`](https://github.com/akuppala21/Sparkie/actions/runs/44059936292): **278/278 passed**
   across three runners (70, 147 and 61), including the context safeguard, timer rollback, evaluation, workflows and
-  installer checks. The owner-question part of T42 remains unbuilt. No final full-suite lock or tested tag has been
+  installer checks. At that snapshot the owner-question part of T42 was unbuilt. No final full-suite lock or tested tag has been
   produced for this candidate.
+
+## Current context-retry candidate
+
+T42 now has a private, one-use owner question after rollback and claim release. Explicit context is carried through
+page and action starts, and numeric owner wording is bound to its model clause before the first launch. Each approved
+reduction creates a separate operation and shares the original attempt/time budget. Page validation stays a separate
+normal gate. The original task is identified separately from the current result chat, so handing a decision to the
+owner neither resumes an agent task nor interrupts a newer request. Activity links to the question without approving it.
+
+New direct policy/intent checks, stand-in action/page tests and a desktop/phone browser scenario are written. Generation,
+document consistency and syntax checks pass; no runtime pass is claimed for this candidate yet. Focused GitHub dispatch
+can optionally include browser checks. Coverage still needs evidence for deadline expiry during I/O, exhausted/expired
+or restarted decisions, unresolved cleanup, wake/download propagation and named/verified remote-code setups. The
+existing related regression files are included where available. T45 and the other gates below remain open.
 
 ## Decisions carried forward
 
@@ -93,7 +108,7 @@ claims and live endpoint state in that handoff were not reverified by this audit
 | B4, migration weights | The move card and `deploy/REBUILD.txt` now copy link contents and require link/ownership checks. Prove snapshot shards are readable as the runtime user on the real hub; source instructions alone are insufficient. |
 | B5, first validation request | The CLI retries only its first body-free GET once after a transport failure. Received HTTP errors and mutations are not replayed. The targeted hosted regressions passed on the earlier candidate. |
 | B7, plug names | The script/card now use Spark numbers for mapped plugs and a unique Tapo label for unassigned setup. Controller ids stay internal; hub-rights and identity regressions await hosted results. |
-| C, T42/T45 | Rejected context flags are protected in the candidate. The OOM owner-question flow and durable restoration after a Spark returns remain unbuilt; reviewed designs identify the required provenance, ownership and rollback checks. Do not mark either complete from a similar test name. |
+| C, T42/T45 | Rejected context flags stay protected. The OOM owner-question flow is now implemented with new regressions awaiting hosted execution and the remaining evidence listed above. Durable restoration after a Spark returns (T45) remains unbuilt. Do not close either finding from a similar test name. |
 | C, `/keep`, budgets | `/keep` is explicitly unbuilt in R71. The handoff's 200 GB download/100 GB hub-floor promises still need a tested implementation or owner-approved disposition. Existing generic disk floors are not proof of those numbers. |
 | C, delivery/update retries | Five result callers now reuse bounded in-memory Telegram retries, with hosted checks passing at bfd4fcab. Timer-triggered update recovery now keeps a three-attempt/30-minute budget across restarts; its focused hosted checks passed at e5aabcdc. Neither change promises durable or exactly-once Telegram delivery; direct-pull/manual recovery retains its existing path. |
 | C, root units/helper trust | Report the actual supported boundary. Do not expand the helper or bypass managed access restrictions to finish a demonstration. |

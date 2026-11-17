@@ -17,7 +17,9 @@ A model start that fails in a way seen before gets a fix and a retry, by code.
 ## Never
 
 - Drop a flag the console sets, or remove a context setting after an engine rejects it.
-- Pass 3 attempts or 30 minutes.
+- Pass 3 attempts or 30 minutes, including retries approved after a context question.
+- Change explicit context without a new owner decision. The failed start restores its changes and releases its
+  claims before publishing that question (`docs/context-retry.md`).
 
 ## Rules
 
