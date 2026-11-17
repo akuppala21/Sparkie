@@ -138,7 +138,12 @@ ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
   if (!failed) {
     const moved = await run(to, `rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }`, { timeout: 600000 });
     if (moved.code === 0) return;
-    errText = `${errText}\n${moved.err || moved.out || `it couldn’t be moved into place on ${to.id}`}`;
+    // Only the move failed, on the receiving Spark (W-9: often files a container left there as root): the whole copy is
+    // kept in staging, never shown as a model, and the words say which Spark and the one command that finishes it there.
+    // (The next start copies again from the start: the staging folder is cleared before each copy.)
+    const [home, stage] = store === 'hf' ? ['~/.cache/huggingface/hub', '~/.cache/huggingface/hub/.spark-console-incoming'] : [`~/${CONFIG.modelsDir}`, `~/${CONFIG.modelsDir}/.incoming`];
+    const said = String(moved.err || moved.out || '').trim().split('\n').pop().slice(0, 300) || (moved.code === 255 ? `${to.id} didn’t answer` : 'no reason given');
+    throw new Error(`Copy failed: the copy reached ${to.id} but couldn’t be moved into place there (${said}). The whole copy is kept there in ${stage}/${folder}. To finish it, on ${to.id} run: sudo chown -R $USER ${home}/${folder} && rm -rf ${home}/${folder} && mv ${stage}/${folder} ${home}/${folder}`);
   }
   // Otherwise what was copied goes, and whether it went is looked at: left there, it would hold up to a whole model.
   const gone = await run(to, `rm -rf ${staging}/${q(folder)}`, { timeout: 600000 });
@@ -199,7 +204,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
-    if (!started.code || started.code === 255 || /\(timed out\)$/.test(started.err)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
+    if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
     consoleStopped.delete(`${nodeId}/${cname}`);
     step(job, 'Loading the model; this can take a few minutes');

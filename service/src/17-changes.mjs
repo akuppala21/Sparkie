@@ -286,12 +286,12 @@ function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) 
 // runs out of memory, the start cuts it again, and the new figure is kept.
 function fullContext(how, v, free) {
   const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
-  if (!flag || !(cut > 0)) return how;
+  if (!flag || !v.contextCut) return how;
   const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
-  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free: a
-  // context is never cut below 16,384 by itself, A-26)
+  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free, also
+  // when the free memory then couldn't be read: a context is never cut below 16,384 by itself, A-26, W-12)
   const low = at >= 0 && Number(pair === 1 ? String(how.args[at]).split('=')[1] : how.args[at + 1]) < CONTEXT_FLOOR;
-  if (!low && (!Number.isFinite(free) || free < cut + HEADROOM)) return how;
+  if (!low && (!(cut > 0) || !Number.isFinite(free) || free < cut + HEADROOM)) return how;
   return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free, ...(low ? { floor: true } : {}) } };
 }
 // The least free memory on these Sparks right now, or null when one can't be read.
@@ -333,8 +333,8 @@ const START_FAILURES = [
   { id: 'out-of-memory', title: 'it ran out of memory while loading',
     sign: /out of memory|OutOfMemoryError|cudaMalloc|insufficient memory|not enough (?:GPU )?memory|no available memory for the cache blocks|larger than the maximum number of tokens that can be stored in KV cache|KV cache[^\n]{0,80}(?:insufficient|too small|exceed)|(?:max_model_len|max_seq_len|context.length)[^\n]{0,80}(?:larger|greater|exceed)/i,
     // (never below 16,384 by itself, contract 6.9 and T12: shorter needs the owner's yes, and no ask is built yet, A-26)
-    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384; never shorter without asking).',
-    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest it is cut to without asking): it needs a Spark with more free memory, or a smaller version of the model.',
+    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384, the shortest Spark Console cuts it to by itself).',
+    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest Spark Console cuts it to by itself): it needs a Spark with more free memory, or a smaller version of the model. To run it with a shorter context, start it with a setup that sets one itself (a recipe setup, or its own spark.json): a setup’s own context is never made longer.',
     next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > CONTEXT_FLOOR ? { fix: { ...fix, contextCap: CONTEXT_FLOOR } } : null) },
   { id: 'bad-flag', title: 'the engine didn’t accept one of the settings',
     sign: /unrecognized arguments|no such option|error: argument|invalid choice|unexpected keyword argument|unknown (?:argument|option)/i,
@@ -397,7 +397,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which isn’t done without asking (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which Spark Console no longer does by itself (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
   else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
@@ -445,28 +445,41 @@ async function putBack(job, m, placed) {
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
   // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
   // have stopped, nothing is started again; both stay on the operation's lists, and its words say so (cleanUp). A copy
-  // set aside is asideBack's, after these stops.
+  // set aside is asideBack's, after these stops. A pair it had stopped goes back whole or not at all (W-7); one that
+  // couldn't be started again stays on `stoppedHere` and is said (W-3, job.notBack).
   const aside = new Set((job.asideHere || []).map(a => `${a.node}/${a.name}`));
   const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x) && !aside.has(x));
   for (const x of ran) consoleStopped.set(x, Date.now());
   const ends = await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return stopChecked(nodeById(id), c); }));
-  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [];
-  for (const x of stopped) {
-    const [id, container] = x.split('/');
-    if (still.some(y => y.split('/')[0] === id)) { held.push(x); continue; }
-    consoleStopped.delete(x);
-    // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
-    // a link while this start ran is refused by name, and the job isn't started)
-    const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
-    note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [], pairs = [], notBack = (job.notBack ||= []);
+  for (const u of backUnits(stopped)) {
+    if (u.items.some(x => still.some(y => y.split('/')[0] === x.split('/')[0]))) { held.push(...u.items); if (u.model) pairs.push(u); continue; }
+    const back = [];
+    for (const x of u.items) {
+      const [id, container] = x.split('/');
+      consoleStopped.delete(x);
+      // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
+      // a link while this start ran is refused by name, and the job isn't started)
+      const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
+      note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+      if (!r.code) { back.push(x); continue; }
+      const at = sparkName(nodeById(id) || { id });
+      notBack.push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message.replace(/\.$/, '') : `${container} couldn’t be started again on ${at}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, W-7)
+    if (u.model && back.length < u.items.length) {
+      for (const x of back) { const [id, c] = x.split('/'); consoleStopped.set(x, Date.now()); if ((await stopChecked(nodeById(id), c)) === 'stopped') note(job, `Stopped ${c} on ${id} again: its other part didn’t start`); }
+    }
   }
   job.ranHere = still;
-  await asideBack(job);
+  await asideBack(job, true);
   const kept = job.asideHere || [];
-  job.stoppedHere = [...held, ...kept.map(a => `${a.node}/${a.name}`)];
-  if (!job.ranHere.length) return;
-  const owed = owedWords(job.ranHere, job.stoppedHere, kept);
-  for (const line of owed) note(job, line);
+  job.stoppedHere = [...new Set([...held, ...notBack.flatMap(n => n.items), ...kept.map(a => `${a.node}/${a.name}`)])];
+  const owed = [...(job.ranHere.length ? owedWords(job.ranHere, held.concat(kept.map(a => `${a.node}/${a.name}`)), kept, pairs) : []), ...notBack.map(n => n.words)];
+  if (!owed.length) return;
+  for (const line of owed.slice(0, owed.length - notBack.length)) note(job, line);
   job.cleanUp = owed.map(l => `${l}.`).join(' ');
 }
 
@@ -827,7 +840,8 @@ function restartJob(viewer, ctx, spark, container, model) {
     await restartRoom(viewer, spark, container, model);
     step(j, `Starting ${container} on ${spark}`);
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
-    if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+    // (a start Docker didn't answer in time may have started it all the same: stopped again below, looked at, W-6)
+    if (r.code && !unanswered(r)) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');
@@ -835,6 +849,7 @@ function restartJob(viewer, ctx, spark, container, model) {
     // didn't answer, a Spark that answered nothing until the limit, the limit itself. One that ended by itself is
     // stopped already.
     try {
+      if (r.code) throw new Error(`Docker didn’t answer the start of ${container} in time.`);
       const deadline = Date.now() + RESTART_WAIT_MS;
       while (Date.now() < deadline) {
         await sleep(5000);
