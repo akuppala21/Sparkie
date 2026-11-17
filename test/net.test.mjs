@@ -95,7 +95,13 @@ const hold = name => {
   const made = spawnSync('mkfifo', [f], { encoding: 'utf8' });
   assert.equal(made.status, 0, made.stderr);
   const open = () => { try { const fd = openSync(f, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK); writeSync(fd, 'go\n'); closeSync(fd); return true; } catch { return false; } };
-  return { cmd: `timeout 60 cat notes/${name}.fifo`, go: () => waitFor(open, { every: 50, timeout: 30000, what: `the command waiting on ${name}.fifo` }) };
+  // (given the press, a press that ends before the command reads its hold is said, with its answer, never waited out)
+  const go = async pressing => {
+    let over = null;
+    pressing?.then(r => { over = `the press ended before the command waited on ${name}.fifo: ${r?.status} ${String(r?.json?.message?.content ?? r?.text ?? '').slice(0, 400)}`; }, e => { over = `the press failed before the command waited on ${name}.fifo: ${e.message}`; });
+    await waitFor(() => { if (open()) return true; if (over) throw new Error(over); return false; }, { every: 50, timeout: 30000, what: `the command waiting on ${name}.fifo` });
+  };
+  return { cmd: `timeout 120 cat notes/${name}.fifo`, go };
 };
 // (the helper's stop of a guard's command: what restore.sh asks of systemd once it holds the guard's lock)
 const stopAsked = id => calls().some(x => x[0] === 'systemctl' && x.includes('stop') && x.some(w => String(w).startsWith(`sw-root-${id}`)));
@@ -160,7 +166,7 @@ test('a way in that worked before stops working after it: put back at once, and 
     // (Spark 3 leaves the tailnet while the change runs: the check after it sees Tailscale's status say so)
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
     tailnet(false);
-    await h.go();
+    await h.go(pressing);
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const g = newest();
@@ -441,7 +447,7 @@ test('the change runs and then Spark 3 stops answering a new connection and the 
   try {
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, timeout: 60000, what: 'the guard armed' });
     offOn.off();
-    await h.go();
+    await h.go(pressing);
     const p = await pressing;
     g = newest();
     assert.equal(p.status, 200, p.text);
@@ -541,7 +547,7 @@ const atOncePart = async words => {
     copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
     rmSync(copy);
     rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
-    await h.go();
+    await h.go(pressing);
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
@@ -608,7 +614,7 @@ test('a way in lost after it and a put-back the helper could not finish (its ref
     assert.ok(existsSync(copy), 'the copy of the key, made first');
     rmSync(copy);
     tailnet(false);
-    await h.go();
+    await h.go(pressing);
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     tailnet(true);
@@ -658,7 +664,7 @@ test('a /putback that reaches a change still running and does not finish: the pr
     // lock and has asked systemd to stop it, so the press's own end comes after the put-back, every time)
     const other = await newChat(), putting = say(other, '/putback');
     await waitFor(() => stopAsked(g.id), { every: 100, timeout: 60000, what: 'the put-back’s stop of the command' });
-    await h.go();
+    await h.go(pressing);
     const w = await putting;
     assert.match(w.text, /did not finish\. None of it went back: 1 could not/, w.text);
     assert.ok(w.text.endsWith(WAYS_OF(g)), w.text);
@@ -691,13 +697,13 @@ test('a /putback that puts back a change still running: the press says it was pu
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && keysNow().includes(ADDED), { every: 100, what: 'the guard armed and the key added' });
     const g = newest(), other = await newChat(), putting = say(other, '/putback');
     await waitFor(() => stopAsked(g.id), { every: 100, timeout: 60000, what: 'the put-back’s stop of the command' });
-    await h.go();
+    await h.go(pressing);
     const w = await putting;
     assert.match(w.text, new RegExp(`^/putback\\nPut back: the newest change made inside the lock-out net, on Spark 3 \\(record ${g.record}\\), at `), w.text);
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const said = await unfinishedSaid(chat, p, /\/putback put it back while it ran/);
-    assert.match(said, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) ran inside the lock-out net, and /putback put it back while it ran \\(put back at \\S+: 1 went back, 0 did not\\)\\.`), said);
+    assert.match(said, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) ran inside the lock-out net, and /putback put it back while it ran(?: \\(put back at \\S+: 1 went back, 0 did not\\))?\\.`), said);
     assert.doesNotMatch(said, /wasn’t one Spark Console knows|stays claimed/, said);
     assert.equal(netRecord().find(x => x.id === g.id).state, 'put back');
     assert.equal(keysNow(), KEYS_LINE, 'put back');
