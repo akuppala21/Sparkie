@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ function fixture() {
   mkdirSync(root);
   const put = (name, text) => { const file = join(root, name); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); };
   put('.gitignore', 'service/workflows.lock.json\nignored-file\n');
-  for (const file of ['public/app.js', 'public/styles.css', 'service/config.json', 'service/worker.py', 'deploy/host-on-portal.sh', 'test/eval/memory-held-out.json', 'folder.a', 'folder/nested']) put(file, `${file}\n`);
+  for (const file of ['public/app.js', 'public/styles.css', 'service/config.json', 'service/worker.py', 'deploy/host-on-portal.sh', 'test/eval/memory-held-out.json', 'folder.a', 'folder/nested', '.github/workflows/example.yml']) put(file, `${file}\n`);
   chmodSync(join(root, 'deploy/host-on-portal.sh'), 0o755);
   symlinkSync('nested', join(root, 'folder/link'));
   const git = (...args) => {
@@ -77,9 +77,50 @@ test('complete no-git archives qualify directly; pull archives prove their delib
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
+test('the frozen retained source keeps root metadata and a verified sibling proof, and original edits cannot change it', () => {
+  const f = fixture();
+  try {
+    const frozen = join(f.dir, 'retained');
+    let r = spawnSync('python3', ['-I', CHECK, f.root, '--freeze', frozen], { env: ENV, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(frozen, '.gitignore')));
+    assert.ok(existsSync(join(frozen, '.github/workflows/example.yml')));
+    assert.ok(!existsSync(join(frozen, 'test/eval/memory-held-out.json')));
+    assert.ok(existsSync(`${frozen}.manifest`));
+    f.put('public/app.js', 'an edit after freezing\n');
+    r = f.check(frozen); assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(join(frozen, 'public/app.js'), 'utf8'), 'public/app.js\n');
+    writeFileSync(join(frozen, 'service/worker.py'), 'a later edit\n');
+    assert.notEqual(f.check(frozen).status, 0, 'the retained proof never permits changes');
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('a file changed between qualification and copying prevents the frozen tree from being accepted', () => {
+  const f = fixture();
+  try {
+    const script = `import pathlib, runpy, sys
+ns = runpy.run_path(sys.argv[1])
+original = pathlib.Path.read_bytes
+reads = 0
+def changed(path):
+    global reads
+    data = original(path)
+    if str(path) == sys.argv[2] + '/public/app.js':
+        reads += 1
+        if reads == 2: return b'changed during copy'
+    return data
+pathlib.Path.read_bytes = changed
+ns['qualify'](sys.argv[2], freeze=sys.argv[3])
+`;
+    const r = spawnSync('python3', ['-I', '-c', script, CHECK, f.root, join(f.dir, 'raced')], { env: ENV, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /archive differs from its tested tree: public\/app.js/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
 test('the installer calls exact qualification before its first remote check, and pull supplies a tree manifest', () => {
   const installer = readFileSync(join(REPO, 'deploy/host-on-portal.sh'), 'utf8');
-  const check = installer.indexOf('python3 -I "$HERE/tools/qualify-install.py" "$HERE"');
+  const check = installer.indexOf('python3 -I "$HERE/tools/qualify-install.py" "$HERE" --freeze');
   assert.ok(check > 0);
   assert.ok(check < installer.indexOf('PRE=$(COPYFILE_DISABLE=1 tar'), 'qualification precedes staging on the hub');
   const pull = readFileSync(join(REPO, 'deploy/pull.sh'), 'utf8');

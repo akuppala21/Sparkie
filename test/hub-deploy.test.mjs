@@ -72,11 +72,20 @@ describe('the installer goes to the hub only', () => {
   // "service/server.mjs doesn't match", so a run that gets there passed them. ssh is a stand-in that is never reached.
   const tree = ({ hub = HUB_ENV, config = configOf(HUB_ENV), withHub = true } = {}) => {
     const root = tmp('shd-tree-');
-    for (const d of ['deploy', 'service', 'bin']) mkdirSync(join(root, d));
+    for (const d of ['deploy', 'service', 'bin', 'tools']) mkdirSync(join(root, d));
     for (const f of ['host-on-portal.sh', 'hub.sh']) copyFileSync(join(DEPLOY, f), join(root, 'deploy', f));
     if (withHub) writeFileSync(join(root, 'deploy', 'hub.env'), hub);
     writeFileSync(join(root, 'service', 'config.json'), JSON.stringify(config));
     sh(join(root, 'bin', 'ssh'), '#!/bin/sh\necho "ssh $*" >> "$HOME/ssh.log"\nexit 97\n');
+    // The install gate gets a real exact-tree lock; the tests still reach the same hub refusal or parts mismatch.
+    copyFileSync(join(REPO, 'tools', 'qualify-install.py'), join(root, 'tools', 'qualify-install.py'));
+    writeFileSync(join(root, '.gitignore'), 'service/workflows.lock.json\n');
+    const git = args => {
+      const r = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr); return r.stdout.trim();
+    };
+    git(['init', '-q']); git(['add', '-A']);
+    writeFileSync(join(root, 'service', 'workflows.lock.json'), JSON.stringify({ tree: git(['write-tree']), build: '0123456789ab' }));
     return root;
   };
   const install = (root, args = []) => spawnSync('bash', [join(root, 'deploy', 'host-on-portal.sh'), ...args],

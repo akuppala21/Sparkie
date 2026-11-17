@@ -3416,7 +3416,7 @@ function mainImageRef(m = MAIN) {
 function mainImageScript(m = MAIN) {
   const { wanted, localRef, pull } = mainImageRef(m);
   return `img=
-for candidate in ${[wanted, pull, m.image].filter(Boolean).map(q).join(' ')}; do
+for candidate in ${[wanted, localRef, pull, m.image].filter(Boolean).map(q).join(' ')}; do
   metadata=$(docker image inspect --format '{{.Id}} {{join .RepoDigests " "}}' "$candidate" 2>/dev/null) || continue
   candidate_id=\${metadata%% *}
   [[ "$candidate_id" =~ ^sha256:[0-9a-f]{64}$ ]] || continue
@@ -3466,6 +3466,7 @@ async function mainPlan(m = MAIN) {
   if (!status.online) throw new HttpError(409, status.error);
   if (!status.ready.model && !m.copyFrom) throw new HttpError(409, `${status.model} isn’t on ${m.node}.`);
   if (!status.ready.draft) throw new HttpError(409, `${status.draft} (its draft model) isn’t in ${m.node}’s Hugging Face cache.`);
+  if (!status.ready.image && !mainImageRef(m).pull) throw new HttpError(409, 'The configured image is not on this Spark. Set an immutable image reference (repository@sha256:digest) before downloading it.');
   const r = await run(node, `${gpuUsersScript(m.imageId || m.image)}
 mi="\${SPARK_MEMINFO:-/proc/meminfo}"
 printf 'mem\\t%s\\t%s\\n' "$(awk '/MemTotal/ {printf "%.0f", $2 * 1024}' "$mi" 2>/dev/null)" "$(awk '/MemAvailable/ {printf "%.0f", $2 * 1024}' "$mi" 2>/dev/null)"`, { timeout: 30000 });

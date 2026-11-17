@@ -100,7 +100,7 @@ function mainImageRef(m = MAIN) {
 function mainImageScript(m = MAIN) {
   const { wanted, localRef, pull } = mainImageRef(m);
   return `img=
-for candidate in ${[wanted, pull, m.image].filter(Boolean).map(q).join(' ')}; do
+for candidate in ${[wanted, localRef, pull, m.image].filter(Boolean).map(q).join(' ')}; do
   metadata=$(docker image inspect --format '{{.Id}} {{join .RepoDigests " "}}' "$candidate" 2>/dev/null) || continue
   candidate_id=\${metadata%% *}
   [[ "$candidate_id" =~ ^sha256:[0-9a-f]{64}$ ]] || continue

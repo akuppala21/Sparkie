@@ -144,7 +144,11 @@ test('the helper this build knows is the one it ships, and the installer sends b
   const part = readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8');
   assert.equal(/const HELPER_SHA256 = '([0-9a-f]{64})'/.exec(part)?.[1], sha(readFileSync(HELPER_SRC)));
   // (the one-time command copies both from ~/spark-console-src/deploy on Spark 2, which the source tar fills)
-  assert.match(readFileSync(join(REPO, 'deploy', 'host-on-portal.sh'), 'utf8'), /ls -d AGENTS\.md README\.md agentbar deploy docs public service test tools/);
+  const installer = readFileSync(join(REPO, 'deploy', 'host-on-portal.sh'), 'utf8');
+  assert.match(installer, /--freeze "\$STAGE\/source" --manifest-out "\$STAGE\/source\.manifest"/);
+  assert.match(installer, /HERE="\$STAGE\/source"/);
+  assert.match(installer, /tar -C "\$HERE" -cf "\$STAGE\/source\.tar" \./, 'the whole qualified source is retained, including deploy and tools');
+  for (const file of ['deploy/spark-console-root', 'deploy/root-for-sparkie.sh', 'tools/qualify-install.py']) assert.ok(existsSync(join(REPO, file)), file);
 });
 
 // Acceptance test T124, its look half (the proof's half is in root-helper.test.mjs): a look on a Spark where the owner's

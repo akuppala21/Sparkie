@@ -5,6 +5,7 @@ A checkout is read through git ls-files. pull.sh supplies its source ls-tree man
 for an archive with no .git; the manifest is checked by rebuilding the tree hash and
 checking every unpacked file. Only the held-out evaluation file may be omitted.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -19,8 +20,10 @@ LOCK = 'service/workflows.lock.json'
 HELD = 'test/eval/memory-held-out.json'
 
 
-def qualify(root, manifest=None):
+def qualify(root, manifest=None, freeze=None, manifest_out=None):
     root = Path(root).resolve()
+    if not manifest and Path(str(root) + '.manifest').is_file():
+        manifest = str(root) + '.manifest'
     lock = json.loads((root / LOCK).read_text())
     tree = lock.get('tree', '')
     if not isinstance(tree, str) or not re.fullmatch(r'[0-9a-f]{40}([0-9a-f]{24})?', tree):
@@ -112,12 +115,37 @@ def qualify(root, manifest=None):
     actual = folder_hash(folders)
     if actual != tree:
         raise ValueError('the test lock is for tree %s, but this source is tree %s; run the whole suite on this tree first' % (tree[:12], actual[:12]))
+    if freeze:
+        target = Path(freeze).resolve()
+        if target == root or root in target.parents:
+            raise ValueError('the frozen source must be outside the input tree')
+        target.mkdir()
+        proof = Path(manifest_out or str(target) + '.manifest')
+        proof.write_bytes(b''.join(mode.encode() + b' blob ' + blob.encode() + b'\t' + path + b'\0' for path, (mode, blob) in sorted(want.items())))
+        for path, (mode, blob) in want.items():
+            if path == HELD.encode():
+                continue  # This file never reaches the hub, even in the retained source.
+            source, dest = root / os.fsdecode(path), target / os.fsdecode(path)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if mode == '120000':
+                dest.symlink_to(os.readlink(source))
+            else:
+                dest.write_bytes(source.read_bytes())
+                dest.chmod(0o755 if mode == '100755' else 0o644)
+        (target / LOCK).write_bytes((root / LOCK).read_bytes())
+        # Qualify what was copied, so concurrent edits cannot slip into shipped artifacts.
+        qualify(target, str(proof))
     return actual
 
 
 if __name__ == '__main__':
     try:
-        print(qualify(sys.argv[1], os.environ.get('SPARK_INSTALL_MANIFEST')))
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument('root')
+        parser.add_argument('--freeze')
+        parser.add_argument('--manifest-out')
+        args = parser.parse_args()
+        print(qualify(args.root, os.environ.get('SPARK_INSTALL_MANIFEST'), args.freeze, args.manifest_out))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print('Stopped: %s. Nothing was installed.' % error, file=sys.stderr)
         sys.exit(1)

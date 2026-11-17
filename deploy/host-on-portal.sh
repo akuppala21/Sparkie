@@ -31,6 +31,12 @@ set -euo pipefail
 # (--stand-in, after the host: the stand-in fleet's tests, through pull.sh; it reaches install.sh as an argument only)
 STAND_IN=''; [ "${2:-}" != --stand-in ] || STAND_IN=' --stand-in'
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# Freeze the exact qualified tree before reading config or preparing anything shipped. Its checked manifest stays
+# beside the retained source, so an unchanged no-.git copy can reinstall itself without the held-out eval file.
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+python3 -I "$HERE/tools/qualify-install.py" "$HERE" --freeze "$STAGE/source" --manifest-out "$STAGE/source.manifest" >/dev/null || exit 1
+HERE="$STAGE/source"
 # Which Spark this build runs Spark Console on, and its address: config.json's Spark with host "local", and origin.
 read -r BUILD_HUB ORIGIN < <(python3 -I -c 'import json, sys
 c = json.load(open(sys.argv[1]))
@@ -114,7 +120,6 @@ if [ "$HOST" = local ]; then
   on_hub() { while [ $# -gt 0 ] && [ "$1" != local ]; do shift; done; shift; [ $# -eq 0 ] || bash -c "$*"; }
   SSH=(on_hub)
 fi
-STAGE="$(mktemp -d)"
 trap '"${SSH[@]}" -O exit "$HOST" >/dev/null 2>&1 || true; rm -rf "$STAGE"' EXIT
 
 # Stamp this build so open pages notice the update (tailscale serve sends no cache headers). version.json goes last,
@@ -137,8 +142,8 @@ API_BUILD="$(cd "$STAGE/service" && cat server.mjs dig.mjs passkey.mjs | shasum 
 # without this Mac (2026-11-11, reviews: "truly standalone").
 # The eval's held-out set (test/eval/memory-held-out.json) is never sent: it tests a brain, so the brain must never be
 # able to read it once commands reach the hub. Nothing the console runs reads it (the eval runs it from this machine).
-COPYFILE_DISABLE=1 tar -C "$HERE" --exclude='.DS_Store' --exclude='node_modules' --exclude='test/eval/memory-held-out.json' -cf "$STAGE/source.tar" \
-  $(cd "$HERE" && ls -d AGENTS.md README.md agentbar deploy docs public service test tools 2>/dev/null)
+# Only qualified files are in this frozen copy, including root metadata such as .github and .gitignore.
+COPYFILE_DISABLE=1 tar -C "$HERE" -cf "$STAGE/source.tar" .
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 # The lock has to be for THIS code: a tree one change ahead of its test run would install with every workflow off
 # (found by the gap analysis, 2026-11-11).
@@ -665,7 +670,8 @@ printf '%s %s\n' "$(date +%s)" "$API_BUILD" > "$HOME/.local/share/spark-console/
 if [ -f "$IN/source.tar" ]; then
   SRC="$HOME/spark-console-src"
   rm -rf "$SRC.new" "$SRC.old" && mkdir -p "$SRC.new" && tar --warning=no-unknown-keyword -C "$SRC.new" -xf "$IN/source.tar" \
-    && { [ ! -d "$SRC" ] || mv "$SRC" "$SRC.old"; } && mv "$SRC.new" "$SRC" && rm -rf "$SRC.old" \
+    && cp "$IN/source.manifest" "$SRC.new.manifest" \
+    && { [ ! -d "$SRC" ] || mv "$SRC" "$SRC.old"; } && mv "$SRC.new" "$SRC" && mv -f "$SRC.new.manifest" "$SRC.manifest" && rm -rf "$SRC.old" \
     && echo "  source: $SRC (to update from $WHERE itself: bash $SRC/deploy/host-on-portal.sh local)" \
     || echo "  NOTE: couldn't keep the source in $SRC (the install itself is fine)."
 fi
@@ -781,7 +787,7 @@ echo "Connecting to $HOST. Your password is asked once and reused for the steps 
 "${SSH[@]}" -fN "$HOST"
 
 echo "Copying build $BUILD to a holding folder on $WHERE (nothing installed changes yet) and checking it …"
-PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh path-check.sh source.tar "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
+PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh path-check.sh source.tar source.manifest "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
   'I="$HOME/.cache/spark-console/incoming"; rm -rf "$I" && mkdir -p "$I" && tar --warning=no-unknown-keyword -C "$I" -xf - && bash "$I/install.sh" check'"$STAND_IN")
 PRE="${PRE##*$'\n'}"
 case "$PRE" in

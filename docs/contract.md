@@ -1,14 +1,14 @@
 # Contract: Sparkie, my main brain
 
-**This is the one page for Spark Console's plan**: the rules (sections 1–14), how workflows work in practice (15) and
-the choices still open for the owner (16). There are no other pages to keep in step: what is built, and the test that
-holds each rule, is in `docs/status.md`, made from the rule files and the tests. The other pages in this folder are
-references for particular features (recipes, the agent door, sharing). The contract as it stood on 2026-11-14, with
-its versions, version marks, gaps, old build order and progress notes, is kept word for word in
-`docs/history/contract-2026-11-14.md`.
+**The Spark Console plan**: rules (1–14), workflow examples (15), and owner decisions still open (16).
+`docs/status.md`, generated from rules and tests, records implementation status. Other pages are feature references.
+The complete 2026-11-14 contract is preserved in `docs/history/contract-2026-11-14.md`.
 
 Every rule below is a MUST unless it says otherwise, and section 11 has the tests. If code and this contract
 disagree, the code is wrong. Changes to this contract need the owner's OK.
+
+Owner update, 2026-11-17: Spark 1 is the permanent, always-on hub; Sparks 2/3/4 are compute.
+Old Spark-2-as-hub references mean Spark 1; named compute targets and cable claims stay unchanged.
 
 ## 1. What it is
 

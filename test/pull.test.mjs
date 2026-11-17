@@ -422,6 +422,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.equal(fixedPull(home), b1.files['deploy/pull.sh'].text);
     assert.equal(statSync(join(home, '.local', 'share', 'spark-console', 'pull.sh')).mode & 0o777, 0o700);
     assert.ok(existsSync(join(home, 'spark-console-src', 'deploy', 'pull.sh')));
+    const retained = join(home, 'spark-console-src');
+    assert.ok(existsSync(`${retained}.manifest`), 'retained source keeps its exact-tree proof outside the archive');
+    const qualified = spawnSync('python3', ['-I', join(retained, 'tools', 'qualify-install.py'), retained], { env: envFor(home), encoding: 'utf8' });
+    assert.equal(qualified.status, 0, `unchanged retained source can qualify its own reinstall: ${qualified.stderr}`);
+
     for (const [l, to] of [[`${HF}/snapshots/c1/config.json`, '../../blobs/cfg'], [OVERLAY, '/hf/models--x--y/snapshots/c1/config.json']]) {
       assert.ok(lstatSync(join(home, 'spark-console-src', l)).isSymbolicLink(), l);
       assert.equal(readlinkSync(join(home, 'spark-console-src', l)), to);
