@@ -503,8 +503,9 @@ const ROWS = [
   ['rm −rf /tmp/x', 'risky'], ['rm -- -rf', 'change'], ['ls ' + 'a'.repeat(100000), 'risky'],
 ];
 
-// T127 (part): code sorts a command on Spark 2, a final delete, a root script and code piped from the network into a
-// shell as risky (never at once, so no go-ahead covers them), and showing a token back as not done.
+// T127 (part): code sorts a command on Spark 2, a final delete and code piped from the network into a shell as risky
+// (never at once, so no go-ahead covers them), a root script never at once either (risky here; root refuses it on
+// the script it names, sort-root.test.mjs, R70), and showing a token back as not done.
 test('the table: each command gets its class, with the reason in plain words', () => {
   const wrong = [];
   for (const [command, want, where] of ROWS) {

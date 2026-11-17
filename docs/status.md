@@ -181,7 +181,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 8.11 | no test yet |  | T15, T51, T74, T130, T131: no test holds them yet |
 | 8.12 | no test yet |  | T88: no test holds it yet |
 | 8.13 | no test yet |  | T90, T92: no test holds them yet |
-| 8.14 | partly | `test/sort.test.mjs` (“the table: each command gets its class, with the reason in plain words”) | holds part of T127: “code sorts a command on Spark 2, a final delete, a root script and code piped from the network into a shell as risky (never at once, so no go-ahead covers …”; T91, T124, T125: no test holds them yet |
+| 8.14 | partly | `test/sort.test.mjs` (“the table: each command gets its class, with the reason in plain words”) | holds part of T127: “code sorts a command on Spark 2, a final delete and code piped from the network into a shell as risky (never at once, so no go-ahead covers them), a root …”; T91, T124, T125: no test holds them yet |
 | 8.15 | no test yet |  | T91, T124: no test holds them yet |
 | 8.16 | no test yet |  | T126: no test holds it yet |
 | 8.17 | built | `test/tg-approve.test.mjs` | holds T128 |
