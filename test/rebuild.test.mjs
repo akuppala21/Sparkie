@@ -77,6 +77,13 @@ describe('deploy/REBUILD.txt, the rebuild steps', () => {
     assert.doesNotMatch(TEXT, /(?:chmod|chown) -R/);
   });
 
+  test('old state copies cannot restore either saved-run authority file or leave a live previous copy behind', () => {
+    assert.match(TEXT, /--exclude=\.\/saved-runs\.json(?:\s|$)/);
+    assert.match(TEXT, /--exclude=\.\/saved-runs\.json\.prev(?:\s|$)/);
+    assert.match(TEXT, /rm -f ~\/\.local\/state\/spark-console\/saved-runs\.json\{,\.prev\}/);
+    assert.ok(TEXT.indexOf('rm -f ~/.local/state/spark-console/saved-runs.json') < TEXT.indexOf('4. Install from the Mac'), 'both files go before the restored service first starts');
+  });
+
   test('the 7 days and the sign-ins left out are the code’s own; plain words, in a size a phone shows', () => {
     assert.match(TEXT, /up to 7 days old/);
     assert.match(src('20-state-copy.mjs'), /const COPY_LATE_MS = 7 \* 86400000;/);

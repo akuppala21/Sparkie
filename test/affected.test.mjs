@@ -307,3 +307,25 @@ test('a changed brain adapter includes its direct-import tests as well as measur
   assert.ok(existsSync(new URL('./brain-ask.test.mjs', import.meta.url)), 'the declared direct test exists');
   assert.ok(r.files.includes('test/brain.test.mjs'));
 });
+
+// Source fixtures also bypass server.mjs coverage, including masking at the agent door.
+test('context policy and intent fixtures stay selected when their source changes', () => {
+  for (const [part, direct] of [
+    ['17-context.mjs', 'test/context-policy.test.mjs'],
+    ['16-actions.mjs', 'test/context-intent.test.mjs'],
+    ['16-actions.mjs', 'test/intent-isolation.test.mjs'],
+    ['20-mcp.mjs', 'test/context-intent.test.mjs'],
+  ]) {
+    const r = choose({ landing: true,
+      map: { tests: ['test/context-start.test.mjs'], fns: { [`${part}:sample@1-3`]: [0] } },
+      changes: [{ path: `service/src/${part}`, status: 'M', hunks: [{ s: 2, n: 1, t: 2, add: ['  return 2;'] }] }],
+      oldText: () => 'function sample() {\n  return 1;\n}',
+      newText: () => 'function sample() {\n  return 2;\n}',
+    });
+    assert.equal(r.all, false, r.why);
+    assert.ok(r.files.includes(direct), `${part} selects ${direct} without measured coverage`);
+    assert.ok(existsSync(new URL(`../${direct}`, import.meta.url)), 'the declared test exists');
+    assert.ok(r.files.includes('test/context-start.test.mjs'), 'measured integration coverage stays selected');
+    for (const required of SHORT_CHECK) assert.ok(r.files.includes(required), required);
+  }
+});

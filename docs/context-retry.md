@@ -28,5 +28,7 @@ originating task is parked while the question waits, including when an agent's r
 
 Automatic settings retain ordinary bounded out-of-memory recovery and the 16,384-token floor. Rejected context
 flags are never silently removed. Pure policy tests cover parsing, provenance, immutable proposals and retry limits;
-integration tests cover actual launch, rollback and approval wiring. Browser checks use a fixture API at desktop
+integration tests cover actual launch, rollback and approval wiring. The lifecycle regressions exercise a private
+choice expiring before its public button, restart invalidation, failed restoration withholding a question, and a
+deadline crossed during image preparation before launch. Browser checks use a fixture API at desktop
 and phone widths; they do not prove actual GPU memory behavior or real-brain interpretation.

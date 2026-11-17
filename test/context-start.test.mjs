@@ -87,6 +87,9 @@ describe('explicit context decisions', { concurrency: 1 }, () => {
   test('changed model settings expire an approved choice before any new operation starts', { timeout: 300000 * SLOW }, async () => {
     writeFileSync(mock('spark4', 'oom-ctx'), '32768');
     const modelName = 'Qwen3-30B-A3B-Instruct-2507';
+    // This model needs 75 GiB. Give the fixture room to reach the fingerprint gate under test.
+    const memory = mock('spark4', 'meminfo'), beforeMemory = readFileSync(memory, 'utf8');
+    writeFileSync(memory, beforeMemory.replace(/^MemAvailable:.*$/m, 'MemAvailable: 110100480 kB'));
     const originals = ['spark3', 'spark4'].map(id => { const path = join(T.fleet.root, id, 'models', modelName, 'spark.json'); return { path, text: readFileSync(path, 'utf8') }; });
     try {
       const q = await offered(await ended(await start(131072, modelName))), before = (await jobs()).filter(j => j.model === modelName).map(j => j.id).sort();
@@ -94,7 +97,7 @@ describe('explicit context decisions', { concurrency: 1 }, () => {
       assert.equal((await choose(q.chat, q.yes.id)).status, 200);
       await waitFor(async () => (await api(`/chats/${q.chat}`)).json.messages.some(m => /model or setup changed|model, setup or Sparks changed/.test(m.content || '')), { timeout: 60000, what: 'the stale-context refusal' });
       assert.deepEqual((await jobs()).filter(j => j.model === modelName).map(j => j.id).sort(), before);
-    } finally { for (const file of originals) writeFileSync(file.path, file.text); rmSync(mock('spark4', 'oom-ctx'), { force: true }); }
+    } finally { for (const file of originals) writeFileSync(file.path, file.text); writeFileSync(memory, beforeMemory); rmSync(mock('spark4', 'oom-ctx'), { force: true }); }
   });
 
   test('an agent-originated start hands retry results and later context questions to the same owner chat', { timeout: 420000 * SLOW }, async () => {
@@ -158,7 +161,8 @@ describe('explicit context decisions', { concurrency: 1 }, () => {
       await say(chat, `start ${REPO_NAME} on Spark 4 with a 128k context then report its speed`);
       const original = await waitFor(async () => (await jobs()).find(j => wanted(j) && j.conv === chat), { what: 'request A’s start' });
       assert.equal(original.status, 'running', 'request B begins before A has finished');
-      await say(chat, 'start gpt-oss-20b on Spark 3 then report its speed');
+      const answer = await say(chat, 'start gpt-oss-20b on Spark 3 then report its speed');
+      assert.ok(!(answer.message.choices || []).length, JSON.stringify(answer.message));
       const newer = task(chat); assert.ok(newer?.id);
       other = await waitFor(async () => (await jobs()).find(j => j.conv === chat && j.node === 'spark3' && j.type === 'deploy'), { what: 'request B’s loading start' });
       assert.equal((await api(`/jobs/${original.id}`)).json.status, 'running', 'B has its own request before A can ask');

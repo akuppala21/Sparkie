@@ -5442,7 +5442,7 @@ function proxyBrain(req, res, path, target, payload) {
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
 // Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74
-// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs, intent-isolation.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
@@ -5882,7 +5882,17 @@ function pickContainer(name, spark, text) {
 function containersSaid(spark, text) {
   const said = [...tokensOf(text)].filter(t => !/^spark\d+$/.test(t));
   const near = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  return Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
+  const here = Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed'), flat = squash(text);
+  return here.filter(w => {
+    // A replacement keeps the old model under this generated name until it works. The watcher can still remember
+    // that row after removal. Its model labels and matching canonical row prove the family; a suffix alone does not.
+    // An owner who names the exact old copy still gets that copy, never its replacement.
+    const aside = /^(sc-.+)-before-[0-9a-f]{12}$/.exec(String(w.name)), model = w.labels?.['spark.model'];
+    const base = model && `sc-${model}`;
+    return !aside || flat.includes(squash(w.name)) || !(w.labels?.['spark.console'] === '1'
+      && [base, `${base}-part2`].includes(aside[1])
+      && here.some(c => c.name === aside[1] && c.labels?.['spark.console'] === '1' && c.labels?.['spark.model'] === model));
+  })
     .map(w => ({ name: w.name, running: Boolean(w.running), score: [...tokensOf(String(w.name).replace(/^sc-/, ''))].filter(t => !/^part\d$/.test(t) && said.some(x => near(x, t))).length }))
     .filter(x => x.score > 0).sort((x, y) => y.score - x.score || y.running - x.running);
 }
@@ -6062,7 +6072,8 @@ function startContext(text) {
 async function sparkieCheck(name, input, ctx) {
   const intent = ctx.intent || { asked: [], negated: [], mixed: [] }, kinds = ACTION_KIND[name] || [];
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
-  const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
+  let saidText = ctx.said || ctx.request || '';
+  const said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
     // Each recognized request owns its model and destinations. Resolve that binding before placement, including
     // destinations before the verb. Unclear mixed requests keep a button, with only that clause's destinations.
@@ -6093,6 +6104,14 @@ async function sparkieCheck(name, input, ctx) {
     } else if (Array.isArray(out.sparks)) {
       // No unique request owns this pair. Keep the unresolved choice, without proposing an invented pair.
       delete out.sparks; delete out.spark;
+    }
+    if (own) {
+      // Rank the model in this clause, not another clause or the previous request. Only an explicit reference as
+      // the model's subject ("start it", "bring that one up") may use the previous owner's words for identity.
+      const subject = String.raw`(?:it|this|that|(?:this|that|the(?:\s+same)?)\s+(?:one|model))(?:\s+(?:again|now|please)){0,3}`;
+      const after = String.raw`(?=\s*(?:$|[,.;]|on\b|across\b|over\b|with\b|using\b|at\b|then\b|and\b))`;
+      const reference = new RegExp(String.raw`\b(?:start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|use|install)\s+${subject}${after}|\b(?:bring|get|spin|fire|boot)\s+${subject}\s+(?:back\s+)?(?:up|going|running)\b|\bswitch\s+(?:spark\d+\s+)?(?:over\s+)?to\s+${subject}${after}`, 'i');
+      if (!reference.test(own.text)) saidText = own.text;
     }
     const context = startContext(own ? own.text : request);
     // A number in another model's clause, or one invented by the brain, is only a proposal. A unique owner's number
@@ -8417,11 +8436,11 @@ async function jobModelEnv(j, n, args) {
   return { env: [...env, ...add.map(([k, v]) => `${k}=${v}`)] };
 }
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, tasks-telegram.test.mjs
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, tasks-telegram.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
-// of itself in saved-runs.json (R20: writePrivate and readKept; names, Spark ids and the chat id, no secret), rewritten as
+// of itself in saved-runs.json (R20: writePrivate; primary-only read, names, Spark ids and the chat id, no secret), rewritten as
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
@@ -8438,7 +8457,34 @@ async function jobModelEnv(j, n, args) {
 // never that nothing was running when the run was cut inside a start. No state copy holds the file (sendCopy,
 // COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
-const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
+// This file grants permission to stop work. A previous copy may describe work its run already finished with, so
+// neither recovery nor a live writer may fall back to it, move a bad primary aside, or replace it as an empty record.
+function savedRunsShape(f) {
+  const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const op = x => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x);
+  const text = x => typeof x === 'string' && x.length > 0;
+  const item = x => object(x) && ['model', 'app', 'job'].includes(x.kind) && text(x.spark) && text(x.container)
+    && ['keep', 'wish'].every(k => x[k] === undefined || typeof x[k] === 'boolean')
+    && (x.operation === undefined || op(x.operation))
+    && (x.seen === undefined || (object(x.seen)
+      && (x.seen.id === undefined || (typeof x.seen.id === 'string' && /^[0-9a-f]{12,64}$/.test(x.seen.id)))
+      && ['since', 'startedAt'].every(k => x.seen[k] === undefined || x.seen[k] === null || text(x.seen[k]))));
+  return object(f) && object(f.runs) && Object.entries(f.runs).every(([id, r]) => object(r) && op(id) && r.operation === id
+    && ['title', 'since'].every(k => r[k] === undefined || text(r[k]))
+    && (r.chat === undefined || r.chat === null || (typeof r.chat === 'string' && /^sc_[0-9a-f]{16}$/.test(r.chat)))
+    && ['step', 'steps'].every(k => r[k] === undefined || (Number.isInteger(r[k]) && r[k] >= 0))
+    && (r.starting === undefined || r.starting === null || op(r.starting))
+    && ['started', 'pending', 'awaiting'].every(k => r[k] === undefined || (Array.isArray(r[k]) && r[k].every(item)))
+    && (r.awake === undefined || (Array.isArray(r.awake) && r.awake.every(text))));
+}
+function savedRunsNow() {
+  let text;
+  try { text = readFileSync(SAVED_RUNS_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return { runs: {} }; throw e; }
+  const f = JSON.parse(text);
+  if (!savedRunsShape(f)) throw new Error('The note of saved workflows under way has an invalid shape.');
+  return f;
+}
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 // Merges `fields` into run j's record. A record that can't be written is said once in the run's log: then a restart
 // would leave what it started running, as before this record existed.
@@ -8459,7 +8505,9 @@ function savedRunDone(j) {
     if (!f.runs[j.id]) return;
     delete f.runs[j.id];
     if (Object.keys(f.runs).length) writePrivate(SAVED_RUNS_FILE, f); else unlinkSync(SAVED_RUNS_FILE);
-  } catch {}
+  } catch (e) {
+    note(j, `Couldn’t clear the note of this saved workflow (${savedRunWords(e)}); its file was left alone. Check saved-runs.json before restarting Spark Console.`);
+  }
 }
 // What a step that answered `started` is still bringing up, while its own operation runs.
 function savedRunPending(action, args, out, keep) {
@@ -8473,7 +8521,16 @@ function savedRunPending(action, args, out, keep) {
 // operation's claim it joins pending with its id/start time, so a restart can clean up even while the app is loading.
 function savedRunReceipts(op) {
   if (!op.startedReceipts || !Object.keys(op.startedReceipts).length) return;
-  for (const r of Object.values(savedRunsNow().runs)) {
+  let f;
+  try { f = savedRunsNow(); }
+  catch (e) {
+    if (!op.runRecordLost) {
+      op.runRecordLost = true;
+      note(op, `Couldn’t keep this start’s receipt with its saved workflow (${savedRunWords(e)}); the note was left alone. A restart now would leave its work running.`);
+    }
+    return;
+  }
+  for (const r of Object.values(f.runs)) {
     const matching = (r.awaiting || []).filter(x => x.operation === op.id);
     const pending = (r.pending || []).map(x => x.operation === op.id && op.ownersWish ? { ...x, wish: true } : x);
     const wished = pending.some((x, i) => x !== r.pending[i]);
@@ -9057,6 +9114,8 @@ const START_CODE = () => [...CONTEXT_CODE(), startModel, notBrainsSpark, brainSp
   captureStartedReceipts,
   savedRunReceipts,
   savedRunsNow,
+  savedRunsShape,
+  savedRunWords,
   runJob,
   desiredAfter,
   stepOpEnd,
@@ -9095,7 +9154,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -9111,7 +9170,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [contextPublish, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
+    code: () => [contextPublish, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, receiptOf, RECEIPT_LOOK, fields, desired, desiredAfter, runJob, restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -13495,7 +13554,7 @@ function memoryClear(name, input, ctx, asked) {
   return asked || !QUESTION_START.test(String(ctx.request || '').trim());
 }
 /* ───────── what is waiting on the owner (H4) ───────── */
-// Area: safety        Rules: R21, R26        Tests: needs.test.mjs
+// Area: safety        Rules: R21, R26        Tests: needs.test.mjs, workloads-record.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model
@@ -13522,6 +13581,10 @@ function openProblems() {
     // State put back from a copy, held until the owner looks on the tailnet (22-putback.mjs).
     () => putBackNeeds(add),
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.
+    () => {
+      try { savedRunsNow(); }
+      catch { add('saved-runs', `The note of saved workflows under way can’t be read. Spark Console left saved-runs.json alone and won’t use an older copy to stop work. Fix saved-runs.json in ${tilde(STATE_DIR)} on ${here}.`); }
+    },
     () => { if (chatsUnsaved) add('chats', `Chats aren’t being saved: ${here}’s state folder can’t be written (full disk?). What you say now is lost at the next restart.`); },
     () => {
       // (a save that worked since, of any file, shows the folder takes writes again)
@@ -29320,7 +29383,7 @@ const handler = async (req, res) => {
 
 /* ───────── a copy of the console's state on another Spark ───────── */
 // Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, copy.test.mjs, fleet.test.mjs,
-//   install.test.mjs
+//   install.test.mjs, copy-signins.test.mjs
 // Owns: backup.json (writers: backupState, copyLate)
 // Timers: backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed),
 //   needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
@@ -29351,9 +29414,9 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25; no saved-runs.json: a
-    // start from it would stop by name what a saved workflow ran back then, R57)
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json: a copy signs no device in, contract 6.25; no saved-runs.json or its .prev: either could
+    // restore a saved workflow's old authority to stop current workloads, R57)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '--exclude=./saved-runs.json.prev', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is

@@ -34,6 +34,10 @@ Code answers them, not Sparkie's model:
 
 Putting state back too (restore.sh --with-state in a release below, or a copy): when Spark Console says so, open it
 once on your tailnet, look at what came back and press "Keep these"; until then sign-in from the internet is refused.
+For an older copy or release, stop the service before putting state back. Do not run its old restore.sh --with-state
+unchanged: it restarts the service itself. First update that script to skip and remove saved-runs.json and
+saved-runs.json.prev, or restore by hand without them. Remove both from ~/.local/state/spark-console before restarting.
+They can hold old authority to stop current workloads. The exact archive commands are in REBUILD.txt.
 If your Tailscale login changed since that copy, put today's login in access.json first (yours now in place of <login>,
 inside the quotes):
      python3 -I -c 'import json,sys; f,l=sys.argv[1:]; d=json.load(open(f)); d["ownerLogin"]=l; json.dump(d,open(f,"w"))' \

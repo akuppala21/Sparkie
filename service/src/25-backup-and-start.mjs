@@ -1,6 +1,6 @@
 /* ───────── a copy of the console's state on another Spark ───────── */
 // Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, copy.test.mjs, fleet.test.mjs,
-//   install.test.mjs
+//   install.test.mjs, copy-signins.test.mjs
 // Owns: backup.json (writers: backupState, copyLate)
 // Timers: backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed),
 //   needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
@@ -31,9 +31,9 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25; no saved-runs.json: a
-    // start from it would stop by name what a saved workflow ran back then, R57)
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json: a copy signs no device in, contract 6.25; no saved-runs.json or its .prev: either could
+    // restore a saved workflow's old authority to stop current workloads, R57)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '--exclude=./saved-runs.json.prev', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is

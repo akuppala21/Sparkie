@@ -1,5 +1,5 @@
 /* ───────── what is waiting on the owner (H4) ───────── */
-// Area: safety        Rules: R21, R26        Tests: needs.test.mjs
+// Area: safety        Rules: R21, R26        Tests: needs.test.mjs, workloads-record.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model
@@ -26,6 +26,10 @@ function openProblems() {
     // State put back from a copy, held until the owner looks on the tailnet (22-putback.mjs).
     () => putBackNeeds(add),
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.
+    () => {
+      try { savedRunsNow(); }
+      catch { add('saved-runs', `The note of saved workflows under way can’t be read. Spark Console left saved-runs.json alone and won’t use an older copy to stop work. Fix saved-runs.json in ${tilde(STATE_DIR)} on ${here}.`); }
+    },
     () => { if (chatsUnsaved) add('chats', `Chats aren’t being saved: ${here}’s state folder can’t be written (full disk?). What you say now is lost at the next restart.`); },
     () => {
       // (a save that worked since, of any file, shows the folder takes writes again)

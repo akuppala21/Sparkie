@@ -1,9 +1,9 @@
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, tasks-telegram.test.mjs
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, tasks-telegram.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
-// of itself in saved-runs.json (R20: writePrivate and readKept; names, Spark ids and the chat id, no secret), rewritten as
+// of itself in saved-runs.json (R20: writePrivate; primary-only read, names, Spark ids and the chat id, no secret), rewritten as
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
@@ -20,7 +20,34 @@
 // never that nothing was running when the run was cut inside a start. No state copy holds the file (sendCopy,
 // COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
-const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
+// This file grants permission to stop work. A previous copy may describe work its run already finished with, so
+// neither recovery nor a live writer may fall back to it, move a bad primary aside, or replace it as an empty record.
+function savedRunsShape(f) {
+  const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const op = x => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x);
+  const text = x => typeof x === 'string' && x.length > 0;
+  const item = x => object(x) && ['model', 'app', 'job'].includes(x.kind) && text(x.spark) && text(x.container)
+    && ['keep', 'wish'].every(k => x[k] === undefined || typeof x[k] === 'boolean')
+    && (x.operation === undefined || op(x.operation))
+    && (x.seen === undefined || (object(x.seen)
+      && (x.seen.id === undefined || (typeof x.seen.id === 'string' && /^[0-9a-f]{12,64}$/.test(x.seen.id)))
+      && ['since', 'startedAt'].every(k => x.seen[k] === undefined || x.seen[k] === null || text(x.seen[k]))));
+  return object(f) && object(f.runs) && Object.entries(f.runs).every(([id, r]) => object(r) && op(id) && r.operation === id
+    && ['title', 'since'].every(k => r[k] === undefined || text(r[k]))
+    && (r.chat === undefined || r.chat === null || (typeof r.chat === 'string' && /^sc_[0-9a-f]{16}$/.test(r.chat)))
+    && ['step', 'steps'].every(k => r[k] === undefined || (Number.isInteger(r[k]) && r[k] >= 0))
+    && (r.starting === undefined || r.starting === null || op(r.starting))
+    && ['started', 'pending', 'awaiting'].every(k => r[k] === undefined || (Array.isArray(r[k]) && r[k].every(item)))
+    && (r.awake === undefined || (Array.isArray(r.awake) && r.awake.every(text))));
+}
+function savedRunsNow() {
+  let text;
+  try { text = readFileSync(SAVED_RUNS_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return { runs: {} }; throw e; }
+  const f = JSON.parse(text);
+  if (!savedRunsShape(f)) throw new Error('The note of saved workflows under way has an invalid shape.');
+  return f;
+}
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 // Merges `fields` into run j's record. A record that can't be written is said once in the run's log: then a restart
 // would leave what it started running, as before this record existed.
@@ -41,7 +68,9 @@ function savedRunDone(j) {
     if (!f.runs[j.id]) return;
     delete f.runs[j.id];
     if (Object.keys(f.runs).length) writePrivate(SAVED_RUNS_FILE, f); else unlinkSync(SAVED_RUNS_FILE);
-  } catch {}
+  } catch (e) {
+    note(j, `Couldn’t clear the note of this saved workflow (${savedRunWords(e)}); its file was left alone. Check saved-runs.json before restarting Spark Console.`);
+  }
 }
 // What a step that answered `started` is still bringing up, while its own operation runs.
 function savedRunPending(action, args, out, keep) {
@@ -55,7 +84,16 @@ function savedRunPending(action, args, out, keep) {
 // operation's claim it joins pending with its id/start time, so a restart can clean up even while the app is loading.
 function savedRunReceipts(op) {
   if (!op.startedReceipts || !Object.keys(op.startedReceipts).length) return;
-  for (const r of Object.values(savedRunsNow().runs)) {
+  let f;
+  try { f = savedRunsNow(); }
+  catch (e) {
+    if (!op.runRecordLost) {
+      op.runRecordLost = true;
+      note(op, `Couldn’t keep this start’s receipt with its saved workflow (${savedRunWords(e)}); the note was left alone. A restart now would leave its work running.`);
+    }
+    return;
+  }
+  for (const r of Object.values(f.runs)) {
     const matching = (r.awaiting || []).filter(x => x.operation === op.id);
     const pending = (r.pending || []).map(x => x.operation === op.id && op.ownersWish ? { ...x, wish: true } : x);
     const wished = pending.some((x, i) => x !== r.pending[i]);

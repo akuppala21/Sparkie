@@ -49,8 +49,13 @@ export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worke
 export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'internet', 'sparkie', 'install', 'go-back'].map(n => `test/${n}.test.mjs`);
 export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
-// Direct-import tests do not execute server.mjs, so its coverage map cannot discover this edge.
-export const DIRECT_TESTS = { '17-context.mjs': ['test/context-policy.test.mjs'], '13-ask.mjs': ['test/brain-ask.test.mjs'] };
+// Direct-import and source-fixture tests do not execute server.mjs, so its map cannot discover these edges.
+export const DIRECT_TESTS = {
+  '13-ask.mjs': ['test/brain-ask.test.mjs'],
+  '16-actions.mjs': ['test/context-intent.test.mjs', 'test/intent-isolation.test.mjs'],
+  '17-context.mjs': ['test/context-policy.test.mjs'],
+  '20-mcp.mjs': ['test/context-intent.test.mjs'],
+};
 const MOST = 0.5;          // a function run by more than this share of the test files: everything
 const MAX_PARTS = 8;       // more parts changed than this: everything
 const HISTORY = 500;       // how far back along base a map is looked for

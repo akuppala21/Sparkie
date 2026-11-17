@@ -48,7 +48,8 @@ test/brain-ask.test.mjs. Existing declarations and integration tests remain. too
 associates those direct tests with this part, because generated-server coverage cannot discover that import. The
 same pattern now covers the context policy in service/src/17-context.mjs and test/context-policy.test.mjs:
 values and retry limits have explicit inputs, while approval and execution stay in the existing adapters. These
-are test seams, not yet complete encapsulation.
+are test seams, not yet complete encapsulation. Source-fixture intent and masking checks also have explicit
+dependencies in the picker; service coverage alone cannot select them.
 
 Then isolate one read-only computation (fabric parsing/pair classification) or pure wake-selection decision behind explicit inputs and outputs. Keep SSH, storage writes, claims, timers and mutations in their current adapter while proving equivalence.
 

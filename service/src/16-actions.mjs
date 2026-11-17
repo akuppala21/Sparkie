@@ -1,7 +1,7 @@
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
 // Rules: R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74
-// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs, intent-isolation.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
@@ -441,7 +441,17 @@ function pickContainer(name, spark, text) {
 function containersSaid(spark, text) {
   const said = [...tokensOf(text)].filter(t => !/^spark\d+$/.test(t));
   const near = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  return Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed')
+  const here = Object.values(knowledge.workloads).filter(w => w.byConsole && w.spark === spark && w.state !== 'removed'), flat = squash(text);
+  return here.filter(w => {
+    // A replacement keeps the old model under this generated name until it works. The watcher can still remember
+    // that row after removal. Its model labels and matching canonical row prove the family; a suffix alone does not.
+    // An owner who names the exact old copy still gets that copy, never its replacement.
+    const aside = /^(sc-.+)-before-[0-9a-f]{12}$/.exec(String(w.name)), model = w.labels?.['spark.model'];
+    const base = model && `sc-${model}`;
+    return !aside || flat.includes(squash(w.name)) || !(w.labels?.['spark.console'] === '1'
+      && [base, `${base}-part2`].includes(aside[1])
+      && here.some(c => c.name === aside[1] && c.labels?.['spark.console'] === '1' && c.labels?.['spark.model'] === model));
+  })
     .map(w => ({ name: w.name, running: Boolean(w.running), score: [...tokensOf(String(w.name).replace(/^sc-/, ''))].filter(t => !/^part\d$/.test(t) && said.some(x => near(x, t))).length }))
     .filter(x => x.score > 0).sort((x, y) => y.score - x.score || y.running - x.running);
 }
@@ -621,7 +631,8 @@ function startContext(text) {
 async function sparkieCheck(name, input, ctx) {
   const intent = ctx.intent || { asked: [], negated: [], mixed: [] }, kinds = ACTION_KIND[name] || [];
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
-  const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
+  let saidText = ctx.said || ctx.request || '';
+  const said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
     // Each recognized request owns its model and destinations. Resolve that binding before placement, including
     // destinations before the verb. Unclear mixed requests keep a button, with only that clause's destinations.
@@ -652,6 +663,14 @@ async function sparkieCheck(name, input, ctx) {
     } else if (Array.isArray(out.sparks)) {
       // No unique request owns this pair. Keep the unresolved choice, without proposing an invented pair.
       delete out.sparks; delete out.spark;
+    }
+    if (own) {
+      // Rank the model in this clause, not another clause or the previous request. Only an explicit reference as
+      // the model's subject ("start it", "bring that one up") may use the previous owner's words for identity.
+      const subject = String.raw`(?:it|this|that|(?:this|that|the(?:\s+same)?)\s+(?:one|model))(?:\s+(?:again|now|please)){0,3}`;
+      const after = String.raw`(?=\s*(?:$|[,.;]|on\b|across\b|over\b|with\b|using\b|at\b|then\b|and\b))`;
+      const reference = new RegExp(String.raw`\b(?:start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|use|install)\s+${subject}${after}|\b(?:bring|get|spin|fire|boot)\s+${subject}\s+(?:back\s+)?(?:up|going|running)\b|\bswitch\s+(?:spark\d+\s+)?(?:over\s+)?to\s+${subject}${after}`, 'i');
+      if (!reference.test(own.text)) saidText = own.text;
     }
     const context = startContext(own ? own.text : request);
     // A number in another model's clause, or one invented by the brain, is only a proposal. A unique owner's number

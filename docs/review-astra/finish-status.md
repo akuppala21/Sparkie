@@ -1,7 +1,7 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17. Completed hosted evidence below is through `e5aabcdc8312957d901664a78947769ceb26fb5d`;
-the subsequent context-retry candidate is implemented and awaiting hosted checks.
+Source audit: 2026-11-17. Completed hosted evidence below is through `56c72fa2d22d585ddb599904aebe8251876c13db`;
+the subsequent intent and recovery repairs are source-reviewed and awaiting hosted checks.
 This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
 new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
 
@@ -18,6 +18,14 @@ Hosted evidence is tied to its snapshot:
   installer checks. At that snapshot the owner-question part of T42 was unbuilt. No final full-suite lock or tested tag has been
   produced for this candidate.
 
+- `56c72fa2`, [run `44068592367`](https://github.com/akuppala21/Sparkie/actions/runs/44068592367): **1,111/1,116 passed**
+  across three runners (311/312, 670/670 and 130/134). Desktop and phone browser checks passed. The five failures
+  were two context-start cases, two linked workflow-restart cases, and an installer archive-order assertion.
+  Follow-up source fixes bind model identity to its current clause and distinguish proven internal rollback copies
+  from real model alternatives. The new fingerprint test now supplies enough fixture memory to reach its intended
+  gate. Archive ordering again satisfies the unchanged recovery test. All fixes still need the next hosted result;
+  the stale-aside explanation for the restart failures is source-supported, not proven by the old log.
+
 ## Current context-retry candidate
 
 T42 now has a private, one-use owner question after rollback and claim release. Explicit context is carried through
@@ -26,11 +34,18 @@ reduction creates a separate operation and shares the original attempt/time budg
 normal gate. The original task is identified separately from the current result chat, so handing a decision to the
 owner neither resumes an agent task nor interrupts a newer request. Activity links to the question without approving it.
 
-New direct policy/intent checks, stand-in action/page tests and a desktop/phone browser scenario are written. Generation,
-document consistency and syntax checks pass; no runtime pass is claimed for this candidate yet. Focused GitHub dispatch
-can optionally include browser checks. Coverage still needs evidence for deadline expiry during I/O, exhausted/expired
-or restarted decisions, unresolved cleanup, wake/download propagation and named/verified remote-code setups. The
-existing related regression files are included where available. T45 and the other gates below remain open.
+Policy/intent and page checks passed on `56c72fa2`, alongside four of six context-start cases and the browser scenario.
+The two failed start cases and their repairs remain open. New lifecycle regressions cover expired and restarted
+choices, cleanup failure and a deadline crossed during image preparation; they await hosted execution. Exhaustion
+publication, complete wake/download propagation, copy/rank deadline crossings and named/verified remote-code setups
+still need evidence. Focused checks can include browser flows. T45 and the other gates below remain open.
+
+The general recovery review found stale cleanup authority in `saved-runs.json.prev`. The new patch reads only a valid
+primary, preserves corrupt bytes, reports an owner-visible problem, and keeps read failures from stopping a healthy
+live workflow. Backup and state restore omit both primary and previous record, including residue from older copies.
+New service/archive/restore regressions await hosted execution. This does not add deferred T45 recovery or solve a
+failed removal of an otherwise valid completed record. The targeted picker now names source-fixture dependencies
+explicitly so generated-service coverage cannot silently omit intent regressions.
 
 ## Decisions carried forward
 

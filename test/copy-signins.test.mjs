@@ -1,10 +1,11 @@
 // Covers: No sign-in travels with the state (E2b; contract 6.25; design E 2.5): a copy of the state holds no
 // `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); nor does it hold
-// `saved-runs.json` (a saved workflow's run under way: a start from the copy would stop what runs then, R57); state put back
+// `saved-runs.json` or `saved-runs.json.prev` (old saved-run cleanup authority, R57); state put back
 // from a copy onto a fresh Spark Console signs no device in (the old cookie gets 401) while the owner's access and
 // passkey are as the copy had them (the passkey signs in from the internet again once the owner, on the tailnet, has
 // kept what came back: E2c, the copy has a number and the new disk none); `restore.sh --with-state` puts an
-// install snapshot's state back but never its `sessions.json`, also when the snapshot holds one. The registry's "Copied
+// install snapshot's state back but never its `sessions.json` or either saved-run authority file, including an older
+// snapshot or a destination with an old file already there. Other `.prev` files remain recoverable. The registry's "Copied
 // daily" column agrees with what a real copy holds, for each state file there (TR-6).
 //
 // One stand-in fleet looks every 3 s (the hourly look, made short), with Sparks 3 and 4 on; a second starts from the
@@ -107,6 +108,24 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
     } finally { rmSync(runs, { force: true }); }
   });
 
+  test('a copy leaves out both saved-run authority files while keeping other previous state', { timeout: 300000 * SLOW }, async () => {
+    const r0 = await quiet(F), files = ['saved-runs.json', 'saved-runs.json.prev', 'test-kept.json.prev', 'test-change-authority.json'];
+    const before = new Map(files.map(f => [f, existsSync(join(F.stateDir, f)) ? readFileSync(join(F.stateDir, f)) : null]));
+    try {
+      const oldRun = { runs: { old: { operation: 'old', started: [{ kind: 'model', spark: 'spark4', container: 'sc-current', seen: { id: 'old-container-id', startedAt: 'old-start' } }] } } };
+      for (const f of files.slice(0, 2)) writeFileSync(join(F.stateDir, f), JSON.stringify(oldRun), { mode: 0o600 });
+      writeFileSync(join(F.stateDir, 'test-kept.json.prev'), JSON.stringify({ entries: ['kept previous state'] }), { mode: 0o600 });
+      writeFileSync(join(F.stateDir, 'test-change-authority.json'), JSON.stringify({ at: new Date().toISOString() }), { mode: 0o600 });
+      const c = await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r0.at && x; }, { timeout: 30000 * SLOW, what: 'a copy with previous-state files present' });
+      const names = listed(copyFile(F, c));
+      assert.ok(!names.some(n => /(^|\/)saved-runs\.json(?:\.prev)?$/.test(n)), `no old saved-run authority in the copy: ${names.join(' ')}`);
+      assert.ok(names.includes('./test-kept.json.prev'), 'other previous state is still copied');
+      assert.ok(names.includes('./test-change-authority.json'), 'the requested changed state reached the archive');
+    } finally {
+      for (const [f, data] of before) { if (data === null) rmSync(join(F.stateDir, f), { force: true }); else writeFileSync(join(F.stateDir, f), data, { mode: 0o600 }); }
+    }
+  });
+
   test('state put back from that copy onto a fresh Spark Console signs no device in; the owner’s access and passkey are as the copy had them', { timeout: 300000 * SLOW }, async () => {
     assert.ok(copy && cookie, 'the copy and the cookie from the test before');
     const file = copyFile(F, copy), had = name => JSON.parse(execFileSync('tar', ['-xzOf', file, `./${name}`], { encoding: 'utf8' }));
@@ -173,6 +192,33 @@ describe('restore.sh --with-state', () => {
       assert.equal(r.status, 0, r.stdout + r.stderr);
       assert.ok(!existsSync(join(x.live, 'sessions.json')), 'no device stays signed in');
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'passkeys.json'), 'utf8')), { keys: [{ id: 'from-the-snapshot' }] }, 'the rest is put back');
+      assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json'), 'utf8')), { entries: ['from the snapshot'] });
+    } finally { rmSync(x.h, { recursive: true, force: true }); }
+  });
+
+  test('an older snapshot restores neither saved-run authority file and removes both live copies', () => {
+    const x = home({ liveSessions: null });
+    try {
+      for (const f of ['saved-runs.json', 'saved-runs.json.prev']) {
+        writeFileSync(join(x.snap, 'state', f), JSON.stringify({ runs: { old: { operation: 'old', started: [{ spark: 'spark4', container: 'sc-current' }] } } }));
+        writeFileSync(join(x.live, f), JSON.stringify({ runs: { current: { operation: 'current' } } }));
+      }
+      writeFileSync(join(x.snap, 'state', 'memory.json.prev'), JSON.stringify({ entries: ['previous snapshot memory'] }));
+      const r = run(x);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      for (const f of ['saved-runs.json', 'saved-runs.json.prev']) assert.ok(!existsSync(join(x.live, f)), `${f} restores no cleanup authority`);
+      assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json.prev'), 'utf8')), { entries: ['previous snapshot memory'] });
+      assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json'), 'utf8')), { entries: ['from the snapshot'] });
+    } finally { rmSync(x.h, { recursive: true, force: true }); }
+  });
+
+  test('a snapshot without saved-run files still clears both files left in the destination', () => {
+    const x = home({ liveSessions: null });
+    try {
+      for (const f of ['saved-runs.json', 'saved-runs.json.prev']) writeFileSync(join(x.live, f), JSON.stringify({ runs: { old: { operation: 'old' } } }));
+      const r = run(x);
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      for (const f of ['saved-runs.json', 'saved-runs.json.prev']) assert.ok(!existsSync(join(x.live, f)), `${f} does not survive state restoration`);
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json'), 'utf8')), { entries: ['from the snapshot'] });
     } finally { rmSync(x.h, { recursive: true, force: true }); }
   });

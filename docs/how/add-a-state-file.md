@@ -12,7 +12,8 @@ A JSON file the console keeps in its state folder (`~/.local/state/spark-console
   row in `docs/state-outside.md` instead.)
 - The state copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`), if no copy may carry it. An install snapshot
   takes every file but `*.sock` and `*.tmp` (`save` in `deploy/host-on-portal.sh`); one that must not come back with
-  `restore.sh --with-state` joins the `rm -f` lines of `restore.sh`, written in that script.
+  `restore.sh --with-state` is skipped in its copy loop and joins its `rm -f` lines, including any `.prev` that
+  `readKept` could use. Clear old destination files too. Keep the by-hand steps safe for older archives (`REBUILD.txt`).
 - `COPY_IGNORES` (`20-state-copy.mjs`), if Spark Console rewrites it by itself as it watches or logs: a change to it
   alone then sends no copy to a Spark that is awake (it still rides in the next one).
 - Its part's header: `Owns: <file> (writers: …)`, naming every function that writes it, wherever it is (R22, R28).
