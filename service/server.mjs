@@ -481,12 +481,28 @@ function secretsWrite(change) {
   const dir = SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
-  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
+  const tmp = `${SECRETS_FILE}.${process.pid}.tmp`, text = Buffer.from(JSON.stringify(next, null, 2));
   // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
-  // the new one, never a short one that can't be read, R23)
-  const fd = openSync(tmp, 'w', 0o600);
-  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(tmp, SECRETS_FILE);
+  // the new one, never a short one that can't be read, R23. Only a whole file takes its place: on a nearly full disk a
+  // write takes in only part and says so, so it is written until every byte is in, then read back and compared. Anything
+  // less throws, leaves the secrets file as it was, and leaves nothing under the temporary name.)
+  try {
+    const fd = openSync(tmp, 'w', 0o600);
+    try {
+      for (let at = 0; at < text.length;) {
+        const n = writeSync(fd, text, at, text.length - at);
+        if (!(n > 0)) throw new Error('the disk took no more of the secrets file');
+        at += n;
+      }
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    const back = readFileSync(tmp);
+    if (!back.equals(text)) throw Object.assign(new Error(`only ${back.length} of ${text.length} bytes of the secrets file reached the disk as written`), { code: 'ESHORT' });
+    renameSync(tmp, SECRETS_FILE);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch {}
+    throw e;
+  }
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });
   return next;
@@ -1288,7 +1304,12 @@ ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
   if (!failed) {
     const moved = await run(to, `rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }`, { timeout: 600000 });
     if (moved.code === 0) return;
-    errText = `${errText}\n${moved.err || moved.out || `it couldn’t be moved into place on ${to.id}`}`;
+    // Only the move failed, on the receiving Spark (W-9: often files a container left there as root): the whole copy is
+    // kept in staging, never shown as a model, and the words say which Spark and the one command that finishes it there.
+    // (The next start copies again from the start: the staging folder is cleared before each copy.)
+    const [home, stage] = store === 'hf' ? ['~/.cache/huggingface/hub', '~/.cache/huggingface/hub/.spark-console-incoming'] : [`~/${CONFIG.modelsDir}`, `~/${CONFIG.modelsDir}/.incoming`];
+    const said = String(moved.err || moved.out || '').trim().split('\n').pop().slice(0, 300) || (moved.code === 255 ? `${to.id} didn’t answer` : 'no reason given');
+    throw new Error(`Copy failed: the copy reached ${to.id} but couldn’t be moved into place there (${said}). The whole copy is kept there in ${stage}/${folder}. To finish it, on ${to.id} run: sudo chown -R $USER ${home}/${folder} && rm -rf ${home}/${folder} && mv ${stage}/${folder} ${home}/${folder}`);
   }
   // Otherwise what was copied goes, and whether it went is looked at: left there, it would hold up to a whole model.
   const gone = await run(to, `rm -rf ${staging}/${q(folder)}`, { timeout: 600000 });
@@ -1349,7 +1370,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
-    if (!started.code || started.code === 255 || /\(timed out\)$/.test(started.err)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
+    if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
     consoleStopped.delete(`${nodeId}/${cname}`);
     step(job, 'Loading the model; this can take a few minutes');
@@ -1795,19 +1816,48 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 }
 
 // It didn't start: what was set aside gets its name back and starts again. It's taken off this start's lists, so
-// putting the rest back (putBack) doesn't stop it again as one of this start's parts.
-async function asideBack(job) {
-  const held = [];
+// putting the rest back (putBack) doesn't stop it again as one of this start's parts. Before that the new container of
+// its own name is stopped and looked at (W-1), and nothing else this start ran there may still run (A-23); otherwise it
+// stays set aside, and the new one stays on `ranHere`, so putBack's checked stop and its words cover both. A pair set
+// aside goes back whole or not at all (W-7). After putBack's own stops (`afterStops`) it only looks.
+// One whose start again failed stays on `stoppedHere` and is said (W-3, job.notBack).
+async function asideBack(job, afterStops = false) {
+  const ready = new Map();
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
-    // (never beside a part this start ran on that Spark that isn't known to have stopped: it stays set aside, and the
-    // put-back looks again once its own stops are done, A-23)
-    if ((await runningOn(job, a.node, x)).length) { held.push(a); continue; }
-    const r = await run(nodeById(a.node), `docker stop --time 20 ${q(a.name)} >/dev/null 2>&1; docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} && docker start ${q(a.name)} >/dev/null`, { timeout: 120000 });
-    job.ranHere = (job.ranHere || []).filter(y => y !== x);
-    job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
-    consoleStopped.delete(x);
-    note(job, r.code ? `Couldn’t start ${a.name} on ${a.node} again (it’s there as ${a.aside}); start it from Spark Console.` : `Started ${a.name} on ${a.node} again`);
+    ready.set(a, afterStops ? !(await runningOn(job, a.node)).length
+      : !(await runningOn(job, a.node, x)).length && (await stopChecked(nodeById(a.node), a.name)) === 'stopped');
+  }
+  const held = [], all = job.asideHere || [];
+  for (const u of backUnits(all.map(a => `${a.node}/${a.name}`))) {
+    const parts = u.items.map(x => all.find(a => `${a.node}/${a.name}` === x));
+    if (parts.some(a => !ready.get(a))) { held.push(...parts); continue; }
+    const back = [];
+    for (const a of parts) {
+      const x = `${a.node}/${a.name}`;
+      const r = await run(nodeById(a.node), `docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} || exit 3; docker start ${q(a.name)} >/dev/null || exit 4`, { timeout: 120000 });
+      job.ranHere = (job.ranHere || []).filter(y => y !== x);
+      consoleStopped.delete(x);
+      if (!r.code) {
+        job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
+        note(job, `Started ${a.name} on ${a.node} again`);
+        back.push(a);
+        continue;
+      }
+      const at = sparkName(nodeById(a.node) || { id: a.node }), there = r.code === 4 ? '' : r.code === 3 ? ` (it’s there as ${a.aside})` : ` (Docker didn’t answer: it may be there as ${a.aside})`;
+      note(job, `Couldn’t start ${a.name} on ${a.node} again${there}; start it from Spark Console.`);
+      (job.notBack ||= []).push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : `${a.name} couldn’t be started again on ${at}${there}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, and it is owed as the pair, W-7)
+    if (u.model && back.length < parts.length) {
+      for (const a of back) {
+        consoleStopped.set(`${a.node}/${a.name}`, Date.now());
+        (job.stoppedHere ||= []).push(`${a.node}/${a.name}`);
+        if ((await stopChecked(nodeById(a.node), a.name)) === 'stopped') note(job, `Stopped ${a.name} on ${a.node} again: its other part didn’t start`);
+      }
+    }
   }
   job.asideHere = held;
 }
@@ -1852,6 +1902,8 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
     const r = await run(nodeById(m.node), clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix }), { timeout: 120000 });
+    // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
+    if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     if (r.code) { await stopAll(); throw new Error(`Docker couldn’t start the part on ${m.node}: ${r.err || r.out}`); }
     (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     // Started again on purpose (as a one-Spark start does): an earlier stop of this part no longer counts as "stopped
@@ -3512,6 +3564,17 @@ async function setupFromLibrary(name) {
   });
 }
 
+// One look at the brain's container after it was to be removed (the final read, W-13): 'gone' only when Docker there
+// says it has none by that name; 'stopped' when it has one that isn't running; 'running'; or 'unknown' when Docker
+// didn't answer. (stopLook, 17-stop-checked.mjs, asks the same and tells only stopped or not.)
+async function mainLook(m) {
+  const r = await run(mainNode(m), `docker inspect -f '{{.State.Status}}' ${q(m.container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+  const state = r.code === 0 ? r.out.trim() : '';
+  return state === 'missing' ? 'gone' : STOPPED_STATES.includes(state) ? 'stopped' : state ? 'running' : 'unknown';
+}
+// The words when a removal isn't known to have worked: what was asked, and what the look says.
+const unconfirmedWords = (look, why = '') => `Spark Console asked Docker to remove it${why}, but couldn’t confirm it is gone: ${look === 'stopped' ? 'it isn’t running, but it is still there' : 'it may still be loading'}.`;
+
 // Switching Sparkie's model: plan the new one first (a setup that can't start leaves the one in use untouched), stop
 // the one in use, start the new one, and keep the choice only once it answers. If the new one fails, the previous one
 // is started again, and the error says whether it came back.
@@ -3523,19 +3586,22 @@ async function switchMain(job, target, keep) {
     await startMain(job, keep, target);
   } catch (e) {
     // (the new one, still loading at the limit, doesn't stay when there is one to go back to: it is removed for it)
-    const removed = Boolean(e.stillLoading && previous);
-    const why = removed ? `${MAIN_SLOW}, so it was removed to start ${previous.title} again.` : e.message;
-    note(job, `${target.title} didn’t start: ${removed ? `${MAIN_SLOW}; going back to ${previous.title} removes it.` : e.message.split('\n')[0]}`);
-    let back = false;
+    const slow = Boolean(e.stillLoading && previous);
+    note(job, `${target.title} didn’t start: ${slow ? `${MAIN_SLOW}; going back to ${previous.title} removes it.` : e.message.split('\n')[0]}`);
+    let back = false, look = null;
     if (previous) {
       step(job, `Going back to ${previous.title}`);
       try { await startMain(job, [], previous); back = true; } catch (e2) {
-        note(job, `${previous.title} didn’t come back either: ${e2.stillLoading ? `${MAIN_SLOW}; it is removed too.` : e2.message.split('\n')[0]}`);
         // No half-started container stays behind: Docker would keep restarting it, and "/restart sparkie" must find it
         // gone and start the saved setup, never the one that just failed.
         await run(mainNode(previous), `docker rm -f ${q(previous.container)} >/dev/null 2>&1; true`, { timeout: 60000 });
+        look = await mainLook(previous).catch(() => 'unknown');
+        note(job, `${previous.title} didn’t come back either: ${e2.stillLoading ? (look === 'gone' ? `${MAIN_SLOW}; it is removed too.` : `${MAIN_SLOW}. ${unconfirmedWords(look)}`) : e2.message.split('\n')[0]}`);
       }
     }
+    // (removed only where it is known: the old one started again under the same name, or a look says it is gone, W-13)
+    const why = !slow ? e.message : back || look === 'gone' ? `${MAIN_SLOW}, so it was removed to start ${previous.title} again.`
+      : `${MAIN_SLOW}. ${unconfirmedWords(look, ` to start ${previous.title} again`)}`;
     const outcome = !previous ? '' : back ? `, so ${ASSISTANT_NAME} is back on ${previous.title}`
       : `, and ${previous.title} didn’t come back either, so ${ASSISTANT_NAME} is down. To start it again, type /restart sparkie in Spark Console’s chat`;
     throw new Error(`${target.title} didn’t start${outcome}. ${why}`);
@@ -6975,12 +7041,12 @@ function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) 
 // runs out of memory, the start cuts it again, and the new figure is kept.
 function fullContext(how, v, free) {
   const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
-  if (!flag || !(cut > 0)) return how;
+  if (!flag || !v.contextCut) return how;
   const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
-  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free: a
-  // context is never cut below 16,384 by itself, A-26)
+  // (one cut below the floor, as an older build cut to 8,192, goes first with its full context whatever is free, also
+  // when the free memory then couldn't be read: a context is never cut below 16,384 by itself, A-26, W-12)
   const low = at >= 0 && Number(pair === 1 ? String(how.args[at]).split('=')[1] : how.args[at + 1]) < CONTEXT_FLOOR;
-  if (!low && (!Number.isFinite(free) || free < cut + HEADROOM)) return how;
+  if (!low && (!(cut > 0) || !Number.isFinite(free) || free < cut + HEADROOM)) return how;
   return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free, ...(low ? { floor: true } : {}) } };
 }
 // The least free memory on these Sparks right now, or null when one can't be read.
@@ -7022,8 +7088,8 @@ const START_FAILURES = [
   { id: 'out-of-memory', title: 'it ran out of memory while loading',
     sign: /out of memory|OutOfMemoryError|cudaMalloc|insufficient memory|not enough (?:GPU )?memory|no available memory for the cache blocks|larger than the maximum number of tokens that can be stored in KV cache|KV cache[^\n]{0,80}(?:insufficient|too small|exceed)|(?:max_model_len|max_seq_len|context.length)[^\n]{0,80}(?:larger|greater|exceed)/i,
     // (never below 16,384 by itself, contract 6.9 and T12: shorter needs the owner's yes, and no ask is built yet, A-26)
-    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384; never shorter without asking).',
-    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest it is cut to without asking): it needs a Spark with more free memory, or a smaller version of the model.',
+    fix: 'Starting it with a shorter context (32,768 tokens, then 16,384, the shortest Spark Console cuts it to by itself).',
+    advice: 'Even a short context didn’t fit (16,384 tokens, the shortest Spark Console cuts it to by itself): it needs a Spark with more free memory, or a smaller version of the model. To run it with a shorter context, start it with a setup that sets one itself (a recipe setup, or its own spark.json): a setup’s own context is never made longer.',
     next: ({ fix }) => (!fix.contextCap ? { fix: { ...fix, contextCap: 32768 } } : fix.contextCap > CONTEXT_FLOOR ? { fix: { ...fix, contextCap: CONTEXT_FLOOR } } : null) },
   { id: 'bad-flag', title: 'the engine didn’t accept one of the settings',
     sign: /unrecognized arguments|no such option|error: argument|invalid choice|unexpected keyword argument|unknown (?:argument|option)/i,
@@ -7086,7 +7152,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
-  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which isn’t done without asking (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
+  if (how?.fullContext?.floor) note(job, `Trying its full context first: the run kept for it had its context cut below 16,384 tokens, which Spark Console no longer does by itself (if it runs out of memory, it is cut again, to 16,384 at the shortest)`);
   else if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
@@ -7134,28 +7200,41 @@ async function putBack(job, m, placed) {
   // Only what this operation did (not what it planned): the containers it started are stopped again, and the ones it
   // stopped are started again. Each stop is looked at (A-23, 17-stop-checked.mjs): on a Spark where one isn't known to
   // have stopped, nothing is started again; both stay on the operation's lists, and its words say so (cleanUp). A copy
-  // set aside is asideBack's, after these stops.
+  // set aside is asideBack's, after these stops. A pair it had stopped goes back whole or not at all (W-7); one that
+  // couldn't be started again stays on `stoppedHere` and is said (W-3, job.notBack).
   const aside = new Set((job.asideHere || []).map(a => `${a.node}/${a.name}`));
   const ran = [...new Set(job.ranHere || [])], stopped = [...new Set(job.stoppedHere || [])].filter(x => !ran.includes(x) && !aside.has(x));
   for (const x of ran) consoleStopped.set(x, Date.now());
   const ends = await Promise.all(ran.map(x => { const [id, c] = x.split('/'); return stopChecked(nodeById(id), c); }));
-  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [];
-  for (const x of stopped) {
-    const [id, container] = x.split('/');
-    if (still.some(y => y.split('/')[0] === id)) { held.push(x); continue; }
-    consoleStopped.delete(x);
-    // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
-    // a link while this start ran is refused by name, and the job isn't started)
-    const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
-    note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+  const still = ran.filter((x, i) => ends[i] !== 'stopped'), held = [], pairs = [], notBack = (job.notBack ||= []);
+  for (const u of backUnits(stopped)) {
+    if (u.items.some(x => still.some(y => y.split('/')[0] === x.split('/')[0]))) { held.push(...u.items); if (u.model) pairs.push(u); continue; }
+    const back = [];
+    for (const x of u.items) {
+      const [id, container] = x.split('/');
+      consoleStopped.delete(x);
+      // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
+      // a link while this start ran is refused by name, and the job isn't started)
+      const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
+      note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+      if (!r.code) { back.push(x); continue; }
+      const at = sparkName(nodeById(id) || { id });
+      notBack.push({ items: u.items, words: u.model ? `${u.model} couldn’t be started again across ${u.sparks.map(i => sparkName(nodeById(i) || { id: i })).join(' + ')}; start ${u.model} across both again`
+        : r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message.replace(/\.$/, '') : `${container} couldn’t be started again on ${at}; start it from Spark Console` });
+      break;
+    }
+    // (a pair whose other part didn't start: the part that did is stopped again, W-7)
+    if (u.model && back.length < u.items.length) {
+      for (const x of back) { const [id, c] = x.split('/'); consoleStopped.set(x, Date.now()); if ((await stopChecked(nodeById(id), c)) === 'stopped') note(job, `Stopped ${c} on ${id} again: its other part didn’t start`); }
+    }
   }
   job.ranHere = still;
-  await asideBack(job);
+  await asideBack(job, true);
   const kept = job.asideHere || [];
-  job.stoppedHere = [...held, ...kept.map(a => `${a.node}/${a.name}`)];
-  if (!job.ranHere.length) return;
-  const owed = owedWords(job.ranHere, job.stoppedHere, kept);
-  for (const line of owed) note(job, line);
+  job.stoppedHere = [...new Set([...held, ...notBack.flatMap(n => n.items), ...kept.map(a => `${a.node}/${a.name}`)])];
+  const owed = [...(job.ranHere.length ? owedWords(job.ranHere, held.concat(kept.map(a => `${a.node}/${a.name}`)), kept, pairs) : []), ...notBack.map(n => n.words)];
+  if (!owed.length) return;
+  for (const line of owed.slice(0, owed.length - notBack.length)) note(job, line);
   job.cleanUp = owed.map(l => `${l}.`).join(' ');
 }
 
@@ -7516,7 +7595,8 @@ function restartJob(viewer, ctx, spark, container, model) {
     await restartRoom(viewer, spark, container, model);
     step(j, `Starting ${container} on ${spark}`);
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
-    if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
+    // (a start Docker didn't answer in time may have started it all the same: stopped again below, looked at, W-6)
+    if (r.code && !unanswered(r)) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
     // Started again on purpose: if it crashes from now on, self-healing may bring it back.
     consoleStopped.delete(`${spark}/${container}`);
     step(j, 'Loading the model; this can take a few minutes');
@@ -7524,6 +7604,7 @@ function restartJob(viewer, ctx, spark, container, model) {
     // didn't answer, a Spark that answered nothing until the limit, the limit itself. One that ended by itself is
     // stopped already.
     try {
+      if (r.code) throw new Error(`Docker didn’t answer the start of ${container} in time.`);
       const deadline = Date.now() + RESTART_WAIT_MS;
       while (Date.now() < deadline) {
         await sleep(5000);
@@ -7664,18 +7745,45 @@ async function runningOn(job, id, except = null) {
   const looks = await Promise.all(mine.map(x => stopLook(nodeById(id), x.split('/').slice(1).join('/'))));
   return mine.filter((x, i) => looks[i] !== 'stopped');
 }
+// A command that didn't get Docker's own answer (it timed out, or the Spark stopped answering) may still have done what
+// it was asked: a `docker run` or `docker start` like that counts as run, and is stopped again and looked at (W-6).
+const unanswered = r => r.code === 255 || /\(timed out\)$/.test(String(r.err || ''));
+// What a put-back starts again, as units: a pair stopped for the start (`<name>` on one Spark, `<name>-part2` on another)
+// goes back whole or not at all (W-7: one part alone holds its memory and does nothing); anything else alone.
+function backUnits(items) {
+  const units = [], used = new Set(), nameOf = x => x.split('/').slice(1).join('/'), sparkOf = x => x.split('/')[0];
+  for (const x of items) {
+    if (used.has(x)) continue;
+    const head = nameOf(x).replace(/-part2$/, ''), mate = items.find(y => y !== x && !used.has(y) && sparkOf(y) !== sparkOf(x)
+      && (nameOf(x) === head ? nameOf(y) === `${head}-part2` : nameOf(y) === head));
+    used.add(x);
+    if (!mate) { units.push({ items: [x] }); continue; }
+    used.add(mate);
+    const [h, p] = nameOf(x) === head ? [x, mate] : [mate, x];
+    units.push({ items: [h, p], model: head.replace(/^sc-/, ''), sparks: [sparkOf(h), sparkOf(p)] });
+  }
+  return units;
+}
 // What a put-back still owes, one sentence a Spark: what may still be running there, and what this operation had stopped
-// there that wasn't started again because of it (a copy set aside named with the name it is there under). Each ends
-// "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
-function owedWords(still, held, asides = []) {
+// there that wasn't started again because of it (a copy set aside named with the name it is there under; the new one of
+// the same name called the new one). Then one sentence a pair held whole (W-7), naming what the owner can ask for: that
+// model across both Sparks. Each ends "… again", so a failed operation's chat line carries it (postResult, 14-chats.mjs).
+function owedWords(still, held, asides = [], pairs = []) {
+  const inPair = new Set(pairs.flatMap(u => u.items)), single = held.filter(x => !inPair.has(x));
   const on = (list, id) => list.filter(x => x.split('/')[0] === id).map(x => x.split('/').slice(1).join('/'));
-  return [...new Set(still.map(x => x.split('/')[0]))].map(id => {
-    const at = sparkName(nodeById(id) || { id }), s = on(still, id), h = on(held, id);
+  const at = id => sparkName(nodeById(id) || { id });
+  const lines = [...new Set(still.map(x => x.split('/')[0]))].map(id => {
+    const h = on(single, id), s = on(still, id).map(n => (asides.some(a => a.node === id && a.name === n) ? `the new ${n}` : n));
     const them = s.length > 1 ? 'them' : 'it', were = s.length > 1 ? 'they' : 'it';
-    if (!h.length) return `${s.join(' and ')} may still be running on ${at}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
+    if (!h.length) return `${s.join(' and ')} may still be running on ${at(id)}: Spark Console couldn’t confirm ${were} stopped. Stop ${them} there before starting anything there again`;
     const shown = h.map(n => { const a = asides.find(x => x.node === id && x.name === n); return a ? `${n} (there as ${a.aside})` : n; });
-    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
+    return `${shown.join(' and ')} ${h.length > 1 ? 'weren’t' : 'wasn’t'} started again on ${at(id)}: ${s.join(' and ')} may still be running there (Spark Console couldn’t confirm ${were} stopped). Stop ${them} there, then start ${h.join(' and ')} again`;
   });
+  for (const u of pairs) {
+    const across = u.sparks.map(at).join(' + ');
+    lines.push(`${u.model} wasn’t started again across ${across}: both its parts stay stopped while one of its Sparks may still run what this start ran. Once that is stopped, start ${u.model} across ${across} again`);
+  }
+  return lines;
 }
 // A failed start's error with what is still owed after its first line (the line the chat shows): unchanged when nothing is.
 const withOwed = (job, message) => {
@@ -8326,6 +8434,9 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   withOwed,
   CONTEXT_FLOOR,
   spanOf,
+  START_READY_MS,
+  unanswered,
+  backUnits,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -8362,7 +8473,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn, ownersAsk, desiredWish, stopChecked, stopLook, STOPPED_STATES, spanOf, RESTART_WAIT_MS, unanswered] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -16764,6 +16875,8 @@ action({
       // (a job's two mounts checked again in the same command, as for a run again)
       const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
       if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
+      // (one Docker didn't answer in time may have started all the same: stopped again, looked at, and said, W-6)
+      if (r.code && unanswered(r)) { await appPutBack(j, node, container); throw new Error(`Docker didn’t answer the start of ${container} in time.`); }
       if (r.code) {
         // docker run makes the container before it starts it: one that never started (its port was taken) holds no data
         // or log, and left there it would stand in the way of the next try under this name. Only that one goes: still
@@ -19143,7 +19256,8 @@ if A['mode'] == 'restore':
                     finally:
                         os.close(fd)
                 # The put-back can't lose another program's edit made since the look above (A-19, beside): nothing at
-                # the name, by a link, which fails when anything is there by then; else the two names are exchanged in
+                # the name, by a link (or an exclusive create where the disk has no hard links), which fails when
+                # anything is there by then; else the two names are exchanged in
                 # one step and what that displaced is checked: not what was looked at, it goes back and is left as it
                 # is. Where this libc or filesystem has no exchange, a second look just before one replace.
                 hold()
@@ -19155,6 +19269,30 @@ if A['mode'] == 'restore':
                         except FileExistsError:
                             missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
                             continue
+                        except OSError:
+                            # (a disk with no hard links, FAT or exFAT: made only where nothing is, then filled; any
+                            # other failure is said with its reason, below)
+                            try:
+                                if e['kind'] == 'link':
+                                    os.symlink(e['target'], p)
+                                else:
+                                    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+                                    try:
+                                        os.write(fd, data)
+                                        try:
+                                            os.fchmod(fd, e['mode'])
+                                        except OSError:
+                                            pass
+                                        os.fsync(fd)
+                                    except OSError:
+                                        # (made here and not filled: it goes, and why is said)
+                                        os.unlink(p)
+                                        raise
+                                    finally:
+                                        os.close(fd)
+                            except FileExistsError:
+                                missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                                continue
                     elif swap(tmp, p):
                         if fp(tmp) != now:
                             if not swap(tmp, p):
@@ -25956,10 +26094,11 @@ function writeKey(text) {
 // whether its owner may write it), a link, something else, nothing. Its text only through the helper's look, the same
 // wall run's looks go through, so its one hidden list decides: a key, or a file that wall hides, is "hidden" and its
 // text is never read; then the program compares it by what code sees without reading it (sig: its inode, size and
-// modification time, from the same look at the name). A helper that can't look there: its own answer (helperNeeds).
+// modification time in epoch seconds and nanoseconds, from the same look at the name: no time zone in it). A helper
+// that can't look there: its own answer (helperNeeds).
 async function writeOld(node, place) {
   const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
-  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %.9Y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
   if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `${sparkName(node)} couldn’t be asked what is at ${place.shown}, so nothing was asked or written.`);
   const [kind, ...rest] = String(r.out).trim().split('\n')[0].split(' '), sig = rest.join(' ');
   if (kind !== 'file') return { kind: ['link', 'other', 'readonly'].includes(kind) ? kind : 'none' };
@@ -25976,44 +26115,62 @@ async function writeOld(node, place) {
 }
 
 // Code's own program for the unit: the whole new text comes on its input. It writes only while the file is as it was
-// read here (a hidden file, whose text is never read: its inode, size and modification time) and its owner may write it,
-// with the old permission bits only (0644 for a new file); the temporary file never stays behind, the unit ended or not.
-// It compares at the start, stages the text beside the file, then publishes in one step that can't lose another
-// program's edit made in between (A-19): a new file by a link, which fails when anything is at the name by then; a
-// replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through python3), then checking what it
-// displaced: not the file as read, it is exchanged back and nothing is written. Where this libc or filesystem has no
-// exchange (or no python3, in a box), it compares once more just before one move. old.hold, a folder (tests only, never
-// set by code): the program waits there between staging and publishing, as a test's second writer needs it to.
+// read here (a hidden file, whose text is never read: its inode, size and modification time in epoch seconds and
+// nanoseconds, which no time zone changes) and its owner may write it, with the old permission bits only (0644 for a
+// new file); its own temporary file never stays behind. It compares at the start, stages the text beside the file,
+// then publishes in one step that can't lose another program's edit made in between (A-19): a new file by a link,
+// which fails when anything is at the name by then (where the disk has no hard links, a FAT or exFAT one, a create that
+// fails the same way, then the text); a replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through
+// python3), then checking what it displaced: not the file as read, it is exchanged back, "changed since it was read".
+// From the exchange on, what was displaced is never removed unchecked: ended before the check (its time, a cancel, a
+// stop), the program exchanges back, and if that fails says where it is; an exchange back that fails is said the same
+// way, exit 5. Where this libc or filesystem has no exchange (or no python3, in a box), it compares once more just
+// before one move. old.hold and old.late, folders (tests only, never set by code): the program waits in the first
+// after staging, in the second just before the publishing call itself, after its last compare, as a test's second
+// writer needs it to.
 function writeProgram(rel, old) {
   // (the exchange: 0 done, 4 where this libc or filesystem has none, 1 on any other failure; all inside this function,
   // which tests lift on its own)
-  const swap = `python3 -I -c 'import ctypes, errno, os, sys
+  const swap = `xchg() { python3 -I -c 'import ctypes, errno, os, sys
 try:
     f = ctypes.CDLL(None, use_errno=True).renameat2
 except AttributeError:
     sys.exit(4)
 if f(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2) == 0:
     sys.exit(0)
-sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)'`;
+sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)' "$1" "$2"; }`;
+  // (a hidden file's signature: inode, size, and its time as epoch seconds with nanoseconds, the same as writeOld's)
   const same = x => (old.kind === 'file' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(sha256sum < "${x}" | cut -d' ' -f1)" = ${old.sha} ]`
-    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
+    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %.9Y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
   const changed = "{ echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }";
-  const hold = typeof old.hold === 'string' ? [`: > ${q(`${old.hold}/at`)}; n=0; until [ -e ${q(`${old.hold}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : [];
+  const wait = h => (typeof h === 'string' ? [`: > ${q(`${h}/at`)}; n=0; until [ -e ${q(`${h}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : []);
+  // (where a kept file is, as a whole path: the temporary name is beside the file, from where the change starts)
+  const at = '$(case $d in /*) echo "$d" ;; *) echo "$PWD/${d#./}" ;; esac)', late = wait(old.late).join('; ') || ':';
   const publish = old.kind === 'none'
-    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name)
-    ? [`ln -T -- "$t" "$p" 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; exit 1; }`]
-    : [`${swap} "$t" "$p"; r=$?`,
-      // (exchanged: the temporary name holds what was at the name; not the file as read, it goes back)
-      `if [ $r = 0 ]; then ${same('$t')} || { ${swap} "$t" "$p" || { k=$t; t=; echo "write_file: the file changed since it was read here and couldn’t be put back: its newer text is kept as $k." >&2; exit 3; }; ${changed}; }`,
-      `elif [ $r = 4 ] || [ $r = 127 ]; then ${same('$p')} || ${changed}; mv -fT -- "$t" "$p" || exit 1; t=`,
-      'else exit 1; fi'];
-  return [`p=${q(rel)}; t=`, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'exit 143' TERM INT HUP",
+    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name. Where the disk
+    // has no hard links: made only if nothing is at the name (set -C, an exclusive create), then filled; the reason said)
+    ? [late, `if ! e=$(ln -T -- "$t" "$p" 2>&1); then`,
+      `  if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi`,
+      `  ( set -C; : > "$p" ) 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; echo "write_file: it couldn’t be made there, so nothing was written: $e" >&2; exit 1; }`,
+      '  cat -- "$t" > "$p" && chmod 0644 -- "$p" 2>/dev/null; [ "$(wc -c < "$p")" = "$(wc -c < "$t")" ] || { rm -f -- "$p"; echo "write_file: it couldn’t be written there in full, so nothing was written: $e" >&2; exit 1; }',
+      'fi']
+    // (from here what was displaced is held as d, never t: the exit trap never removes it. ti, the staged file's inode,
+    // says at an end whether the exchange happened)
+    : ['ti=$(stat -c %i -- "$t") || exit 1', 'd=$t; t=', late, 'xchg "$d" "$p"; r=$?',
+      // (exchanged: d holds what was at the name; the file as read goes, anything else goes back)
+      `if [ $r = 0 ]; then if ${same('$d')}; then k=$d; d=; rm -f -- "$k"; else xchg "$d" "$p" || { echo "write_file: the file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as ${at}." >&2; d=; exit 5; }; k=$d; d=; rm -f -- "$k"; ${changed}; fi`,
+      `elif [ $r = 4 ] || [ $r = 127 ]; then t=$d; d=; ${same('$p')} || ${changed}; ${late}; mv -fT -- "$t" "$p" || exit 1; t=`,
+      'else t=$d; d=; exit 1; fi'];
+  // (ended between the exchange and its check: exchanged back, so what was at the name is there again; if that fails,
+  // where it is kept is said. No exchange yet: d is only the staged text)
+  const ended = `gone() { [ -n "$d" ] || return 0; if [ "$(stat -c %i -- "$p" 2>/dev/null)" = "$ti" ]; then xchg "$d" "$p" && { rm -f -- "$d"; return 0; }; echo "write_file: ended just after the exchange, which couldn’t be undone: the name holds the new text, and what was there is kept as ${at}." >&2; else rm -f -- "$d"; fi; }`;
+  return [`p=${q(rel)}; t=; d=; ti=`, swap, ended, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'gone; exit 143' TERM INT HUP",
     `${same('$p')} || ${changed}`,
     `[ ! -e "$p" ] || [ -w "$p" ] || { echo 'write_file: the file is read-only, so nothing was written.' >&2; exit 3; }`,
     't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
     'cat > "$t" || exit 1',
     `if [ -f "$p" ]; then m=$(stat -c %a -- "$p") && chmod "$(printf '%o' $(( 8#$m & 8#777 )))" -- "$t" || exit 1; else chmod 0644 -- "$t" || exit 1; fi`,
-    ...hold, ...publish].join('\n');
+    ...wait(old.hold), ...publish].join('\n');
 }
 
 // A text's lines, without the empty one after its last line break.
@@ -26386,82 +26543,114 @@ const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r =
 // note is taken out again and the error is the route's, as before. A stop between the note and the save leaves the
 // secrets file ahead with the removal noted: the next start holds and removes it again (the safe side). A note that
 // can't be written (the secrets file can't be written or read just then) never stops the removal: it is done at once,
-// the state's number still goes up, and the note is kept in the state folder (auth-unnoted.json, which an older copy
-// untarred over the folder doesn't hold, so it stays), said in the removal's answer and on the needs-you list, and
-// written at the next removal, each minute (putBackRetry), and at the next start before anything is judged. items: one
-// or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took: extra
-// { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed notes
-// the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
+// the state's number still goes up, and the note waits with that number (S-2: the higher of it and the state's is
+// written with it, so an older copy put back before then still holds). It is kept before the save, in memory and in
+// the state folder (auth-unnoted.json, which an older copy untarred over the folder doesn't hold, so it stays; a stop
+// after it holds the removal or redoes it), said in the removal's answer and on the needs-you list, and written at the
+// next removal, each minute (putBackRetry), and at the next start before anything is judged; a start that still can't
+// write it judges as if it were written. One that the state folder can't keep either is held in memory only (S-8): its
+// answer says so and promises nothing (PUTBACK_UNKEPT_SAID), and a stop before it is written forgets it (R23's Today).
+// items: one or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took:
+// extra { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed
+// notes the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
 const PUTBACK_UNNOTED_FILE = `${STATE_DIR}/auth-unnoted.json`;
 const PUTBACK_RETRY_MS = Number(process.env.SPARK_CONSOLE_PUTBACK_RETRY_MS || 60000);
 const PUTBACK_UNNOTED_SAID = 'Done. Its note outside the state (in the secrets file) couldn’t be written just now, so an older copy of the state put back by hand could bring it back: Spark Console tries again every minute and says so on the needs-you list until it is written.';
-const putBackUnnoted = { why: null };
+const PUTBACK_UNKEPT_SAID = 'Done. Its note couldn’t be written, outside the state or in it, so if an older copy of the state folder is put back before the disk is mended, it may come back.';
+// What waits: in memory, and in auth-unnoted.json while `kept` (false when that file couldn't be written).
+const putBackUnnoted = { why: null, notes: [], serial: 0, kept: true };
 function putBackUnnotedRead() {
   const v = readJson(PUTBACK_UNNOTED_FILE);
-  return Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [];
+  return { notes: Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [],
+    serial: Number.isInteger(v?.serial) && v.serial > 0 ? v.serial : 0 };
 }
-function putBackUnnotedSave(notes) {
-  if (notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: notes.slice(-PUTBACK_KEPT_MAX) });
+const putBackNoteKey = r => `${r.kind}|${r.id ?? ''}|${r.at || ''}`;
+// The file's notes and memory's, each once, oldest first, with the higher number.
+function putBackWaiting() {
+  let f = { notes: [], serial: 0 };
+  try { f = putBackUnnotedRead(); } catch {}
+  const seen = new Set(), notes = [...f.notes, ...putBackUnnoted.notes].filter(r => !seen.has(putBackNoteKey(r)) && seen.add(putBackNoteKey(r)));
+  notes.sort((x, y) => String(x.at || '').localeCompare(String(y.at || '')));
+  return { notes: notes.slice(-PUTBACK_KEPT_MAX), serial: Math.max(f.serial, putBackUnnoted.serial) };
+}
+function putBackUnnotedSave(w) {
+  if (w.notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: w.notes.slice(-PUTBACK_KEPT_MAX), serial: w.serial });
   else if (existsSync(PUTBACK_UNNOTED_FILE)) unlinkSync(PUTBACK_UNNOTED_FILE);
 }
-// Writes notes into the secrets file: its number at least `serial`, what went added, the pause as the last pause or resume
-// left it. Throws when the file can't be read or written.
+// What waits, kept in memory and, when it can be written there, in the state folder (none: both cleared).
+function putBackKeep(w) {
+  Object.assign(putBackUnnoted, { notes: w.notes, serial: w.serial });
+  try { putBackUnnotedSave(w); putBackUnnoted.kept = true; } catch (e) { putBackUnnoted.kept = false; console.error(`What waits to be noted couldn’t be kept in the state folder (it is held in memory and tried again): ${e.message}`); }
+  return putBackUnnoted.kept;
+}
+// The secrets file's part with notes added: its number at least `serial`, what went added (once), the pause as the last
+// pause or resume left it.
+function putBackWith(auth, notes, serial) {
+  const a = { ...(auth && typeof auth === 'object' && !Array.isArray(auth) ? auth : {}) };
+  a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
+  for (const r of notes) {
+    // (a resume is noted only over a pause that was: nothing else to put right later)
+    if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
+    if (putBackRemovedList(a).some(x => putBackNoteKey(x) === putBackNoteKey(r))) continue;
+    a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+  }
+  return a;
+}
+// Writes notes into the secrets file (putBackWith). Throws when the file can't be read or written.
 function putBackNoteWrite(notes, serial) {
   const s = secretsRead();
   if (s === null) throw new Error('the secrets file can’t be read');
-  secretsWrite(x => {
-    const a = { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}) };
-    a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
-    for (const r of notes) {
-      // (a resume is noted only over a pause that was: nothing else to put right later)
-      if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
-      a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
-    }
-    return { ...x, auth: a };
-  });
+  secretsWrite(x => ({ ...x, auth: putBackWith(x.auth, notes, serial) }));
   putBackSeen.at = 0;
 }
 function putBackRemoval(items, save) {
   const now = new Date().toISOString(), notes = [].concat(items).map(r => ({ ...r, at: now }));
   if (!SECRETS_FILE) { save(); return null; }
-  const pending = putBackUnnotedRead(), raises = notes.some(r => r.kind !== 'resumed');
+  const pending = putBackWaiting(), raises = notes.some(r => r.kind !== 'resumed');
   let n = null, had, noted = false;
   try {
     const s = secretsRead();
     if (s === null) throw new Error('the secrets file can’t be read');
     had = s.auth;
-    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (raises ? 1 : 0);
-    putBackNoteWrite([...pending, ...notes], n);
+    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0, pending.serial) + (raises ? 1 : 0);
+    putBackNoteWrite([...pending.notes, ...notes], n);
     noted = true;
   } catch (e) { putBackUnnoted.why = e.message; console.error(`What was removed couldn’t be noted outside the state just now (it is tried again): ${e.message}`); }
-  try { save(); } catch (e) {
-    // (the removal itself failed: its note is taken out again, and the error is the route's)
-    if (noted) try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
-    throw e;
-  }
   if (noted) {
+    try { save(); } catch (e) {
+      // (the removal itself failed: its note is taken out again, and the error is the route's)
+      try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
+      throw e;
+    }
     try { if (raises) putBackSerialWrite(n); } catch (e) { console.error(`The state’s number couldn’t be raised (the secrets file is ahead, so the next start holds): ${e.message}`); }
-    try { if (pending.length) putBackUnnotedSave([]); putBackUnnoted.why = null; } catch (e) { console.error(`The note of earlier removals stays on disk: ${e.message}`); }
+    if (pending.notes.length || !putBackUnnoted.kept) putBackKeep({ notes: [], serial: 0 });
+    putBackUnnoted.why = null;
     return null;
   }
-  // (not noted: the removal stands; the state's number still goes up, and the note waits on disk)
-  try { if (raises) putBackSerialWrite(Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0) + 1); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
-  try { putBackUnnotedSave([...pending, ...notes]); } catch (e) { console.error(`The removal couldn’t be kept to note later either: ${e.message}`); }
-  return PUTBACK_UNNOTED_SAID;
+  // (not noted: the note waits with the number the state goes up to, kept before the save, then the save, then the
+  // state's number; a failed save takes the waiting note out again)
+  const a = putBackAuth(), raised = Math.max(putBackSerial(), Number.isInteger(a.serial) ? a.serial : 0, pending.serial) + (raises ? 1 : 0);
+  const kept = putBackKeep({ notes: [...pending.notes, ...notes], serial: raised });
+  try { save(); } catch (e) { putBackKeep(pending); throw e; }
+  try { if (raises) putBackSerialWrite(raised); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
+  return kept ? PUTBACK_UNNOTED_SAID : PUTBACK_UNKEPT_SAID;
 }
-// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check).
+// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check),
+// with the higher of their number and the state's; when it still doesn't, they are kept in the state folder if they
+// weren't yet.
 function putBackRetry() {
   if (!SECRETS_FILE) return true;
-  let pending;
-  try { pending = putBackUnnotedRead(); } catch { return false; }
-  if (!pending.length) { putBackUnnoted.why = null; return true; }
-  try {
-    putBackNoteWrite(pending, putBackSerial());
-    putBackUnnotedSave([]);
-    putBackUnnoted.why = null;
-    console.error(`What was removed is noted outside the state now (${pending.length} removal${pending.length === 1 ? '' : 's'}).`);
-    return true;
-  } catch (e) { putBackUnnoted.why = e.message; return false; }
+  const w = putBackWaiting();
+  if (!w.notes.length) { putBackUnnoted.why = null; return true; }
+  try { putBackNoteWrite(w.notes, Math.max(putBackSerial(), w.serial)); } catch (e) {
+    putBackUnnoted.why = e.message;
+    if (putBackUnnoted.kept) Object.assign(putBackUnnoted, { notes: w.notes, serial: w.serial }); else putBackKeep(w);
+    return false;
+  }
+  putBackKeep({ notes: [], serial: 0 });
+  putBackUnnoted.why = null;
+  console.error(`What was removed is noted outside the state now (${w.notes.length} removal${w.notes.length === 1 ? '' : 's'}).`);
+  return true;
 }
 setInterval(() => { try { putBackRetry(); } catch {} }, PUTBACK_RETRY_MS).unref?.();
 
@@ -26497,7 +26686,9 @@ function putBackAtStart() {
     if (!putBackRetry()) console.error(`Removals still not noted outside the state: ${putBackUnnoted.why}`);
     const s = secretsRead();
     if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
-    const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
+    // (notes that still can't be written are judged as if they were, with their number: S-2)
+    const a0 = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, w = putBackWaiting(), t = putBackSerial();
+    const a = w.notes.length ? putBackWith(a0, w.notes, w.serial) : a0;
     const n = Number.isInteger(a.serial) && a.serial > 0 ? a.serial : 0, first = !a.hold;
     const removed = putBackRemovedList(a), gone = kind => new Set(removed.filter(r => r.kind === kind).map(r => String(r.id)));
     // Something the owner removed is in the state again: put back, whatever the numbers say (a snapshot with no number
@@ -26597,10 +26788,9 @@ async function putBackRoute(req, res, path, viewer) {
 function putBackNeeds(add) {
   const h = putBackHold();
   if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
-  // (removals not yet noted outside the state: said until the retry writes them)
-  let waiting = [];
-  try { waiting = putBackUnnotedRead(); } catch {}
-  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.`);
+  // (removals not yet noted outside the state, from memory and the state folder: said until the retry writes them)
+  const waiting = putBackWaiting().notes;
+  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.${putBackUnnoted.kept ? '' : ` ${waiting.length === 1 ? 'It' : 'They'} couldn’t be kept in the state folder either, so if Spark Console stops before then, ${waiting.length === 1 ? 'it is' : 'they are'} forgotten.`}`);
 }
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
 // Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
@@ -26847,14 +27037,15 @@ async function signinRoute(req, res, path, viewer) {
   const owner = accessList().owner;
   if (path === '/auth/signout') {
     const s = sessionFor(req);
+    let unnoted = null;
     if (s) {
-      // (its note outside the state first, then the save: 22-putback.mjs)
-      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
+      // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+      unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   if (!owner) throw new HttpError(409, 'No owner is set up on this Spark yet.');
