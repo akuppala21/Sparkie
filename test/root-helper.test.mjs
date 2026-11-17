@@ -2043,12 +2043,16 @@ describe('the lock-out net (R60)', () => {
     assert.equal(fire(s, r.id).status, 0);
     assert.equal(readFileSync(join(s.R, 'home/owner/.local/state/spark-console/passkeys.json'), 'utf8'), '{}');
     assert.deepEqual([console_(s, b, 'stop'), console_(s, b, 'start')], [1, 1]);
-    // ./put cannot be written: each try dies after the stop, and each starts the console again on its way out.
+    // ./put cannot be written: the first try stops the console, puts the file back and dies writing ./put; it starts the
+    // console again on its way out. The next tries find nothing left to put back, so they stop nothing, but each starts
+    // what ./stopped names on its way out: three starts for one stop, and the console never stays down.
     const [t, q] = make();
     mkdirSync(join(G(t, q.id), 'put'));
     b = calls(t).length;
     assert.equal(fire(t, q.id).status, 1);
-    assert.deepEqual([console_(t, b, 'stop'), console_(t, b, 'start')], [3, 3]);
+    assert.deepEqual([console_(t, b, 'stop'), console_(t, b, 'start')], [1, 3]);
+    const last = calls(t).slice(b).filter(c => c.join(' ').includes('spark-console-api.service')).at(-1).join(' ');
+    assert.equal(last, 'systemctl --machine=owner@.host --user start spark-console-api.service', 'the last word to it is a start');
   });
 
   // step-f2, H10 and H11: branches no test held. A path the change added that cannot be taken away; a folder on the way
@@ -2056,20 +2060,21 @@ describe('the lock-out net (R60)', () => {
   // by design, and the guard closed); a look that cannot be armed; a reload of networkd's or NetworkManager's.
   test('a path the change added that cannot be taken away, and a folder that cannot be opened, are a put-back that failed (H10, H11)', { timeout: 150000 }, async () => {
     const s = netted();
-    const r = net(s, `printf x > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/added"`);
+    // (a folder the change added, with a read-only folder in it: the put-back cannot take it away, try after try; a
+    // copied folder's own mode it would put back first, so that is no way to hold a removal off)
+    const r = net(s, 'd="$SPARK_CONSOLE_REHEARSAL/etc/ssh/added/inner"; mkdir -p "$d" && : > "$d/f" && chmod 555 "$d"');
     const t = netted();
     t.put('etc/default/ssh', 'SSHD_OPTS=\n', 0o644);
     const q = net(t, 'printf "SSHD_OPTS=-p2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/default/ssh"');
-    chmodSync(join(s.R, 'etc/ssh'), 0o555);       // (the added file cannot be taken away)
     chmodSync(join(t.R, 'etc/default'), 0o311);   // (the folder can be passed through, not opened: neither a link nor a file)
     try {
       const [a, b] = await Promise.all([fireLater(s, r.id), fireLater(t, q.id)]);
       assert.equal(a.status, 1, a.stdout + a.stderr);
-      assert.ok(part(s, r.id).includes('could not: not put back /etc/ssh/added: Permission denied'), part(s, r.id).join('\n'));
+      assert.ok(part(s, r.id).includes('could not: not put back /etc/ssh/added/inner/f: Permission denied'), part(s, r.id).join('\n'));
       assert.equal(b.status, 1, b.stdout + b.stderr);
       assert.ok(part(t, q.id).includes('could not: not put back /etc/default/ssh: /etc/default could not be opened (Permission denied)'), part(t, q.id).join('\n'));
       for (const [x, y] of [[s, r], [t, q]]) assert.ok(!existsSync(join(G(x, y.id), 'result')) && existsSync(join(G(x, y.id), 'pending')));
-    } finally { chmodSync(join(s.R, 'etc/ssh'), 0o755); chmodSync(join(t.R, 'etc/default'), 0o755); }
+    } finally { chmodSync(join(s.R, 'etc/ssh/added/inner'), 0o755); chmodSync(join(t.R, 'etc/default'), 0o755); }
   });
 
   test('after a restart a look that cannot be armed is a put-back that failed: three tries, the guard stays open (H10)', { timeout: 120000 }, () => {
