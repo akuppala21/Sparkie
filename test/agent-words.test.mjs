@@ -177,16 +177,19 @@ test('change answers: a planted sentence reaches no change’s answer to Sparkie
   await ownerSays(chat, k, [[{ name: 'keep_running', arguments: { spark: 'spark3', container: 'c3web', command: ['sleep', '60'] } }]]);
   assert.match(clean(k, 'an app'), /There’s already a container called c3web on Spark 3, and its command isn’t sleep 60 \(workloads with detail has its own\)/);
   // A start that fails later: its answer is the operation, and the failure's words reach the brain only through a read.
-  const st = 'start gemma-3-12b-it on spark 4', s1 = await ownerSays(chat, st, [[{ name: 'start_model', arguments: { model: 'gemma-3-12b-it', spark: 'spark4' } }]]);
+  // (a chat of its own: "keep … running" that was refused holds "don't stop" for the next message, and this start makes
+  // room on Spark 4 by stopping one of Spark Console's models)
+  const chat2 = await newChat();
+  const st = 'start gemma-3-12b-it on spark 4', s1 = await ownerSays(chat2, st, [[{ name: 'start_model', arguments: { model: 'gemma-3-12b-it', spark: 'spark4' } }]]);
   clean(st, 'a start');
   const op = s1.back[0]?.operation;
   assert.ok(op, JSON.stringify(s1.back));
   const failed = await waitFor(async () => { const j = (await api(`/jobs/${op}`)).json; return j?.status && j.status !== 'running' && j; }, { timeout: 180000 * SLOW, what: 'the start to end' });
   assert.equal(failed.status, 'failed', JSON.stringify(failed));
   // After it, a change on the owner's words runs at once; after operation_log it is asked.
-  const f = await ownerSays(chat, 'it failed, so fix the notes on spark 3', [[RUN('echo fixed > notes/c3class-a.txt')]]);
+  const f = await ownerSays(chat2, 'it failed, so fix the notes on spark 3', [[RUN('echo fixed > notes/c3class-a.txt')]]);
   assert.equal(f.r.tools[0]?.tail, 'exit 0', JSON.stringify(f.r.tools));
-  const o = await ownerSays(chat, 'look at why it failed, then fix the notes on spark 3', [[{ name: 'operation_log', arguments: { id: op } }], [RUN('echo fixed > notes/c3class-b.txt')]]);
+  const o = await ownerSays(chat2, 'look at why it failed, then fix the notes on spark 3', [[{ name: 'operation_log', arguments: { id: op } }], [RUN('echo fixed > notes/c3class-b.txt')]]);
   assert.equal(o.r.tools.at(-1)?.tail, 'Asked first, with a button: nothing ran yet.', JSON.stringify(o.r.tools));
   assert.ok(!existsSync(at3('notes/c3class-b.txt')), 'nothing ran');
 });
