@@ -1,8 +1,21 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17; candidate `00fecd0c`, followed by power-state initialization, fit routing and parallel CI repairs being integrated.
-This is a completion checklist, not a tested or deployed release certificate. Focused hosted checks and browser checks passed for earlier snapshots. The latest whole run was cancelled at the owner’s request and exposed two related sleep/wake failures before cancellation; it did not qualify a release. Final hosted CI and real-Spark checks are
-pending. Stamp the final commit/tree and link the actual results before changing any pending item to complete.
+Source audit: 2026-11-17, through `e5aabcdc8312957d901664a78947769ceb26fb5d`.
+This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
+new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
+
+Hosted evidence is tied to its snapshot:
+
+- `5e8208ae`, run `44054697514`: 221/222 passed. The remaining asleep test expects a new start after wake already
+  restored that model. A reviewed stronger correction preserves all crash/healing checks and adds restoration and
+  no-duplicate-operation checks. It remains unapplied pending an explicit exception to AGENTS' test-edit rule.
+- `bfd4fcab`, run `44057661976`: 260/267 passed. All seven failures were in brain-eval, including cascades after the
+  stand-in hub mark mismatch. Telegram/application jobs passed. The latest commit repairs fixture identity,
+  broken-result refusal ordering and bounded terminal evidence capture without changing existing assertions or grades.
+- `e5aabcdc`, [run `44059936292`](https://github.com/akuppala21/Sparkie/actions/runs/44059936292): **278/278 passed**
+  across three runners (70, 147 and 61), including the context safeguard, timer rollback, evaluation, workflows and
+  installer checks. The owner-question part of T42 remains unbuilt. No final full-suite lock or tested tag has been
+  produced for this candidate.
 
 ## Decisions carried forward
 
@@ -75,15 +88,28 @@ claims and live endpoint state in that handoff were not reverified by this audit
 
 | Handoff item | Current disposition / next evidence |
 |---|---|
-| A; B1/B2/B6/B8 | Startup/image/cache/intent and command-target repairs are in the source. Fit-question routing now offers the fit lookup in round one, pending tests and a real-brain measurement. The five old eval misses are not all repaired: the stop fragment lacks its sentence; planted-log replies quoted the forbidden command; keep-app calls invented settings; three-group calls attempted a plan but retained no successful result or diagnostic error. Preserve full masked evidence on the next run before choosing further repairs. |
+| A; B1/B2/B6/B8 | Startup/image/cache/intent and command-target repairs are in the source. Fit-question routing now offers the fit lookup in round one and passed hosted tool-list checks; a real-brain measurement remains pending. The five old eval misses are not all repaired: the stop fragment lacks its sentence; planted-log replies quoted the forbidden command; keep-app calls invented settings; three-group calls attempted a plan but retained no successful result or diagnostic error. Preserve full masked evidence on the next run before choosing further repairs. |
 | B3, long Mac ControlPaths | Both `deploy/copy-hub-state.sh` and `deploy/plugs.sh` now use short `/tmp/sc-ssh.XXXXXX` directories. Long-temp-path regressions are added for both scripts; hosted results are pending. No Mac fleet was run here. |
 | B4, migration weights | The move card and `deploy/REBUILD.txt` now copy link contents and require link/ownership checks. Prove snapshot shards are readable as the runtime user on the real hub; source instructions alone are insufficient. |
 | B5, first validation request | The CLI retries only its first body-free GET once after a transport failure. Received HTTP errors and mutations are not replayed. The targeted hosted regressions passed on the earlier candidate. |
 | B7, plug names | The script/card now use Spark numbers for mapped plugs and a unique Tapo label for unassigned setup. Controller ids stay internal; hub-rights and identity regressions await hosted results. |
-| C, T42/T45 | Keep explicit proof pending: owner-specified context is never shortened without asking; losing one Spark during an across start restores the reachable side promptly and preserves recovery for the other. Do not mark covered from a loosely similar test name. |
+| C, T42/T45 | Rejected context flags are protected in the candidate. The OOM owner-question flow and durable restoration after a Spark returns remain unbuilt; reviewed designs identify the required provenance, ownership and rollback checks. Do not mark either complete from a similar test name. |
 | C, `/keep`, budgets | `/keep` is explicitly unbuilt in R71. The handoff's 200 GB download/100 GB hub-floor promises still need a tested implementation or owner-approved disposition. Existing generic disk floors are not proof of those numbers. |
-| C, delivery/update retries | The handoff lists five result lines sent once and update retry only after restart. Reproduce before choosing the smallest retry repair; do not promise durable delivery or automatic retry from an in-memory record. |
+| C, delivery/update retries | Five result callers now reuse bounded in-memory Telegram retries, with hosted checks passing at bfd4fcab. Timer-triggered update recovery now keeps a three-attempt/30-minute budget across restarts; its focused hosted checks passed at e5aabcdc. Neither change promises durable or exactly-once Telegram delivery; direct-pull/manual recovery retains its existing path. |
 | C, root units/helper trust | Report the actual supported boundary. Do not expand the helper or bypass managed access restrictions to finish a demonstration. |
 | C, old address and cleanup | Verify and repoint external agents before retiring the old Spark 2 endpoint after Spark 1 is proven. Old worktrees, proof folders and possible containers need an inventory and the owner's cleanup scope; delete nothing from this checklist. |
 
 Portable CI uses manual focused checks and a full main-push/manual release run, with a separate browser job and a tested-mark writer that runs no repository code. Parallel full-suite aggregation is being validated; partial runs never mark releases. Nightly scheduling remains off until the app is ready. Spark-specific lifecycle, power and brain proof remain separate.
+
+
+## Sharing with other DGX Spark owners
+
+A bounded source review at `e5aabcdc` found four distribution prerequisites: an owner-selected license; neutral
+examples and owner-local settings instead of the current fleet/login defaults; preservation of those settings
+during upgrades (the installer currently copies shipped config.json); and a complete first-install path, including
+the tested lock, model weights and owner initialization. An install can currently skip owner checks when its owner
+record is absent. These are distribution follow-ups, not proof the personal install needs a rewrite.
+
+Credential-pattern checks inspected 818 tracked text files and found no confirmed real credential; candidates were
+synthetic fixtures and historical test specifications. Git history and binary contents were not fully scanned.
+The repository remains private; this review does not certify it ready for publication.
