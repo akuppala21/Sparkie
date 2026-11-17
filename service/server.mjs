@@ -23284,6 +23284,17 @@ function runnerMemoryCap(available) {
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
+// write_file's answer when its program didn't end well (21-write.mjs, writeProgram): ended before it finished, whether
+// it was written isn't known; exit 5, it was written: another program's edit came between its read and the exchange,
+// and the exchange back failed, so the name holds the new text and the other text is kept beside it, where the
+// program's last line says (wroteOver, a field of its own: the chat and the journal tell it from a refusal); any other
+// end, nothing was written, in the program's own last line.
+function runnerWriteAnswer(exit, last) {
+  const line = maskSecrets(String(last || '')).replace(/^write_file:\s*/, '');
+  if (exit == null) return { notWritten: `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` };
+  if (exit === 5) return { wroteOver: line ? `${line[0].toUpperCase()}${line.slice(1, 400)}` : 'It was written over another program’s edit made after it was read, which couldn’t be put back: the name holds the new text, and the other text is kept beside it.' };
+  return { notWritten: `Nothing was written: ${maskSecrets(last || `exit ${exit}`).slice(0, 300)}` };
+}
 // The pinned scripts handed to the root helper's --script ("<sha256>:<path>"), each once: two spellings of one file
 // (run.sh from ~/work and /home/<owner>/work/run.sh) are one script, which the helper would refuse as named twice
 // (R-11). Only what the helper copies: ~/ and a file, or a whole path, in the owner's home (workHelperPins).
@@ -23466,6 +23477,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
+      ...(as?.result && a.exit === 5 ? { wroteOver: true } : {}),
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
     const cannot = sorted.deletes && lost.length ? `No copy was kept of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removed or overwrote (notKept says which and why), as its ask said: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` : null;
@@ -23482,7 +23494,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
       // (after an end the console can't know, or at the time limit, it may have been written)
-      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
+      ...(as?.result ? (a.exit === 0 ? as.result : runnerWriteAnswer(a.exit, last)) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back;
       // said in notes too, which the press's notice carries, 14-chats.mjs)
