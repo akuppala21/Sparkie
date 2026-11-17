@@ -208,6 +208,50 @@ test('A-20: the owner says Spark 4; the call says Spark 3, or no Spark: it start
   assert.equal(stateOf('spark3', TESTORG), 'running');
 });
 
+// Final read 2 (S1, S3, X1): only this message names a place. A Spark named to keep the start off it never decides; the
+// message before never does; with two Sparks in the sentence and the call on the wrong one, a button that shows the place
+// the words settle. And `ranOn` is only where something ran: none on an "already".
+test('A-20, final read 2: a Spark named with "not", or only in the message before, never decides where a start runs; two in one sentence with the call on the wrong one is a button showing the place the words settle; an "already" has no ranOn', { timeout: 600000 * SLOW }, async () => {
+  const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', at = spark => readFileSync(join(T.fleet.root, spark, '.mock', 'containers'), 'utf8');
+  const stateOf = (spark, name) => at(spark).split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+  assert.equal(stateOf('spark3', TESTORG), 'running', 'Spark 3’s model runs before');
+  // S1: "not on spark 3", the call for Spark 4 or none: a button (on 7c6d682's fix it started on Spark 3, stopping its model).
+  for (const args of [{ model: 'gpt-oss-20b', spark: 'spark4' }, { model: 'gpt-oss-20b' }]) {
+    const r = await turn(await newChat(), 'start gpt-oss-20b, not on spark 3', [[{ name: 'start_model', arguments: args }]]);
+    assert.ok(['needs-ok', 'question'].includes(r.tools[0]?.outcome), `${JSON.stringify(args)}: ${shown(r.tools)}`);
+    assert.ok(r.choices.length > 0, 'a button');
+  }
+  // Two Sparks in the sentence, the call on Spark 3: a button, and it shows Spark 4.
+  const two = await turn(await newChat(), 'stop qwen on spark 3 and start gpt-oss-20b on spark 4', [[{ name: 'start_model', arguments: { model: 'gpt-oss-20b', spark: 'spark3' } }]]);
+  assert.ok(['needs-ok', 'question'].includes(two.tools[0]?.outcome), shown(two.tools));
+  assert.ok(two.choices.some(c => /on Spark 4\b/.test(c.label)) && !two.choices.some(c => /on Spark 3\b/.test(c.label)), JSON.stringify(two.choices));
+  await sleep(1000);
+  assert.equal(stateOf('spark3', TESTORG), 'running', 'Spark 3’s model still runs');
+  assert.ok(!/^sc-gpt-oss-20b\|running/m.test(at('spark3')), 'nothing of it started on Spark 3');
+  // S3: the message before names Spark 3, this one Spark 4, the call Spark 3: it starts on Spark 4, and Spark 3's model runs.
+  const chat = await newChat();
+  await turn(chat, 'is the model on spark 3 ok?', []);
+  const words = 'start gpt-oss-20b on spark 4', args = { model: 'gpt-oss-20b', spark: 'spark3' };
+  const r = await turn(chat, words, [[{ name: 'start_model', arguments: args }]]);
+  assert.equal(r.tools[0]?.outcome, 'started', shown(r.tools));
+  const line = await waitFor(() => auditLines().findLast(l => l.via === 'sparkie' && l.action === 'start_model' && l.ok && l.request === words && JSON.stringify(l.args) === JSON.stringify(args)), { what: 'the start’s audit line' });
+  const job = await waitFor(async () => { const j = (await api(`/jobs/${line.operation}`)).json; return j && j.status !== 'running' && j; }, { timeout: 240000, every: 500, what: 'the start to end' });
+  assert.equal(job.status, 'completed', JSON.stringify(job.error || job.log?.slice(-3)));
+  assert.deepEqual(line.ranOn, ['spark4'], JSON.stringify(line));
+  assert.ok(/^sc-gpt-oss-20b\|running/m.test(at('spark4')), 'it runs on Spark 4');
+  assert.equal(stateOf('spark3', TESTORG), 'running', 'Spark 3’s model still runs');
+  // X1: the same start again answers "already": its audit line has no ranOn, since nothing ran.
+  const again = 'start gpt-oss-20b on spark 4 again';
+  const a = await turn(await newChat(), again, [[{ name: 'start_model', arguments: { model: 'gpt-oss-20b', spark: 'spark4' } }]]);
+  assert.equal(a.tools[0]?.outcome, 'already', shown(a.tools));
+  const said = await waitFor(() => auditLines().findLast(l => l.via === 'sparkie' && l.action === 'start_model' && l.request === again), { what: 'the already’s audit line' });
+  assert.equal(said.outcome, 'already', JSON.stringify(said));
+  assert.ok(!('ranOn' in said), JSON.stringify(said));
+  const stop = await api('/actions/stop_model', { method: 'POST', body: { spark: 'spark4', container: 'sc-gpt-oss-20b' } });
+  assert.equal(stop.status, 200, stop.text);
+  if (stop.json?.operation) await waitFor(async () => { const j = (await api(`/jobs/${stop.json.operation}`)).json; return j && j.status !== 'running' && j; }, { timeout: 120000, every: 500, what: 'the stop to end' });
+});
+
 // (last: a change inside the lock-out net)
 test('C-16: /undo after a change inside the lock-out net says so and points to /putback; the change before it is not put back instead', { timeout: 300000 * SLOW }, async () => {
   const chat = await newChat();

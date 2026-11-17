@@ -1,5 +1,5 @@
 /* ───────── the sorter's places: which paths and names are ways in, risky or the helper's (design A 2.8) ───────── */
-// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Area: safety        Rules: R55, R75        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // What a path a command names is, for the sorter (20-sort.mjs): one of the ways in (lockout), the root helper or its sudo
@@ -47,7 +47,7 @@ const sortPaths = (c0, ctx, r = null) => {
 // A folder a cd may leave the command in; past SORT_CWDS of them a relative path can't be placed.
 function sortCd(p, ctx) {
   ctx.cwds.add(p);
-  if (ctx.cwds.size > SORT_CWDS) unsure(`It changes folder more than ${SORT_CWDS} ways, more than the sorter follows.`);
+  if (ctx.cwds.size > SORT_CWDS) sortBound(`It changes folder more than ${SORT_CWDS} ways, more than the sorter follows.`);
 }
 // A glob as bash matches it, one segment against one segment: * ? [abc] [!a-z], no dot file unless the word says so.
 function sortGlob(g) {
@@ -138,17 +138,33 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '~/.config/environment.d', '/etc/netplan', '/etc/NetworkManager', '/etc/network', '/etc/hosts', '/etc/hostname', '/etc/resolv.conf',
   '/etc/systemd/network', '/etc/systemd/resolved.conf', '/etc/systemd/resolved.conf.d', '/etc/hosts.allow', '/etc/hosts.deny', '/etc/iproute2',
   '/etc/wpa_supplicant', '/etc/ufw', '/etc/default/ufw', '/etc/iptables', '/etc/nftables.conf', '/etc/firewalld', '/var/lib/tailscale',
-  '/etc/default/tailscaled', '/etc/default/ssh', '/var/lib/systemd/linger', '/etc/nologin', '/run/nologin', '~/.config/spark-console',
+  '/etc/default/tailscaled', '/etc/default/ssh', '/var/lib/systemd/linger', '/proc/sys/net', '/sys/class/net', '/etc/nologin', '/run/nologin', '~/.config/spark-console',
   '/etc/systemd/system/multi-user.target.wants/ssh.service', '/etc/systemd/system/multi-user.target.wants/tailscaled.service',
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
 LOCK_PATHS.push(...LOCK_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
-// The ways in's own programs, by each place the system keeps them (merged /usr or not): moved, removed, rewritten or made
-// not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next start (A-16's "beside").
-LOCK_PATHS.push(...['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
+// The ways in's own programs and what they load, by each place the system keeps them (merged /usr or not): changed,
+// moved, removed or made not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next
+// start (A-16's "beside"). Counted only when the command writes, moves or removes one, or a folder above one (sortTouch):
+// naming one (docker exec … /bin/bash) is no change to it (E1).
+const WAY_FILES = ['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
   'sbin/wpa_supplicant', 'sbin/tailscaled', 'sbin/netplan', 'sbin/sudo', 'bin/sudo', 'bin/su', 'bin/login', 'bin/passwd', 'bin/tailscale', 'bin/nmcli', 'bin/netplan', 'bin/bash', 'bin/sh',
   'bin/dash', 'bin/zsh', 'lib/openssh', 'lib/systemd/systemd', 'lib/systemd/systemd-logind', 'lib/systemd/systemd-networkd', 'lib/systemd/systemd-resolved',
-  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security'].flatMap(p => [`/${p}`, `/usr/${p}`]));
+  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security', 'bin/systemctl', 'bin/dbus-daemon', 'bin/dbus-broker', 'lib/systemd/libsystemd-shared',
+  'lib/systemd/systemd-journald'].flatMap(p => [`/${p}`, `/usr/${p}`]);
+// (and the libraries every way in loads, by name in the system's library folders: the loader, libc, libpam, libcrypto,
+// libssl, libsystemd, libnss, libcrypt, libz, libselinux, libaudit, libresolv; L3)
+const WAY_LIBS = /^\/(?:usr\/)?lib(?:64|32)?(?:\/(?:aarch64|x86_64)-linux-gnu)?\/(?:ld-linux[^/]*|lib(?:c|pam|pam_misc|crypto|ssl|systemd|nss_[^/.]+|crypt|z|selinux|audit|resolv|dl|pthread|m|gcc_s|cap|tinfo|wrap|keyutils|gssapi_krb5|krb5|k5crypto|com_err|krb5support)\.so[.\d]*)$/;
+// Where a written file is work that starts later by itself (L2): schedules, systemd's units and generators, init
+// scripts, udev rules, logrotate's and apt's hooks, the message of the day, the loader's preload, the start files. Only a
+// file written there with content counts: a removal, a move away, a copy's source or an empty file does not (L1).
+const LATER_DOORS = /^\/etc\/(?:crontab|anacrontab|rc\.local|ld\.so\.preload|profile|bash\.bashrc|environment)$|^\/(?:etc|var\/spool)\/(?:cron\.(?:d|hourly|daily|weekly|monthly)|cron\/crontabs|init\.d|rc\d\.d|profile\.d|update-motd\.d|logrotate\.d|udev\/rules\.d|apt\/apt\.conf\.d|systemd\/(?:system|user)-(?:generators|environment-generators|sleep|shutdown))\/[^/]+$|^\/var\/spool\/(?:cron|at)\/[^/]+(?:\/[^/]+)?$|^\/(?:usr\/)?lib\/(?:udev\/rules\.d|systemd\/(?:system|user)-(?:generators|sleep|shutdown))\/[^/]+$|^\/root\/\.(?:bashrc|profile|bash_profile|bash_login|zshrc|zprofile)$/;
+// (cron and run-parts pass over a name with a dot or a ~: moving a job to job.disabled stops it)
+const sortLaterPlace = (p, ctx) => { const base = p.slice(p.lastIndexOf('/') + 1);
+  if (/^\/etc\/cron\.(?:d|hourly|daily|weekly|monthly)\//.test(p) && /[.~]/.test(base)) return false;
+  // (apt's settings run a program only through a hook: settings shown whole that name none, a proxy, start nothing)
+  if (/^\/etc\/apt\/apt\.conf\.d\//.test(p)) { const shown = ctx?.stdinText ?? (/^(?:echo|printf)$/.test(ctx?.cmd?.find(w => !w.unknown && !/=/.test(w.text))?.text ?? '') ? ctx.cmd.map(w => w.text).join(' ') : null); return shown == null || /invoke|pre-install|script|::exec|\bpost-?/i.test(shown); }
+  return LATER_DOORS.test(p) || (SORT_UNIT_DIRS.test(p) && /\.(?:service|socket|timer|path|mount|automount|target|slice|swap)$|\.(?:service|socket|timer|path|mount|target)\.d\/[^/]+\.conf$|\.(?:wants|requires)\/[^/]+$/.test(p)) || /^~\/\.config\/autostart\/[^/]+$/.test(p); };
 const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
@@ -191,7 +207,7 @@ function sortNames(p, ctx, r, glob = false) {
   for (const b of ctx.brain) if (names(b)) { ctx.kinds.add('brain'); raise(r, 'risky', `It names the brain (its container, model files or setup): ${sortQ(p)}.`); }
 }
 function sortPlace(p, glob0, ctx, r, wide, touched = false) {
-  if (++ctx.steps > SORT_STEPS) unsure('It names more places than the sorter reads.');
+  if (++ctx.steps > SORT_STEPS) sortBound('It names more places than the sorter reads.');
   const glob = glob0 && /[*?[]/.test(p);
   if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
   sortNames(p, ctx, r, glob);
@@ -201,8 +217,6 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
-  // (a folder of units, a unit's own file or drop-in, by a pattern too: not systemd's settings, journald.conf)
-  if (touched === true && (RISKY_PATHS[2][0].test(p) || SORT_UNIT_DIRS.test(p) || /^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket|target|mount)(?:\.d(?:\/|$)|$)/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -231,6 +245,12 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
+    // (written, moved or removed, not only read: a way-in program's own file or library, or a folder above one; a file of
+    // work that starts later, when written with content)
+    if (!read && (write || ctx.removing || ctx.noContent)) {
+      if (WAY_FILES.some(sortReach(p, w.glob && /[*?[]/.test(p), wide)) || (!/[*?[]/.test(p) && WAY_LIBS.test(p))) raise(r, 'lockout', `It changes ${sortQ(p)}, a way-in program's own file or one it loads: SSH, Tailscale or the logins may not start again.`);
+      if (!ctx.removing && !ctx.noContent && (sortLaterPlace(p, ctx) || (wide && (p === '/' || SORT_UNIT_DIRS.test(p) || /^\/etc(?:$|\/(?:cron\.|init\.d|rc\d\.d|udev|logrotate\.d|update-motd\.d|profile\.d|apt\/apt\.conf\.d|systemd$))/.test(p))))) sortLaterWords(ctx, r, SORT_UNIT_DIRS.test(p) || /\/(?:cron|at)(?:[./]|$)|crontab|\.(?:timer|service)$/.test(p) ? 'a schedule or a unit written' : 'a start-up or hook file written');
+    }
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
@@ -252,7 +272,7 @@ const sortBefore = (b, p, ctx) => {
   if (b === '/') return true;
   if (!/[*?[]/.test(b)) return p === b || p.startsWith(`${b}/`);
   const up = [p, ...sortUp(p)];
-  if ((ctx.steps += up.length) > SORT_STEPS) unsure('It names more places than the sorter reads against what the task wrote before.');
+  if ((ctx.steps += up.length) > SORT_STEPS) sortBound('It names more places than the sorter reads against what the task wrote before.');
   return up.some(a => sortGlob(b).test(a));
 };
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
@@ -284,9 +304,12 @@ function sortScan(text, ctx, r, progs, touched = false) {
 function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
-    const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
-    if (all.doubt) unsure(all.doubt);
-    sortScan(w.text, ctx, r, false, 'seen');
+    // (one word's doubt doesn't stop the others: each is still placed, F1)
+    try {
+      const all = sortBraces(w.text);
+      for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+      if (all.doubt) unsure(all.doubt);
+      sortScan(w.text, ctx, r, false, 'seen');
+    } catch (e) { if (!(e instanceof SortDoubt) || e.bound) throw e; raise(r, 'risky', e.message); if (e.unreadable) r.unreadable ??= e.message; }
   }
 }

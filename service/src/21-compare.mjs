@@ -46,22 +46,23 @@ function compareBrainView(w) {
   return { ...w, steps, approved };
 }
 // Why a candidate's run of saved workflow w would not reach its job (see above), or null. A job made before is known
-// from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken.
-async function compareWontReach(w) {
-  const wont = await compareStepWont(w);
+// from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken. (named: how the answer
+// names it, savedNamed: its title only for the owner's own call, final read)
+async function compareWontReach(w, named = `“${w.title}”`) {
+  const wont = await compareStepWont(w, named);
   if (wont) return wont;
   // (with no job made from an image nothing is scored, and the last candidate stays running; with no start of {model}
   // before the last job every candidate's job asks the same model)
   const last = w.steps.map((st, i) => (jobFromImage(st.action, stepArgs(st)) ? i : -1)).filter(i => i >= 0).pop();
-  if (last === undefined) return `“${w.title}” runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
+  if (last === undefined) return `${named} runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
   if (!w.steps.slice(0, last).some(st => ['start_model', 'restart_model'].includes(st.action) && placeholders(st.args).includes('model'))) {
-    return `“${w.title}” starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
+    return `${named} starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
   }
   return null;
 }
-async function compareStepWont(w) {
+async function compareStepWont(w, named = `“${w.title}”`) {
   for (const [i, st] of w.steps.entries()) {
-    const a = stepArgs(st), n = `Step ${i + 1} of “${w.title}”`, job = jobFromImage(st.action, a);
+    const a = stepArgs(st), n = `Step ${i + 1} of ${named}`, job = jobFromImage(st.action, a);
     if (job && placeholders(st.args).length) return `${n} is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`;
     const own = job ? (Array.isArray(a.env) ? a.env : []).map(e => String(e).split('=')[0]).find(k => ['SPARK_MODEL_NAME', 'SPARK_MODEL_URL'].includes(k)) : null;
     if (own) return `${n} is a job that names its own ${own}, so every candidate’s run would ask that one model. Save it without ${own}: each candidate’s job is handed it.`;
@@ -181,14 +182,14 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
 }
 // The owner's pick after a compare: keeps that candidate of the last compare of this workflow.
 function compareKeep(w, keep, viewer, ctx) {
-  const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false);
-  if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of “${w.title}”, so nothing was kept.`);
+  const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false), named = savedNamed(w, viewer, ctx);
+  if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of ${named}, so nothing was kept.`);
   if (ctx.channel && !ctx.ownerConfirmed) {
-    const label = `Keep ${r.model} for “${w.title}”`;
+    const label = `Keep ${r.model} for ${named}`;
     return question(viewer, ctx, `${label}? That one waits for you in Spark Console.`, [{ label, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
   }
   compareKeepOn(w, compareBest(r, w.compared.sample), null);
-  return { outcome: 'kept', workflow: w.title, model: r.model, note: `${r.model} is kept for “${w.title}”: a run of it with no model given uses it.` };
+  return { outcome: 'kept', workflow: savedOwnCall(viewer, ctx) ? w.title : w.id, model: r.model, note: `${r.model} is kept for ${named}: a run of it with no model given uses it.` };
 }
 
 action({
@@ -202,22 +203,23 @@ action({
   }, required: ['workflow'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
     const w = findSaved(input.workflow);
-    if (!w) throw new HttpError(404, `No saved workflow called “${input.workflow}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `“${w.title}” has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step; its job gets the model in SPARK_MODEL_NAME).`);
+    if (!w) throw new HttpError(404, savedMissing(input.workflow, viewer, ctx));
+    const named = savedNamed(w, viewer, ctx, true);
+    if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `${named} has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step; its job gets the model in SPARK_MODEL_NAME).`);
     if (input.keep !== undefined) {
       if (input.candidates !== undefined || input.sample !== undefined) throw new HttpError(400, 'Give keep alone, with the workflow.');
       return compareKeep(w, input.keep, viewer, ctx);
     }
     if (!input.candidates) throw new HttpError(400, 'Missing argument: candidates.');
     // (one a candidate's run would not reach: refused by name before anything starts)
-    const wont = await compareWontReach(w);
+    const wont = await compareWontReach(w, named);
     if (wont) throw new HttpError(409, wont);
     const cands = [...new Set(input.candidates.map(String))].sort((a, b) => compareIsBrain(b) - compareIsBrain(a));
-    if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of “${w.title}” is running already. Its scores are posted when it ends.`);
+    if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of ${savedNamed(w, viewer, ctx)} is running already. Its scores are posted when it ends.`);
     const sample = input.sample ?? 10;
     const job = newJob('compare', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     runJob(job, j => compareRun(j, w, cands, sample, viewer, ctx));
-    return { outcome: 'started', operation: job.id, workflow: w.title, candidates: cands, sample,
+    return { outcome: 'started', operation: job.id, workflow: savedOwnCall(viewer, ctx) ? w.title : w.id, candidates: cands, sample,
       next: `wait_operation {"id":"${job.id}"}` };
   },
 });

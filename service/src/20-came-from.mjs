@@ -61,9 +61,11 @@ function dangerWhole(text, thing) {
   return false;
 }
 // "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
-// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
-// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
-// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of the chat's other messages
+// (answers). A pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never
+// shown; the newest 40 and 64 MB in all), answers [{at, text, label?}]: Sparkie's earlier answers, no label (the newest
+// 20), and the chat's other messages that aren't the owner's own, each with its label (all of them: chatEarlier,
+// 14-chats.mjs). A label is built by code and never quotes its source.
 function cameFrom(things, ownerMessages, reads, answers) {
   const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
   const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
@@ -76,7 +78,9 @@ function cameFrom(things, ownerMessages, reads, answers) {
     budget -= text.length;
     searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
   }
-  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const all = [...(answers || [])].sort(newest), labelled = a => typeof a?.label === 'string' && a.label;
+  const said = [...all.filter(a => !labelled(a)).slice(0, DANGER_ANSWERS), ...all.filter(labelled)].sort(newest)
+    .map(a => ({ at: a.at, what: labelled(a) ? dangerPlain(a.label, 120) || 'an earlier message in this chat' : 'Sparkie’s earlier answer', lower: String(a.text ?? '').toLowerCase() }));
   const lines = [], labels = [], list = [...(things || [])];
   // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
   if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
@@ -92,31 +96,70 @@ function cameFrom(things, ownerMessages, reads, answers) {
     if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
     const a = r === null ? null : seek(said, t);
     if (a === null) { cut = true; break; }
-    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+    if (a) { lines.push(`${thing}: ${a.what} (${dangerHhmm(a.at)})`); labels.push(a.what); }
   }
   return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
 }
-// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
-function dangerJournalText(id, max) {
-  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
-  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
-    if (!line.includes(`"id":"${id}"`)) continue;
-    const r = jParse(line);
-    if (r?.id !== id || !Array.isArray(r.o)) continue;
-    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
-    let fd;
-    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
-    // (and a record the journal itself cut at its size counts as not all searched)
-    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
+// Where each read's long text is ({month, o, cut}) by its id (R-9): from the journal's own index of its newest records
+// (jBodyAt), else in one pass over the months its reads were made in (each read's month and the one before, newest
+// first), every id looked for at once in the raw bytes (no line decoded but a wanted one's), the pass held to
+// DANGER_SCAN bytes. What a pass finds joins the index, so a later request reads it with no pass.
+const DANGER_SCAN = 256 * 2 ** 20, DANGER_ID = Buffer.from('{"id":"j_');
+function dangerJournalWhere(reads) {
+  const where = new Map(), want = new Set(), months = new Set();
+  for (const r of reads) {
+    const id = String(r?.id || '');
+    if (!/^j_[0-9a-f]{12}$/.test(id)) continue;
+    const b = jBodyAt(id);
+    if (b) { where.set(id, b); continue; }
+    want.add(id);
+    const m = /^(\d{4})-(\d{2})/.exec(String(r.at || ''));
+    if (m) months.add(`${m[1]}-${m[2]}`).add(Number(m[2]) === 1 ? `${Number(m[1]) - 1}-12` : `${m[1]}-${String(Number(m[2]) - 1).padStart(2, '0')}`);
   }
-  return null;
+  let left = DANGER_SCAN;
+  for (const f of journalFiles().filter(x => !months.size || months.has(x.slice(8, 15)))) {
+    if (!want.size || left <= 0) break;
+    let fd;
+    try { fd = openSync(`${JOURNAL_DIR}/${f}`, 'r'); } catch { continue; }
+    try {
+      const buf = Buffer.alloc(4 << 20);
+      let rest = Buffer.alloc(0);
+      for (let n; want.size && left > 0 && (n = readSync(fd, buf, 0, buf.length, null)) > 0;) {
+        left -= n;
+        const data = rest.length ? Buffer.concat([rest, buf.subarray(0, n)]) : buf.subarray(0, n), last = data.lastIndexOf(10);
+        const whole = last < 0 ? 0 : last + 1;
+        for (let i = data.indexOf(DANGER_ID); i >= 0 && i < whole; i = data.indexOf(DANGER_ID, i + 1)) {
+          const id = data.toString('latin1', i + 7, i + 21);
+          if (!want.has(id)) continue;
+          const end = data.indexOf(10, i), r = jParse(data.toString('utf8', i, end < 0 ? whole : end));
+          if (r?.id !== id || !Array.isArray(r.o)) continue;
+          const at = { month: f.slice(8, 15), o: r.o, cut: Boolean(r.cut) };
+          where.set(id, at);
+          jBodies.set(id, at);
+          want.delete(id);
+        }
+        rest = Buffer.from(data.subarray(whole));
+      }
+    } finally { closeSync(fd); }
+  }
+  return where;
+}
+// A read's long text, read back from the journal where dangerJournalWhere found it (never shown; only searched by cameFrom).
+function dangerJournalText(at, max) {
+  if (!at || !Array.isArray(at.o)) return null;
+  const [offset, length] = at.o, n = Math.max(0, Math.min(length, max));
+  let fd;
+  try { fd = openSync(jFile(at.month, 'out'), 'r'); } catch { return null; }
+  // (and a record the journal itself cut at its size counts as not all searched)
+  try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(at.cut) }; } finally { closeSync(fd); }
 }
 // What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
 function dangerReadsLoaded(reads) {
   let left = DANGER_READ_BYTES, cut = false;
-  const out = [];
-  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
-    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
+  const out = [], list = [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS);
+  const where = dangerJournalWhere(list.filter(r => typeof r.text !== 'string'));
+  for (const r of list) {
+    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(where.get(String(r.id)), left);
     // (a read whose text can't be read back was not searched, and the ask says so)
     if (!got) { cut = true; continue; }
     out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
