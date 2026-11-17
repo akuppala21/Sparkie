@@ -32,3 +32,7 @@ integration tests cover actual launch, rollback and approval wiring. The lifecyc
 choice expiring before its public button, restart invalidation, failed restoration withholding a question, and a
 deadline crossed during image preparation before launch. Browser checks use a fixture API at desktop
 and phone widths; they do not prove actual GPU memory behavior or real-brain interpretation.
+
+The boundary regressions also cover shared-attempt exhaustion after a different automatic repair, named and verified
+page-only setups, a numeric download-first request, and expiry between actual rank launches. They use the service
+with stand-ins; wake-first and expiry during model copying remain separate evidence gaps.

@@ -124,10 +124,18 @@ test('a missing primary does not revive its valid previous cleanup record', { ti
 test('a corrupt primary during receipt capture leaves a healthy saved-workflow start running and reports failed record updates', { timeout: 300000 * SLOW }, async t => {
   writeFileSync(file(), '{"runs":{}}');
   writeFileSync(`${file()}.prev`, previous);
-  writeFileSync(mock('slow-run'), String(10 * SLOW));
-  t.after(() => rmSync(mock('slow-run'), { force: true }));
+  // A direct API save does not approve a new image. Seed the app through the owner's API, then let the workflow
+  // start that existing CPU app as-is, just as the other saved-workflow receipt fixtures do.
+  await createApp(ACTIVE);
+  const stopped = await act('keep_running', { spark: 'spark4', container: ACTIVE, do: 'stop' });
+  assert.equal(stopped.status, 200, stopped.text);
+  assert.equal(stopped.json.outcome, 'started', stopped.text);
+  assert.equal((await ended(stopped.json.operation)).status, 'completed');
+  assert.equal(stateOf(ACTIVE), 'exited');
+  writeFileSync(mock('slow-start'), String(10 * SLOW));
+  t.after(() => rmSync(mock('slow-start'), { force: true }));
   const saved = await act('save_workflow', { title: 'record live start', steps: [
-    { action: 'keep_running', args: { spark: 'spark4', container: ACTIVE, image: 'nginx:1.27', port: `${await freePort()}:80` } },
+    { action: 'keep_running', args: { spark: 'spark4', container: ACTIVE } },
   ] });
   assert.equal(saved.status, 200, saved.text);
   const run = await act('run_workflow', { name: 'record live start' });

@@ -12,3 +12,6 @@ Check the file on the hub and the running work before repairing it. Do not copy 
 receipts may be stale. This does not change when a completed run clears its record, or add retries for unresolved
 cleanup. `workloads-record.test.mjs` covers bad primaries and live errors; `workloads-restart.test.mjs` covers ordinary
 interrupted-run recovery.
+
+Read and parse failures use fixed error text. Damaged file contents never enter run notes or service logs;
+`workloads-record-errors.test.mjs` checks that boundary independently of secret-pattern masking.

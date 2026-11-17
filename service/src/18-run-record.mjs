@@ -1,5 +1,5 @@
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, tasks-telegram.test.mjs
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, workloads-record-errors.test.mjs, tasks-telegram.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
@@ -43,8 +43,14 @@ function savedRunsShape(f) {
 function savedRunsNow() {
   let text;
   try { text = readFileSync(SAVED_RUNS_FILE, 'utf8'); }
-  catch (e) { if (e.code === 'ENOENT') return { runs: {} }; throw e; }
-  const f = JSON.parse(text);
+  catch (e) {
+    if (e.code === 'ENOENT') return { runs: {} };
+    throw new Error('The note of saved workflows under way couldn’t be read.');
+  }
+  // Parser errors may quote the damaged file. Never pass its contents to an operation note or the service log.
+  let f;
+  try { f = JSON.parse(text); }
+  catch { throw new Error('The note of saved workflows under way is not valid JSON.'); }
   if (!savedRunsShape(f)) throw new Error('The note of saved workflows under way has an invalid shape.');
   return f;
 }

@@ -14,3 +14,10 @@ further timer recovery, and the copy remains armed for the owner. The tests use 
 timeout and restart behavior still needs a check on the hub.
 
 Checks: `test/update-guard.test.mjs`; rule: [R30](rules/R30.md).
+
+The retained `~/spark-console-src` and its sibling `.manifest` are one recovery unit. The guard saves and restores
+the proof with the source, removes the new proof when the older install had none, and keeps its copy armed if either
+cannot be restored. Otherwise a rollback could leave the old source paired with a new proof and prevent a reinstall.
+
+The already-installed guard judges an upgrade. This repair protects updates after that guard has been installed;
+an upgrade still using an older guard keeps the older rollback behavior.

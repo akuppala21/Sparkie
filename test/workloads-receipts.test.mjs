@@ -313,22 +313,26 @@ test('A-22: cleanup with no ownership evidence leaves it running and reports unr
 });
 test('A-22: a successful start records its resource identity before completion and claim release', async () => {
   const source = readFileSync(new URL('../service/src/07-jobs.mjs', import.meta.url), 'utf8');
-  const fn = /^function runJob\([^]*?^\}/m.exec(source)[0], order = [];
+  const fn = /^function runJob\([^]*?^\}/m.exec(source)[0], order = [], published = [];
   let letReceiptFinish;
   const pending = new Promise(resolve => { letReceiptFinish = resolve; });
   const job = { id: 'test', status: 'running', log: [], release: () => order.push('release') };
   const deps = { desiredAfter: j => { assert.equal(j.status, 'completed'); order.push('desired'); },
     captureStartedReceipts: async j => { assert.equal(j.status, 'running'); order.push('receipt'); await pending; },
+    contextPublish: j => published.push({ id: j.id, status: j.status, order: [...order] }),
     note: (_j, text) => order.push(text), agentCache: { clear() {} }, recordWorkflowRun() {}, fleetEvent() {}, learnFrom() {}, journalOp() {}, console, jobMasked: String };
   const runJob = new Function(...Object.keys(deps), `${fn}\nreturn runJob;`)(...Object.values(deps));
   runJob(job, async () => {});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(job.status, 'running');
   assert.deepEqual(order, ['desired', 'receipt']);
+  assert.deepEqual(published, [], 'no context question is published while the receipt is still pending');
   letReceiptFinish();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(job.status, 'completed');
   assert.deepEqual(order, ['desired', 'receipt', 'Done', 'release']);
+  assert.deepEqual(published, [{ id: job.id, status: 'completed', order: ['desired', 'receipt', 'Done', 'release'] }],
+    'context publication runs once, after claim release, with terminal status');
 });
 test('A-22: a once-job without ranHere still captures its own identity under its start claim', async () => {
   const key = 'spark4/rc-once', own = { id: 'b'.repeat(64), startedAt: SINCE }, job = { app: true, type: 'deploy', node: 'spark4', container: 'rc-once' };

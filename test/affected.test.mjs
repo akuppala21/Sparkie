@@ -329,3 +329,18 @@ test('context policy and intent fixtures stay selected when their source changes
     for (const required of SHORT_CHECK) assert.ok(r.files.includes(required), required);
   }
 });
+
+// Recovery error fixtures exercise the primary reader directly, outside measured service coverage.
+test('saved-run record edits select the content-free error regression', () => {
+  const r = choose({ landing: true,
+    map: { tests: ['test/workloads-record.test.mjs'], fns: { '18-run-record.mjs:savedRunsNow@1-3': [0] } },
+    changes: [{ path: 'service/src/18-run-record.mjs', status: 'M', hunks: [{ s: 2, n: 1, t: 2, add: ['  return 2;'] }] }],
+    oldText: () => 'function savedRunsNow() {\n  return 1;\n}',
+    newText: () => 'function savedRunsNow() {\n  return 2;\n}',
+  });
+  assert.equal(r.all, false, r.why);
+  assert.ok(r.files.includes('test/workloads-record-errors.test.mjs'));
+  assert.ok(existsSync(new URL('./workloads-record-errors.test.mjs', import.meta.url)));
+  assert.ok(r.files.includes('test/workloads-record.test.mjs'), 'measured service coverage is retained');
+  for (const required of SHORT_CHECK) assert.ok(r.files.includes(required), required);
+});

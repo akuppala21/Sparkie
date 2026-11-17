@@ -1,7 +1,7 @@
 Spark Console: bringing the hub back after its disk is lost
 
 Use a Mac, a compute Spark and a new hub disk (deploy/hub.env names it). These steps are on GitHub; installs save
-~/.local/share/spark-console/REBUILD.txt.
+~/.local/share/spark-console/REBUILD.txt
 
 1. On the hub: DGX OS, the same user name, Docker, Node.js 22+ from NodeSource, and Tailscale under the same machine
    name (the address and passkeys depend on it). Then:

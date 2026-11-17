@@ -1,7 +1,7 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17. Completed hosted evidence below is through `56c72fa2d22d585ddb599904aebe8251876c13db`;
-the subsequent intent and recovery repairs are source-reviewed and awaiting hosted checks.
+Source audit: 2026-11-17. Completed hosted evidence below is through `c1a69b4684c9aa11cc084bbdf8fbabe2555372f6`;
+the following recovery-error, source-proof and test-fixture repairs await hosted checks.
 This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
 new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
 
@@ -26,6 +26,13 @@ Hosted evidence is tied to its snapshot:
   gate. Archive ordering again satisfies the unchanged recovery test. All fixes still need the next hosted result;
   the stale-aside explanation for the restart failures is source-supported, not proven by the old log.
 
+- `c1a69b46`, [run `44072357306`](https://github.com/akuppala21/Sparkie/actions/runs/44072357306): **964 passed, 4 failed, 1 skipped**
+  across three runners (203/203, 646/648 with one skip, 115/118). All five prior failures passed, including the two
+  workflow restarts. New failures: a trailing period in a recovery-guide path, a live-record fixture that reached
+  image consent before receipt capture and its dependent cleanup case, and a receipt-order source fixture missing
+  the new context-publisher dependency. The next candidate corrects the guide and fixtures without removing any
+  assertion. GitHub now installs zsh for the previously skipped backup-command portability case.
+
 ## Current context-retry candidate
 
 T42 now has a private, one-use owner question after rollback and claim release. Explicit context is carried through
@@ -35,17 +42,18 @@ normal gate. The original task is identified separately from the current result 
 owner neither resumes an agent task nor interrupts a newer request. Activity links to the question without approving it.
 
 Policy/intent and page checks passed on `56c72fa2`, alongside four of six context-start cases and the browser scenario.
-The two failed start cases and their repairs remain open. New lifecycle regressions cover expired and restarted
-choices, cleanup failure and a deadline crossed during image preparation; they await hosted execution. Exhaustion
-publication, complete wake/download propagation, copy/rank deadline crossings and named/verified remote-code setups
-still need evidence. Focused checks can include browser flows. T45 and the other gates below remain open.
+Both previously failing start cases and all four lifecycle regressions passed on `c1a69b46`. New boundary tests
+cover exhaustion publication, numeric download-first starts, between-rank deadline expiry and named/verified
+page-only setups; these await hosted execution. Wake-first propagation and copy-time expiry still need evidence. Focused checks can include browser flows. T45 and the other gates below remain open.
 
 The general recovery review found stale cleanup authority in `saved-runs.json.prev`. The new patch reads only a valid
 primary, preserves corrupt bytes, reports an owner-visible problem, and keeps read failures from stopping a healthy
 live workflow. Backup and state restore omit both primary and previous record, including residue from older copies.
-New service/archive/restore regressions await hosted execution. This does not add deferred T45 recovery or solve a
-failed removal of an otherwise valid completed record. The targeted picker now names source-fixture dependencies
-explicitly so generated-service coverage cannot silently omit intent regressions.
+Archive/restore and most new service regressions passed on `c1a69b46`; the live-record fixture correction awaits its rerun. This does not add deferred T45 recovery or solve a
+failed removal of an otherwise valid completed record. The targeted picker names source-fixture dependencies explicitly so service coverage cannot omit them. Fixed reader
+errors prevent corrupt file contents entering logs; the update guard now restores source and its sibling manifest
+together. These repairs and regressions passed independent source review and await hosted checks. Details and
+stable findings A-43 through A-45: [findings-4.md](findings-4.md).
 
 ## Decisions carried forward
 

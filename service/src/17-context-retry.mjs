@@ -1,5 +1,5 @@
 /* ───────── a shorter context waits for the owner's own decision (T42) ───────── */
-// Area: core        Rules: R1, R7, R9, R16, R18, R25        Tests: context-start.test.mjs, context-page.test.mjs
+// Area: core        Rules: R1, R7, R9, R16, R18, R25        Tests: context-start.test.mjs, context-page.test.mjs, context-lifecycle.test.mjs, context-boundaries.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Private start plans and one-use owner decisions. No setup, environment or retry token is a job property.

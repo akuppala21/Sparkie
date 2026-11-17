@@ -54,6 +54,7 @@ export const DIRECT_TESTS = {
   '13-ask.mjs': ['test/brain-ask.test.mjs'],
   '16-actions.mjs': ['test/context-intent.test.mjs', 'test/intent-isolation.test.mjs'],
   '17-context.mjs': ['test/context-policy.test.mjs'],
+  '18-run-record.mjs': ['test/workloads-record-errors.test.mjs'],
   '20-mcp.mjs': ['test/context-intent.test.mjs'],
 };
 const MOST = 0.5;          // a function run by more than this share of the test files: everything

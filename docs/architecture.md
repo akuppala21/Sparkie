@@ -69,7 +69,7 @@ flowchart TD
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
   DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses; go-back.sh once after 15 minutes silent within a day of an install"| LISTEN
-  GUARD -->|"armed before the incoming installer runs; kept only if the real address answers with the new build within 10 minutes, else the build from before goes back"| LISTEN
+  GUARD -->|"armed before install; keep only if the real address answers with the new build within 10 minutes; else restore files, source and manifest"| LISTEN
   ROLL -->|"puts back the newest whole snapshot not marked same (files, not state), restarts; ends with the unit started"| LISTEN
   LISTEN -->|"every request, /health aside"| GATE
   PAGE -->|"an app's door link: GET /console/api/open/spark/app on :10000 reads the sign-in cookie (viewerFor) and gives a door ticket (its own cookie)"| APPDOOR

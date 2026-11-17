@@ -6,6 +6,8 @@
 // arm changes nothing without the lock; a staged copy that isn't the saved one (cp said yes) changes nothing live;
 // restore.sh with --in-place-if-no-room puts back in place, checked, when there is no room beside, and says when
 // that isn't whole (exit 3). The final read of round two, S-5, S-7 and S-10.
+// The retained source manifest returns with its source, is removed when previously absent, and a failed proof copy
+// keeps recovery armed until a later retry restores the matching pair.
 // Timer-triggered recovery gets at most three persisted attempts within 30 minutes of its first; direct-pull
 // rollback and recovery by hand keep their existing paths. Native limits, transient failure,
 // exhaustion across restarts, elapsed time, safe disarm and a later install are covered with the real guard script.
@@ -306,5 +308,55 @@ describe('the update timer retries safely within one saved budget', { concurrenc
     const log = calls(h), stop = log.indexOf('--user stop spark-console-update-guard.service'), reset = log.indexOf('--user reset-failed spark-console-update-guard.service'), enable = log.indexOf('--user enable --now spark-console-update-guard.timer');
     assert.ok(stop >= 0 && reset > stop && enable > reset, log.join('\n'));
     assert.equal(retryFields(h).autoTries, undefined, 'a later install starts with a fresh budget');
+  });
+});
+
+// The installer keeps its source-tree proof beside the source, so rollback must treat both as one recovery unit.
+function manifestHome(proof) {
+  const h = armedHome();
+  const disarmed = run(h, [share(h, 'update-guard', 'update-guard.sh'), 'disarm']);
+  assert.equal(disarmed.status, 0, disarmed.stdout + disarmed.stderr);
+  if (proof !== null) put(h, 'spark-console-src.manifest', proof);
+  const armedAgain = run(h, [GUARD_SH, 'arm', 'aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', '2147483646']);
+  assert.equal(armedAgain.status, 0, armedAgain.stdout + armedAgain.stderr);
+  answerOld(h);
+  put(h, 'spark-console-src/README.md', 'new source\n');
+  put(h, 'spark-console-src.manifest', 'new source proof\n');
+  return h;
+}
+describe('update rollback keeps source and its qualification proof together', { concurrency: 1 }, () => {
+  test('an old manifest is saved and restored with its source before recovery is complete', () => {
+    const h = manifestHome('old source proof\n');
+    assert.equal(get(h, '.local/share/spark-console/update-guard/src.manifest'), 'old source proof\n');
+    const r = putBack(h);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(get(h, 'spark-console-src/README.md'), 'old source\n');
+    assert.equal(get(h, 'spark-console-src.manifest'), 'old source proof\n');
+    assert.equal(armed(h), false);
+  });
+  test('a new manifest is removed when the prior install had none', () => {
+    const h = manifestHome(null);
+    assert.equal(existsSync(share(h, 'update-guard', 'src.manifest')), false);
+    const r = putBack(h);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(get(h, 'spark-console-src/README.md'), 'old source\n');
+    assert.equal(existsSync(join(h, 'spark-console-src.manifest')), false);
+    assert.equal(armed(h), false);
+  });
+  test('a failed manifest copy keeps recovery armed and the saved proof for the next attempt', () => {
+    const h = manifestHome('old source proof\n');
+    put(h, 'bin/cp', '#!/bin/sh\nfor a; do case "$a" in */src.manifest) echo "cp: No space left on device" >&2; exit 1 ;; esac; done\nexec /bin/cp "$@"\n', 0o755);
+    const first = putBack(h);
+    assert.equal(first.status, 1, first.stdout + first.stderr);
+    assert.equal(get(h, 'spark-console-src/README.md'), 'old source\n');
+    assert.equal(get(h, 'spark-console-src.manifest'), 'new source proof\n');
+    assert.equal(armed(h), true, 'mismatched proof must never count as complete recovery');
+    assert.equal(get(h, '.local/share/spark-console/update-guard/src.manifest'), 'old source proof\n');
+    assert.equal(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).wayBackArmed, true);
+    rmSync(join(h, 'bin/cp'));
+    const second = putBack(h);
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.equal(get(h, 'spark-console-src.manifest'), 'old source proof\n');
+    assert.equal(armed(h), false);
   });
 });

@@ -106,6 +106,7 @@ take_copy() {
   local f u
   copy_dir "$HOME/spark-console" "$G/ui" && copy_dir "$HOME/spark-console-service" "$G/service" \
     && copy_dir "$HOME/spark-console-src" "$G/src" && mkdir "$G/share" "$G/units" || return 1
+  [ ! -f "$HOME/spark-console-src.manifest" ] || cp -p "$HOME/spark-console-src.manifest" "$G/src.manifest" || return 1
   for u in spark-console-api.service "${WATCHDOG_UNITS[@]}"; do [ ! -f "$UNITS/$u" ] || cp -p "$UNITS/$u" "$G/units/" || return 1; done
   for f in "${BY_HAND[@]}"; do [ ! -f "$SHARE/$f" ] || cp -p "$SHARE/$f" "$G/share/" || return 1; done
   cp "$0" "$G/update-guard.sh"
@@ -220,7 +221,8 @@ back_whole() {
     && { [ ! -f "$G/units/spark-console-api.service" ] || same "$G/units/spark-console-api.service" "$UNITS/spark-console-api.service"; } || return 1
   for f in "${BY_HAND[@]}"; do same "$G/share/$f" "$SHARE/$f" || return 1; done
   for u in "${WATCHDOG_UNITS[@]}"; do [ ! -f "$G/units/$u" ] || same "$G/units/$u" "$UNITS/$u" || return 1; done
-  [ ! -d "$G/src" ] || same "$G/src" "$HOME/spark-console-src"
+  { [ ! -d "$G/src" ] || same "$G/src" "$HOME/spark-console-src"; } \
+    && same "$G/src.manifest" "$HOME/spark-console-src.manifest"
 }
 
 # A timer-triggered attempt consumes its place under the same lock, before any live file changes. The existing
@@ -312,6 +314,10 @@ put_back() {
     if stage "$G/src" "$HOME/spark-console-src.back"; then rm -rf "$HOME/spark-console-src" && mv "$HOME/spark-console-src.back" "$HOME/spark-console-src"
     else rm -rf "$HOME/spark-console-src.back"; fi
   fi
+  # The source's tree proof travels with it. A failed copy keeps the guard armed; an older install had no proof.
+  if [ -f "$G/src.manifest" ]; then
+    same "$G/src.manifest" "$HOME/spark-console-src.manifest" || put_file "$G/src.manifest" "$HOME/spark-console-src.manifest"
+  elif whole; then rm -f "$HOME/spark-console-src.manifest"; fi
   whole || { say "The copy in $G went away while this ran (another run took it), so nothing more was changed."; return 1; }
   # Not all back as the copy holds it: the copy stays armed, to be tried again.
   back_whole || { kept "The build from before the update couldn't be put back whole: some of its files couldn't be copied back (is the disk full?)."; return 1; }

@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 104 parts in `service/src/`, joined in name order into `service/server.mjs` (29542 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 104 parts in `service/src/`, joined in name order into `service/server.mjs` (29548 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -368,7 +368,7 @@ Sparkie, your agents (with "can change things" on their key) and the spark comma
 
 Private start plans and one-use owner decisions. No setup, environment or retry token is a job property.
 
-- **Area:** core. **Rules:** R1, R7, R9, R16, R18, R25. **Tests:** context-start.test.mjs, context-page.test.mjs
+- **Area:** core. **Rules:** R1, R7, R9, R16, R18, R25. **Tests:** context-start.test.mjs, context-page.test.mjs, context-lifecycle.test.mjs, context-boundaries.test.mjs
 - **Lines:** 136
 - **Owns:** none
 - **Timers:** none
@@ -420,8 +420,8 @@ The address rule (design D 2.4 and 2.3's "handing results on", as cut): a job a 
 
 Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record of itself in saved-runs.json (R20: writePrivate; primary-only read, names, Spark ids and the chat id, no secret), rewritten as it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is known only …
 
-- **Area:** core. **Rules:** R32, R57. **Tests:** workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, tasks-telegram.test.mjs
-- **Lines:** 153
+- **Area:** core. **Rules:** R32, R57. **Tests:** workloads-restart.test.mjs, workloads-receipts.test.mjs, workloads-record.test.mjs, workloads-record-errors.test.mjs, tasks-telegram.test.mjs
+- **Lines:** 159
 - **Owns:** saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 - **Timers:** none
 - **Wakes:** none
