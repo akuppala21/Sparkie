@@ -97,10 +97,16 @@ function makeHome() {
   for (const f of ['journalctl', 'logger']) sh(join(bin, f), '#!/bin/sh\nexit 0\n');
   sh(join(bin, 'loginctl'), '#!/bin/sh\necho yes\n');
   for (const f of ['ssh', 'sudo', 'tailscale', 'systemd-run']) sh(join(bin, f), `#!/bin/sh\necho "${f} $*" >> "$HOME/never-called.log"\nexit 97\n`);
+  // ($HOME/fail-cp: the next copy naming it fails once; $HOME/fail-cp-always: every copy naming it fails, as on a disk
+  // that stays full)
   sh(join(bin, 'cp'), `#!/bin/bash
 if [ -f "$HOME/fail-cp" ]; then
   want=$(cat "$HOME/fail-cp")
   case " $* " in *"$want"*) rm -f "$HOME/fail-cp"; echo "cp: No space left on device" >&2; exit 1 ;; esac
+fi
+if [ -f "$HOME/fail-cp-always" ]; then
+  want=$(cat "$HOME/fail-cp-always")
+  case " $* " in *"$want"*) echo "cp: No space left on device" >&2; exit 1 ;; esac
 fi
 PATH="\${PATH#*:}" exec cp "$@"
 `);
@@ -267,6 +273,39 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     writeFileSync(join(home, 'fail-cp'), '/spark-console-service/');
     const r = await install(home, nextStamp(), stage(home, 'good', 2));
     assert.notEqual(r.code, 0, r.out);
+    assert.deepEqual(installed(home), before);
+    assert.equal((await health(home))?.build, old);
+  });
+
+  // (the final read of round two, S-7: the installer's own put-back, when the disk is what failed the install)
+  test('4b. a copy that fails part-way, and no room for a checked copy beside: the previous files go back in place, checked, by themselves', CASE, async () => {
+    const home = makeHome(), old = await firstGood(home);
+    const before = installed(home);
+    writeFileSync(join(home, 'fail-cp'), '/spark-console-service/');
+    writeFileSync(join(home, 'fail-cp-always'), '.spark-console-service.restore');
+    try {
+      const r = await install(home, nextStamp(), stage(home, 'good', 2));
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, /There isn't room for a checked copy beside the live one, so the saved install is put back in place and checked after\./);
+      assert.match(r.out, /The update was not kept\. The previous version is running again\./);
+      assert.deepEqual(installed(home), before);
+      assert.equal((await health(home))?.build, old);
+    } finally { rmSync(join(home, 'fail-cp-always'), { force: true }); }
+  });
+
+  test('4c. the disk stays full: the previous files can\'t go back whole, and it says so, with the line that puts them back once there is room', CASE, async () => {
+    const home = makeHome(), old = await firstGood(home);
+    const before = installed(home), stamp = nextStamp();
+    writeFileSync(join(home, 'fail-cp-always'), '/spark-console-service/');
+    let r;
+    try {
+      r = await install(home, stamp, stage(home, 'good', 2));
+      assert.notEqual(r.code, 0, r.out);
+      assert.match(r.out, new RegExp(`The update was not kept, and the previous files couldn't be put back whole \\(is the disk full\\?\\)\\. Make room, then run: bash ${snapDir(home, stamp).replace(/[.]/g, '\\.')}/restore\\.sh`));
+      assert.doesNotMatch(r.out, /isn't answering either/);
+    } finally { rmSync(join(home, 'fail-cp-always'), { force: true }); }
+    r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8', timeout: 120000 * SLOW });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.deepEqual(installed(home), before);
     assert.equal((await health(home))?.build, old);
   });

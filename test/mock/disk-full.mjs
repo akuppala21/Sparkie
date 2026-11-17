@@ -3,7 +3,10 @@
 // folder ($SPARK_CONSOLE_JOURNAL_DIR) fails as a full disk does (ENOSPC), after the file opened fine. While
 // $MOCK_DIR/fsync-fail is there, the writes work and syncing a journal file fails (EIO), as a failing disk can. The same
 // for the secrets file's folder ($SPARK_CONSOLE_SECRETS_FILE's) with $MOCK_DIR/secrets-full and $MOCK_DIR/secrets-fsync-fail
-// (putback.test.mjs). Everything else the service writes (its state folder, chats) is left alone.
+// (putback.test.mjs). Everything else the service writes (its state folder, chats) is left alone, but for one thing:
+// while $MOCK_DIR/stop-between is there, naming two files (say "secrets.json agents.json"), the service is killed
+// (SIGKILL, as a power cut) the moment it opens the second of the two to write it (its temporary file counts),
+// whichever comes first: a stop between two writes, either way round (putback.test.mjs).
 import fs, { existsSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 
@@ -11,11 +14,16 @@ if (/\/service\/server\.mjs$/.test(process.argv[1] || '') && !process.execArgv.i
   const dir = process.env.SPARK_CONSOLE_JOURNAL_DIR, flag = `${process.env.MOCK_DIR}/disk-full`, syncFlag = `${process.env.MOCK_DIR}/fsync-fail`, fds = new Set();
   const sdir = process.env.SPARK_CONSOLE_SECRETS_FILE ? process.env.SPARK_CONSOLE_SECRETS_FILE.replace(/\/[^/]*$/, '/') : null, sfds = new Set();
   const sflag = `${process.env.MOCK_DIR}/secrets-full`, ssyncFlag = `${process.env.MOCK_DIR}/secrets-fsync-fail`;
-  const { openSync, closeSync, writeSync, fsyncSync } = fs;
+  const stopFlag = `${process.env.MOCK_DIR}/stop-between`, written = new Set();
+  const { openSync, closeSync, writeSync, fsyncSync, readFileSync } = fs;
   fs.openSync = function (path, ...rest) {
     const fd = openSync.call(this, path, ...rest);
     if (String(path).startsWith(dir)) fds.add(fd);
     if (sdir && String(path).startsWith(sdir)) sfds.add(fd);
+    if (/[wa+]/.test(String(rest[0] ?? 'r')) && existsSync(stopFlag)) {
+      const base = String(path).split('/').pop(), hit = readFileSync(stopFlag, 'utf8').split(/\s+/).find(n => n && (base === n || base.startsWith(`${n}.`)));
+      if (hit) { written.add(hit); if (written.size >= 2) process.kill(process.pid, 'SIGKILL'); }
+    }
     return fd;
   };
   fs.closeSync = function (fd) { fds.delete(fd); sfds.delete(fd); return closeSync.call(this, fd); };
