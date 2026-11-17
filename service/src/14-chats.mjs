@@ -272,18 +272,22 @@ function chatReadsKeep(conv, ctx) {
 // What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
 // (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
 // dangerReadsLoaded ([{label, at, text, cut}]); answers ([{at, text, label?}]): Sparkie's own earlier answers in the
-// chat, which can quote what was read (no label), and everything else in it that isn't the owner's own typing, each
-// with a label of code's (final read C3): an agent's message, Spark Console's notices with what they quote (a pressed
-// command's last line, an operation's failure, a report, an ask again), its carry-on lines and a dangerous ask's text.
+// chat, which can quote what was read (no label), and every message chatOutsideMessage marks, each with a label of
+// code's (final read C3): an agent's message, a notice with what it quotes, a dangerous ask's text. (A carry-on line is
+// code's words and the owner's own request.)
 // Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
 function chatEarlier(conv, ctx = {}) {
   const byId = new Map();
   for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
-  const answer = m => m.role === 'assistant' && !m.notice && !m.danger, own = m => m.role === 'user' && !m.from && !m.auto;
-  const answers = (conv?.messages || []).filter(m => m.content && !own(m)).map(m => ({ at: m.createdAt, text: String(m.content),
-    ...(answer(m) ? {} : { label: m.from ? `a message from the agent ${dangerPlain(m.from, 60) || 'that started this chat'}` : m.auto ? 'Spark Console’s carry-on line in this chat' : 'Spark Console’s notice in this chat' }) }));
+  const answer = m => m.role === 'assistant' && !m.notice && !m.danger;
+  const answers = (conv?.messages || []).filter(m => m.content && (answer(m) || chatOutsideMessage(m))).map(m => ({ at: m.createdAt, text: String(m.content),
+    ...(answer(m) ? {} : { label: m.from ? `a message from the agent ${dangerPlain(m.from, 60) || 'that started this chat'}` : 'Spark Console’s notice in this chat' }) }));
   return { reads: dangerReadsLoaded([...byId.values()]), answers };
 }
+// A message of a chat that is neither the owner's own typing nor Sparkie's own answer: an agent's message, a notice of
+// Spark Console's (a result, a report, a pressed command's last line, an ask asked again), a dangerous ask. One test for
+// both: chatEarlier searches these, and memoryChatOutside (20-memory.mjs) counts a chat holding one as outside text.
+const chatOutsideMessage = m => Boolean(m?.from || m?.notice || m?.danger);
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',

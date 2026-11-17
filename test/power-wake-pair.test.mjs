@@ -312,10 +312,12 @@ describe('a start wakes the Sparks a model across two needs, and no more (R56)',
     await sleepSpark('spark3');
     const saved = await act('save_workflow', { title: 'kept awake', steps: [{ action: 'keep_running', args: { spark: 'spark3', container: 'wl-k' } }] });
     assert.equal(saved.status, 200, saved.text);
-    const before = plugs.commands.length, want = 'kept awake: the saved workflow “kept awake”';
+    const before = plugs.commands.length;
     const neededFor = async () => (await look('fleet_status')).power?.bySpark?.spark3?.neededFor;
     const r = await act('run_workflow', { name: 'kept awake' });
     assert.equal(r.json?.outcome, 'started', r.text);
+    // (by kind and the run's operation, never the title: fleet_status is an inside read, R26, F2 C5)
+    const want = `kept awake: a saved workflow’s run, operation ${r.json.operation}`;
     try {
       await waitFor(async () => ((await neededFor()) || []).includes(want), { timeout: 60000, every: 250, what: 'Spark 3 kept awake by the run' });
     } finally {

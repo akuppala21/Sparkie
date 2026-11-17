@@ -38,7 +38,9 @@ function saveMemory(entries, gone = [], erased = null) {
 }
 // A live line's words, for its button (changeLabel); null for a line no longer live (forgotten, replaced or past its
 // day: its words go on no button, question or reply, to Telegram or an agent: R59), none, or memory that can't be read.
-const memoryText = id => { try { const e = memoryEntries().find(x => x.id === id); return e && memoryLive(e) ? e.text : null; } catch { return null; } };
+// An agent's line is said by who noted it and its id: the brain reads a button's label in what the change hands back,
+// which is no read from outside (R26, F2 C1).
+const memoryText = id => { try { const e = memoryEntries().find(x => x.id === id); return e && memoryLive(e) ? (e.by === 'owner' ? e.text : memoryNoted(e)) : null; } catch { return null; } };
 // Who a line is from (contract 5.8): the owner, or an agent by its name: its own call or press over the agent door, or
 // Sparkie answering it in its own chat (whose words are the agent's, not the owner's).
 const lineBy = ctx => (ctx.via === 'agent' ? (ctx.actor || 'an agent') : ctx.agent ? (chatData().conversations.find(c => c.id === ctx.conv)?.agent?.name || 'an agent') : 'owner');
@@ -106,7 +108,7 @@ function memoryWithPast(ctx) {
 
 action({
   name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
-  description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
+  description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie is sent the owner’s own lines with each message (those that fit, and those about it); lines an agent noted come only from here and recall, as text from outside. Agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
   input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten (the owner’s own, in Spark Console).' } }, additionalProperties: false },
   // (the owner's own call sees what each line is about, from the index; Sparkie and agents see the lines as before)
   run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: ctx.via === 'api' ? memoryIndexNow().lines.filter(memoryLive) : memoryEntries().filter(memoryLive).map(withoutAbout) }),
@@ -130,8 +132,11 @@ function keepLine({ text, kind = 'preference', replaces, until: end }, ctx) {
   const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line, about,
     by: lineBy(ctx), at: new Date().toISOString(), src: lineSrc(ctx), ...(gone ? { replaces: gone.id } : {}), ...(until ? { until } : {}) };
   saveMemory([...all.filter(e => e.id !== again?.id), entry], gone ? [retired(gone, 'replaced', ctx, entry.id)] : []);
-  const also = gone ? [] : memoryAlso(entry);
-  return { outcome: 'remembered', id: entry.id, ...(again ? { replaced: { id: again.id, text: again.text } } : {}), ...(also.length ? { also } : {}), note: memorySaid(line, { until, gone, also }) };
+  // (what it hands back quotes only lines whose words may steer this caller: an agent's line, on the owner's turn, by its
+  // id and who noted it; remember is a change, so its result is no read from outside: R26, F2 C1, 20-memory-time.mjs)
+  const { also, noted } = gone ? { also: [], noted: [] } : memoryAlso(entry);
+  return { outcome: 'remembered', id: entry.id, ...(again ? { replaced: memoryQuoted(again, entry.by) ? { id: again.id, text: again.text } : { id: again.id, by: again.by } } : {}),
+    ...(also.length ? { also } : {}), ...(noted.length ? { noted } : {}), note: memorySaid(line, { until, gone, also, noted, by: entry.by }) };
 }
 action({
   name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
@@ -154,7 +159,8 @@ action({
     if (!gone) return { outcome: 'already', note: 'There’s no such line in memory.' };
     notTheOwners(gone, ctx);
     saveMemory(all.filter(e => e.id !== id), [retired(gone, 'forgotten', ctx)]);
-    return { outcome: 'forgotten', note: `No longer used: “${gone.text}”. It is kept in memory’s history, which only the owner sees; it isn’t erased.` };
+    // (an agent's line, forgotten on the owner's turn, by who noted it and its id, never its words: R26, F2 C1)
+    return { outcome: 'forgotten', note: `No longer used: ${memoryQuoted(gone, lineBy(ctx)) ? `“${gone.text}”` : memoryNoted(gone)}. It is kept in memory’s history, which only the owner sees; it isn’t erased.` };
   },
 });
 // Erasing a line for good (contract 5.5, 8.2): the owner's alone, by their own call on the tailnet (POST /actions) or a
@@ -168,8 +174,9 @@ function eraseLine(id, viewer, ctx) {
   const all = memoryEntries(), line = all.find(e => e.id === id) || memoryPast().find(p => p.id === id);
   if (!line) return { outcome: 'already', note: 'There’s no such line in memory or its history.' };
   if (!(ctx.via === 'api' && !viewer.session && !viewer.agentKey) && !ctx.ownerConfirmed) {
-    // (a retired line's words on its button only for a caller who may see the history, R59)
-    const label = memoryPastShown(ctx) ? `Erase for good: “${String(line.text).slice(0, 200)}”` : changeLabel('forget_memory', { id, erase: true });
+    // (a retired line's words on its button only for a caller who may see the history, R59; an agent's line's words never:
+    // the brain reads the button's label, R26, F2 C1)
+    const label = memoryPastShown(ctx) && line.by === 'owner' ? `Erase for good: “${String(line.text).slice(0, 200)}”` : changeLabel('forget_memory', { id, erase: true });
     return question(viewer, ctx, `${label}? Its words leave memory and its history for good. That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: 'forget_memory', args: { id, erase: true } } }, { label: 'No, keep it', call: null }], 'question', { ownerOnly: true });
   }
@@ -186,11 +193,27 @@ function eraseLine(id, viewer, ctx) {
 
 // Whether Sparkie may change memory straight away, without a button. The owner said to ("remember…", "forget that…")
 // or simply stated it, never asked it; and the line is about what they said. Sparkie rephrases ("I" becomes "the
-// owner", "changing yourself" becomes "updating Spark Console"), so in a turn where it has read nothing from outside
-// (no log, operation, recipe or web result: only the owner's message, its memory and the console's own numbers) a
-// quarter of the line's own words (or two of them) have to be the owner's; once it has read outside text, most of them
-// (0.6) do, so a log line can't become a memory. A line it replaces or forgets has to be what they're talking about.
-// Anything else is a button, which shows the line.
+// owner", "changing yourself" becomes "updating Spark Console"), so in a chat that holds nothing but the owner's own
+// typing and Sparkie's answers to it (no log, operation, recipe or web result read, in this turn or one before; no
+// notice of Spark Console's; no agent's message: only the owner's messages, their memory and the console's own numbers)
+// a quarter of the line's own words have to be the owner's. Two of them still pass a short line, of up to 8 own words
+// (two are its quarter): the rephrased short line they were allowed for; past 8, two words no longer pass a line of
+// any length (F2 C2): it needs its quarter. Once the chat holds outside text, most of them (0.6) do, so a log line, a
+// notice or an agent's words, or Sparkie's answer quoting them, can't become the owner's line (R26). A line it replaces
+// or forgets has to be what they're talking about. Anything else is a button, which shows the line whole: pressed, the
+// owner's.
+// Whether the chat holds text that isn't the owner's own typing: an agent's message (or the chat is one an agent
+// started), a notice of Spark Console's (a result, a report, a pressed command's last line), a dangerous ask, or a read
+// from outside it keeps (conv.reads). Sparkie's answers there may quote any of them. A chat that can't be read counts.
+// (chatOutsideMessage, 14-chats.mjs: the same messages chatEarlier searches)
+// (asked only for a line that would be the owner's: an agent's own line rides ahead of nobody's words, R26)
+function memoryChatOutside(ctx) {
+  if (!ctx.conv) return false;
+  try {
+    const conv = chatData().conversations.find(c => c.id === ctx.conv);
+    return !conv || Boolean(conv.agent) || (Array.isArray(conv.reads) && conv.reads.length > 0) || (conv.messages || []).some(chatOutsideMessage);
+  } catch { return true; }
+}
 const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 'them', 'you', 'your', 'yours', 'yourself', 'itself', 'wants', 'want', 'wanted',
   'should', 'would', 'that', 'this', 'with', 'have', 'has', 'does', 'from', 'for', 'when', 'will', 'can', 'are', 'was', 'not', 'any', 'all', 'its', 'now']);
 // Whether this message itself says to forget, in so many words (A-3, 2026-11-14: a question about a line, "don't forget
@@ -250,7 +273,7 @@ function memoryClear(name, input, ctx, asked) {
   // (a line with an end, only when the owner's words name a time: 20-memory-time.mjs)
   if (input.until && !memoryOffFor('time') && !TIME_WORDS.test(words)) return false;
   const line = shared(input.text);
-  if (ctx.readOutside ? line.share < 0.6 : line.share < 0.25 && line.hits < 2) return false;
+  if (line.share < (ctx.readOutside || (lineBy(ctx) === 'owner' && memoryChatOutside(ctx)) ? 0.6 : 0.25)) return false;
   if (input.replaces && !(entry(input.replaces) && about(entry(input.replaces).text) >= 0.3)) return false;
   return asked || !QUESTION_START.test(String(ctx.request || '').trim());
 }
