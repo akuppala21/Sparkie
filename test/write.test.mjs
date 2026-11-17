@@ -330,6 +330,17 @@ const liftWrite = () => {
 };
 const a19Dir = name => { const d = join(A19, name); mkdirSync(d, { recursive: true }); return d; };
 const a19Left = d => readdirSync(d).filter(f => f.startsWith('.write_file.') || f.startsWith('.spark-console-put-back-'));
+// A hidden file's signature as code takes it: the format in writeOld's look at the name.
+const SIG_FORMAT = /echo "file \$\(stat -c '([^']+)' -- "\$p"\)"/.exec(readFileSync(join(REPO, 'service', 'src', '21-write.mjs'), 'utf8'))?.[1];
+const sigOf = (f, env = {}) => spawnSync('stat', ['-c', SIG_FORMAT, '--', f], { encoding: 'utf8', timeout: 10000, env: { ...process.env, ...env } }).stdout.trim();
+const shq = s => `'${String(s).replace(/'/g, "'\\''")}'`;
+// A program first on the PATH of a test's own: `first` (shell), then the real one.
+function shimmed(dir, name, first) {
+  const bin = join(dir, 'bin'), real = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8', timeout: 10000 }).stdout.trim();
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, name), `#!/bin/sh\n${first}\nexec ${real} "$@"\n`, { mode: 0o755 });
+  return { PATH: `${bin}:${process.env.PATH}` };
+}
 // Runs `argv` in `dir` with `input` on its input; when it waits in `hold`, `during()` runs, then it may go on.
 async function held(argv, dir, hold, input, during, env = {}) {
   mkdirSync(hold, { recursive: true });
@@ -341,7 +352,7 @@ async function held(argv, dir, hold, input, during, env = {}) {
   p.stdin.end(input);
   try {
     await waitFor(() => existsSync(join(hold, 'at')), { timeout: 20000, every: 20, what: 'the program to wait between its look and its publish' });
-    await during();
+    await during(p.pid);
     writeFileSync(join(hold, 'go'), '');
     const code = await Promise.race([closed, sleep(30000 * SLOW).then(() => 'never ended')]);
     return { code, out, err: err.trim() };
@@ -396,7 +407,7 @@ test('A-19: where there is no exchange, the program compares once more just befo
 
 test('A-19: a hidden file, whose text is never read, is compared by its inode, size and time: an edit since the look is kept', { timeout: 60000 * SLOW }, async () => {
   const d = a19Dir('hidden'), f = join(d, 'server.key'), writeProgram = liftWrite();
-  const sig = () => spawnSync('stat', ['-c', '%i %s %y', '--', f], { encoding: 'utf8', timeout: 10000 }).stdout.trim();
+  const sig = () => sigOf(f);
   writeFileSync(f, BEFORE, { mode: 0o600 });
   const hold = join(d, 'hold1');
   const r = await held(['bash', '-c', writeProgram('./server.key', { kind: 'hidden', sig: sig(), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER));
@@ -411,6 +422,70 @@ test('A-19: a hidden file, whose text is never read, is compared by its inode, s
   const ok = await held(['bash', '-c', writeProgram('./server.key', { kind: 'hidden', sig: sig(), hold: hold3 })], d, hold3, WANTED, () => {});
   assert.equal(ok.code, 0, ok.err);
   assert.deepEqual([readFileSync(f, 'utf8'), statSync(f).mode & 0o777], [WANTED, 0o600]);
+});
+
+// The final read of the A-19 fix (S-10): the second writer lands after the program's last compare, just before the
+// publishing call itself (old.late). Compare-last then a move would lose it; the exchange keeps it.
+test('A-19: an edit landing after the last compare, just before the publish itself, is kept: the exchange checks what it displaced, where compare-last would lose it', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('late'), f = join(d, 'notes.txt'), late = join(d, 'late');
+  writeFileSync(f, BEFORE);
+  const r = await held(['bash', '-c', liftWrite()('./notes.txt', { kind: 'file', sha: sha(BEFORE), late })], d, late, WANTED, () => writeFileSync(f, NEWER));
+  assert.equal(r.code, 3, r.err);
+  assert.equal(readFileSync(f, 'utf8'), NEWER, 'the other program’s edit is there');
+  assert.deepEqual(a19Left(d), []);
+});
+
+// S-6: the unit ended just after the exchange, as what it displaced is checked (its time, a cancel, a stop: TERM). A
+// sha256sum first on the PATH sends the program's shell TERM at that check, once the test asks for it.
+test('A-19: a unit ended just after the exchange puts back what it displaced: another program’s edit is never lost', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('ended'), f = join(d, 'notes.txt'), hold = join(d, 'hold'), flag = join(d, 'end-now'), sent = join(d, 'ended'), pid = join(d, 'pid');
+  const env = shimmed(d, 'sha256sum', `if [ -e ${shq(flag)} ]; then mv ${shq(flag)} ${shq(sent)}; kill -TERM "$(cat ${shq(pid)})"; fi`);
+  writeFileSync(f, BEFORE);
+  const r = await held(['bash', '-c', liftWrite()('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold })], d, hold, WANTED, shell => {
+    writeFileSync(f, NEWER);
+    writeFileSync(pid, String(shell));
+    writeFileSync(flag, '');
+  }, env);
+  assert.ok(existsSync(sent), 'the TERM was sent at the check of what was displaced');
+  assert.equal(r.code, 143, r.err);
+  assert.equal(readFileSync(f, 'utf8'), NEWER, 'what the exchange displaced, the other program’s edit, is back at the name');
+  assert.deepEqual(a19Left(d), []);
+});
+
+test('A-19: an exchange back that fails says what is at the name and where the other text is kept, exit 5', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('back-fails'), f = join(d, 'notes.txt'), hold = join(d, 'hold'), count = join(d, 'count');
+  // (python3's first call, the exchange, is the real one; the second, the exchange back, fails)
+  const env = shimmed(d, 'python3', `n=$(cat ${shq(count)} 2>/dev/null || echo 0); echo $((n + 1)) > ${shq(count)}; [ "$n" = 0 ] || exit 1`);
+  writeFileSync(f, BEFORE);
+  const r = await held(['bash', '-c', liftWrite()('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER), env);
+  assert.equal(r.code, 5, r.err);
+  const kept = /and what was there is kept as (\/\S+\.write_file\.\w+)\.$/.exec(r.err)?.[1];
+  assert.ok(kept && r.err.startsWith('write_file: the file changed since it was read here and couldn’t be put back: the name holds the new text'), r.err);
+  assert.deepEqual([readFileSync(f, 'utf8'), readFileSync(kept, 'utf8')], [WANTED, NEWER]);
+});
+
+// S-11: a disk with no hard links (a FAT or exFAT one): `ln` fails though nothing is at the name, as an ln first on
+// the PATH makes it.
+test('A-19: where the disk has no hard links, a new file is made only if nothing is at the name, and a file made meanwhile stays theirs', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('no-links'), env = shimmed(d, 'ln', `echo "ln: failed to create hard link: Operation not permitted" >&2; exit 1`), writeProgram = liftWrite();
+  const ok = await held(['bash', '-c', writeProgram('./new.txt', { kind: 'none', hold: join(d, 'hold1') })], d, join(d, 'hold1'), WANTED, () => {}, env);
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual([readFileSync(join(d, 'new.txt'), 'utf8'), statSync(join(d, 'new.txt')).mode & 0o777, a19Left(d)], [WANTED, 0o644, []]);
+  const theirs = await held(['bash', '-c', writeProgram('./new2.txt', { kind: 'none', hold: join(d, 'hold2') })], d, join(d, 'hold2'), WANTED, () => writeFileSync(join(d, 'new2.txt'), NEWER), env);
+  assert.equal(theirs.code, 3, theirs.err);
+  assert.deepEqual([readFileSync(join(d, 'new2.txt'), 'utf8'), a19Left(d)], [NEWER, []]);
+});
+
+// The reviewer's open question: a hidden file's signature, taken over SSH at the ask and inside the unit at the
+// write, must not depend on the time zone either sees.
+test('A-19: a hidden file’s signature carries no time zone: a look and a unit in different zones agree', { timeout: 60000 * SLOW }, async () => {
+  const program = liftWrite()('./server.key', { kind: 'hidden', sig: 'x' });
+  assert.ok(SIG_FORMAT && program.includes(`stat -c '${SIG_FORMAT}'`), `the look and the program use one format: ${SIG_FORMAT}`);
+  const d = a19Dir('zones'), f = join(d, 'server.key');
+  writeFileSync(f, BEFORE, { mode: 0o600 });
+  const r = spawnSync('bash', ['-c', liftWrite()('./server.key', { kind: 'hidden', sig: sigOf(f, { TZ: 'UTC0' }) })], { cwd: d, input: WANTED, encoding: 'utf8', timeout: 20000, env: { ...process.env, TZ: 'EST5' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(f, 'utf8'), WANTED);
 });
 
 // Undo's put-back (A-19, beside): the copies' program (21-copies.mjs), lifted with its pruning part, run with python3
@@ -428,8 +503,8 @@ async function copiesPy() {
   const arg = A => Buffer.from(JSON.stringify({ fileMax: m.COPIES_FILE_MAX, allMax: m.COPIES_SET_MAX, ways: [], ...A })).toString('base64');
   const answer = (out, err) => { const x = /^RESULT ([A-Za-z0-9+/=]+)$/m.exec(out); assert.ok(x, `no answer: ${out.slice(-300)} ${String(err).slice(-600)}`); return JSON.parse(Buffer.from(x[1], 'base64').toString('utf8')); };
   return {
-    once: (home, A) => { const r = spawnSync('python3', ['-', arg(A)], { input: m.COPIES_PY, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 30000 }); return answer(String(r.stdout), r.stderr); },
-    held: async (home, A, hold, during) => { const r = await held(['python3', '-', arg({ ...A, hold })], home, hold, m.COPIES_PY, during, { HOME: home }); assert.equal(r.code, 0, r.err); return answer(r.out, r.err); },
+    once: (home, A, env = {}) => { const r = spawnSync('python3', ['-', arg(A)], { input: m.COPIES_PY, env: { ...process.env, HOME: home, ...env }, encoding: 'utf8', timeout: 30000 }); return answer(String(r.stdout), r.stderr); },
+    held: async (home, A, hold, during, env = {}) => { const r = await held(['python3', '-', arg({ ...A, hold })], home, hold, m.COPIES_PY, during, { HOME: home, ...env }); assert.equal(r.code, 0, r.err); return answer(r.out, r.err); },
   };
 }
 
@@ -452,6 +527,27 @@ test('A-19, undo: the put-back never replaces an edit another program made since
     assert.equal(readFileSync(join(notes, name), 'utf8'), NEWER, `what the other program wrote in ${name} is there`);
   }
   assert.deepEqual(a19Left(notes), []);
+});
+
+// S-11, undo: a disk with no hard links. Python's os.link fails there though nothing is at the name; a sitecustomize
+// first on its path makes it fail so.
+test('A-19, undo: where the disk has no hard links, a removed file is put back only where nothing is', { timeout: 60000 * SLOW }, async () => {
+  const P = await copiesPy(), home = a19Dir('home-no-links'), notes = join(home, 'notes'), site = a19Dir('no-links-site');
+  writeFileSync(join(site, 'sitecustomize.py'), 'import errno, os\ndef _no(*a, **k):\n    raise OSError(errno.EPERM, "Operation not permitted")\nos.link = _no\n');
+  const env = { PYTHONPATH: site };
+  mkdirSync(notes, { recursive: true });
+  writeFileSync(join(notes, 'b.txt'), BEFORE, { mode: 0o640 });
+  writeFileSync(join(notes, 'c.txt'), BEFORE);
+  const set = 'sa19test0003', c = P.once(home, { mode: 'copy', set, placed: ['~/notes/b.txt', '~/notes/c.txt'], wide: [] }, env);
+  unlinkSync(join(notes, 'b.txt'));
+  unlinkSync(join(notes, 'c.txt'));
+  P.once(home, { mode: 'after', set, sha: c.sha }, env);
+  const r = await P.held(home, { mode: 'restore', set, sha: c.sha, check: true, only: ['~/notes/b.txt'] }, join(home, 'hold1'), () => {}, env);
+  assert.deepEqual([r.restored, r.notRestored], [['~/notes/b.txt'], []], JSON.stringify(r));
+  assert.deepEqual([readFileSync(join(notes, 'b.txt'), 'utf8'), statSync(join(notes, 'b.txt')).mode & 0o777], [BEFORE, 0o640]);
+  const t = await P.held(home, { mode: 'restore', set, sha: c.sha, check: true, only: ['~/notes/c.txt'] }, join(home, 'hold2'), () => writeFileSync(join(notes, 'c.txt'), NEWER), env);
+  assert.deepEqual([t.restored, t.notRestored.map(e => [e.path, e.why])], [[], [['~/notes/c.txt', 'changed again since the change: left as it is']]], JSON.stringify(t));
+  assert.deepEqual([readFileSync(join(notes, 'c.txt'), 'utf8'), a19Left(notes)], [NEWER, []]);
 });
 
 test('A-19, undo: with nobody else writing, the put-back puts both back, exactly', { timeout: 60000 * SLOW }, async () => {
