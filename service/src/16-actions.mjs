@@ -455,13 +455,15 @@ function containersSaid(spark, text) {
 // spark", "both sparks", "across both", "node 4", "the 4th one", "on #4", a sentence ending in "there"). `after`: the
 // Sparks a change of these kinds names after its own word, the nearest change word before them in the sentence (what
 // settles it: "stop qwen on Spark 3 and start gemma on Spark 4" settles Spark 3 for the stop, Spark 4 for the start; for
-// a start only as a place).
+// a start only as a place). `clauses`: each sentence cut at its change words, one clause from a change word to the next
+// (or the sentence's end): its kind, its text, the Sparks named in it and those named as places; `loose`: a Spark named
+// before its sentence's first change word, in no clause.
 const PLACE_BEFORE = /\b(?:on|onto|to|into|at|in|across|over|for|switch|swap|load|use)\s+(?:the\s+)?$/, PLACE_SOURCE = /\b(?:from|off)\s+(?:the\s+)?$/;
 const PLACE_RULED_OUT = /(?:\bbut\s+(?:the\s+)?|\b(?:except|instead\s+of|rather\s+than|other\s+than|besides|apart\s+from)\s+(?:(?:on|in|at|the)\s+){0,2}|(?:\b(?:not|never|without|avoid|dont|cant|wont|isnt|arent|didnt)\b|n't\b)(?:\s+[\w'#]+){0,3}\s+)$/;
 const PLACE_UNSURE = /\bsparks?\b(?![\s_-]*(?:console|\d))|\b(?:across|on)\s+both\b|\b(?:nodes?|box(?:es)?|machines?|servers?|hosts?)\s*#?\s*\d\b|\bthe\s+\d(?:st|nd|rd|th)\s+one\b|\b(?:on|to|onto)\s+#\d\b|(?<!\b(?:hi|hey|hello)\s+)\bthere\s*$/;
 function sparkPlaces(text, kinds = ['start']) {
-  const named = new Set(), places = new Set(), after = new Set(), out = new Set(), source = new Set(), either = new Set();
-  let doubt = false;
+  const named = new Set(), places = new Set(), after = new Set(), out = new Set(), source = new Set(), either = new Set(), clauses = [];
+  let doubt = false, loose = false;
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     // (a host name's letters before it, "akspark4", are part of the name; a Spark's bare number after a word that rules
     // it out, "on spark 4 not 3", is that Spark)
@@ -473,6 +475,8 @@ function sparkPlaces(text, kinds = ['start']) {
       for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) { either.add(t); doubt = true; }
     }
     const words = CHANGE_WORDS.flatMap(([kind, re]) => [...s.matchAll(new RegExp(re.source, 'gi'))].map(m => ({ kind, at: m.index }))).sort((x, y) => x.at - y.at);
+    // (two kinds at one word, "set up": two clauses with the same text)
+    const cut = words.map(w => ({ kind: w.kind, at: w.at, end: words.find(x => x.at > w.at)?.at ?? s.length, named: new Set(), places: new Set() }));
     for (const g of s.matchAll(/\bspark\d+\b(?:\s*(?:,|and|&|\+|or)?\s*\bspark\d+\b)*/g)) {
       const ids = g[0].match(/spark\d+/g), pre = s.slice(0, g.index), post = s.slice(g.index + g[0].length);
       for (const id of ids) named.add(id);
@@ -481,11 +485,15 @@ function sparkPlaces(text, kinds = ['start']) {
       for (const id of ids) { if (ruled) out.add(id); if (from) source.add(id); if (or) either.add(id); }
       const near = words.filter(w => w.at < g.index).pop(), mine = near && kinds.includes(near.kind) && !ruled && !or && !ids.some(id => either.has(id)) && !(kinds.includes('start') && (from || !place));
       for (const id of ids) if (mine) after.add(id);
+      const own = cut.filter(c => c.at < g.index && g.index < c.end);
+      if (!own.length) loose = true;
+      for (const c of own) for (const id of ids) { c.named.add(id); if (place && !ruled && !from && !or) c.places.add(id); }
       if (!place || ruled || from || or) { doubt = true; continue; }
       for (const id of ids) places.add(id);
     }
+    for (const c of cut) clauses.push({ kind: c.kind, text: s.slice(c.at, c.end), named: [...c.named], places: [...c.places] });
   }
-  return { named: [...named], places: [...places], after: [...after], out: [...out], source: [...source], either: [...either], doubt };
+  return { named: [...named], places: [...places], after: [...after], out: [...out], source: [...source], either: [...either], doubt, clauses, loose };
 }
 // Whether a change is exactly what the words named: every word of the model, the one container they point to (or
 // "everything on Spark N", said in this message), and only Sparks they named.
@@ -584,14 +592,23 @@ async function sparkieCheck(name, input, ctx) {
     // Where it lands is the owner's to say (A-20), in this message only (sparkPlaces): one Spark named as a place and
     // nothing else ("start gemma on Spark 4") is where it starts, whatever the call says; no Spark named at all, Spark
     // Console places it (the call's Spark is dropped); the Sparks of a start across Sparks all named as places, as the
-    // call has them. Anything else (two Sparks, one ruled out or doubtful, "3 or 4", "the other spark") is a button,
-    // never at once: it shows the place the words settle after the start word, else the call's.
+    // call has them. Several orders that each bring something up (start or keep) each take the one place their own
+    // words name: every Spark in a clause (sparkPlaces), each clause naming one as a place, and one start clause naming
+    // the model ("start gpt-oss-20b on Spark 3, then run wl-y on Spark 4": Spark 3). Anything else (one order naming two
+    // Sparks, one ruled out or doubtful, "3 or 4", "the other spark", a stop or restart beside it, a call across Sparks
+    // the words don't match) is a button, never at once: it shows the place the words settle after the start word, else
+    // the call's.
     const p = sparkPlaces(ctx.request ?? saidText, ['start']), places = p.places;
     const same = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+    // (the model's name read as tracesToRequest reads it: every word of it, or squashed into one)
+    const modelWords = [...tokensOf(String(out.model || ''))], namesIt = c => modelWords.length > 0 && modelWords.every(t => tokensOf(c.text).has(t) || squash(c.text).includes(t.replace(/\./g, '')));
+    const startClauses = p.clauses.filter(c => c.kind === 'start' && namesIt(c));
+    const eachOwn = !p.loose && p.clauses.every(c => ['start', 'keep'].includes(c.kind) && c.named.length === 1 && c.places.length === 1) && startClauses.length === 1;
     let settled = false;
     if (!p.named.length && !p.doubt) { delete out.spark; delete out.sparks; settled = true; }
     else if (!p.doubt && places.length === 1) { out.spark = places[0]; delete out.sparks; settled = true; }
     else if (!p.doubt && places.length > 1 && Array.isArray(out.sparks) && same(out.sparks, places)) { delete out.spark; settled = true; }
+    else if (!p.doubt && places.length > 1 && eachOwn && !Array.isArray(out.sparks)) { out.spark = startClauses[0].places[0]; delete out.sparks; settled = true; }
     else if (p.after.length === 1) { out.spark = p.after[0]; delete out.sparks; }
     return { clear: asked && settled && await namesModel(out, saidText), input: out };
   }

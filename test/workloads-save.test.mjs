@@ -59,13 +59,7 @@ describe('save that as …: a saved workflow from the request before (D6e)', { c
     });
     const chat = await newChat(), other = await newChat();
     const asked = await say(chat, 'start gpt-oss-20b on spark 3, then run wl-y on spark 4');
-    // (a message that names two Sparks asks the start with a button, never at once: sparkieCheck, A-20; the owner's
-    // press is part of that request, so both steps are still the request's)
-    assert.deepEqual(asked.message.tools.map(x => [x.name, x.ok, x.outcome ?? null]), [['start_model', true, 'needs-ok'], ['keep_running', true, 'started']], JSON.stringify(asked.message.tools));
-    const go = asked.message.choices?.[0];
-    assert.match(go?.label || '', /gpt-oss-20b[^;]*Spark 3/, JSON.stringify(asked.message.choices));
-    const pressed = await choose(chat, go.id);
-    assert.equal(pressed.status, 200, pressed.text);
+    assert.deepEqual(asked.message.tools.map(x => [x.name, x.ok, x.outcome ?? null]), [['start_model', true, 'started'], ['keep_running', true, 'started']], JSON.stringify(asked.message.tools));
     // Meanwhile, a change in another chat.
     const elsewhere = await say(other, 'run wl-z on spark 4');
     assert.deepEqual(elsewhere.message.tools.map(x => [x.name, x.ok, x.outcome ?? null]), [['keep_running', true, 'started']]);
