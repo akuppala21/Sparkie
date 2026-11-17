@@ -59,9 +59,10 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // v3.1): pressed or picked by its id, never by a typed "yes".
 // whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
 // paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
-// said: the question's words for Sparkie's brain, when they must differ from the page's (a saved workflow by its id, not
-// its title: savedNamed); a choice's `said` is its label there.
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, said = null } = {}) {
+// brain: what Sparkie is handed in place of text, when the ask shows the owner something the brain must not be handed as
+// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2; a saved workflow's title, savedNamed);
+// a choice's `brain` is its label there.
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, brain = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -69,7 +70,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   // shows its button and nobody else may answer it, so it hands back no choice ids. It says how the owner says yes.
   if (ownerOnly && !ctx.onQuestion && ctx.via !== 'page') {
     const yes = choices.find(c => c.call)?.label;
-    return { outcome: 'question', question: text, choices: choices.slice(0, 4).map(c => ({ label: c.label, choice: null })),
+    return { outcome: 'question', question: typeof brain === 'string' ? brain : text, choices: choices.slice(0, 4).map(c => ({ label: c.label, choice: null })),
       note: `Only the owner can answer this one, from Spark Console, and nothing was done. There’s no choice to send back: the owner asks Sparkie for it in their own chat there${yes ? ` (“${yes}”)` : ''} and presses the button it shows, or does it on the page. Tell them that.` };
   }
   if (ctx.validating) choices = choices.map(c => (c.call ? { ...c, call: { ...c.call, args: { ...c.call.args, __validate: ctx.validating } } } : c));
@@ -97,7 +98,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
-    return { outcome: out.outcome, question: said ?? text, buttons: shown.map((c, i) => choices[i]?.said || c.label),
+    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map((c, i) => choices[i]?.brain || c.label),
       note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
         : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
   }
@@ -165,7 +166,7 @@ function changeLabel(name, input, brain = false) {
 // for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
 function propose(viewer, ctx, name, input, because = null) {
   const first = input.__validate ? ' (its first run, which validates it)' : '', label = `${changeLabel(name, input)}${first}`, said = `${changeLabel(name, input, true)}${first}`;
-  const out = question(viewer, ctx, `${label}?`, [{ label, said, call: { action: name, args: input } }], 'proposal', { said: `${said}?` });
+  const out = question(viewer, ctx, `${label}?`, [{ label, brain: said, call: { action: name, args: input } }], 'proposal', { brain: `${said}?` });
   return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {

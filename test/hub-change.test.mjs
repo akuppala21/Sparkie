@@ -353,3 +353,16 @@ test('a change on Spark 2 pressed for a task counts in the task’s report, afte
     assert.deepEqual([start?.task, Boolean(start?.net)], [report.report, true], JSON.stringify(start));
   } finally { noScript(); rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
 });
+
+// The final read of round two (R-13, with R-2): Spark 2's ask shows each script's text on the page, after │, and no
+// test showed it; the brain is not handed those lines (R-2).
+test('Spark 2’s ask shows a script’s text on the page, each line after │, and the brain is not handed it', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at2('notes/hub-f2.sh'), 'echo from the f2 script > notes/from-f2.txt\n');
+  const chat = await newChat(), c = await inChat(chat, 'run the f2 hub script on spark 2', 'bash notes/hub-f2.sh');
+  const page = JSON.stringify((await chatMessages(chat)).at(-1).asks || []);
+  assert.ok(page.includes('The script ~/notes/hub-f2.sh as read for this ask (1 line, SHA-256 ') && page.includes('│ echo from the f2 script > notes/from-f2.txt'), page);
+  assert.ok(!String(c.value?.question).includes('echo from the f2 script'), String(c.value?.question));
+  assert.match(String(c.value?.question), /\nThe owner is shown the text of the script it runs on the button; it isn’t sent here: to read a script, read its file\.$/);
+  assert.ok(!existsSync(at2('notes/from-f2.txt')), 'nothing ran');
+  await choose(chat, c.r.message.choices.find(x => x.label === 'No').id);
+});

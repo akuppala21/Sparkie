@@ -124,11 +124,13 @@ function outcomeText(label, out, agentChat = false) {
 // written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
 // these words in its history. null for any other result. (The net's, Spark 2's and root's carry their own, note.)
 function pressRan(label, out, agentChat = false) {
-  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
+  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'wroteOver', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
   const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';
   const tail = String(out.tail || '').split('\n'), last = tail.length > 1 ? s(tail.slice(0, -1).join(' ')).slice(0, 200) : '';
   const said = out.ran === false ? (out.why ? s(out.why) : 'nothing ran.')
     : out.notWritten ? (typeof out.notWritten === 'string' ? s(out.notWritten) : `Nothing was written to ${s(out.notWritten.path)}: ${s(out.notWritten.why).replace(/\.$/, '')}.`)
+      // (write_file's exit 5: written, over another program's edit; the program's own line says where the other text is)
+      : out.wroteOver ? s(out.wroteOver)
       : out.exit === 0 || (out.wrote && out.exit === undefined) ? `done.${out.ended ? ` ${s(out.ended)}` : ''}`
         : Number.isInteger(out.exit) ? `it ran and failed, with exit code ${out.exit}.${last ? ` Its last line: “${last}”.` : ''}`
           : s(out.ended || out.cut || 'Whether it finished isn’t known.');

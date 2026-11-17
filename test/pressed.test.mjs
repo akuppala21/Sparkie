@@ -225,6 +225,7 @@ test('the words from each kind of result: the page’s pressRan and Telegram’s
   const stubs = 'const maskSecrets = s => String(s).replace(/hf_[A-Za-z0-9]{20,}/g, "[hidden]"); const nodeById = id => (["spark3", "spark4"].includes(id) ? { id } : undefined); const sparkName = n => `Spark ${n.id.slice(5)}`;';
   const page = new Function(`${stubs}\n${cut('14-chats.mjs', /^function pressRan\(label, out, agentChat = false\) \{[\s\S]*?\n\}$/m)}\nreturn pressRan;`)();
   const tg = new Function(`${stubs}\n${cut('21-telegram.mjs', /^function tgRanLine\(r\) \{[\s\S]*?\n\}$/m)}\nreturn tgRanLine;`)();
+  const OVER = 'The file changed since it was read here and couldn’t be put back: the name holds the new text, and what was there is kept as /home/owner/notes/a.txt.write_file.k1.';
   const ended = 'It ran past its 30 seconds and was ended, with everything it started.', unknown = 'Spark 3 didn’t answer within 45 seconds, so whether it finished is unknown.';
   const rows = [
     [{ spark: 'spark3', ran: true, exit: 0, tail: 'ok\nexit 0' }, 'Run it: done.', 'Done.'],
@@ -240,6 +241,8 @@ test('the words from each kind of result: the page’s pressRan and Telegram’s
     [{ spark: 'spark4', ran: false, why: `${NONE4}`, ownerCommand: 'bash x.sh 4' }, `Run it: ${NONE4}\nRun this once in your own terminal (it asks Spark 4’s password once), then ask again:\nbash x.sh 4`, 'Nothing ran: Spark 4 needs your one-time set-up command first. It is in your chat in Spark Console.'],
     [{ spark: 'spark4', ran: false, why: NONE4, next: 'given earlier' }, `Run it: ${NONE4}`, `Nothing ran. ${MORE}`],
     [{ spark: 'spark3', ran: true, exit: 0, notes: ['It was stopped: the disk’s free space fell under 5 GB (the root helper\'s floor).'] }, 'Run it: done. It was stopped: the disk’s free space fell under 5 GB (the root helper\'s floor).', 'Done.'],
+    // (write_file's exit 5, wroteOver: written over another program's edit, never "it ran and failed")
+    [{ spark: 'spark3', ran: true, exit: 5, wroteOver: OVER }, `Run it: ${OVER}`, `It was written over another program’s edit made after it was read: the name holds the new text, and what was there is kept beside it. ${MORE}`],
     [{ outcome: 'saved', title: 'x' }, null, 'Done.'],
   ];
   for (const [out, onPage, there] of rows) {

@@ -14,11 +14,11 @@
 // a change and named the Spark, and nothing was read since): the sorter, the wall, the pause, the rail (R52), the
 // copies and the journal all still apply, and the run's record says gate "go-ahead". Never ahead (aheadWhyNot), and so
 // never offered: an agent's change; Spark 2 or a Spark holding the brain; root; a key read or sent; a script (its hash
-// is for one press); what an earlier command of the task fetched or wrote; what came from what Sparkie read (R54's
-// "came from"), in this request or an earlier message of the chat (workEarlier); a dangerous ask's kinds; anything the
-// sorter calls risky, lock-out, open or not done; a protected folder; a change that runs with --home or --open after
-// its yes; an install (the sorter's installs); the GPU; a reach beyond the Spark itself (another Spark, the home
-// network, the internet).
+// is for one press); what an earlier command of the task fetched or wrote; a thing that came from what Sparkie read
+// (R54's "came from": an address, a whole path, a package), in this request or anywhere earlier in the chat (its reads,
+// answers, notices and agents' messages, workChatEarlier); a dangerous ask's kinds; anything the sorter calls risky,
+// lock-out, open or not done; a protected folder; a change that runs with --home or --open after its yes; an install
+// (the sorter's installs); the GPU; a reach beyond the Spark itself (another Spark, the home network, the internet).
 // "Always allow" (A9b) is the same kind kept across tasks: one list in agent-settings.json (`allowed`, 50 at most), added
 // only by the owner's press of that answer on the page while a passkey is set up (the press needs it; Telegram never
 // shows that answer), taken away by /allowed off. In the owner's chats it stands in for the naming of the Spark and for
@@ -69,8 +69,9 @@ const aheadWords = (e, at) => (e.command != null ? 'this same command' : `“${e
 const aheadWritten = (sorted, written) => (Array.isArray(written) ? written : []).some(w => typeof w === 'string'
   && ((sorted?.placed || []).some(p => aheadIn(p, w.replace(/\/+$/, ''))) || (sorted?.wide || []).some(p => aheadIn(p, w.replace(/\/+$/, '')) || aheadIn(w, p))));
 // Why a command may never run on a go-ahead, or null. f: {agent, hub, brain, root, written, from (cameFrom's answer),
-// earlier (workEarlier's reason), reached (protected folders), outside (runnerOutside: --open or --home after the yes),
-// widen (runnerWiden)}; the sorter's own installs, gpu and reach too.
+// reached (protected folders), outside (runnerOutside: --open or --home after the yes), widen (runnerWiden)}; the
+// sorter's own installs, gpu and reach too. (A plain name a read showed is not one: the go-ahead is the owner's own
+// press for the task's plain changes, contract 8.14, so a task's next edit of a file its look showed runs on it, R-8.)
 function aheadWhyNot(sorted, command, f) {
   if (f.agent) return 'an agent asked for it';
   if (f.hub) return 'it is on Spark 2';
@@ -80,9 +81,6 @@ function aheadWhyNot(sorted, command, f) {
   if (sorted?.scripts?.length) return 'it runs a script, whose text can change after a yes';
   if (aheadWritten(sorted, f.written)) return 'it uses what an earlier command of this task fetched or wrote';
   if (f.from?.lines?.length || f.from?.cut) return 'part of it came from what Sparkie read';
-  // (a name from an earlier read or answer of this chat that no message of the owner's there holds: workEarlier's own
-  // reason, 21-ladder.mjs, so a go-ahead is never gentler than no go-ahead)
-  if (f.earlier) return String(f.earlier);
   if (sorted?.kinds?.includes('lockout')) return 'it could lock you out';
   if (sorted?.kinds?.length) return `it ${sorted.kinds.includes('delete') ? 'deletes what can’t be put back' : 'names the brain'}, which is a dangerous ask`;
   if (sorted?.class !== 'change') return sorted?.class === 'lockout' ? 'it could lock you out' : sorted?.class === 'notdone' ? 'it is never done' : sorted?.open ? 'it needs what the run wall hides' : 'the sorter calls it risky';
@@ -94,17 +92,15 @@ function aheadWhyNot(sorted, command, f) {
   if (reach.size) return `it reaches ${reach.has('fleet') ? 'another Spark of this fleet' : reach.has('home') ? 'your home network' : 'the internet'}`;
   return null;
 }
-// The facts for aheadWhyNot, from the request (ctx) and the Spark; the chat's earlier answers and what was read go to
-// cameFrom (20-came-from.mjs), as for the dangerous ask; and every read and answer of this chat, with the owner's words
-// in all of it, to workEarlier (21-ladder.mjs), as for a change with no go-ahead.
+// The facts for aheadWhyNot, from the request (ctx) and the Spark; everything earlier in this chat that a thing could
+// come from (its reads, this request's too, Sparkie's answers, notices and agents' messages: workChatEarlier,
+// 21-ladder.mjs, loaded once a request) goes to cameFrom (20-came-from.mjs), as for the dangerous ask.
 function aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen) {
-  const answers = conv.messages.filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
   // (a command that names no thing came from nowhere: nothing to look for, nor a read to load)
-  const things = dangerThings(command);
+  const things = dangerThings(command), e = things.length ? workChatEarlier(conv, ctx) : null;
   return aheadWhyNot(sorted, command, { agent: Boolean(ctx.agent || ctx.agentId || viewer?.agentKey || conv.agent), hub: node.host === 'local',
     brain: brainSparks().includes(node.id), root: Boolean(ctx.root), written: ctx.written,
-    from: things.length ? cameFrom(things, dangerOwnerWords(conv), dangerReadsLoaded(ctx.reads), answers) : null,
-    earlier: workEarlier(node, ctx, command, dir),
+    from: e ? cameFrom(things, dangerOwnerWords(conv), e.reads, e.answers) : null,
     reached: runnerProtected(sorted, dir), outside: runnerOutside(sorted, command, dir, topDirs), widen: runnerWiden(node, command, widen, sorted) });
 }
 // The owner's own chat this call is in (Sparkie's turn in it, the owner viewing), or null.
