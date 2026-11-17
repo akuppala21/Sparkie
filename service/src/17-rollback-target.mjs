@@ -78,7 +78,8 @@ try:
     elif p['action'] == 'run':
         if before is not None: result = {'terminal': True, 'changed': True, 'seen': before, 'boot': boot}
         else:
-            r = subprocess.run(['bash', '-c', p['script']], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            marker = os.path.join(root, command + '.launch')
+            r = subprocess.run(['bash', '-c', p['script']], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, SPARK_CONSOLE_LAUNCH_MARK=marker))
             # Only success is terminal proof for a create. A killed/failed client can leave a daemon request in flight.
             normal = r.returncode == 0 or (r.returncode > 0 and 'Error response from daemon:' in r.stderr)
             result = {'terminal': normal, 'code': r.returncode, 'boot': boot}
@@ -89,6 +90,12 @@ try:
                 flag = re.search(r'(?:unknown (?:flag|option)|no such option):?[ \t]*(--[a-z][a-z0-9_-]{0,63})(?=$|[\s=,:])', r.stderr, re.I)
                 flags = re.findall(r'(?<!\S)--[a-zA-Z][a-zA-Z0-9_-]{0,63}(?=$|[\s=,:])', clause.group(1))[:8] if clause else [flag.group(1)] if flag else []
                 result['failure'] = ('docker: Error response from daemon: could not select device driver ' + driver.group(1) + ' with capabilities: [[gpu]].' if driver else 'unrecognized arguments: ' + ' '.join(flags) if flags else 'port is already allocated' if 'port is already allocated' in error else 'CUDA out of memory' if 'out of memory' in error else 'the image could not be found' if 'manifest unknown' in error else 'Docker refused the start')
+            # Only our model builders opt in: their marker write must succeed immediately before Docker.
+            # No missing file is interpreted while this subprocess is live or without its final return.
+            if p.get('launchGuarded') is True and r.returncode > 0 and not os.path.exists(marker):
+                result = {'terminal': True, 'notIssued': True, 'code': r.returncode, 'boot': boot, 'failure': 'The model files could not be prepared'}
+                detail = re.search(r'(?m)^([A-Za-z0-9_.-]{1,128}) in the Hugging Face cache copy of ([A-Za-z0-9_.-]{1,128}) links outside the model’s folder', r.stderr)
+                if detail: result['failure'] = detail.group(1) + ' in the Hugging Face cache copy of ' + detail.group(2) + ' links outside the model’s folder.'
             if r.returncode == 0:
                 seen = inspect(p['name'])
                 if not seen or seen['labels'].get('spark.operation') != p['operation'] or seen['labels'].get('spark.attempt') != p['attempt'] or seen['labels'].get('spark.command') != p['command']: raise RuntimeError('The new container identity was not proved')
@@ -171,9 +178,9 @@ async function rollbackCommand(job, spark, action, name, expected = null, fields
   }
   throw Object.assign(new Error(`${spark} didn’t finish ${action}. Earlier work stays stopped there until that command is known to have ended. It may need a power cycle.`), { rollbackObserverTimeout: true });
 }
-async function rollbackRun(job, spark, name, build) {
+async function rollbackRun(job, spark, name, build, launchGuarded = false) {
   try {
-    const result = await rollbackCommand(job, spark, 'run', name, null, ids => ({ script: build(ids) }));
+    const result = await rollbackCommand(job, spark, 'run', name, null, ids => ({ script: build(ids), launchGuarded }));
     return { code: 0, out: result.seen?.id || '', err: '' };
   } catch (e) {
     // The caller still reports its 120-second timeout. Compensation may later prove how that command ended.

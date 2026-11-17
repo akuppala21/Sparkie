@@ -347,11 +347,11 @@ function clusterRunCommand(model, { rank, nodes, net, store, tsip, extra = [], f
     // SGLang: every part runs launch_server with the same model and flags; part 0 answers on its Tailscale address.
     const serve = ['--tp', '2', '--nnodes', '2', '--node-rank', String(rank), '--dist-init-addr', `${net.headIp}:${CLUSTER_PORT}`,
       '--host', rank === 0 ? tsip : '127.0.0.1', '--port', '8000', '--served-model-name', served, ...(rank === 0 ? metricsFlags('sglang', args) : []), ...args];
-    return prelude + [...parts, ...vol, ...['--entrypoint', 'python3', imageOf(model), '-m', 'sglang.launch_server', '--model-path'].map(q), path, ...serve.map(q)].join(' ');
+    return prelude + (receipt ? `: > "$SPARK_CONSOLE_LAUNCH_MARK" || exit 1\n` : '') + [...parts, ...vol, ...['--entrypoint', 'python3', imageOf(model), '-m', 'sglang.launch_server', '--model-path'].map(q), path, ...serve.map(q)].join(' ');
   }
   const serve = ['--tensor-parallel-size', '2', '--nnodes', '2', '--node-rank', String(rank), '--master-addr', net.headIp, '--master-port', String(CLUSTER_PORT),
     ...(rank === 0 ? ['--host', tsip, '--port', '8000', '--served-model-name', served] : ['--headless']), ...args];
-  return prelude + [...parts, ...vol, ...['--entrypoint', 'vllm', imageOf(model), 'serve'].map(q), path, ...serve.map(q)].join(' ');
+  return prelude + (receipt ? `: > "$SPARK_CONSOLE_LAUNCH_MARK" || exit 1\n` : '') + [...parts, ...vol, ...['--entrypoint', 'vllm', imageOf(model), 'serve'].map(q), path, ...serve.map(q)].join(' ');
 }
 
 async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = null, approved = null, fix = {}) {
@@ -495,7 +495,7 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   step(job, `Starting ${modelName} across ${nodeIds.join(' and ')}`);
   for (const [rank, m] of cp.members.entries()) {
     contextCheck(job); // Each rank must still be inside the approved retry's shared deadline.
-    const r = await rollbackRun(job, m.node, names[rank], receipt => clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix, receipt }));
+    const r = await rollbackRun(job, m.node, names[rank], receipt => clusterRunCommand(model, { rank, nodes: nodeIds, net, store: m.store || 'models', tsip: cp.tsip, extra: share, fix, receipt }), true);
     // (one that timed out, or whose Spark stopped answering, may still have made it: on the list, so putBack looks at it, W-6)
     if (r.code && unanswered(r)) (job.ranHere ||= []).push(`${m.node}/${names[rank]}`);
     if (r.code) { await stopAll(); throw new Error(`Docker couldn’t start the part on ${m.node}: ${r.err || r.out}`); }

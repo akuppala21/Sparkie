@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { REPO } from './lib.mjs';
@@ -14,6 +14,14 @@ function fixture(t, mode = 'pass') {
   const at = mkdtempSync(join(tmpdir(), 'sct-runner-')), bin = join(at, 'bin'), calls = join(at, 'calls');
   t.after(() => rmSync(at, { recursive: true, force: true }));
   mkdirSync(bin);
+  // Compute runners receive no .git. Give this protocol fixture its own real repository and actual runner inputs;
+  // transport remains the only stand-in, and every receipt below is checked against that source's real tree.
+  const repo = join(at, basename(REPO));
+  for (const name of ['tools/test-on-spark.sh', 'service/config.json', 'test/lock.mjs']) {
+    const target = join(repo, name); mkdirSync(join(target, '..'), { recursive: true }); copyFileSync(join(REPO, name), target);
+  }
+  const init = spawnSync('git', ['init', '--quiet', repo], { encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
   const stand = (name, extra = '') => writeFileSync(join(bin, name), `#!/bin/bash\nprintf '%s\\n' "${name} $*" >> "$RUNNER_CALLS"\n${extra}\n`, { mode: 0o755 });
   stand('rsync', '[ "$RUNNER_MODE" = copyfail ] && exit 1\nexit 0');
   stand('ssh', `
@@ -32,7 +40,7 @@ for last; do :; done
 case "$2" in *workflows.lock.json) cp "$RUNNER_LOCK" "$last" ;; *) cp "$RUNNER_RECEIPT" "$last" ;; esac`);
   const run = (queue, host = TARGET) => {
     const out = join(at, queue); mkdirSync(join(out, 'queue'), { recursive: true });
-    const r = spawnSync('bash', [join(REPO, 'tools/test-on-spark.sh'), host], { encoding: 'utf8', timeout: 60000,
+    const r = spawnSync('bash', [join(repo, 'tools/test-on-spark.sh'), host], { encoding: 'utf8', timeout: 60000,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SPARK_TEST_OUT: out, RUNNER_CALLS: calls,
         RUNNER_RECEIPT: join(at, 'receipt'), RUNNER_LOCK: join(at, 'lock'), RUNNER_MODE: mode } });
     return { ...r, out, lines: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [] };

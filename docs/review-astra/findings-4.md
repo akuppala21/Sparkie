@@ -182,3 +182,64 @@ These scoped repairs do not establish a finished product. The complete strict ho
 actual Spark 1 brain, power/workload paths and remaining contract work still need qualification. See
 [finish-status.md](finish-status.md). The owner explicitly approved the reviewed asleep test correction on
 2026-11-17; it is applied and its compute-Spark checks passed. No partial pass is a release lock or tested tag.
+
+## A-55: a prelaunch refusal can leave false uncertainty and block later work
+
+**Accepted; repaired, independently reviewed and focused checks passed.** A Hugging Face cache check can refuse
+before Docker is called. The target previously classified that completed shell failure as an uncertain Docker run,
+so validation retained a recovery obligation and seven later checks cascaded. The two trusted model builders now
+require a launch marker immediately before Docker. Only their completed nonzero subprocess with no marker proves
+that Docker was not called. Live preflight, failed clients after the marker, and other command builders retain their
+uncertainty. Failure details retain bounded model/file names, never the outside target path or raw stderr.
+Four new target checks exercise the boundary; the original validation assertions are unchanged.
+
+## A-56: startup recovery can hide a self-test's stop and delay its first desired list
+
+**Accepted; repaired, independently reviewed and focused checks passed.** Fenced startup recovery can stop the
+self-test's model before its reporting pass. The eventual message then omits that stop. The existing self-test note
+now retains an exact successful stop receipt for the same container incarnation. A failed note write remains
+retryable from that receipt; an unrelated unreadable note cannot block restoration. Initial desired-list seeding
+also permits an active self-test that displaced no running work, while excluding its test model. Any other pending
+recovery still holds seeding. Original self-test/cleanup assertions remain, with added identity and debt controls.
+
+## A-57: new owner and retry gates were absent from protected code paths
+
+**Accepted; repaired, independently reviewed and focused checks passed.** The unchanged protected-path assertion
+identified `17-context-retry.mjs` and `21-owner-admin.mjs` as missing from `SELF_PROTECTED_PARTS`. Both now have the
+same protected treatment as the existing gates. No protected path was removed and no security assertion changed.
+
+## A-58: recovery lines can hide the earlier retry decisions in an operation result
+
+**Accepted; repaired, independently reviewed and focused checks passed.** A three-attempt start correctly restored
+the original work, but extra cleanup lines pushed one retry decision outside `wait_operation`'s twelve-line tail.
+A settled result now includes at most the last two missing retry decisions beside that tail, in order and without
+duplication. The result remains masked and labelled as data. Running results retain twelve lines; settled results
+are bounded at fourteen. The full original workflows and masking files pass, alongside three new history checks.
+
+## A-59: owner-control help pushed the core prompt over its size limit
+
+**Accepted; repaired, independently reviewed and focused checks passed.** The full run measured 2,573 characters
+against the existing 2,500-character limit. Four instructions are shorter while retaining memory corrections,
+workflow-only changes, model/app distinction, confirmations, truthful tool results and outside-text boundaries.
+The original size assertion passes. Account and hub restrictions retain their exact wording.
+
+The completed original run at tree `99061774e6e677854483939d7efff6edcfd9afaf` reported **3,336/3,381** passed,
+45 failed, no skipped or cancelled tests. Its failures are preserved; it qualified no release. The later r2 full
+run was deliberately interrupted with exit 137 once additional source repairs were known, and also qualifies none.
+
+Root snapshot r22 tree `17edc7d670c759bb08467cfaa8b09b918f76e64a` passed **233/233** across eight files,
+including prompt size, streaming decoders, held-agent refusal, pause/resume, and the unchanged safety text.
+The decoder fixtures now import the actual exported reader; all byte-cut assertions remain. Two exact old Telegram
+messages were updated under the owner's policy exception; `/resume` alone still cannot unpause work. The desktop
+and phone fixture browser checks passed on Spark 3 with this snapshot; this is not a live installed-page result.
+
+CI snapshot r23 tree `dc3b97b9a26170f4b93934328b7d139e2d3099f2` passed **56/56** across operation history,
+runner receipts, self-change, workflows and masking, with no skips or cancellations. Its receipt fixture now gives
+the actual runner a real minimal Git repository instead of expecting Git metadata in the compute export. All prior
+receipt assertions remain. These focused results do not replace complete combined-tree and hosted qualification.
+
+Combined r24 tree `86b0178fdf0fb04b23ee8ce3343d097ad786ee01` passed **231/231** across all thirteen T45
+files plus validation, self-test and self-test cleanup, with no skipped or cancelled tests. The formerly failing
+validation and both self-test cases now pass unchanged. Its generated-document and affected-test-selection batch
+also passed **123/123**. All 45 original failures now have scoped passing evidence; complete release qualification
+still must run on the final combined committed tree.

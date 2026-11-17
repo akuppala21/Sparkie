@@ -35,7 +35,7 @@ const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/i, /^service\/worker\.py$
   /^public\//i, /^test\/authenticator\.mjs$/i, /^test\/eval\.mjs$/i, /^test\/eval\/cases\.json$/i];
 // (selfchange.test.mjs holds every part whose Area is safety or ways in, or that raises an ask or calls a gate, on it)
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
-  '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start',
+  '17-changes', '17-context-retry', '21-owner-admin', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start',
   // (the parts that hold the gates: this one, the dangerous ask, the brain's rail, the install, the guard, the runner)
   '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner',
   // (what decides whether a change on a Spark runs at once, is asked or isn't done: the ladder, the go-ahead, the sorter)

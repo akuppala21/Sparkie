@@ -32,7 +32,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, agentSettings, SLOW, REPO } from './lib.mjs';
 
 const page = await new Promise(res => { const s = http.createServer((req, r) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end('<p>self-test</p>'); }); s.listen(0, '127.0.0.1', () => res(s)); });
 const WEB_PORT = page.address().port;
@@ -370,4 +370,21 @@ test('with every compute Spark off, it says so, wakes nothing and starts nothing
     assert.equal(r.json.error, 'No compute Spark is on: Spark 1, Spark 3 and Spark 4 are off or not answering, so the self-test didn’t run and nothing was started. It wakes nothing: turn one on, then ask again.');
     assert.equal((await operations()).length, before, 'nothing started');
   } finally { writeFileSync(T.fleet.offlineFile, offline); }
+});
+
+test('the first desired seed permits only an active non-displacing self-test and still waits for every other debt', async () => {
+  const source = readFileSync(join(REPO, 'service/src/20-desired.mjs'), 'utf8');
+  const body = /^async function watchHeld\(\) \{[\s\S]*?^\}/m.exec(source)?.[0]; assert.ok(body);
+  for (const [name, phase, selfTest, wasRunning, extraDebt, expected] of [
+    ['active self-test', 'active', true, false, false, 1], ['returning self-test', 'returning', true, false, false, 0],
+    ['ordinary start', 'active', false, false, false, 0], ['displaced running work', 'active', true, true, false, 0],
+    ['unrelated recovery', 'active', true, false, true, 0],
+  ]) {
+    let seeded = 0;
+    const records = [{ operation: 'test', phase, units: [{ members: [{ wasRunning }] }] }, ...(extraDebt ? [{ operation: 'other', phase: 'returning', units: [] }] : [])];
+    const env = { existsSync: () => false, DESIRED_FILE: 'desired.json', recentInventory: async () => ({}), rollbackRecords: () => records,
+      jobs: new Map([['test', { status: 'running', selfTest }]]), seedDesired: () => { seeded++; }, desired: () => ({ running: [] }), console: { error: e => { throw new Error(e); } } };
+    const call = new Function(...Object.keys(env), `let heldLast = [];\n${body}\nreturn watchHeld;`)(...Object.values(env));
+    await call(); assert.equal(seeded, expected, name);
+  }
 });

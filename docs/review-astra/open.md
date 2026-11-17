@@ -57,3 +57,9 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-52 | Wall time expires a command observer before its receipt | Fixed; monotonic transport budgets; clock regressions and original context-expiry case pass | Complete release qualification |
 | A-53 | Failed restoration omits structured notBack evidence | Fixed; exact proof-derived metadata, original context/lifecycle assertions pass | Complete release qualification |
 | A-54 | Duplicate setup intent asks before an explicit model start | Fixed; independent review; negative authority controls and unchanged carry-on eval pass | Complete release qualification |
+
+| A-55 | Pre-Docker refusal becomes false unresolved start debt | Fixed; independent review; boundary regressions and original validation pass in r24’s 231/231 | Complete release qualification |
+| A-56 | Self-test recovery loses stop evidence and holds initial seeding | Fixed; independent review; original and added identity/debt checks pass in r24’s 231/231 | Complete release qualification |
+| A-57 | New retry and owner gates lack protected-path classification | Fixed; unchanged security assertions pass in r23's 56/56 | Complete release qualification |
+| A-58 | Long cleanup hides earlier retry decisions | Fixed; bounded masked history; original workflows and added cases pass in r23 | Complete release qualification |
+| A-59 | Core prompt exceeds its existing size limit | Fixed; shorter instructions preserve safeguards; original assertion passes in r22's 233/233 | Complete qualification and real brain evaluation |

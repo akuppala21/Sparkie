@@ -191,7 +191,13 @@ async function watchHeld() {
       if (!inv) return;
       // A first look during an unfinished start can see its unproved new container. Observation is not a newer
       // owner wish: wait for compensation to settle before making the first list from what is running.
-      if (rollbackRecords().some(r => r.phase !== 'committed')) return;
+      if (rollbackRecords().some(r => {
+        if (r.phase === 'committed') return false;
+        const job = jobs.get(r.operation);
+        // A live self-test displaces no running work and seedDesired excludes its exact model. Other debt
+        // still holds the whole seed, including a failed self-test whose compensation has not settled.
+        return !(r.phase === 'active' && job?.status === 'running' && job.selfTest && r.units.every(u => u.members.every(m => !m.wasRunning)));
+      })) return;
       seedDesired(inv);
     }
     if (!desired().running.length) { heldLast = []; return; }

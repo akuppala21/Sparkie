@@ -413,7 +413,7 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
 // is refused, but an agent's run change through Sparkie was asked instead. Now it is refused in the same words; a look
 // still runs.
 test('S-12: during the put-back hold an agent\'s change on a Spark is refused in the hold\'s words, through Sparkie and by its own call; its look still runs', { timeout: 180000 * SLOW }, async () => {
-  const PUTBACK = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
+  const PUTBACK = 'Spark Console’s state was put back from a copy. Agents wait until the owner reviews and confirms what came back on the tailnet page or with /review access in the already paired Telegram chat.';
   const f = T.fleet.secretsFile, was = readFileSync(f, 'utf8'), s = JSON.parse(was);
   writeFileSync(f, JSON.stringify({ ...s, auth: { ...(s.auth || {}), hold: { since: new Date().toISOString() } } }), { mode: 0o600 });
   try {

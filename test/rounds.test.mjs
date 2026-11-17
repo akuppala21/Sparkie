@@ -28,6 +28,7 @@ import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { T, REPO, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
+import { answerReader } from '../service/src/13-ask.mjs';
 
 // (a change may run 60 seconds here, so one can go on past the 50 seconds a tool call has)
 useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '60', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0',
@@ -311,10 +312,10 @@ const BODY = Buffer.from([
 const CUTS = [...BODY.keys()].filter(i => i > 0 && (BODY[i] & 0xc0) === 0x80);
 
 test('the chat’s model answer is read through one decoder: cut inside any character, its words and a write_file call’s text come out as they went in', async () => {
-  const fn = new Function('http', 'answerReader', 'modelInUse', 'TURN_STOPPED', `${SRC('13-ask.mjs')}\n${lift(SRC('14-rounds.mjs'), 'function modelStep(turn, sent) {')}\nreturn modelStep;`);
+  const fn = new Function('http', 'answerReader', 'modelInUse', 'TURN_STOPPED', `${lift(SRC('14-rounds.mjs'), 'function modelStep(turn, sent) {')}\nreturn modelStep;`);
   let pieces = [];
   const http = { request(opts, cb) { const up = new EventEmitter(); up.end = () => cb(piecesOut(pieces, { statusCode: 200 })); up.destroy = () => {}; return up; } };
-  const modelStep = fn(http, null, 0, 'stopped');
+  const modelStep = fn(http, answerReader, 0, 'stopped');
   const step = async p => { pieces = p; return modelStep({ emit: () => {}, link: {}, target: { host: 'x', port: 1 }, messages: [], base: {}, tuned: {}, answer: '' }, [{ type: 'function', function: { name: 'write_file' } }]); };
   assert.ok(CUTS.length >= 20, `cuts inside characters: ${CUTS.length}`);
   for (const i of CUTS) {
@@ -325,10 +326,10 @@ test('the chat’s model answer is read through one decoder: cut inside any char
 
 test('the brain check’s answer is read through one decoder: cut inside any character, it comes out as it went in', async () => {
   const src = SRC('21-brain-check.mjs');
-  const fn = new Function('http', 'howAsked', 'clean', 'CHECK_TOOL', 'CHECK_ASK_MS', `${SRC('13-ask.mjs')}\n${lift(src, 'function brainAsk(m, messages, tools = null) {')}\nreturn brainAsk;`);
+  const fn = new Function('http', 'answerReader', 'howAsked', 'clean', 'CHECK_TOOL', 'CHECK_ASK_MS', `${lift(src, 'function brainAsk(m, messages, tools = null) {')}\nreturn brainAsk;`);
   let pieces = [];
   const http = { request(opts, cb) { const req = new EventEmitter(); req.end = () => cb(piecesOut(pieces, { statusCode: 200 })); req.destroy = () => {}; return req; } };
-  const brainAsk = fn(http, () => ({ base: {} }), s => String(s), {}, 30000);
+  const brainAsk = fn(http, answerReader, () => ({ base: {} }), s => String(s), {}, 30000);
   for (const i of CUTS) {
     pieces = [BODY.subarray(0, i), BODY.subarray(i)];
     const r = await brainAsk({ port: 1, served: 'm' }, []);

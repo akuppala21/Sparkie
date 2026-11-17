@@ -135,3 +135,5 @@ start time alone even if the container carries the earlier attempt’s labels.
   then restores Spark 4 without rerunning that model; repeats across a console kill and restart.
 
 These checks use stand-ins. They do not establish an installed build or a successful run on the owner’s Sparks.
+
+Model builders mark the launch boundary before Docker. A completed preflight that never crossed it records a terminal `notIssued` receipt; live or unanswered commands stay unknown. Cache refusals retain only bounded file and model names, never target paths or raw stderr. Startup recovery keeps its proved exact self-test stop with `self-test.json`, so the later notice reports that action.

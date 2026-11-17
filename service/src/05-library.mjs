@@ -453,6 +453,6 @@ mm=$(cd ${root} 2>/dev/null && ls *.gguf */*.gguf 2>/dev/null | grep -i mmproj |
     vision = ' ${mm:+--mmproj "$in/$mm"}';
   }
   const cache = engineCache(imageOf(model));
-  return prelude + cache.prelude + [...parts, ...(fromCache ? ['"${hfmounts[@]}"'] : ['-v', mount]), ...cache.mount, ...head.map(q), path, ...[...tail, ...metricsFlags(engineOf(model), args), ...args].map(q)].join(' ') + vision;
+  return prelude + cache.prelude + (receipt ? `: > "$SPARK_CONSOLE_LAUNCH_MARK" || exit 1\n` : '') + [...parts, ...(fromCache ? ['"${hfmounts[@]}"'] : ['-v', mount]), ...cache.mount, ...head.map(q), path, ...[...tail, ...metricsFlags(engineOf(model), args), ...args].map(q)].join(' ') + vision;
 }
 

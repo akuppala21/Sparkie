@@ -37,7 +37,7 @@ function harness(initial = record()) {
     note: (j, line) => { (j.log ||= []).push(line); events.push(line); }, sleep: async () => {}, q: x => `'${x}'`,
     agentSettings: () => ({ halted: false, selfHeal: false }), jobs: new Map(), busySparks: busy, consoleOff: () => false,
     runAction: async (...args) => { calls.push(['action', ...args]); return { outcome: 'started' }; }, healOwner: () => ({ login: 'owner' }),
-    savedRunWords: e => e.message, owedWords: () => [],
+    savedRunWords: e => e.message, owedWords: () => [], selfTestRollbackStopped: () => {},
   };
   runInNewContext(backUnitsSource + '\n' + source + '\nglobalThis.api = { rollbackShape, rollbackWrite, rollbackPrepare, rollbackReturn, rollbackSupersede, rollbackPass, rollbackHeld, rollbackCommand, rollbackLook, rollbackTransfer, rollbackOwned };', env);
   env.rollbackLook = async (spark, ref) => {

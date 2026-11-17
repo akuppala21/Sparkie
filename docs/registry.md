@@ -109,7 +109,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `saved-runs.json` | `18-run-record` | `rollbackSave` (17-rollback), `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunDone` is called by `run_workflow` | no | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
-| `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
+| `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRollbackStopped`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test`; `selfTestRollbackStopped` is called by `rollbackReturn`, `ROLLBACK_CODE` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | no | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
 | `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |

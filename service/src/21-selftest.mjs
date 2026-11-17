@@ -2,7 +2,7 @@
 // Area: features
 // Rules: R1, R11, R13, R19, R20, R22, R30, R32, R38, R42
 // Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs, tasks-telegram.test.mjs
-// Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
+// Owns: self-test.json (writers: keep, selfTest, selfTestRecover, selfTestRollbackStopped; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
 // "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in
@@ -381,6 +381,14 @@ action({
 // After a restart: what a self-test cut off in the middle had started, stopped if it still runs (its model only while it
 // is the very container it started, by id; its web page and job by their own names, by id when known). Then one notice,
 // also in the chat that asked. A Spark that doesn't answer is tried again a minute later; the file stays until then.
+function selfTestRollbackStopped(spark, seen) {
+  let rec;
+  try { rec = readKept(SELF_TEST_FILE); } catch { console.error('The self-test recovery note could not be read.'); return; }
+  if (rec?.spark !== spark || rec.model?.id !== seen.id || rec.model?.container !== seen.name) return;
+  // Startup's fenced recovery can stop this exact model before the self-test's own recovery runs.
+  // Keep that proved action with its existing note so the eventual notice does not say nothing ran.
+  writePrivate(SELF_TEST_FILE, { ...rec, rollbackStoppedModel: { id: seen.id, container: seen.name } });
+}
 async function selfTestRecover() {
   let rec;
   try { rec = readKept(SELF_TEST_FILE); } catch (e) { console.error(`The self-test's note of what it started can't be read: ${e.message}`); return; }
@@ -391,7 +399,8 @@ async function selfTestRecover() {
   const parts = [['model', rec.model], ['web', rec.web], ['job', rec.job]].filter(([, x]) => x && NAME_RE.test(String(x.container || '')));
   const now = await containerStates(node, parts.map(([, x]) => x.container)).catch(() => null);
   if (!now) { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
-  const at = sparkName(node), quiet = { log: [] }, stopped = [], problems = [];
+  const recovered = rec.rollbackStoppedModel;
+  const at = sparkName(node), quiet = { log: [] }, stopped = recovered?.id === rec.model?.id && recovered?.container === rec.model?.container ? [recovered.container] : [], problems = [];
   for (const [what, x] of parts) {
     const c = now[x.container];
     if (c?.state !== 'running') continue;
@@ -399,7 +408,7 @@ async function selfTestRecover() {
       if (!x.id) problems.push(`${x.container} runs there, and whether it is the one the test started isn’t known, so it was left alone: if it is, stop it`);
       continue;
     }
-    try { await (what === 'model' ? selfTestStopModel(quiet, rec.spark, x.container) : selfTestStopApp(quiet, rec.spark, x.container)); stopped.push(x.container); }
+    try { await (what === 'model' ? selfTestStopModel(quiet, rec.spark, x.container) : selfTestStopApp(quiet, rec.spark, x.container)); if (!stopped.includes(x.container)) stopped.push(x.container); }
     catch (e) { problems.push(`${x.container} couldn’t be stopped (${firstLine(e)}): stop it there`); }
   }
   try { unlinkSync(SELF_TEST_FILE); } catch {}

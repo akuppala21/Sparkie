@@ -61,9 +61,9 @@ test('an already-recorded owner wish is also handed off before retirement', asyn
 });
 function seedFixture() {
   const h = { records: [], seeds: 0, missing: true, badRecords: false };
-  h.watch = new Function('existsSync', 'DESIRED_FILE', 'recentInventory', 'rollbackRecords', 'seedDesired', 'desired', `let heldLast = [];\n${take(desiredSource, 'watchHeld')}\nreturn watchHeld;`)(
+  h.watch = new Function('existsSync', 'DESIRED_FILE', 'recentInventory', 'rollbackRecords', 'seedDesired', 'desired', 'jobs', 'console', `let heldLast = [];\n${take(desiredSource, 'watchHeld')}\nreturn watchHeld;`)(
     () => !h.missing, '/fake/desired.json', async () => ({ sparks: [{ id: 'spark3', online: true, deployments: [{ container: 'sc-loading', state: 'running' }] }] }),
-    () => { if (h.badRecords) throw new Error('unreadable recovery'); return h.records; }, () => { h.seeds++; }, () => ({ running: [] }));
+    () => { if (h.badRecords) throw new Error('unreadable recovery'); return h.records; }, () => { h.seeds++; }, () => ({ running: [] }), new Map(), { error: text => { if (!h.badRecords) throw new Error(text); } });
   return h;
 }
 for (const phase of ['active', 'returning']) test(`first automatic desired seed waits through ${phase} recovery, then resumes`, async () => {

@@ -18,7 +18,7 @@ function rollbackShape(r) {
   const result = x => obj(x) && typeof x.terminal === 'boolean' && text(x.boot)
     && ['notIssued', 'rebooted', 'changed', 'missing', 'guardFailed'].every(k => x[k] === undefined || typeof x[k] === 'boolean')
     && (x.code === undefined || Number.isInteger(x.code) && x.code >= -128 && x.code <= 255)
-    && (x.failure === undefined || typeof x.failure === 'string' && x.failure.length <= 700 && (/^(?:port is already allocated|CUDA out of memory|the image could not be found|Docker refused the start)$/.test(x.failure) || /^unrecognized arguments: (?:--[a-zA-Z][a-zA-Z0-9_-]{0,63} ?){1,8}$/.test(x.failure) || /^docker: Error response from daemon: could not select device driver \"(?:nvidia)?\" with capabilities: \[\[gpu\]\]\.$/.test(x.failure)))
+    && (x.failure === undefined || typeof x.failure === 'string' && x.failure.length <= 700 && (/^(?:port is already allocated|CUDA out of memory|the image could not be found|Docker refused the start|The model files could not be prepared)$/.test(x.failure) || /^([A-Za-z0-9_.-]{1,128}) in the Hugging Face cache copy of ([A-Za-z0-9_.-]{1,128}) links outside the model’s folder\.$/.test(x.failure) || /^unrecognized arguments: (?:--[a-zA-Z][a-zA-Z0-9_-]{0,63} ?){1,8}$/.test(x.failure) || /^docker: Error response from daemon: could not select device driver \"(?:nvidia)?\" with capabilities: \[\[gpu\]\]\.$/.test(x.failure)))
     && (x.guardPath === undefined || typeof x.guardPath === 'string' && /^\.local\/share\/spark-portal\/workspaces\/shared(?:\/jobs(?:\/[A-Za-z0-9][A-Za-z0-9_.-]{0,127})?)?$/.test(x.guardPath))
     && (x.seen === undefined || x.seen === null || seen(x.seen));
   const member = x => obj(x) && node(x.spark) && NAME_RE.test(x.container || '') && identity(x.original)
@@ -341,6 +341,9 @@ async function rollbackReturn(job) {
         const looked = await rollbackLook(spark, x.id);
         if (adopted()) continue;
         if (looked && !STOPPED_STATES.includes(looked.state)) throw new Error('Its new container did not stop.');
+        const provedStop = rollbackRead(record.operation).attempts.some(a => a.commands.some(c => c.spark === spark && c.action === 'stop' && c.expected?.id === x.id
+          && c.result?.terminal === true && c.result.code === 0 && rollbackSame(c.result.seen, looked) && STOPPED_STATES.includes(c.result.seen.state)));
+        if (looked && rollbackSame(x, looked) && provedStop) selfTestRollbackStopped(spark, x);
         if (looked && x.name === ENGINE_CHECK_NAME) await rollbackRemove(job, spark, x.name);
       }
     } catch {

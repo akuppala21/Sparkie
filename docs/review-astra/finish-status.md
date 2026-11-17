@@ -12,6 +12,14 @@ tests. Snapshots and scope are in [findings-4.md](findings-4.md). Original acces
 and recovery assertions remain. A complete passing repaired run, final hosted qualification and installation are
 still pending. No partial batch marks the release tested.
 
+The completed original full run reported **3,336 passed, 45 failed, zero skipped or cancelled** in 54 minutes.
+Final buffered output exposed A-55–A-59 in addition to the earlier findings. The next r2 full run was stopped
+(exit 137) because those repairs required another source version; it is incomplete, never a pass. Root r22's eight
+files now pass **233/233**, and CI r23's five files pass **56/56**. Candidate desktop and phone browser checks pass
+on Spark 3. Combined r24's generated-document and affected-selection checks pass **123/123**. The recovery batch
+for A-55/A-56 has now passed **231/231**, including every original validation and self-test assertion. A complete
+combined strict run, final GitHub qualification, installation and real-Spark checks remain pending. All evidence is scoped in findings-4; no partial batch or interrupted run marks this build tested.
+
 Hosted evidence is tied to its snapshot:
 
 - `5e8208ae`, run `44054697514`: 221/222 passed. The remaining asleep test expects a new start after wake already

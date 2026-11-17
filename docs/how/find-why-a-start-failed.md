@@ -6,7 +6,8 @@ named.
 ## Touch
 
 Look in this order, each a read through Sparkie, `POST /console/api/actions/<name>` or the agent door:
-1. `recent_operations`: the failed start, its error, its operation id.
+1. `recent_operations`: the failed start, its error, its operation id. `wait_operation` keeps its twelve newest lines
+   and, after it ends, up to two earlier retry decisions so its put-back does not hide what was tried.
 2. `operation_log` with that id: the operation's own lines (each fix it tried, what it stopped and put back). After a
    restart it says expired: `recall` with the id finds the operation's record, and `recall` with that record's id
    gives its log.
@@ -20,7 +21,7 @@ Look in this order, each a read through Sparkie, `POST /console/api/actions/<nam
 Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFailure`, `causeLines` and `putBack`
 (`17-changes.mjs`); `deploy` (`07-jobs.mjs`); across two Sparks, `clusterDeploy` and `asideBack` (`08-cluster.mjs`).
 
-A timeout is not proof that Docker stopped working on the request. `17-rollback-target.mjs` waits briefly for a
+A completed cache preflight refusal records that Docker was never invoked. A timeout is not proof that Docker stopped working on the request. `17-rollback-target.mjs` waits briefly for a
 late receipt and a free fence before restoration. An uncertain stop of a proved new container can be settled only
 by a successful removal of that exact ID; an original container or other unanswered command stays held. The source
 operation keeps its timeout even when compensation succeeds. Receipt waits use elapsed time; a changed wall clock

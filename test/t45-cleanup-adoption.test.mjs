@@ -62,7 +62,7 @@ function harness(adoptAt = null) {
     },
     rollbackKey: x => `${x.spark}/${x.container}`, desired: () => ({ running: [] }), rollbackDesiredChanged: () => false,
     agentSettings: () => ({ halted: false }), rollbackRoom: async () => {}, rollbackTransfer: async () => {},
-    jobMountsReal: () => 'true', consoleStopped: new Map(),
+    jobMountsReal: () => 'true', consoleStopped: new Map(), selfTestRollbackStopped: () => {},
   };
   const functions = ['rollbackAttempt', 'rollbackOriginal', 'rollbackStopOriginal', 'rollbackRemove', 'rollbackOwned', 'rollbackStopCancelled', 'rollbackReturn'];
   runInNewContext(functions.map(n => take(core, n)).join('\n') + '\n' + take(target, 'rollbackCommand'), env);

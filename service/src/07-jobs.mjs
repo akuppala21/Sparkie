@@ -211,7 +211,7 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     const share = [...memoryShare(model, [measured ? { node: nodeId, steps: [], memory: { ...p.memory, ...measured } } : { ...p, node: nodeId }], keep), ...fixFlags(model, fix)];
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     contextCheck(job); // Copies, image pulls and fresh planning may have used the remaining retry time.
-    const started = await rollbackRun(job, nodeId, cname, receipt => dockerRunCommand(model, p.tsip, p.store, share, receipt));
+    const started = await rollbackRun(job, nodeId, cname, receipt => dockerRunCommand(model, p.tsip, p.store, share, receipt), true);
     // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
     if (!started.code || unanswered(started)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);

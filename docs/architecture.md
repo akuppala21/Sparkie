@@ -104,8 +104,8 @@ flowchart TD
   CHAT -->|"each tool call, via sparkie, with the intent and the asker's words in ctx"| RUN
   RUN -->|"finds the action"| REG
   RUN -->|"untested: refused. Not validated: a validation run, or a question"| WF
-  RUN -->|"a change with long work starts a job"| JOBS
-  RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
+  RUN -->|"start job; follow: 12 latest lines and two retry decisions"| JOBS
+  RUN -->|"read actions: on demand, no job; files and save_file (one new file) use a Spark's shared-folder worker"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
   RUN -->|"run and write_file are lookups to runAction: the ladder makes a change's checks"| WORK
@@ -118,7 +118,7 @@ flowchart TD
   CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
   JOBS -->|"failed model start"| RETURN
   RETURN -->|"fence late commands; prove exact new-ID disposal; restart exact originals"| SSH
-  RETURN -->|"settled owner adoption; all target claims held"| STATE
+  RETURN -->|"owner adoption; exact self-test stop evidence; all claims held"| STATE
   JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
   SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN

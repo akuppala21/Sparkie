@@ -115,3 +115,26 @@ test('a restart of Spark Console in the middle: at start-up it stops exactly wha
   assert.ok(!told.some(e => /cut off/.test(e.text)), JSON.stringify(told));
   assert.equal(told.filter(e => /^Spark Console restarted while the self-test ran/.test(e.text)).length, 1, JSON.stringify(told));
 });
+
+test('fenced recovery records only a matching self-test model stop and preserves the rest of its note', () => {
+  const source = readFileSync(join(REPO, 'service/src/21-selftest.mjs'), 'utf8');
+  const body = /^function selfTestRollbackStopped\(spark, seen\) \{[\s\S]*?^\}/m.exec(source)?.[0];
+  assert.ok(body);
+  let saved = { operation: 'test-operation', spark: 'spark3', model: { id: 'a'.repeat(64), container: 'sc-test' }, chat: 'kept-chat' }, writes = 0;
+  const fn = new Function('SELF_TEST_FILE', 'readKept', 'writePrivate', `${body}\nreturn selfTestRollbackStopped;`)('self-test.json', () => structuredClone(saved), (file, value) => { assert.equal(file, 'self-test.json'); writes++; saved = value; });
+  for (const [spark, id, name] of [['spark4', 'a'.repeat(64), 'sc-test'], ['spark3', 'b'.repeat(64), 'sc-test'], ['spark3', 'a'.repeat(64), 'sc-other']]) fn(spark, { id, name });
+  assert.equal(writes, 0);
+  fn('spark3', { id: 'a'.repeat(64), name: 'sc-test' });
+  assert.equal(writes, 1); assert.equal(saved.chat, 'kept-chat'); assert.equal(saved.operation, 'test-operation');
+  assert.deepEqual(saved.rollbackStoppedModel, { id: 'a'.repeat(64), container: 'sc-test' });
+});
+
+test('an unrelated unreadable self-test note cannot block fenced model restoration', () => {
+  const source = readFileSync(join(REPO, 'service/src/21-selftest.mjs'), 'utf8');
+  const body = /^function selfTestRollbackStopped\(spark, seen\) \{[\s\S]*?^\}/m.exec(source)?.[0]; assert.ok(body);
+  let writes = 0, warnings = 0;
+  const fn = new Function('SELF_TEST_FILE', 'readKept', 'writePrivate', 'console', `${body}\nreturn selfTestRollbackStopped;`)(
+    'self-test.json', () => { throw new Error('unreadable unrelated note'); }, () => { writes++; }, { error: () => { warnings++; } });
+  assert.doesNotThrow(() => fn('spark3', { id: 'a'.repeat(64), name: 'sc-other' }));
+  assert.equal(writes, 0); assert.equal(warnings, 1);
+});

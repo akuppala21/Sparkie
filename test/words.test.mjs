@@ -161,7 +161,7 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
     const chat = await newChat();
     try {
       const r = await say(chat, '/pause');
-      assert.match(r.text, /^\/pause\nPaused\. Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed\. Models already running stay up\. Self-healing is off while paused\.\nTo resume: your account menu → Agents and Telegram, with your passkey\. Or by hand on Spark 2: set "halted": false in .*agent-settings\.json\.$/);
+      assert.match(r.text, /^\/pause\nPaused\. Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed\. Models already running stay up\. Self-healing is off while paused\.\nTo resume: send \/resume and confirm the change, or use Agents and Telegram in your account menu\.$/);
       const s = (await api('/agents')).json.settings;
       assert.equal(s.halted, true);
       assert.notEqual(s.autoPaused, true);

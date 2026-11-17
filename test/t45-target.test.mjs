@@ -108,3 +108,44 @@ test('immediate rejected flags come only from the exact error clause and preserv
     assert.equal(result.failure, expected); assert.doesNotMatch(result.failure, /--help|--port|--max-model-len|--version/);
   }
 });
+
+test('a proved pre-Docker cache refusal is terminal and keeps only the bounded file diagnostic', async t => {
+  const f = fixture(t);
+  await f.call({ mode: 'dispatch', action: 'run', name: 'sc-new', expected: null, launchGuarded: true,
+    script: "echo 'chat_template.jinja in the Hugging Face cache copy of testorg--Bad links outside the model’s folder (to /private/secret-token). Authorization: Bearer never_persist_this_secret' >&2; exit 1" });
+  const result = await until(async () => (await f.call({ mode: 'receipt' })).result);
+  assert.equal(result.terminal, true); assert.equal(result.notIssued, true); assert.equal(result.code, 1);
+  assert.equal(result.failure, 'chat_template.jinja in the Hugging Face cache copy of testorg--Bad links outside the model’s folder.');
+  assert.equal(existsSync(join(f.home, 'entered')), false);
+  assert.equal((await f.call({ mode: 'fence', commands: [COMMAND] })).results[COMMAND].notIssued, true);
+  assert.doesNotMatch(readFileSync(join(f.root, `${COMMAND}.done.json`), 'utf8'), /private|secret-token|never_persist|Authorization|Bearer/);
+});
+
+test('an absent launch marker while preflight is live proves nothing until that exact subprocess ends', async t => {
+  const f = fixture(t); writeFileSync(join(f.home, 'hold'), '');
+  await f.call({ mode: 'dispatch', action: 'run', name: 'sc-new', expected: null, launchGuarded: true,
+    script: 'touch "$HOME/preflight-entered"; while [ -e "$HOME/hold" ]; do sleep .05; done; exit 1' });
+  await until(() => existsSync(join(f.home, 'preflight-entered')));
+  assert.equal((await f.call({ mode: 'receipt' })).result, null);
+  assert.equal((await f.call({ mode: 'fence', commands: [COMMAND] })).active, true);
+  rmSync(join(f.home, 'hold'));
+  const result = await until(async () => (await f.call({ mode: 'receipt' })).result);
+  assert.equal(result.terminal, true); assert.equal(result.notIssued, true);
+});
+
+test('after the launch boundary a failed client remains uncertain even with no container found', async t => {
+  const f = fixture(t);
+  await f.call({ mode: 'dispatch', action: 'run', name: 'sc-new', expected: null, launchGuarded: true,
+    script: ': > "$SPARK_CONSOLE_LAUNCH_MARK" || exit 1; exit 7' });
+  const result = await until(async () => (await f.call({ mode: 'receipt' })).result);
+  assert.equal(result.terminal, false); assert.equal(result.notIssued, undefined); assert.equal(result.code, 7);
+});
+
+test('a failed launch-marker write prevents the Docker invocation', async t => {
+  const f = fixture(t); mkdirSync(join(f.root, `${COMMAND}.launch`), { recursive: true });
+  await f.call({ mode: 'dispatch', action: 'run', name: 'sc-new', expected: null, launchGuarded: true,
+    script: ': > "$SPARK_CONSOLE_LAUNCH_MARK" || exit 1; ' + script(COMMAND) });
+  const result = await until(async () => (await f.call({ mode: 'receipt' })).result);
+  assert.notEqual(result.code, 0);
+  assert.equal(existsSync(join(f.home, 'entered')), false); assert.equal(existsSync(join(f.home, 'containers.json')), false);
+});
