@@ -393,7 +393,10 @@ async function selfSend(viewer, ctx, input) {
   if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, commit, open.head]);
   await selfPush(open.id).catch(async e => {
     if (!again) await selfGit(['update-ref', `refs/sparkie/${open.id}`, open.head, commit]).catch(() => {});
-    throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent: ${maskSecrets(e.message).slice(0, 300)}`);
+    // (git's and GitHub's own words are outside text, and a change's answer is no outside read, R26: they go to Spark
+    // Console's own log, which service_logs reads, and the answer says what happened in code's words)
+    console.error(`The push to ${open.branch} was refused: ${maskSecrets(e.message).slice(0, 600)}`);
+    throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent. git’s own words are in Spark Console’s log (service_logs, console, on Spark 2).`);
   });
   const sent = again ? pushes : pushes + 1;
   const repo = selfGithub().repo, owner = repo.split('/')[0];

@@ -234,6 +234,14 @@ const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].ma
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
   savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}), ...(w.best ? { best: w.best } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
+// A saved workflow named in a change's answer (run_workflow, compare_models, forget_workflow): its title and its inputs'
+// words are free text whoever saved it wrote, an agent too, and a change's answer never counts as text read from
+// outside (R26). To Sparkie's brain (a turn's call, `via` sparkie) it is named by its id, and `workflows` (a read,
+// outside) has the rest; a call that is no Sparkie turn (the owner's page or API, an agent's own, a press) keeps the
+// title (final read, the change answers).
+const savedOwnCall = (viewer, ctx) => !/^sparkie/.test(String(ctx?.via || ''));
+const savedNamed = (w, viewer, ctx, start = false) => (savedOwnCall(viewer, ctx) ? `“${w.title}”` : `${start ? 'The' : 'the'} saved workflow ${w.id}`);
+const savedMissing = (name, viewer, ctx) => `No saved workflow called “${String(name).slice(0, 80)}”. ${savedOwnCall(viewer, ctx) ? `Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.` : 'workflows lists the saved ones.'}`;
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
 function stepArgs(st) {
@@ -278,7 +286,7 @@ const OWN_RECORD_READS = new Set(['fleet_events', 'workloads', 'spark_diagnostic
 // or off (21-power.mjs) works whether it answers now or not, so a Spark that is off doesn't stop those steps.
 const TOUCHES_SPARKS = new Set(['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'test_changes', 'undo_update', 'power_off', 'power_on']);
 const POWER_STEPS = new Set(['power_off', 'power_on']);
-async function checkSteps(w, inputs, inv) {
+async function checkSteps(w, inputs, inv, said = true) {
   if (checkFailsForTest()) throw new Error('the check failed (test)');
   const changed = new Set(), lines = [], turnedOn = new Set();
   const sparkOn = id => inv.sparks.find(x => x.id === id);
@@ -322,7 +330,8 @@ async function checkSteps(w, inputs, inv) {
       if (lib) { line(onDisk(lib)); continue; }
       if (REPO_RE.test(args.model)) { line({ result: 'checked when reached', why: 'it isn’t on disk, so it would download first' }); continue; }
       let found;
-      try { found = await resolveModelName(args.model, inv); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+      // (the model's words are the step's, free text: said in code's words in a change's answer, final read)
+      try { found = await resolveModelName(args.model, inv); } catch (e) { line({ result: 'cannot run', why: said ? e.message : e.status === 404 ? 'nothing on disk or in the recipes matches the model it names' : 'the model it names couldn’t be looked up now' }); continue; }
       line(found.lib ? onDisk(found.lib) : found.choices ? { result: 'checked when reached', why: 'several models match; it will ask which one' }
         : { result: 'checked when reached', why: 'it isn’t on disk, so it would download first' });
       continue;
@@ -389,18 +398,19 @@ action({
   run: async (input, viewer, ctx) => {
     // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
     const saved = ctx.compare?.workflow || findSaved(input.name);
-    if (!saved) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    if (!saved) throw new HttpError(404, savedMissing(input.name, viewer, ctx));
     let w = saved;
+    const own = savedOwnCall(viewer, ctx), named = savedNamed(saved, viewer, ctx, true);
     const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
     // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
     const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
     if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
-    if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    if (missing.length) throw new HttpError(400, own ? `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.` : `${named} needs ${missing.join(', ')}: workflows says what each is.`);
     // (Sparkie's own model, given or kept by a compare, runs the brain's view of it, as the compare ran it: its {model}
     // start and stop steps left out; refused in the compare's words when the brain can't be asked)
     if (!ctx.compare && 'model' in (w.inputs || {}) && compareIsBrain(given.model ?? '')) {
       const why = compareBrainWhy();
-      if (why) throw new HttpError(409, `“${w.title}” can’t run with Sparkie’s own model: ${why}.`);
+      if (why) throw new HttpError(409, `${named} can’t run with Sparkie’s own model: ${why}.`);
       w = compareBrainView(w);
     }
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
@@ -408,12 +418,12 @@ action({
     let check = null, skipped = null;
     try {
       const inv = await Promise.race([inventory(null), sleep(30000).then(() => { throw new Error('the look at the Sparks took over 30 seconds'); })]);
-      check = await checkSteps(w, given, inv);
+      check = await checkSteps(w, given, inv, own);
     } catch (e) { skipped = String(e.message).slice(0, 200); }
     const blocked = check?.find(l => l.result === 'cannot run');
     if (blocked) {
       const would = check.filter(l => l.result === 'goes').map(l => l.step);
-      throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
+      throw new HttpError(409, `${named} can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     if (usedBest) job.usedBest = usedBest;
@@ -468,18 +478,18 @@ action({
         await runEndWell(j, ran, viewer, ctx, w.title);
       } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { runsRan.delete(j.id); letSleep(j); savedRunDone(j); }
     });
-    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
+    return { outcome: 'started', operation: job.id, workflow: own ? w.title : w.id, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
 });
 action({
   name: 'forget_workflow', title: 'Forget a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner wants one of their saved workflows gone. Changes nothing on the Sparks.',
   input: { type: 'object', properties: { name: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, from workflows (saved).' } }, required: ['name'], additionalProperties: false },
-  run: async input => {
+  run: async (input, viewer, ctx) => {
     const w = findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”.`);
     writeSaved(savedWorkflows().filter(x => x.id !== w.id));
-    return { outcome: 'forgotten', workflow: w.title };
+    return { outcome: 'forgotten', workflow: savedOwnCall(viewer, ctx) ? w.title : w.id };
   },
 });
 

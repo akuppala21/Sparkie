@@ -74,7 +74,9 @@ echo looked`, { timeout: 20000 });
 }
 // What a container that's there was made with, against what was asked: a container keeps its image, ports, volumes and
 // settings, so any that differ are said, never quietly dropped. (Setting values aren't repeated: only their names.)
-function appDiffers(look, input) {
+// (said: the container's own volumes and command, free text from the Spark, for a call that is no Sparkie turn; to the
+// brain code's words, and `workloads` with detail has them: a change's answer is no outside read, R26, savedOwnCall)
+function appDiffers(look, input, said = true) {
   const out = [];
   if (input.image && input.image !== look.image) out.push(`its image is ${look.image || 'unknown'}, not ${input.image}`);
   if (input.port && look.ports.length) {
@@ -82,7 +84,7 @@ function appDiffers(look, input) {
     if (!look.ports.some(b => b.port === h && (!input.port.includes(':') || b.inside === i))) out.push(`its port is ${[...new Set(look.ports.map(b => `${b.port}:${b.inside}`))].join(', ')}, not ${input.port}`);
   }
   const vols = input.volumes ?? (input.image ? [] : null);
-  if (vols && [...vols].sort().join(',') !== [...look.volumes].sort().join(',')) out.push(`its volumes are ${look.volumes.join(', ') || 'none'}, not ${vols.join(', ') || 'none'}`);
+  if (vols && [...vols].sort().join(',') !== [...look.volumes].sort().join(',')) out.push(said ? `its volumes are ${look.volumes.join(', ') || 'none'}, not ${vols.join(', ') || 'none'}` : `its volumes aren’t ${vols.join(', ') || 'none'} (workloads with detail has its own)`);
   const env = (input.env || []).filter(e => !look.env.includes(e));
   if (env.length) out.push(`its settings don’t have ${env.map(e => e.split('=')[0]).join(', ')} as asked`);
   // (with an image named, gpu and once not said mean without; a command is compared only when one is said: Docker gives
@@ -90,7 +92,7 @@ function appDiffers(look, input) {
   const gpu = input.gpu ?? (input.image ? false : null), once = input.once ?? (input.image ? false : null);
   if (gpu !== null && gpu !== look.gpu) out.push(look.gpu ? 'it uses the GPU' : 'it doesn’t use the GPU');
   if (once !== null && once !== look.job) out.push(look.job ? 'it’s a job that runs once' : 'it isn’t a job that runs once');
-  if (input.command && JSON.stringify(input.command) !== JSON.stringify(look.cmd)) out.push(`its command is ${look.cmd.length ? commandWords(look.cmd).join(' ') : 'its image’s own'}, not ${commandWords(input.command).join(' ')}`);
+  if (input.command && JSON.stringify(input.command) !== JSON.stringify(look.cmd)) out.push(said ? `its command is ${look.cmd.length ? commandWords(look.cmd).join(' ') : 'its image’s own'}, not ${commandWords(input.command).join(' ')}` : `its command isn’t ${commandWords(input.command).join(' ')} (workloads with detail has its own)`);
   return out;
 }
 // A command's words as they may be shown: each masked (a key shape), and the value after a secret-named flag hidden
@@ -403,7 +405,7 @@ action({
     if (ctx.via === 'watcher' && !desired().running.some(x => x.app && keyOf(x) === key)) return { outcome: 'already', spark, container, note: `${container} is no longer on the list of what should be running, so it wasn’t started.` };
     // A container that's there keeps the image, ports, volumes and settings it was made with: asked for with others, it
     // is refused and told what differs, never quietly started as it was.
-    const differs = state === 'missing' ? [] : appDiffers(look, input);
+    const differs = state === 'missing' ? [] : appDiffers(look, input, savedOwnCall(viewer, ctx));
     if (differs.length) {
       throw new HttpError(409, `There’s already a container called ${container} on ${at}, and ${differs.join('; ')}. A container keeps what it was made with, so nothing was started or changed. To keep that one as it is, ask without the image, port, volumes or settings; for a new app, pick another name.`);
     }

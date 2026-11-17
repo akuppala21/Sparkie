@@ -90,19 +90,17 @@ function workNames(node, command, dir, sorted = null) {
   for (const x of [text, ...parts]) if (x.length >= 12 && /\s/.test(x) && !out.has(x)) out.set(x, { forms: [x], own: [x] });
   return [...out.values()];
 }
-// What this chat holds that a change may have been taken from, for workEarlier: chatEarlier's reads and Sparkie's
-// answers (14-chats.mjs), with the chat's notices and agents' messages as reads of their own (R-4: a press's notice can
-// quote a command's last line). Loaded once a request, while nothing new was read or said (R-9).
+// What this chat holds that a change may have been taken from, for workEarlier and a go-ahead's check: chatEarlier's
+// reads, Sparkie's answers, and the chat's notices and agents' messages (chatOutsideMessage, each by its label, final
+// read C3; R-4: a press's notice can quote a command's last line). Loaded once a request, while nothing new was read or
+// said (R-9).
 const workEarlierSeen = new WeakMap();
 function workChatEarlier(conv, ctx) {
   const key = `${conv.id}|${(conv.reads || []).length}|${(ctx?.reads || []).length}|${(conv.messages || []).length}`, was = ctx && typeof ctx === 'object' ? workEarlierSeen.get(ctx) : null;
   if (was?.key === key) return was.e;
-  const e = chatEarlier(conv, ctx), seen = new Set([...e.reads, ...e.answers].map(x => String(x.text ?? '')));
-  const more = (conv.messages || []).filter(m => (m.notice || (m.role === 'user' && m.from)) && m.content && !seen.has(String(m.content)))
-    .slice(-40).map(m => ({ label: m.notice ? 'a notice in this chat' : 'an agent’s message in this chat', at: m.createdAt, text: String(m.content) }));
-  const out = { reads: [...more, ...e.reads], answers: e.answers };
-  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e: out });
-  return out;
+  const e = chatEarlier(conv, ctx);
+  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e });
+  return e;
 }
 // The owner's words in this chat, as they are and with ~/, $HOME/ and the home taken off every path, so a name typed
 // one way and run another is still theirs (R-10).

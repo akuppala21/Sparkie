@@ -389,6 +389,8 @@ function tgRanLine(r) {
   }
   if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
   if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
+  // (write_file's exit 5: written, over another program's edit; where the other text is kept is said in Spark Console)
+  if (r?.wroteOver) return `It was written over another program’s edit made after it was read: the name holds the new text, and what was there is kept beside it. ${more}`;
   if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
   if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
   return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;

@@ -219,18 +219,19 @@ async function powerLook(node) {
   const kept = new Set(desired().running.filter(x => x.app).map(keyOf)), inUse = [], apps = [], boxed = powerBoxesIn(node, r.out), found = [];
   for (const [name, protect, ours, app, job, role] of fields(r.out, 'power')) {
     if (!name) continue;
-    if (role === 'main' || isProtected(name, protect)) inUse.push(`${name} (protected)`);
+    if (role === 'main' || isProtected(name, protect)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (protected)`);
     else if (ours === '1') continue;
     // (Spark Console's own box: said and ended by an asked power-off, 21-power-box.mjs; one it doesn't have open is said)
     else if (boxed.known.has(name)) found.push(boxed.known.get(name));
-    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${name} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
-    else if (app === '1' && job === '1') inUse.push(`${name} (a job that hasn’t ended)`);
+    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
+    else if (app === '1' && job === '1') inUse.push(`${nameShown(name, 'workloads') || 'a container'} (a job that hasn’t ended)`);
     else if (app === '1' && kept.has(`${node.id}/${name}`)) apps.push(name);
-    else inUse.push(`${name} (started outside Spark Console)`);
+    else inUse.push(`${nameShown(name, 'workloads') || 'a container'} (started outside Spark Console)`);
   }
   await powerBoxFiles(node, found);
   return { answers: true, inUse, apps, boxes: found };
 }
+// (each container by its name as shown, nameShown: a long one is said, and workloads has it)
 const inUseWords = (node, list) => `${sparkName(node)} is in use: ${list.join(', ')} ${list.length > 1 ? 'run' : 'runs'} there. Spark Console never stops those, so nothing was changed. Stop ${list.length > 1 ? 'them' : 'it'} first, or turn ${sparkName(node)} off by hand.`;
 // The shutdown needs exactly the two commands deploy/power-setup.sh lets the owner's account run without a password.
 const SUDO_CHECK = `sudo -n -l /usr/bin/systemctl poweroff >/dev/null 2>&1 && sudo -n -l /usr/bin/systemctl stop nvidia-persistenced >/dev/null 2>&1 && printf 'sudo\\tok\\n'`;
@@ -358,7 +359,9 @@ action({
     // or stuck, and its power is never cut from here.
     for (const l of looks.filter(x => !x.answers)) {
       const w = await freshWall(l.id).catch(e => ({ answering: false, problem: e.message }));
-      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (${w.problem || 'no reading'}), so nothing was changed.`);
+      // (the plug controller's own words are outside text, and a change's answer is no outside read, R26: why is in
+      // fleet_status's wall for that Spark)
+      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (fleet_status’s wall for it says why), so nothing was changed.`);
       if (w.on === false) { l.plugOff = true; continue; }
       if (!(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, but its plug shows ${w.watts ?? '?'} W: it is powered on but not answering, so its power is not cut from here. Look at it there.`);
     }
@@ -662,7 +665,7 @@ action({
     // One that draws power but doesn't answer is on (or starting): said now, and nothing is switched.
     for (const [i, id] of ids.entries()) {
       if (answering[i]) continue;
-      const w = await freshWall(id).catch(e => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (${e.message}), so nothing was switched.`); });
+      const w = await freshWall(id).catch(() => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (fleet_status’s wall for it says why), so nothing was switched.`); });
       if (!w.answering) throw new HttpError(409, `${sparkWord(id)}’s plug isn’t answering the plug controller, so it can’t be turned on from here.`);
       if (w.on === true && !(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) {
         throw new HttpError(409, `${sparkWord(id)}’s plug shows ${w.watts ?? '?'} W, so it is powered on but not answering. Nothing was switched: it may still be starting; if it stays like this, look at it there.`);

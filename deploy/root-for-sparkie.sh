@@ -79,6 +79,7 @@ n = [x for x in c.get("nodes", []) if x.get("id") == sys.argv[2]]
 print(n[0].get("host") or "-" if n else "-", c.get("user") or "-")' "$CONFIG" "spark$N") || stop "couldn't read Spark Console's list of Sparks"
 [ "$ADDR" != - ] || stop "Spark $N is not on Spark Console's list"
 if [ "$ADDR" = local ]; then
+  [ "$MODE" != with-root ] || stop "root is never turned on on Spark 2, the hub: Spark Console refuses a root command there. Set Spark 2 up without --with-root: bash ~/spark-console-src/deploy/root-for-sparkie.sh --hub $N"
   [ "$HUB" = 1 ] || stop "Spark $N runs Spark Console: it is the hub, set up last, after a compute Spark, and only with --hub: bash ~/spark-console-src/deploy/root-for-sparkie.sh ${FLAGS}--hub $N"
 else
   [ "$HUB" = 0 ] || stop "--hub is only for Spark 2 itself; Spark $N is a compute Spark"
@@ -366,8 +367,12 @@ undo() {
   else
     g=$(sed -n "s/^$id net open: guard \([a-z0-9]*\) goes back at .*/\1/p" <<<"$out" | head -n 1)
     at=$(sed -n "s/^$id net open: guard [a-z0-9]* goes back at \(.*\) unless it is kept;.*/\1/p" <<<"$out" | head -n 1)
-    if [ -n "$g" ] && grep -q "^$id net left: " <<<"$out"; then
-      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), or, once its put-back has failed, keep it as it stands (sudo $HELPER keep --id $g); then run --undo again. Nothing was changed."
+    if [ -n "$g" ] && grep -q "^$id net look: " <<<"$out"; then
+      stop "the lock-out net still holds a change here (guard $g): it was put back after a restart, and its look that the ways in run waits. Wait two minutes, or put it back now (sudo $HELPER putback --id $g); then run --undo again. Nothing was changed."
+    elif [ -n "$g" ] && grep -q "^$id net failed: " <<<"$out"; then
+      stop "the lock-out net still holds a change here (guard $g), and its put-back did not finish. Put it back (sudo $HELPER putback --id $g), or keep it as the put-back left it (sudo $HELPER keep --id $g --as-left); then run --undo again. Nothing was changed."
+    elif [ -n "$g" ] && grep -q "^$id net left: " <<<"$out"; then
+      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), then run --undo again. Nothing was changed."
     elif [ -n "$g" ]; then
       stop "the lock-out net still holds a change here (guard $g, which goes back at ${at:-its time} unless it is kept). Keep it (sudo $HELPER keep --id $g) or put it back (sudo $HELPER putback --id $g) first, then run --undo again. Nothing was changed."
     fi

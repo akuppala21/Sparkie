@@ -124,11 +124,13 @@ function outcomeText(label, out, agentChat = false) {
 // written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
 // these words in its history. null for any other result. (The net's, the hub's and root's carry their own, note.)
 function pressRan(label, out, agentChat = false) {
-  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
+  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'wroteOver', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
   const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';
   const tail = String(out.tail || '').split('\n'), last = tail.length > 1 ? s(tail.slice(0, -1).join(' ')).slice(0, 200) : '';
   const said = out.ran === false ? (out.why ? s(out.why) : 'nothing ran.')
     : out.notWritten ? (typeof out.notWritten === 'string' ? s(out.notWritten) : `Nothing was written to ${s(out.notWritten.path)}: ${s(out.notWritten.why).replace(/\.$/, '')}.`)
+      // (write_file's exit 5: written, over another program's edit; the program's own line says where the other text is)
+      : out.wroteOver ? s(out.wroteOver)
       : out.exit === 0 || (out.wrote && out.exit === undefined) ? `done.${out.ended ? ` ${s(out.ended)}` : ''}`
         : Number.isInteger(out.exit) ? `it ran and failed, with exit code ${out.exit}.${last ? ` Its last line: “${last}”.` : ''}`
           : s(out.ended || out.cut || 'Whether it finished isn’t known.');
@@ -215,16 +217,17 @@ function pressSaid(x, c, conv, ctx, by) {
     return { out: { outcome: 'error', error: e.message }, content: `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}` };
   }
 }
-// A press's notice in its chat. (An ask with lines its button shows whole, write_file's: the chat file keeps them
-// masked, R7, and the owner's page gets them whole, from memory, chatWholeShown.) The message as the page gets it.
+// A press's notice in its chat, keys hidden whatever it says (an ask again holds a script's lines, final read R-1). (An
+// ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page gets
+// them whole, the rest masked as the asks are, from memory, chatWholeShown.) The message as the page gets it.
 function pressPost(conv, content, asked) {
-  const whole = asked?.whole?.length ? content : null;
-  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  const kept = maskSecrets(content), whole = asked?.whole?.length ? askShown(content, asked.whole) : kept;
+  const message = { role: 'assistant', content: kept, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
-  if (whole) chatWhole.set(message, whole);
+  if (whole !== kept) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  return whole ? { ...message, content: whole } : message;
+  return whole !== kept ? { ...message, content: whole } : message;
 }
 // A press still running at the press's time, ended: its result posted in its chat from its own fields (pressRan), and
 // told in the paired chat for a press made there (tgRanLine); the parked task it answered woken. (The net says its own
@@ -248,10 +251,12 @@ const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.g
 const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
 // A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
 // shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+// (the page's copy of an ask: the lines its button shows whole as they are, every other line masked)
+const askShown = (text, whole) => String(text).split('\n').map(l => ((whole || []).includes(l) ? l : maskSecrets(l))).join('\n');
 function chatAsks(asked, message) {
   const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
   if (!list.length) return message;
-  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  const whole = list.map(q => ({ group: q.group, text: askShown(q.question.slice(0, 8000), q.whole) }));
   message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
   if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
   return message;
@@ -268,14 +273,23 @@ function chatReadsKeep(conv, ctx) {
 }
 // What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
 // (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
-// dangerReadsLoaded ([{label, at, text, cut}]); answers, Sparkie's own earlier answers in the chat ([{at, text}]),
-// which can quote what was read. Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
+// dangerReadsLoaded ([{label, at, text, cut}]); answers ([{at, text, label?}]): Sparkie's own earlier answers in the
+// chat, which can quote what was read (no label), and every message chatOutsideMessage marks, each with a label of
+// code's (final read C3): an agent's message, a notice with what it quotes, a dangerous ask's text. (A carry-on line is
+// code's words and the owner's own request.)
+// Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
 function chatEarlier(conv, ctx = {}) {
   const byId = new Map();
   for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
-  const answers = (conv?.messages || []).filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  const answer = m => m.role === 'assistant' && !m.notice && !m.danger;
+  const answers = (conv?.messages || []).filter(m => m.content && (answer(m) || chatOutsideMessage(m))).map(m => ({ at: m.createdAt, text: String(m.content),
+    ...(answer(m) ? {} : { label: m.from ? `a message from the agent ${dangerPlain(m.from, 60) || 'that started this chat'}` : 'Spark Console’s notice in this chat' }) }));
   return { reads: dangerReadsLoaded([...byId.values()]), answers };
 }
+// A message of a chat that is neither the owner's own typing nor Sparkie's own answer: an agent's message, a notice of
+// Spark Console's (a result, a report, a pressed command's last line, an ask asked again), a dangerous ask. One test for
+// both: chatEarlier searches these, and memoryChatOutside (20-memory.mjs) counts a chat holding one as outside text.
+const chatOutsideMessage = m => Boolean(m?.from || m?.notice || m?.danger);
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',

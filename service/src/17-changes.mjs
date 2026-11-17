@@ -60,7 +60,8 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
 // paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
 // brain: what Sparkie is handed in place of text, when the ask shows the owner something the brain must not be handed as
-// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2).
+// the call's result (a script's lines, 21-ladder.mjs: text read from a file, R-2; a saved workflow's title, savedNamed);
+// a choice's `brain` is its label there.
 function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, brain = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
@@ -97,14 +98,15 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
-    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map(c => c.label),
+    return { outcome: out.outcome, question: typeof brain === 'string' ? brain : text, buttons: shown.map((c, i) => choices[i]?.brain || c.label),
       note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
         : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
   }
   return out;
 }
 // What a change does, in plain words, for its button.
-function changeLabel(name, input) {
+// (brain: the words Sparkie's brain gets, a saved workflow by its id; the page's button keeps its title)
+function changeLabel(name, input, brain = false) {
   const sp = id => sparkName(nodeById(id) || { id });
   const where = input.sparks ? ` across ${input.sparks.map(sp).join(' + ')}` : input.spark ? ` on ${sp(input.spark)}` : '';
   const what = input.model || input.container || 'it';
@@ -116,12 +118,13 @@ function changeLabel(name, input) {
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
-    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    const f = findSaved(String(input.workflow || '')), w = String((brain ? f?.id : f?.title) || input.workflow || '').slice(0, 80);
     return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
   }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
-    return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
+    const f = findSaved(String(input.name || ''));
+    return `Run the saved workflow “${String((brain ? f?.id : f?.title) || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
   }
   if (name === 'keep_running') {
     const c = String(input.container || 'it').slice(0, 80);
@@ -162,8 +165,8 @@ function changeLabel(name, input) {
 // because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
 // for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
 function propose(viewer, ctx, name, input, because = null) {
-  const label = `${changeLabel(name, input)}${input.__validate ? ' (its first run, which validates it)' : ''}`;
-  const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  const first = input.__validate ? ' (its first run, which validates it)' : '', label = `${changeLabel(name, input)}${first}`, said = `${changeLabel(name, input, true)}${first}`;
+  const out = question(viewer, ctx, `${label}?`, [{ label, brain: said, call: { action: name, args: input } }], 'proposal', { brain: `${said}?` });
   return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
