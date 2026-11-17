@@ -883,6 +883,11 @@ test('A-20, final read 2 (S1, S3, S4): only this message names a place; one Spar
     const v = await check('start_model', { model: 'gemma', spark: 'spark3' }, 'start gemma', before);
     assert.deepEqual([v.clear, v.input.spark, v.input.sparks], [true, undefined, undefined], before);
   }
+  // (a Spark right after switch, swap, load or use is where it starts: intent.test's "switch spark 4 to …")
+  for (const text of ['switch spark 4 to gemma', 'load spark 4 with gemma']) {
+    const v = await check('start_model', { model: 'gemma', spark: 'spark3' }, text);
+    assert.deepEqual([v.clear, v.input.spark], [true, 'spark4'], text);
+  }
   // A start across two Sparks, both named as places as the call has them, runs at once there.
   const across = await check('start_model', { model: 'gemma', sparks: ['spark3', 'spark4'] }, 'start gemma across spark 3 and spark 4');
   assert.deepEqual([across.clear, across.input.sparks], [true, ['spark3', 'spark4']]);

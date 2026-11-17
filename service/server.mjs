@@ -5788,8 +5788,9 @@ function containersSaid(spark, text) {
     .filter(x => x.score > 0).sort((x, y) => y.score - x.score || y.running - x.running);
 }
 // Where this message puts a change (A-20; only this message, never the one before): each Spark it names, as a place
-// ("on Spark 4", "to 4", "onto", "at", "in", "for", or "Spark 4:" / "Spark 4 start …" first) or not; ruled out ("not on
-// Spark 3", "don't use Spark 3", "never … Spark 3", "without", "avoid": up to three words before it in its own clause;
+// ("on Spark 4", "to 4", "onto", "at", "in", "for", "switch Spark 4 to …", or "Spark 4:" / "Spark 4 start …" first) or
+// not; ruled out ("not on Spark 3", "don't use Spark 3", "never … Spark 3", "without", "avoid": up to three words
+// before it in its own clause;
 // "but Spark 3", right before it; "except", "instead of", "rather than", "other than", "besides": before it or before
 // "on"); a source ("from Spark 3", "off Spark 3": ruled out for a start); one of "3 or 4" (either). Doubtful for a start:
 // any of those, one named but not as a place ("Spark 3 is full"), and a Spark said in a way no id fits ("the other
@@ -5797,7 +5798,7 @@ function containersSaid(spark, text) {
 // Sparks a change of these kinds names after its own word, the nearest change word before them in the sentence (what
 // settles it: "stop qwen on Spark 3 and start gemma on Spark 4" settles Spark 3 for the stop, Spark 4 for the start; for
 // a start only as a place).
-const PLACE_BEFORE = /\b(?:on|onto|to|into|at|in|across|over|for)\s+(?:the\s+)?$/, PLACE_SOURCE = /\b(?:from|off)\s+(?:the\s+)?$/;
+const PLACE_BEFORE = /\b(?:on|onto|to|into|at|in|across|over|for|switch|swap|load|use)\s+(?:the\s+)?$/, PLACE_SOURCE = /\b(?:from|off)\s+(?:the\s+)?$/;
 const PLACE_RULED_OUT = /(?:\bbut\s+(?:the\s+)?|\b(?:except|instead\s+of|rather\s+than|other\s+than|besides|apart\s+from)\s+(?:(?:on|in|at|the)\s+){0,2}|(?:\b(?:not|never|without|avoid|dont|cant|wont|isnt|arent|didnt)\b|n't\b)(?:\s+[\w'#]+){0,3}\s+)$/;
 const PLACE_UNSURE = /\bsparks?\b(?![\s_-]*(?:console|\d))|\b(?:across|on)\s+both\b|\b(?:nodes?|box(?:es)?|machines?|servers?|hosts?)\s*#?\s*\d\b|\bthe\s+\d(?:st|nd|rd|th)\s+one\b|\b(?:on|to|onto)\s+#\d\b|(?<!\b(?:hi|hey|hello)\s+)\bthere\s*$/;
 function sparkPlaces(text, kinds = ['start']) {
