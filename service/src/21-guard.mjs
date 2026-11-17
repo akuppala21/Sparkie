@@ -83,7 +83,10 @@ function guardAnswer(id, out) {
   const refusedText = !end && last.startsWith('refused: ') ? last.slice('refused: '.length) : null;
   const back = after(GUARD_SAYS.putBack), partSaid = GUARD_PART_SAID.exec(net)?.[1] ?? (refusedText != null ? GUARD_PART_SAID.exec(refusedText)?.[1] : null) ?? null;
   const failed = after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null);
-  const counted = failed != null && GUARD_COUNT.test(failed) ? failed : null;
+  // (keep refused after a put-back that did not finish, the console's own keep never sends --as-left: that failure)
+  const keepNotDone = refusedText != null ? /^its put-back did not finish \((.*)\): putback --id /.exec(refusedText)?.[1] ?? null : null;
+  const failedAll = failed ?? keepNotDone;
+  const counted = failedAll != null && GUARD_COUNT.test(failedAll) ? failedAll : null;
   const part = partSaid ?? counted ?? (back && GUARD_PART.test(back) ? back : null);
   // (why a put-back came at once: the helper's line just before its result, which it prints only then)
   const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net) || partSaid != null) ? own(lines.at(-3)) ?? '' : '';
@@ -96,7 +99,9 @@ function guardAnswer(id, out) {
     alreadyBack: Boolean(end) && GUARD_SAYS.alreadyBack.test(net),
     putBackAt: part == null ? back : null,
     part,
-    failed: counted == null ? failed : null,
+    failed: counted == null ? failedAll : null,
+    // (keep refused while the helper's look that the ways in run after a restart waits: ask again in two minutes)
+    lookWaits: refusedText != null && /^its look that the ways in run after the restart waits\b/.test(refusedText),
     sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
     timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),

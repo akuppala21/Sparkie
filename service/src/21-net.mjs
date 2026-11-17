@@ -29,6 +29,8 @@ const NET_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '0');
 const NET_FILE = `${STATE_DIR}/net.json`;
 // (the helper's own: its timer fires the command's time limit plus 600 s after it began; NET_AFTER in the helper)
 const NET_AFTER_S = 600, NET_SLACK_MS = 60000, NET_KEPT = 50, NET_LATE_MS = 45000;
+// (keep refused while the helper's look after a restart waits: the helper's own "ask again in two minutes")
+const NET_LOOK_WAIT_MS = 125000;
 const NET_PROBES = { ssh: 'a new SSH connection', helper: 'the root helper through its sudo line', tailnet: 'its Tailscale connection' };
 const netHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? 'an unknown time' : `${d.toISOString().slice(11, 16)} UTC`; };
 // net.json: { guards: [{ id, spark, state, at, goesBackAt, record, chat, putBackAt, keptAt, unfinished, went, could, reached }] },
@@ -126,11 +128,12 @@ async function netStillLost(node, g) {
 }
 const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, so something it doesn’t put back still cuts ${at} off. ${netRestart(at)}`;
 // After a put-back that did not finish (in part, or failed whole), the owner's two ways on, always said together: /putback
-// tries it again; or the owner keeps it as it stands with the helper's keep, one command they run on that Spark from their
-// own terminal (its sudo line lets their account run the helper), exactly as typed, with the guard's id. keep then says
+// tries it again; or the owner keeps it as it stands with the helper's keep --as-left, one command they run on that
+// Spark from their own terminal (its sudo line lets their account run the helper), exactly as typed, with the guard's id.
+// The console never sends --as-left: its own keep, after a put-back that did not finish, the helper refuses. keep then says
 // what did not go back, and /putback afterwards finds it kept. (A /keep word is not built: contract 8.13's list of the
 // owner's words is the owner's, and a lock-out risk is never an action. It waits for the owner.)
-const netKeepCommand = g => `sudo ${HELPER_FILE} keep --id ${g.id}`;
+const netKeepCommand = g => `sudo ${HELPER_FILE} keep --id ${g.id} --as-left`;
 const netWaysOn = (at, g) => `/putback tries the put-back again. Or, to keep it as it stands, run this on ${at} in your own terminal: ${netKeepCommand(g)} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
 // What went back of a put-back that did not finish, in plain words from the helper's count (guardAnswer's part; GUARD_COUNT),
 // its first item quoted as the helper's words (data); with no count, its failure: nothing of it is known to have gone back.
@@ -530,7 +533,14 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       // (and again just before keep: a /putback meanwhile is never kept over)
       const reached1 = reachedNow('open');
       if (reached1) return afterPutback(reached1);
-      const k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
+      let k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
+      // (the helper's look that the ways in run after a restart still waits: asked again once, past its two minutes)
+      if (k.lookWaits) {
+        await sleep(NET_LOOK_WAIT_MS);
+        const reached2 = reachedNow('open');
+        if (reached2) return afterPutback(reached2);
+        k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
+      }
       if (k.kept) {
         netMark(id, { state: 'kept', keptAt: new Date().toISOString() });
         end({ ok: true, outcome: 'kept', exit: a.exit }, `$ ${command}\n${output}`);
@@ -538,10 +548,12 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
         netTell(g, words, late());
         return result('kept', words);
       }
+      // (the helper refused this keep: a put-back of it did not finish, whole or in part; never kept, never said as kept)
+      if (k.failed != null && k.part == null) k.part = k.failed;
       if (k.part != null) {
         netMark(id, { state: 'part', ...netLeft(k.part) });
         end({ ok: false, outcome: 'part', exit: a.exit }, `$ ${command}\n${output}`);
-        const words = `A change that could lock you out of ${at} (record ${rid}) couldn’t be kept: its put-back had begun. ${netPartWords(at, k.part, g, back)}${cut}`;
+        const words = `A change that could lock you out of ${at} (record ${rid}) couldn’t be kept: a put-back of it had begun, and did not finish. ${netPartWords(at, k.part, g, back)}${cut}`;
         netTell(g, words, late());
         netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
         held = true;
@@ -553,6 +565,16 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
         const words = `A change that could lock you out of ${at} (record ${rid}) went back before it could be kept (put back at ${k.putBackAt}).${cut}${await still()}`;
         netTell(g, words, late());
         return result('put back', words);
+      }
+      // (keep refused while the helper's look after a restart waits: not kept; said plainly, and left to its timer)
+      if (k.lookWaits) {
+        netMark(id, { state: 'timer' });
+        end({ ok: false, outcome: 'timer', exit: a.exit }, `$ ${command}\n${output}`);
+        const words = `A change that could lock you out of ${at} (record ${rid}) couldn’t be kept: ${at} restarted, and the root helper’s look that its ways in run after the restart still waited two minutes on. It isn’t kept: /putback puts it back now, or ${at}’s own timer puts it back at ${netHhmm(back)}. ${at} stays claimed until then.${cut}`;
+        netTell(g, words, late());
+        netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+        held = true;
+        return result('timer', words);
       }
       // (keep didn't count: the timer stays, and puts it back at its time)
       netMark(id, { state: 'timer' });

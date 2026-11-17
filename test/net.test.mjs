@@ -504,57 +504,73 @@ test('narration, reported speech and an order after a statement are refused, nev
 // Round two with the outside reviewer (A-14, the helper's new answers, through the rehearsed helper). What the owner can
 // do after a put-back that did not finish: see what did not go back, have it tried again, or keep it as it stands.
 const unfinishedSaid = async (chat, p, re) => waitFor(async () => [p?.json?.message?.content || '', ...(await chatMessages(chat)).map(m => m.content || '')].find(c => re.test(c)), { timeout: 150000, what: `words like ${re}` });
-const KEEP_OF = g => `sudo /usr/local/sbin/spark-console-root keep --id ${g.id}`;
+const KEEP_OF = g => `sudo /usr/local/sbin/spark-console-root keep --id ${g.id} --as-left`;
 const WAYS_OF = g => `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: ${KEEP_OF(g)} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
 const needsNow = async () => { const r = await api('/actions/fleet_status', { method: 'POST', body: {} }); assert.equal(r.status, 200, r.text); return r.json.needsOwner; };
 // At once: while the command runs, its guard's timer and the copy of one way in are taken away (as a root command may
 // not name the helper's folder or its timers, the test does it), so the helper's put-back at once (its timer not
 // waiting) could put back the alias but not the key; its net line says the put-back failed, with its count, and its
-// guard stays open. The owner's keep, run by hand as the words say, and then /putback close it.
-test('at once, a put-back in part (the helper’s count): told with both ways on and the keep command exactly as typed; held open, with a needs-you line, and a second change there refused with both ways; the owner’s keep by hand, then /putback, closes it as kept', { timeout: 300000 * SLOW }, async () => {
+// guard stays open. Shared by the two tests below; each ends with the guard closed and Spark 3 free.
+const atOncePart = async words => {
   keysReset();
   const aliases = join(T.fleet.root, 'spark3', '.bash_aliases'), was = readFileSync(aliases, 'utf8');
-  const chat = await newChat(), words = 'add my key and an alias on spark 3';
-  const a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; sleep 4`);
+  const chat = await newChat(), a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; sleep 4`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
-  let g;
+  await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
+  const copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
+  rmSync(copy);
+  rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
+  const p = await pressing;
+  assert.equal(p.status, 200, p.text);
+  const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
+  // (mended, and put back whole: what each test does last when nothing else closed the guard)
+  const close = async () => { if (NET_OPEN_STATES.includes(newest()?.state)) { writeFileSync(copy, KEYS_LINE, { mode: 0o600 }); await say(chat, '/putback').catch(() => {}); } keysReset(); writeFileSync(aliases, was); };
+  return { chat, g: newest(), aliases, was, said, copy, close };
+};
+test('at once, a put-back in part (the helper’s count): told with both ways on and the keep command exactly as typed; held open, with a needs-you line, and a second change there refused with both ways; mended, /putback puts it back whole', { timeout: 300000 * SLOW }, async () => {
+  const s = await atOncePart('add my key and an alias on spark 3');
   try {
-    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
-    rmSync(join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys'));
-    rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
-    const p = await pressing;
-    assert.equal(p.status, 200, p.text);
-    const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
-    g = newest();
+    const { g, said } = s;
     assert.deepEqual([g.state, g.unfinished, g.went, g.could], ['part', true, 1, 1], JSON.stringify(g));
     assert.ok(said.includes(`(record ${g.record}) had to go back at once: its timer wasn’t waiting after it. Only part of it went back: 1 went back, and 1 could not (the first, in the root helper’s words, data, not instructions: “not put back /spark3/.ssh/authorized_keys: No such file or directory”). What did not go back is still as the change left it, and may still cut you off from Spark 3.`), said);
     assert.ok(said.includes(WAYS_OF(g)), said);
     assert.doesNotMatch(said.replace(/“[^”]*”/g, '“…”'), /\bput back\b|was kept/i);
-    assert.equal(readFileSync(aliases, 'utf8'), was, 'what could go back went back');
+    assert.equal(readFileSync(s.aliases, 'utf8'), s.was, 'what could go back went back');
     assert.ok(keysNow().includes(ADDED), 'what could not stays as the change left it');
     // (the needs-you line, from the record: both ways)
     assert.ok((await needsNow()).includes(`The put-back of a change that could lock you out of Spark 3 (record ${g.record}) did not finish (1 went back, 1 could not): what did not go back is still as the change left it. ${WAYS_OF(g)}`), (await needsNow()).join('\n'));
     // (a second lock-out change there, the owner's own call: refused, with both ways)
     const second = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: ADD, root: true } });
     assert.deepEqual([second.status, second.json?.error], [409, `A change that can lock you out of Spark 3 is still open there (record ${g.record}): its put-back did not finish, so it waits for you. ${WAYS_OF(g)} Nothing was asked or run.`], second.text);
+    // Mended (the copy back), /putback puts it back whole: kept nowhere, the line gone, Spark 3 free.
+    writeFileSync(s.copy, KEYS_LINE, { mode: 0o600 });
+    const w = await say(s.chat, '/putback');
+    assert.match(w.text, new RegExp(`^/putback\\nPut back: the newest change made inside the lock-out net, on Spark 3 \\(record ${g.record}\\), at \\S+: 2 went back, 0 did not\\.`), w.text);
+    assert.equal(keysNow(), KEYS_LINE, 'put back');
+    assert.ok(!(await needsNow()).some(l => l.includes(`record ${g.record}`)), 'the needs-you line is gone');
+    const plain = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch net-note.txt' } });
+    assert.equal(plain.status, 200, plain.text);
+  } finally { await s.close(); }
+});
+
+// The owner's keep by hand, exactly as the words give it (keep --as-left, the helper's own: plain keep after a put-back
+// that did not finish is refused, since the step-f2-helper round), then /putback reads "kept already": kept as it stands.
+test('at once, a put-back in part: the owner’s keep by hand, as the words give it, then /putback, closes it as kept as it stands', { todo: 'waits for step-f2-helper on main (keep --as-left)', timeout: 300000 * SLOW }, async () => {
+  const s = await atOncePart('add my key and another alias on spark 3');
+  try {
+    const { g } = s;
     // The owner's keep, by hand on Spark 3 as the words say (the stand-in runs the rehearsed helper's keep as the owner).
     const k = spawnSync(join(T.fleet.root, 'usr/local/sbin/spark-console-root'), KEEP_OF(g).split(' ').slice(2), { env: rehearsalEnv(realpathSync(join(T.fleet.root, 'spark3')), realpathSync(T.fleet.root)), encoding: 'utf8', timeout: 60000 });
     assert.equal(k.stdout, `${g.id} kept: the change stays as the put-back left it: 1 went back, 1 could not (not put back /spark3/.ssh/authorized_keys: No such file or directory)\n`, k.stderr);
     // Then /putback reads the helper's "kept already": kept on record, the line gone, Spark 3 free.
-    const w = await say(chat, '/putback');
+    const w = await say(s.chat, '/putback');
     assert.equal(w.text, `/putback\nNothing was put back: the newest change made inside the lock-out net, on Spark 3 (record ${g.record}) was kept as it stands, so what did not go back stays as the change left it, and once kept the net puts nothing back. Change it back with a new change.`);
     assert.equal(newest().state, 'kept');
     assert.ok(!(await needsNow()).some(l => l.includes(`record ${g.record}`)), 'the needs-you line is gone');
     const plain = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch net-note.txt' } });
     assert.equal(plain.status, 200, plain.text);
-  } finally {
-    if (g && NET_OPEN_STATES.includes(newest()?.state)) spawnSync(join(T.fleet.root, 'usr/local/sbin/spark-console-root'), ['keep', '--id', g.id], { env: rehearsalEnv(realpathSync(join(T.fleet.root, 'spark3')), realpathSync(T.fleet.root)) });
-    if (g && NET_OPEN_STATES.includes(newest()?.state)) await say(chat, '/putback').catch(() => {});
-    await pressing.catch(() => {});
-    keysReset();
-    writeFileSync(aliases, was);
-  }
+  } finally { await s.close(); }
 });
 
 // After a way in stopped working: the console's putback, refused by the helper with its count (the copy of the key gone),
@@ -890,6 +906,7 @@ const seamWith = (answer, more = {}) => {
   const seen = { verbs: [], told: [], held: [], marks: [] };
   class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
   const stubs = { NET_ON: true, HttpError, sparkName: n => `Spark ${n.id.slice(5)}`, netOpenOn: () => null, netHhmm: () => '22:10 UTC', RUNNER_DIR: '~/work', RUNNER_SECONDS: 30, HELPER_FILE: '/usr/local/sbin/spark-console-root',
+    netNow: () => ({ guards: [] }), sleep: async () => {}, NET_LOOK_WAIT_MS: 0,
     NET_LATE_MS: 45000, randomBytes: () => Buffer.from('abcdef0123456789abcdef01', 'hex'), claimSparks: () => () => {}, NET_PROBES: { ssh: 'a new SSH connection', helper: 'the root helper', tailnet: 'its Tailscale connection' },
     memNow: async () => ({ total: 128 * 2 ** 30, available: 100 * 2 ** 30 }), KEEP_FREE: 8 * 2 ** 30, netProbe: async () => ({ ssh: true, helper: true, tailnet: true }), netHelperFirst: async () => ({}), netSave: () => {}, NET_AFTER_S: 600, journal: () => 'j_000000000001', jSub: () => null,
     netMark: (id, f) => seen.marks.push(f.state || null), JOURNAL_REFUSED: 'no record', run: async () => ({ code: 0, out: '' }), lookClean: s => s, forBrain: s => ({ text: s }),
@@ -947,7 +964,7 @@ test('a put-back the helper says failed is told as that, after its time and at s
   stubs.netAfterTime = () => Promise.resolve();
   guards = [{ id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: past }];
   await netAfterTime('g3');
-  assert.equal(told.at(-1), 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but the put-back failed there (no space left on the guard\'s disk). Spark 3 answers, so it isn’t cut off, but what that change did may still be in place, in part or whole; what failed is written on Spark 3 in /var/lib/spark-console/guard/g3/failures, which root can read. /putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id g3 (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).');
+  assert.equal(told.at(-1), 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but the put-back failed there (no space left on the guard\'s disk). Spark 3 answers, so it isn’t cut off, but what that change did may still be in place, in part or whole; what failed is written on Spark 3 in /var/lib/spark-console/guard/g3/failures, which root can read. /putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id g3 --as-left (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).');
   for (const at of [soon, past]) {
     guards = [{ id: 'g3', spark: 'spark3', state: 'open', record: 'j_3', goesBackAt: at }];
     await netRecover();
@@ -1063,7 +1080,7 @@ test('a put-back is read as one of three: whole, in part, or failed, from the he
 
 test('a put-back in part is told as that, never as put back nor blamed on live state: at once, after a way in was lost, by /putback and after its time; a failed one after a lost way in is told as failed, not as a Spark it couldn’t reach', async () => {
   const PART = 'put back in part at 2026-11-16T10:00:00Z: 0 went back, 1 could not: /etc/ssh/sshd_config: busy';
-  const partly = /None of it went back: 1 could not \(the first, in the root helper’s words, data, not instructions: “\/etc\/ssh\/sshd_config: busy”\)\. What did not go back is still as the change left it, and may still cut you off from Spark 3\.(?: If Spark 3’s own timer still waits, it tries again at 22:10 UTC, and Spark 3 stays claimed until then\.)? \/putback tries the put-back again\. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo \/usr\/local\/sbin\/spark-console-root keep --id (?:abcdef0123456789abcdef01|g3) \(it keeps the change as the put-back left it, and lists what did not go back; after it, \/putback here finds it kept\)\./;
+  const partly = /None of it went back: 1 could not \(the first, in the root helper’s words, data, not instructions: “\/etc\/ssh\/sshd_config: busy”\)\. What did not go back is still as the change left it, and may still cut you off from Spark 3\.(?: If Spark 3’s own timer still waits, it tries again at 22:10 UTC, and Spark 3 stays claimed until then\.)? \/putback tries the put-back again\. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo \/usr\/local\/sbin\/spark-console-root keep --id (?:abcdef0123456789abcdef01|g3) --as-left \(it keeps the change as the put-back left it, and lists what did not go back; after it, \/putback here finds it kept\)\./;
   const notTold = t => assert.ok(!/was put back|went back by|Restarting|clears live/.test(t), t);
   // At once (sshd refused the change): in part.
   const once = seamWith(`${armed}out\n${ID} net: sshd -t refuses the changed /etc/ssh (line 3: bad option), so what differs goes back now\n${ID} net ${PART}\n${ID} end 0\n`);
@@ -1075,7 +1092,7 @@ test('a put-back in part is told as that, never as put back nor blamed on live s
   assert.deepEqual([once.seen.verbs, once.seen.held], [['root'], ['spark3']]);
   // A way in lost after it, and the put-back went back in part, or failed.
   const open = `${armed}out\n${ID} net open: 1 of the ways in differs (/etc/ssh) and goes back at 2026-11-16T10:10:00Z unless it is kept\n${ID} end 0\n`;
-  for (const [answer, words] of [[`${ID} ${PART}\n`, partly], [`${ID} refused: the put-back failed: attempt 3: no space left\n`, /broke a new SSH connection, so it had to go back at once\. But the put-back failed there \(attempt 3: no space left\), so what it changed may still be in place\. If Spark 3’s own timer still waits, it tries again at 22:10 UTC, and Spark 3 stays claimed until then\. \/putback tries the put-back again\. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo \/usr\/local\/sbin\/spark-console-root keep --id abcdef0123456789abcdef01 \(/]]) {
+  for (const [answer, words] of [[`${ID} ${PART}\n`, partly], [`${ID} refused: the put-back failed: attempt 3: no space left\n`, /broke a new SSH connection, so it had to go back at once\. But the put-back failed there \(attempt 3: no space left\), so what it changed may still be in place\. If Spark 3’s own timer still waits, it tries again at 22:10 UTC, and Spark 3 stays claimed until then\. \/putback tries the put-back again\. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo \/usr\/local\/sbin\/spark-console-root keep --id abcdef0123456789abcdef01 --as-left \(/]]) {
     let n = 0;
     const s = seamWith(open, { netProbe: async () => (n++ === 0 ? { ssh: true, helper: true, tailnet: true } : { ssh: false, helper: true, tailnet: true }),
       guardCall: async (node, verb) => { s.seen.verbs.push(verb); return { out: verb === 'putback' ? answer : open }; } });
@@ -1144,7 +1161,7 @@ test('after a put-back that did not finish, every sentence names both ways on, t
   const code = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m, /^const GUARD_PART = .*;$/m, /^const GUARD_PART_SAID = .*;$/m, /^const GUARD_COUNT = .*;$/m, /^function guardAnswer\([\s\S]*?\n\}$/m].map(re => re.exec(guard)[0]).join('\n');
   const w = new Function('scope', `with (scope) { ${code}\n${netWordsSrc(src)}\n${grab(/^const netOpenWords = [\s\S]*?;\n(?=\S)/m)}\n${grab(/^const netFailedNow = .*;$/m)}\n${grab(/^function netNeeds\([\s\S]*?\n\}$/m)}\n${grab(/^async function netPutbackWord\([\s\S]*?\n\}$/m)}\n${grab(/^async function netPutbackOne\([\s\S]*?\n\}$/m)}
     return { netPartWords, netWaysOn, netOpenWords, netFailedNow, netNeeds, netPutbackWord }; }`)(new Proxy(stubs, { has: (t, k) => k in t }));
-  const KEEP = 'sudo /usr/local/sbin/spark-console-root keep --id g3', WAYS = `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: ${KEEP} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
+  const KEEP = 'sudo /usr/local/sbin/spark-console-root keep --id g3 --as-left', WAYS = `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: ${KEEP} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
   assert.equal(w.netWaysOn('Spark 3', g), WAYS);
   const said = [
     w.netPartWords('Spark 3', '2026-11-16T10:00:00Z attempt 3: 1 went back, 1 could not: not put back /etc/ssh/sshd_config: No such file or directory', g),
@@ -1210,7 +1227,7 @@ const recordTest = (guards, answers = {}, more = {}) => {
   stubs.netAfterTime = async id => { seen.calls.push(['look at its time', id]); };
   return { f, seen, ...fns };
 };
-const KEEP3 = id => `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id ${id} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
+const KEEP3 = id => `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id ${id} --as-left (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
 const SOON = () => new Date(Date.now() + 600000).toISOString(), PAST = () => new Date(Date.now() - 600000).toISOString();
 
 // F2b: "net: already put back" (the helper's line when a put-back finished first, /putback's while the command ran) is
@@ -1361,3 +1378,41 @@ test('the refusal for words not read as an order says where an order starts, whi
   assert.equal(words, 'your words, but not as an order that starts its sentence (after nothing but a greeting, the Spark as in “on Spark 3,”, “as root”, or a request such as “can you”)');
   assert.doesNotMatch(words, /tell of a change|after a statement/);
 });
+
+// The helper's step-f2-helper round: after a put-back that did not finish, plain keep (the console's own, which never
+// sends --as-left) is refused, and so is keep while its look after a restart waits. The console reads each: never kept,
+// said as not finished with both ways on; the look's wait asked again once after its two minutes, then said plainly.
+test('the console’s own keep, refused by the helper after a put-back that did not finish or while its look waits, is never read or said as kept', async () => {
+  const guardAnswer = guardAnswerOf();
+  const NOT_DONE = `${ID} refused: its put-back did not finish (2026-11-16T10:00:00Z attempt 3: 1 went back, 1 could not: not put back /etc/ssh/sshd_config: busy): putback --id ${ID} tries again, or keep --id ${ID} --as-left keeps it as the put-back left it\n`;
+  const LOOK = `${ID} refused: its look that the ways in run after the restart waits (sw-guard-look-${ID}): ask again in two minutes, or putback --id ${ID} puts it back now\n`;
+  assert.deepEqual([guardAnswer(ID, NOT_DONE).kept, guardAnswer(ID, NOT_DONE).part], [false, '2026-11-16T10:00:00Z attempt 3: 1 went back, 1 could not: not put back /etc/ssh/sshd_config: busy']);
+  assert.deepEqual([guardAnswer(ID, LOOK).kept, guardAnswer(ID, LOOK).lookWaits], [false, true]);
+  const open = `${armed}out\n${ID} net open: 1 of the ways in differs (/etc/ssh) and goes back at 2026-11-16T10:10:00Z unless it is kept\n${ID} end 0\n`;
+  const run = async keeps => {
+    const fields = [], s = seamWith(open, { netMark: (id, f) => fields.push(f), guardCall: async (node, verb) => { s.seen.verbs.push(verb); return { out: verb === 'keep' ? keeps.shift() : open }; } });
+    const r = await s.go();
+    return { r, s, fields };
+  };
+  const notDone = await run([NOT_DONE]);
+  assert.equal(notDone.r.net.outcome, 'part');
+  assert.ok(notDone.fields.some(f => f.state === 'part' && f.unfinished === true && f.went === 1 && f.could === 1), JSON.stringify(notDone.fields));
+  assert.match(notDone.s.seen.told[0], /couldn’t be kept: a put-back of it had begun, and did not finish\. Only part of it went back: 1 went back, and 1 could not /);
+  assert.ok(notDone.s.seen.told[0].includes(`keep --id ${ID} --as-left (it keeps`), notDone.s.seen.told[0]);
+  assert.doesNotMatch(notDone.s.seen.told[0], /it is kept/);
+  // (the look waits: asked again once; kept then)
+  const later = await run([LOOK, `${ID} kept: it stays\n`]);
+  assert.deepEqual([later.r.net.outcome, later.s.seen.verbs], ['kept', ['root', 'keep', 'keep']]);
+  // (still waiting after the second ask: not kept, and said plainly)
+  const still = await run([LOOK, LOOK]);
+  assert.equal(still.r.net.outcome, 'timer');
+  assert.equal(still.s.seen.told[0], `A change that could lock you out of Spark 3 (record j_000000000001) couldn’t be kept: Spark 3 restarted, and the root helper’s look that its ways in run after the restart still waited two minutes on. It isn’t kept: /putback puts it back now, or Spark 3’s own timer puts it back at 22:10 UTC. Spark 3 stays claimed until then.`);
+  // (and the console's own keep never asks for --as-left)
+  const guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8'), fn = /^function guardScript\([\s\S]*?\n\}$/m.exec(guard)?.[0];
+  const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const guardScript = new Function('createHash', 'q', 'HELPER_AT', 'HELPER_SHA256', `${/^function protectShell\([\s\S]*?\n\}$/m.exec(guard)?.[0]}\n${fn}\nreturn guardScript;`)(createHash, q, '/usr/local/sbin/spark-console-root', 'f'.repeat(64));
+  const keepLine = guardScript({ host: '100.64.0.3' }, 'keep', { id: ID }).split('\n').at(-1);
+  assert.match(keepLine, / keep --id "\$id" /);
+  assert.doesNotMatch(keepLine, /--as-left/);
+});
+

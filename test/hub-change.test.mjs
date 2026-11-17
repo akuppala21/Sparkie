@@ -316,7 +316,7 @@ test('with a change on Spark 2 whose put-back did not finish still open, a new c
   writeFileSync(file, JSON.stringify({ guards: [...guards, g] }), { mode: 0o600 });
   try {
     const chat = await newChat(), c = await inChat(chat, 'tidy the f12 notes on spark 2', 'touch notes/f12.txt');
-    assert.equal(c.error, `A change that can lock you out of Spark 2 is still open there (record j_f12): its put-back did not finish, so it waits for you. /putback tries the put-back again. Or, to keep it as it stands, run this on Spark 2 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id ${g.id} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept). Nothing was asked or run.`, JSON.stringify(c));
+    assert.equal(c.error, `A change that can lock you out of Spark 2 is still open there (record j_f12): its put-back did not finish, so it waits for you. /putback tries the put-back again. Or, to keep it as it stands, run this on Spark 2 in your own terminal: sudo /usr/local/sbin/spark-console-root keep --id ${g.id} --as-left (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept). Nothing was asked or run.`, JSON.stringify(c));
     assert.ok(!(await chatMessages(chat)).some(m => (m.choices || []).length), 'no button');
     assert.ok(!existsSync(at2('notes/f12.txt')), 'nothing ran');
   } finally { if (was === null) writeFileSync(file, JSON.stringify({ guards })); else writeFileSync(file, was); }
