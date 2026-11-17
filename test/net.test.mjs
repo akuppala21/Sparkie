@@ -19,7 +19,7 @@
 // ($MOCK_DIR/status.json, which a test may change while a change runs). Linux only: run it on a Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync, renameSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync, renameSync, realpathSync, openSync, writeSync, closeSync, constants as fsConstants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -86,6 +86,19 @@ async function ask(chat, words, command, more = { root: true }) {
   return { r, m, yes: m?.choices.find(c => c.pair), no: m?.choices.find(c => c.label === 'No'), pair: m?.pair };
 }
 const press = (chat, choice, pair) => api(`/chats/${chat}/choose`, { method: 'POST', body: { choice, pair } });
+// A hold the test lets go of, never a sleep a busy Spark can outrun: the command waits on a FIFO in Spark 3's folder
+// until the test opens it for writing (go), 60 s at most (timeout), so it can never hang a queue.
+const hold = name => {
+  const f = join(T.fleet.root, 'spark3', 'notes', `${name}.fifo`);
+  mkdirSync(dirname(f), { recursive: true });
+  rmSync(f, { force: true });
+  const made = spawnSync('mkfifo', [f], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  const open = () => { try { const fd = openSync(f, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK); writeSync(fd, 'go\n'); closeSync(fd); return true; } catch { return false; } };
+  return { cmd: `timeout 60 cat notes/${name}.fifo`, go: () => waitFor(open, { every: 50, timeout: 30000, what: `the command waiting on ${name}.fifo` }) };
+};
+// (the helper's stop of a guard's command: what restore.sh asks of systemd once it holds the guard's lock)
+const stopAsked = id => calls().some(x => x[0] === 'systemctl' && x.includes('stop') && x.some(w => String(w).startsWith(`sw-root-${id}`)));
 // What a run call answered the brain (the newest), parsed.
 const sentBack = words => {
   const x = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(m => m.words === words && m.lastRole === 'tool').at(-1);
@@ -140,13 +153,14 @@ test('pressed: the timer is armed first (its time limit plus 600 s), the change 
 test('a way in that worked before stops working after it: put back at once, and said; still not working after the put-back, it is said plainly: live state the net holds no copy of, and restarting the Spark is the way back', { timeout: 180000 * SLOW }, async () => {
   keysReset();
   const chat = await newChat();
-  const a = await ask(chat, 'add my key on spark 3 again', `${ADD}; sleep 4`);
+  const h = hold('again'), a = await ask(chat, 'add my key on spark 3 again', `${ADD}; ${h.cmd}`);
   const seen = netRecord().length;
   const pressing = press(chat, a.yes.id, a.pair);
   try {
     // (Spark 3 leaves the tailnet while the change runs: the check after it sees Tailscale's status say so)
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
     tailnet(false);
+    await h.go();
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const g = newest();
@@ -420,13 +434,14 @@ test('Spark 3 doesn’t answer a new connection when the press comes: nothing ru
 
 test('the change runs and then Spark 3 stops answering a new connection and the helper: not kept; the put-back can’t reach it, so its own timer is left to put it back, that is said, Spark 3 stays claimed, and /putback puts it back once it answers', { timeout: 300000 * SLOW }, async () => {
   keysReset();
-  const chat = await newChat(), a = await ask(chat, 'add my key on spark 3 before it goes dark', `${ADD}; sleep 4`);
+  const h = hold('dark'), chat = await newChat(), a = await ask(chat, 'add my key on spark 3 before it goes dark', `${ADD}; ${h.cmd}`);
   assert.ok(a.m && a.yes && a.pair, 'the dangerous ask');
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let g;
   try {
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, timeout: 60000, what: 'the guard armed' });
     offOn.off();
+    await h.go();
     const p = await pressing;
     g = newest();
     assert.equal(p.status, 200, p.text);
@@ -514,7 +529,7 @@ const needsNow = async () => { const r = await api('/actions/fleet_status', { me
 const atOncePart = async words => {
   keysReset();
   const aliases = join(T.fleet.root, 'spark3', '.bash_aliases'), was = readFileSync(aliases, 'utf8');
-  const chat = await newChat(), a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; sleep 4`);
+  const h = hold('at-once'), chat = await newChat(), a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; ${h.cmd}`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let copy = null;
@@ -526,6 +541,7 @@ const atOncePart = async words => {
     copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
     rmSync(copy);
     rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
+    await h.go();
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
@@ -581,8 +597,8 @@ test('at once, a put-back in part: the owner’s keep by hand, as the words give
 // is told with both ways on; /putback tries again and is told the same; mended, /putback puts it back whole.
 test('a way in lost after it and a put-back the helper could not finish (its refusal, with its count): told with both ways on; /putback tries again and says the same; once mended, /putback puts it back whole', { timeout: 360000 * SLOW }, async () => {
   keysReset();
-  const chat = await newChat(), words = 'add my key on spark 3 for the last time';
-  const a = await ask(chat, words, `${ADD}; sleep 4`);
+  const chat = await newChat(), words = 'add my key on spark 3 for the last time', h = hold('last');
+  const a = await ask(chat, words, `${ADD}; ${h.cmd}`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let copy = null, g;
@@ -592,6 +608,7 @@ test('a way in lost after it and a put-back the helper could not finish (its ref
     assert.ok(existsSync(copy), 'the copy of the key, made first');
     rmSync(copy);
     tailnet(false);
+    await h.go();
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
     tailnet(true);
@@ -628,8 +645,8 @@ test('a way in lost after it and a put-back the helper could not finish (its ref
 // again first and never keeps what /putback reached.
 test('a /putback that reaches a change still running and does not finish: the press never keeps it; said with both ways on, the guard open and its timer waiting (F2)', { timeout: 300000 * SLOW }, async () => {
   keysReset();
-  const chat = await newChat(), words = 'add my key on spark 3 while I watch';
-  const a = await ask(chat, words, `${ADD}; sleep 5`);
+  const chat = await newChat(), words = 'add my key on spark 3 while I watch', h = hold('watch');
+  const a = await ask(chat, words, `${ADD}; ${h.cmd}`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let g;
@@ -637,7 +654,12 @@ test('a /putback that reaches a change still running and does not finish: the pr
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && keysNow().includes(ADDED), { every: 100, what: 'the guard armed and the key added' });
     g = newest();
     rmSync(join(guardDir(g.id), 'files/spark3/.ssh/authorized_keys'));
-    const other = await newChat(), w = await say(other, '/putback');
+    // (the owner's /putback while the command still waits; it is let go once the helper's put-back holds the guard's
+    // lock and has asked systemd to stop it, so the press's own end comes after the put-back, every time)
+    const other = await newChat(), putting = say(other, '/putback');
+    await waitFor(() => stopAsked(g.id), { every: 100, timeout: 60000, what: 'the put-back’s stop of the command' });
+    await h.go();
+    const w = await putting;
     assert.match(w.text, /did not finish\. None of it went back: 1 could not/, w.text);
     assert.ok(w.text.endsWith(WAYS_OF(g)), w.text);
     const p = await pressing;
@@ -661,13 +683,16 @@ test('a /putback that reaches a change still running and does not finish: the pr
 // it ran (never "an answer Spark Console doesn't know", the Spark held for the whole window), and the Spark is free.
 test('a /putback that puts back a change still running: the press says it was put back while it ran, and the Spark is free at once (F2b)', { timeout: 240000 * SLOW }, async () => {
   keysReset();
-  const chat = await newChat(), words = 'add my key on spark 3 and I may take it back';
-  const a = await ask(chat, words, `${ADD}; sleep 5`);
+  const chat = await newChat(), words = 'add my key on spark 3 and I may take it back', h = hold('take-back');
+  const a = await ask(chat, words, `${ADD}; ${h.cmd}`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   try {
     await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && keysNow().includes(ADDED), { every: 100, what: 'the guard armed and the key added' });
-    const g = newest(), other = await newChat(), w = await say(other, '/putback');
+    const g = newest(), other = await newChat(), putting = say(other, '/putback');
+    await waitFor(() => stopAsked(g.id), { every: 100, timeout: 60000, what: 'the put-back’s stop of the command' });
+    await h.go();
+    const w = await putting;
     assert.match(w.text, new RegExp(`^/putback\\nPut back: the newest change made inside the lock-out net, on Spark 3 \\(record ${g.record}\\), at `), w.text);
     const p = await pressing;
     assert.equal(p.status, 200, p.text);
@@ -1197,7 +1222,7 @@ test('after a put-back that did not finish, every sentence names both ways on, t
 
 // The outside reviewer's "Beside them", 10: a putback call had 240 s from the console, near the helper's worst case,
 // and the Spark ends the call itself at that limit, so a slow put-back could be cut off midway.
-test('a putback call outlasts the helper’s own worst case: 660 s; other calls keep their time limit plus 180 s', () => {
+test('a putback call has 660 s (the helper’s stop, three tries 20 s apart, one hung systemd call in each; a put-back already under way can outlast it); other calls keep their time limit plus 180 s', () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8'), grab = re => re.exec(src)?.[0] || '';
   const limits = [];
   const guardCall = new Function('spawnOn', 'guardScript', 'randomBytes', 'J_MAX', `${grab(/^const GUARD_TAIL = .*;$/m)}\n${grab(/^const GUARD_PUTBACK_S = .*;$/m)}\n${grab(/^function guardCall\([\s\S]*?\n\}$/m)}\nreturn guardCall;`)(
@@ -1365,13 +1390,13 @@ test('the owner’s order to kill a process on a Spark is their own words for a 
 });
 
 // F7, F8: the order rule's lists, from the reviewer: narration that opens with the verb asks for nothing; plain orders
-// with a place or manner in front ask. Both wait for the intent builder's step-f2-words on main (orderAt).
-test('narration that opens with the verb asks for no lock-out change (F7)', { todo: 'waits for step-f2-words on main (orderAt)' }, () => {
+// with a place or manner in front ask (the intent builder's step-f2-words, orderAt).
+test('narration that opens with the verb asks for no lock-out change (F7)', () => {
   const { netAsks } = wordsTest(), node = { id: 'spark3' };
   for (const s of ['Reset my password on spark 3 yesterday and it still fails', 'Set up my ssh key on spark 3 last week, still asks for a password', 'Put my key on spark 3 last night but it doesn’t work',
     'open ports on spark 3 are a risk', 'Add-on keys for spark 3 arrived']) assert.equal(netAsks(node, s), false, s);
 });
-test('plain orders with a place or manner in front ask for the lock-out change (F8)', { todo: 'waits for step-f2-words on main (orderAt)' }, () => {
+test('plain orders with a place or manner in front ask for the lock-out change (F8)', () => {
   const { netAsks } = wordsTest(), node = { id: 'spark3' };
   for (const s of ['for spark 3, open port 8002 in the firewall', 'in spark 3’s firewall, allow port 8002', 'with root on spark 3, restart sshd', 'use root to restart sshd on spark 3',
     'we need to restart tailscale on spark 3', 'need to restart tailscale on spark 3', 'time to restart tailscale on spark 3']) assert.equal(netAsks(node, s), true, s);
