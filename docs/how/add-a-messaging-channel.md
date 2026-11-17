@@ -13,6 +13,13 @@ A way for the owner to talk to Sparkie from another app, like Telegram.
   `tgApproving` (`20-tg-approve.mjs`), with the switch, the caps and `/lock`; `runChoice` takes it as the owner's yes
   only after `tgAskOpen`.
 
+Completion results use `tellAgain` (20-tell.mjs), including job ends, saved-run and self-test recovery, install
+results and carry-on replies. Keep each caller's return value and page updates; `tellAgain` returns `sent`, `later`
+or `never`, while `tellCarry` returns a boolean. The existing retry checks its first-send pairing before each later
+try; disconnecting or pairing again drops it. It makes at most four tries, waiting 1, 2 and 4 minutes. Its timers
+are in memory: a restart loses remaining tries. This is no exactly-once promise; a lost answer or partial multipart
+send can repeat a message. Task reports keep their own retry record in the chat; do not also call `tellAgain` for them.
+
 ## Also update
 
 - R32; R51 (keys given once).
@@ -36,7 +43,7 @@ A way for the owner to talk to Sparkie from another app, like Telegram.
 
 ## Tests
 
-- `telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `app-keys.test.mjs`, `tg-approve.test.mjs`.
+- `telegram.test.mjs`, `tasks-telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `app-keys.test.mjs`, `tg-approve.test.mjs`.
 
 ## Copy from
 

@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (29189 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (29190 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -394,13 +394,13 @@ The address rule (design D 2.4 and 2.3's "handing results on", as cut): a job a 
 
 Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record of itself in saved-runs.json (R20: writePrivate and readKept; names, Spark ids and the chat id, no secret), rewritten as it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is known only once its …
 
-- **Area:** core. **Rules:** R57. **Tests:** workloads-restart.test.mjs, workloads-receipts.test.mjs
+- **Area:** core. **Rules:** R32, R57. **Tests:** workloads-restart.test.mjs, workloads-receipts.test.mjs, tasks-telegram.test.mjs
 - **Lines:** 115
 - **Owns:** saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `savedRunsNow`, `savedRunWords`, `savedRunKeep`, `savedRunDone`, `savedRunPending`, `savedRunReceipts`, `savedRunCutOff`, `savedRunsRecover`
-- **Uses:** `01-setup` (`STATE_DIR`, `nodeById`, `NAME_RE`), `02-ssh` (`fields`), `03-identity` (`readKept`, `writePrivate`, `accessList`), `07-jobs` (`note`, `jobs`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `sparkIdOf`), `18-step-jobs` (`stopWhatRan`), `19-watcher` (`fleetEvent`), `20-heal` (`healOwner`), `20-mcp` (`maskSecrets`), `20-tell` (`tell`)
+- **Uses:** `01-setup` (`STATE_DIR`, `nodeById`, `NAME_RE`), `02-ssh` (`fields`), `03-identity` (`readKept`, `writePrivate`, `accessList`), `07-jobs` (`note`, `jobs`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `sparkIdOf`), `18-step-jobs` (`stopWhatRan`), `19-watcher` (`fleetEvent`), `20-heal` (`healOwner`), `20-mcp` (`maskSecrets`), `20-tell` (`tellAgain`)
 - **Used by:** `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`
 
 ### `18-saved-from.mjs`: "save that as …": a saved workflow from the changes a request made (D6e)
@@ -828,7 +828,7 @@ Moved out of 20-sort.mjs as it was (2026-11-15, no word changed): the programs t
 tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13, docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on with a request made there, Spark Console's own fixed lines (pairing, /status, "restarted while answering"), and an ask that waits for the owner's yes, with its buttons (20-tg-approve.mjs, only while approvals from Telegram are on). Never heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the needs-me line at the …
 
 - **Area:** safety. **Rules:** R32. **Tests:** telegram.test.mjs, needs-me.test.mjs, tasks-telegram.test.mjs
-- **Lines:** 227
+- **Lines:** 228
 - **Owns:** none
 - **Timers:** tellAgain (a result Telegram didn't take, again after 1, 2 and 4 minutes)
 - **Wakes:** none
@@ -918,14 +918,14 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 
 "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the owner names: no GPU, a memory cap, named volumes only, its port opened on 127.0.0.1 and the Spark's tailnet address only, labelled spark.app=1 (never spark.console=1, so no model start ever counts it as one of its own). Self-healing brings a kept app …
 
-- **Area:** features. **Rules:** R1, R2, R7, R23, R38, R40. **Tests:** apps.test.mjs
+- **Area:** features. **Rules:** R1, R2, R7, R23, R32, R38, R40. **Tests:** apps.test.mjs, tasks-telegram.test.mjs
 - **Lines:** 622
 - **Actions:** `keep_running`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `appSecretName`, `imageRepo`, `appModelImage`, `appAnswers`, `appStates`, `appLook`, `appDiffers`, `commandWords`, `appCommand`, `devBox`, `appRoom`, `jobDir`, `appRunCommand`, `gpuAlone`, `jobFolder`, `jobMountsReal`, `jobNotReal`, `jobEnded`, `waitJobEnd`, `appUp`, `appDone`, `appPutBack`, `appNamed`, `appNow`, `healApp`
-- **Uses:** `01-setup` (`CONFIG`, `q`, `HttpError`, `sleep`, `nodeById`, `isProtected`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`accessList`, `mustUse`), `05-library` (`memNow`, `KEEP_FREE`, `inventory`), `07-jobs` (`step`, `note`, `claimed`, `newJob`, `runJob`, `stopContainer`), `09-verified` (`answers`), `11-setups` (`squash`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`, `wakeWork`), `16-actions` (`recent`, `tokensOf`, `sparkNames`, `normQuotes`, `runAction`, `action`, `sparkArg`, `sparkOf`), `17-changes` (`notBrainsSpark`, `changeLabel`, `question`, `pausedCheck`, `stoppedForSure`), `17-stop-checked` (`unanswered`, `stopChecked`), `18-step-jobs` (`sleepUnless`, `startedStill`, `captureStartedReceipts`), `18-workflows` (`consoleStopped`, `savedOwnCall`), `19-watcher` (`MODEL_IMAGES`, `fleetEvent`, `knowledge`, `events`, `sparkOff`), `20-desired` (`cancelCheck`, `keyOf`, `desired`, `forgetApp`, `keepApp`, `ownersAsk`, `desiredWish`), `20-heal` (`skippedOnce`, `healSkip`, `cameBack`, `healCount`, `HEAL_WINDOW`, `HEAL_SETTLE_MS`, `healMark`, `healOwner`, `HEAL_OFFLINE_MS`), `20-mcp` (`SECRET_FLAG`, `maskSecrets`), `20-tell` (`tell`), `21-box` (`notBoxName`), `21-door` (`appLinks`, `linkWords`), `21-power` (`power`, `powerThenKeep`)
+- **Uses:** `01-setup` (`CONFIG`, `q`, `HttpError`, `sleep`, `nodeById`, `isProtected`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`accessList`, `mustUse`), `05-library` (`memNow`, `KEEP_FREE`, `inventory`), `07-jobs` (`step`, `note`, `claimed`, `newJob`, `runJob`, `stopContainer`), `09-verified` (`answers`), `11-setups` (`squash`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`, `wakeWork`), `16-actions` (`recent`, `tokensOf`, `sparkNames`, `normQuotes`, `runAction`, `action`, `sparkArg`, `sparkOf`), `17-changes` (`notBrainsSpark`, `changeLabel`, `question`, `pausedCheck`, `stoppedForSure`), `17-stop-checked` (`unanswered`, `stopChecked`), `18-step-jobs` (`sleepUnless`, `startedStill`, `captureStartedReceipts`), `18-workflows` (`consoleStopped`, `savedOwnCall`), `19-watcher` (`MODEL_IMAGES`, `fleetEvent`, `knowledge`, `events`, `sparkOff`), `20-desired` (`cancelCheck`, `keyOf`, `desired`, `forgetApp`, `keepApp`, `ownersAsk`, `desiredWish`), `20-heal` (`skippedOnce`, `healSkip`, `cameBack`, `healCount`, `HEAL_WINDOW`, `HEAL_SETTLE_MS`, `healMark`, `healOwner`, `HEAL_OFFLINE_MS`), `20-mcp` (`SECRET_FLAG`, `maskSecrets`), `20-tell` (`tellAgain`), `21-box` (`notBoxName`), `21-door` (`appLinks`, `linkWords`), `21-power` (`power`, `powerThenKeep`)
 - **Used by:** `16-actions`, `17-changes`, `18-job-model`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `21-compare`, `21-selftest`
 
 ### `21-box-fill.mjs`: the box filled from an exact tree, and read back as data (C8b; called by propose_update, C8c)
@@ -1235,14 +1235,14 @@ propose_update {do: start|send|drop|install, title, why} (group updates): Sparki
 
 "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no model, model server or GPU app runs there, and nothing is changing there) and has a small chat model on disk (testModels): Model start_model there, stopping nothing (noStops); it answers its test prompt, and is timed. Healing the drill: that model's …
 
-- **Area:** features. **Rules:** R1, R11, R13, R19, R20, R22, R30, R38, R42. **Tests:** selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs
+- **Area:** features. **Rules:** R1, R11, R13, R19, R20, R22, R30, R32, R38, R42. **Tests:** selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs, tasks-telegram.test.mjs
 - **Lines:** 424
 - **Actions:** `self_test`
 - **Owns:** self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
 - **Timers:** selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)
 - **Wakes:** none
 - **Functions:** `selfTestJobCommand`, `selfTestAddress`, `selfTestName`, `wordList`, `firstLine`, `selfTestPlace`, `healDrill`, `inAbout`, `drillHeldBack`, `selfTestJobParts`, `selfTestCtx`, `selfTestNeed`, `selfTestMine`, `selfTestModels`, `selfTestStopModel`, `selfTestStopApp`, `containerStates`, `selfTest`, `selfTestRecover`, `selfTestCutOff`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-memory-time` (`lineWords`), `20-tell` (`tell`), `21-apps` (`waitJobEnd`), `21-work` (`selfTestWalls`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-memory-time` (`lineWords`), `20-tell` (`tellAgain`), `21-apps` (`waitJobEnd`), `21-work` (`selfTestWalls`)
 - **Used by:** `18-job-model`, `18-workflows`, `19-watcher`, `20-desired`, `21-box`
 
 ### `21-telegram.mjs`: Telegram: the owner talks to Sparkie from any phone or laptop
@@ -1262,14 +1262,14 @@ The hub asks Telegram for new messages over one outbound HTTPS connection (long 
 
 check_update runs `pull.sh check --json` on the hub (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer (never when the installed build's commit on main can't be told: it says so); whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update doesn't say it is an inside read, R26). …
 
-- **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs
+- **Area:** features. **Rules:** R32, R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs, tasks-telegram.test.mjs
 - **Lines:** 335
 - **Actions:** `install_update`, `check_update`
 - **Owns:** update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 - **Timers:** updResultLook (every 10 s while an install asked from chat waits for its result)
 - **Wakes:** none
 - **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updArmedSince`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updProposalAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `hubName`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerDay`, `dangerAsk`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfInstallFacts`, `selfProposalFacts`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `hubName`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerDay`, `dangerAsk`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tellAgain`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfInstallFacts`, `selfProposalFacts`)
 - **Used by:** `20-needs`, `21-selfchange`, `25-backup-and-start`
 
 ### `21-web.mjs`: looking things up on the web

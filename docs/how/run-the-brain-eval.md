@@ -1,8 +1,7 @@
 # Run the brain eval and keep its result
 
-Before an install whose "what the brain reads" mark (`brainReads` in the lock) differs from the installed build's, the
-eval runs on the real brain and its result is kept for that build (the one page, section 10; R47). The cases run on a
-stand-in console and stand-in Sparks; only the brain is real.
+Before an install changes the “what the brain reads” mark (`brainReads` in the lock), run the real-brain eval and keep
+its result for that build (the one page, section 10; R47). Cases use a stand-in console and Sparks; only the brain is real.
 
 ## Touch
 
@@ -22,6 +21,8 @@ tailnet address>` (from `tailscale ip -4` there), as `eval-on-spark.sh` beside t
    change things without asking (R52), so once a passkey is set up it waits for your yes: the console answers 202 and
    puts one button in the chat “The brain eval’s result”; press it on the page, with your passkey. A run with a run that
    was no result twice (a chat failed, the practice console's rail wasn't checked) is `-broken`: no score, refused.
+
+[Diagnostic evidence](../eval-evidence.md).
 
 Without the brain (to try the runner): `--stand-in --only <case> --runs 1 --out <file>`.
 

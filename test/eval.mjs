@@ -28,8 +28,9 @@
 // setup's key, model, engine, image and flags as that console shows them), the build, when, and per case and run:
 // passed, rounds (requests the brain got for that turn), seconds, what it called, the changes it made, whether it asked,
 // what each run call came to (cmds), each typed call that was asked (askedCalls) and the rail before the chat (rail).
-// Never what the brain said beyond what a grade needs; masked before it is written. A run that is no result (a chat
-// failed, or the practice console's rail wasn't checked before the chat) is tried once more; one that is no result again
+// The grade keeps no other reply text. A separate <out>.diagnostics.json file keeps full masked replies, parsed tool
+// calls/results and operations, for every attempt including no-result retries. Evidence cannot qualify the brain.
+// A run that is no result (a chat failed, or the practice console's rail wasn't checked before the chat) is tried once more; one that is no result again
 // makes the file no score: it is written under the kind spark-console-eval-broken (-broken in its name), each such run
 // named with its error, and --store and the console refuse it. The brain is checked once for the whole run: the first
 // fleet asks it, the others keep that profile (start-mock.mjs, evalProfile); two checks with no "checked" stop the run.
@@ -115,6 +116,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { TEST_DIR } from './start-mock.mjs';
 import { brainSent, brainReadsOf, shippedHub } from './lock.mjs';
+import { DIAGNOSTICS_KIND, diagnosticAttempt, fixtureSecretSnapshot, retainAttempt, writeDiagnostics } from './eval-diagnostics.mjs';
 import { mask, turnCalls, gradeRun, diskSnapshot, railOf, FLEET_SKIP } from './eval-grade.mjs';
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
@@ -129,6 +131,7 @@ const DEFAULT_CONSOLE = `${String(endpointConfig.origin).replace(/\/$/, '')}${en
 const STORE = arg('store', null), CONSOLE = String(arg('console', DEFAULT_CONSOLE)).replace(/\/$/, '');
 if (STORE) {
   const record = JSON.parse(readFileSync(STORE, 'utf8')), origin = arg('origin', new URL(CONSOLE).origin);
+  if (record?.kind === DIAGNOSTICS_KIND) { console.error('Not kept: this file is diagnostic evidence, not an eval result.'); process.exit(1); }
   if (record?.kind === DIAGNOSTIC_KIND || record?.serving?.verified === false) { console.error('Not kept: the serving brain identity was not verified. This is a diagnostic run only.'); process.exit(1); }
   if (record?.kind === BROKEN_KIND) { console.error(`Not kept: that run isn't a score: ${record.broken?.length || 'some'} of its runs were no result (${(record.broken || []).map(b => `${b.case} run ${b.run}`).join(', ')}). Its results file has them.`); process.exit(1); }
   if (record?.memorySwitches?.off?.length) { console.error(`Not kept: that run had memory additions switched off (${record.memorySwitches.off.join(', ')}), so it measures them, not this build as it runs. Its results file has it.`); process.exit(1); }
@@ -419,8 +422,8 @@ async function chatSince(api, chat, words) {
 }
 // One run of a case on a fresh practice fleet. Its grade (gradeRun, eval-grade.mjs), or notResult with its error: the
 // rail wasn't checked before the chat, or a chat failed.
-async function runCase(c) {
-  let link = null, setup = null;
+async function runCase(c, evidence) {
+  let link = null, setup = null, caseChat = null, reply = null, captureError = null;
   const fleet = await startMock({ hub: HUB,
     // (its own recorded eval, start-mock.mjs: the rail lets a clear change run at once there, as on a checked brain; the
     // real brain's check takes longer than the stand-in's; the profile of the run's one check, once there is one)
@@ -471,6 +474,7 @@ async function runCase(c) {
       const earlier = JSON.parse((await api('/chats', {})).text).id;
       for (const text of said) {
         const b = await api(`/chats/${earlier}/messages`, { text }), end = turnEnd(b.text);
+        reply = end;
         if (b.status !== 200 || !end || end.type === 'error' || end.message?.error) {
           return { notResult: true, error: `an earlier chat (before) failed: ${String(end?.message?.error || end?.error || `HTTP ${b.status}`).slice(0, 200)}`, ms: 0 };
         }
@@ -504,10 +508,13 @@ async function runCase(c) {
     // (as: "agent": one of the owner's agents asks, with a key of its own, over the agent door: its own chat)
     const agentToken = c.as === 'agent' ? JSON.parse((await api('/agents', { name: `eval ${c.id}`.slice(0, 60) })).text).token : null;
     const chat = agentToken ? null : JSON.parse((await api('/chats', {})).text).id;
+    caseChat = chat;
     const t0 = Date.now();
     const r = agentToken ? await askAsAgent(fleet.mcp, agentToken, c.say) : await api(`/chats/${chat}/messages`, { text: c.say });
     const ms = Date.now() - t0;
     const done = r.done || r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
+    caseChat ??= r.chat;
+    reply = done;
     const failed = r.status !== 200 || !done || done.type === 'error' || done.message?.error
       ? `the chat failed: ${String(done?.message?.error || done?.message || done?.error || `HTTP ${r.status}: ${r.text.slice(0, 200)}`).slice(0, 300)}` : null;
     // A request that left a task: its carry-on turns are its own, so the grade waits for it to end (or to wait at a button).
@@ -527,20 +534,47 @@ async function runCase(c) {
     if (g.railAsks.length && !g.changes) return { notResult: true, error: `the practice console’s rail asked during the chat (${g.railAsks.join(', ')}): its Docker look didn’t answer in time, so the brain’s calls became buttons`, rail, ms };
     if (task.open) return { pass: false, why: [`a task of this request was still going after ${TASK_WAIT_S} s`, g.why].filter(Boolean).join('; '), wrong: g.wrong, asked: g.asked, ms, error: null, kept: { ...g.kept, passed: false, taskOpen: true } };
     return { pass: g.pass, why: g.why, wrong: g.wrong, asked: g.asked, ms, error: msg.error || null, kept: { ...g.kept, ...(task.carried ? { carried: true } : {}) } };
-  } finally { await fleet.stop(); link?.close(); }
+  } catch (e) {
+    captureError = String(e?.message || e);
+    throw e;
+  } finally {
+    // Capture while the fixture still exists; this never changes the observations gradeRun already received.
+    try {
+      const snapshot = fixtureSecretSnapshot(fleet);
+      const chatsFile = join(fleet.stateDir, 'chats.json');
+      let conversations = [], repliesError = null;
+      try { conversations = existsSync(chatsFile) ? JSON.parse(readFileSync(chatsFile, 'utf8')).conversations || [] : []; } catch { repliesError = 'Saved replies could not be read.'; }
+      const jobs = await fetch(`${fleet.base}/jobs`, { signal: AbortSignal.timeout(5000) }).then(async r => { if (!r.ok) throw new Error('operations unavailable'); return r.json(); }).catch(() => null);
+      evidence.captured = diagnosticAttempt(evidence.identity, {
+        capturedAt: new Date().toISOString(), chat: caseChat, reply, error: captureError, repliesError,
+        replies: conversations.map(c => ({ chat: c.id, task: c.task || null, messages: (c.messages || []).filter(m => m.role === 'assistant') })),
+        calls: turnCalls(link?.all()), operations: jobs?.jobs || [], operationsError: jobs ? null : 'Operations could not be read before teardown.', operationLogLimit: 120,
+        journal: journalOf(fleet),
+      }, { snapshot, answerSecret: c.answerSecret || [] });
+    } catch {
+      evidence.captured = diagnosticAttempt(evidence.identity, null); // No snapshot: fail closed without raw text.
+    }
+    await fleet.stop(); link?.close();
+  }
 }
 
 // A run that threw (a practice fleet that didn't come up, a request that failed outright) is no result, named with its
 // error, so the file is always written.
-const caught = c => runCase(c).catch(e => ({ notResult: true, error: `the run stopped: ${String(e?.message || e).replace(/\s+/g, ' ').slice(0, 300)}`, ms: 0 }));
+const diagnosticAttempts = [];
+const caught = async (c, run, attempt) => {
+  const evidence = { identity: { case: c.id, run, attempt } };
+  const result = await runCase(c, evidence).catch(e => ({ notResult: true, error: `the run stopped: ${String(e?.message || e).replace(/\s+/g, ' ').slice(0, 300)}`, ms: 0 }));
+  retainAttempt(diagnosticAttempts, evidence.identity, evidence.captured, result);
+  return result;
+};
 // Each run; one that is no result is tried once more, and stays no result (broken, named) if it is again.
 const results = [], brokenRuns = [];
 for (const c of cases) {
   const runs = [], lines = [];
   for (let i = 1; i <= RUNS; i++) {
-    let run = SHARED.stop ? { notResult: true, error: `not run: ${SHARED.stop}`, ms: 0 } : await caught(c);
+    let run = SHARED.stop ? { notResult: true, error: `not run: ${SHARED.stop}`, ms: 0 } : await caught(c, i, 1);
     const first = run.notResult && !SHARED.stop ? run.error : null;
-    if (first) run = await caught(c);
+    if (first) run = await caught(c, i, 2);
     if (run.notResult) {
       const error = String(run.error).replace(/\s+/g, ' ');
       brokenRuns.push({ case: c.id, run: i, error });
@@ -585,6 +619,8 @@ const record = mask({ kind: broken ? BROKEN_KIND : diagnostic ? DIAGNOSTIC_KIND 
   cases: results.map(r => ({ id: r.id, expect: r.expect, ...(r.kind ? { kind: r.kind } : {}), ...(r.switch ? { switch: r.switch } : {}), passed: r.passed, runs: r.kept })) });
 const file = resolve(arg('out', join(TEST_DIR, 'eval', `results-${record.at.slice(0, 10)}-${MARK.build}${CAP ? `-cap-${CAP}` : ''}${SET_NAME ? `-${SET_NAME}` : ''}${OFF.length ? `-off-${OFF.join('+')}` : ''}${FULL ? '' : '-partial'}${broken ? '-broken' : ''}.json`)));
 writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+writeDiagnostics(`${file}.diagnostics.json`, diagnosticAttempts, { build: MARK.build, reads: MARK.reads, set: SET, at: record.at });
+console.log(`Diagnostic evidence (not a score): ${file}.diagnostics.json`);
 console.log(`\n${(once * 100).toFixed(0)}% passed per run, ${(all3 * 100).toFixed(0)}% passed all ${RUNS} runs, ${wrong} wrong changes.`);
 console.log(`Questions on clear requests: ${(askedOnClear * 100).toFixed(0)}% (at most 5%).`);
 if (!broken) {

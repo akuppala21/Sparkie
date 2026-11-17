@@ -1,5 +1,5 @@
 /* ───────── apps kept running (R38) ───────── */
-// Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
+// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
@@ -197,7 +197,7 @@ function jobEnded(node, w) {
   if (conv.task?.jobs) conv.task.jobs = conv.task.jobs.filter(j => !(j.spark === node.id && j.container === name));
   conv.updatedAt = now;
   saveChats();
-  if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  if (conv.channel === 'telegram') tellAgain('result', text, {}, 'job-end', { chat: conv.id, spark: node.id, container: name }).catch(() => {});
   // (its end wakes the request it was started for, as an operation's result does: wakeWork, 14-chats.mjs)
   wakeWork(conv.id);
 }

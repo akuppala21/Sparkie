@@ -1,7 +1,7 @@
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
-// Rules: R1, R11, R13, R19, R20, R22, R30, R38, R42
-// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs
+// Rules: R1, R11, R13, R19, R20, R22, R30, R32, R38, R42
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs, tasks-telegram.test.mjs
 // Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
@@ -411,7 +411,7 @@ async function selfTestRecover() {
   conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at2, notice: true });
   conv.updatedAt = at2;
   saveChats();
-  if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  if (conv.channel === 'telegram') tellAgain('result', text, {}, 'self-test', { chat: conv.id, spark: rec.spark }).catch(() => {});
 }
 setTimeout(() => selfTestRecover().catch(e => console.error(`Stopping what a cut-off self-test started: ${e.message}`)), Number(process.env.SPARK_CONSOLE_SELFTEST_RECOVER_MS || 5000)).unref?.();
 // An operation a restart cut off that was the self-test's (its own, a step of it, or anything on its Spark since it began,

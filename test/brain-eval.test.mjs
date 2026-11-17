@@ -69,6 +69,17 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
     assert.deepEqual([start.called, start.rounds, start.changed.map(x => [x.action, x.args?.spark])], [['start_model'], 2, [['start_model', 'spark3']]]);
     for (const x of [look, start]) assert.ok(typeof x.passed === 'boolean' && x.seconds > 0 && x.seconds < 120, JSON.stringify(x));
     assert.doesNotMatch(readFileSync(file('a.json'), 'utf8'), /You asked|I checked/, 'no words of the answer');
+    const evidence = read('a.json.diagnostics.json');
+    assert.deepEqual([evidence.kind, evidence.qualification], ['spark-console-eval-evidence', false]);
+    assert.deepEqual(evidence.attempts.map(a => [a.case, a.run, a.attempt]), [['whats-running', 1, 1], ['start-named', 1, 1]]);
+    assert.ok(evidence.attempts.every(a => !a.captureError && a.replies.some(c => c.messages.length)), JSON.stringify(evidence));
+    const startEvidence = evidence.attempts.find(a => a.case === 'start-named');
+    assert.ok(startEvidence.calls.some(c => c.name === 'start_model' && c.args.spark === 'spark3' && c.result?.operation));
+    assert.ok(startEvidence.operations.some(o => o.status === 'completed'));
+    const refused = await runEval(['--store', file('a.json.diagnostics.json'), '--console', 'http://127.0.0.1:1']);
+    assert.equal(refused.code, 1, refused.out);
+    assert.match(refused.out, /diagnostic evidence, not an eval result/);
+    assert.doesNotMatch(refused.out, /doesn’t answer/, 'refused before any network request');
   });
 
   test('an edited case is a new version of the case set; what the brain reads stays', { timeout: 300000 * SLOW }, async () => {
@@ -258,6 +269,9 @@ test('a run that throws is no result: the file is still written under the broken
   assert.deepEqual([rec.kind, rec.broken.map(x => [x.case, x.run])], ['spark-console-eval-broken', [['whats-running', 1]]], r.out);
   assert.match(rec.broken[0].error, /^the run stopped: No setup called no-such-setup/);
   assert.match(rec.cases[0].runs[0].firstTry, /^the run stopped: /, 'tried once more');
+  const evidence = read('threw.json.diagnostics.json');
+  assert.deepEqual(evidence.attempts.map(a => [a.case, a.run, a.attempt, a.notResult]), [['whats-running', 1, 1, true], ['whats-running', 1, 2, true]]);
+  assert.ok(evidence.attempts.every(a => a.captureError), 'a fleet that did not start leaves a capture failure, never raw text');
 });
 
 // A scripted brain (an OpenAI-style server) for the runs above: it answers the console's brain check (its system line)

@@ -102,6 +102,7 @@ const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
 const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
 // In memory (a restart forgets the tries left): an operation's line, a press's late result. Each try goes only to the
 // pairing it was meant for (mark, taken at the first: final read C4); paired with another since, it is dropped.
+// Also used by job ends, recovery notes, install results and carry-on replies; no delivery claim survives a restart.
 async function tellAgain(why, text, opts, what, fields = {}, n = 1, mark = tgPairingMark()) {
   if (mark !== tgPairingMark()) { tellDropped(what, { ...fields, tries: n - 1, err: 'another pairing' }); return 'never'; }
   const got = await tellTry(why, text, opts).catch(() => 'later');
@@ -170,8 +171,8 @@ function tellResult(job, conv) {
 async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
   tellHeld.delete(convId);
-  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message), last });
-  if (held.length) return tell('result', held.join('\n'));
+  if (message && !message.error && String(message.content || '').trim()) return (await tellAgain('carry', tellReplyText(message), { buttons: tellButtons(message), last }, 'carry', { chat: convId })) === 'sent';
+  if (held.length) return (await tellAgain('result', held.join('\n'), {}, 'carry', { chat: convId })) === 'sent';
   return false;
 }
 // What a Sparkie answer says on Telegram: its words, and a line for anything that waits in Spark Console (an owner-only

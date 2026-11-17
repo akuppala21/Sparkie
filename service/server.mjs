@@ -8143,7 +8143,7 @@ async function jobModelEnv(j, n, args) {
   return { env: [...env, ...add.map(([k, v]) => `${k}=${v}`)] };
 }
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, tasks-telegram.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
@@ -8248,7 +8248,7 @@ async function savedRunsRecover() {
       conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at, notice: true });
       conv.updatedAt = at;
       saveChats();
-      if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+      if (conv.channel === 'telegram') tellAgain('result', text, {}, 'saved-run', { chat: conv.id, op: r.operation }).catch(() => {});
     }
   }
   try {
@@ -15763,6 +15763,7 @@ const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
 const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
 // In memory (a restart forgets the tries left): an operation's line, a press's late result. Each try goes only to the
 // pairing it was meant for (mark, taken at the first: final read C4); paired with another since, it is dropped.
+// Also used by job ends, recovery notes, install results and carry-on replies; no delivery claim survives a restart.
 async function tellAgain(why, text, opts, what, fields = {}, n = 1, mark = tgPairingMark()) {
   if (mark !== tgPairingMark()) { tellDropped(what, { ...fields, tries: n - 1, err: 'another pairing' }); return 'never'; }
   const got = await tellTry(why, text, opts).catch(() => 'later');
@@ -15831,8 +15832,8 @@ function tellResult(job, conv) {
 async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
   tellHeld.delete(convId);
-  if (message && !message.error && String(message.content || '').trim()) return tell('carry', tellReplyText(message), { buttons: tellButtons(message), last });
-  if (held.length) return tell('result', held.join('\n'));
+  if (message && !message.error && String(message.content || '').trim()) return (await tellAgain('carry', tellReplyText(message), { buttons: tellButtons(message), last }, 'carry', { chat: convId })) === 'sent';
+  if (held.length) return (await tellAgain('result', held.join('\n'), {}, 'carry', { chat: convId })) === 'sent';
   return false;
 }
 // What a Sparkie answer says on Telegram: its words, and a line for anything that waits in Spark Console (an owner-only
@@ -17035,7 +17036,7 @@ function aheadShown(conv) {
   return l.entries.map(e => ({ words: aheadWords(e, sparkName(nodeById(e.spark) || { id: e.spark })), since: e.since, by: e.by }));
 }
 /* ───────── apps kept running (R38) ───────── */
-// Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
+// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
@@ -17233,7 +17234,7 @@ function jobEnded(node, w) {
   if (conv.task?.jobs) conv.task.jobs = conv.task.jobs.filter(j => !(j.spark === node.id && j.container === name));
   conv.updatedAt = now;
   saveChats();
-  if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  if (conv.channel === 'telegram') tellAgain('result', text, {}, 'job-end', { chat: conv.id, spark: node.id, container: name }).catch(() => {});
   // (its end wakes the request it was started for, as an operation's result does: wakeWork, 14-chats.mjs)
   wakeWork(conv.id);
 }
@@ -25073,8 +25074,8 @@ action({
 });
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
-// Rules: R1, R11, R13, R19, R20, R22, R30, R38, R42
-// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs
+// Rules: R1, R11, R13, R19, R20, R22, R30, R32, R38, R42
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs, tasks-telegram.test.mjs
 // Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
@@ -25484,7 +25485,7 @@ async function selfTestRecover() {
   conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at2, notice: true });
   conv.updatedAt = at2;
   saveChats();
-  if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+  if (conv.channel === 'telegram') tellAgain('result', text, {}, 'self-test', { chat: conv.id, spark: rec.spark }).catch(() => {});
 }
 setTimeout(() => selfTestRecover().catch(e => console.error(`Stopping what a cut-off self-test started: ${e.message}`)), Number(process.env.SPARK_CONSOLE_SELFTEST_RECOVER_MS || 5000)).unref?.();
 // An operation a restart cut off that was the self-test's (its own, a step of it, or anything on its Spark since it began,
@@ -25964,7 +25965,7 @@ async function telegramRoute(req, res, path, viewer) {
   throw new HttpError(405, 'Use GET, PUT, POST /telegram/pair, PUT /telegram/needs or DELETE.');
 }
 /* ───────── Spark Console's own updates, from chat: is a newer tested build out (design C 2.3, step 5) ───────── */
-// Area: features        Rules: R58        Tests: check-update.test.mjs, install-update.test.mjs, tools.test.mjs
+// Area: features        Rules: R32, R58        Tests: check-update.test.mjs, install-update.test.mjs, tools.test.mjs, tasks-telegram.test.mjs
 // Owns: update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 // Timers: updResultLook (every 10 s while an install asked from chat waits for its result)        Wakes: none
 // check_update runs `pull.sh check --json` on the hub (the copy every install leaves beside go-back.sh), as /key GITHUB
@@ -26182,7 +26183,7 @@ function updTell(asked, line) {
     saveChats();
   }
   fleetEvent({ type: 'notice', text: line });
-  if (asked.channel === 'telegram') tell('result', line).catch(() => {});
+  if (asked.channel === 'telegram') tellAgain('result', line, {}, 'update', { chat: asked.conv || null }).catch(() => {});
   return conv;
 }
 // The yes: answered within UPD_YES_WAIT_MS; a check that takes longer goes on, and what it comes to is told in the chat.

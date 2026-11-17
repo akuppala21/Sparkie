@@ -1,5 +1,5 @@
 /* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
-// Area: core        Rules: R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs
+// Area: core        Rules: R32, R57        Tests: workloads-restart.test.mjs, workloads-receipts.test.mjs, tasks-telegram.test.mjs
 // Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
 // Timers: none        Wakes: none
 // Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
@@ -104,7 +104,7 @@ async function savedRunsRecover() {
       conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at, notice: true });
       conv.updatedAt = at;
       saveChats();
-      if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+      if (conv.channel === 'telegram') tellAgain('result', text, {}, 'saved-run', { chat: conv.id, op: r.operation }).catch(() => {});
     }
   }
   try {

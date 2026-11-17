@@ -12,6 +12,8 @@
 // meet while a send waits are both kept and each sent once (C8c); each report keeps its own schedule (C9); one owed
 // across a restart is sent once at its next try (C8c); one owed to a pairing is never sent to the chat paired since,
 // nor is a result tried again in memory (C4); a result counts toward the hour's six only when it went (C7).
+// Job ends, saved-run and self-test recovery, install results and both carry-on paths use the same bounded retry;
+// behavioral checks exercise later delivery, unchanged caller return/state effects, disconnect and re-pair cancellation.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, cpSync, readdirSync } from 'node:fs';
@@ -378,3 +380,94 @@ test('C4: a result tried again goes only to the pairing it was meant for: paired
   assert.deepEqual(tries, ['first'], 'never tried in the chat paired since');
   assert.deepEqual(drops, [{ what: 'press', chat: 'sc_1', tries: 1, err: 'another pairing' }]);
 });
+
+// Exercise the real result entrypoints and tellAgain with a controlled clock: no extra service or queue. A failed
+// first send must actually schedule another send, and a disconnect or different pairing cancels that scheduled send.
+const RESULT_ENTRIES = ['job end', 'saved-run recovery', 'self-test recovery', 'install result', 'carry reply', 'held carry result'];
+function resultEntry(entry, tellAgain) {
+  const conv = { id: 'sc_0123456789abcdef', login: 'owner', channel: 'telegram', messages: [], task: { jobs: [{ spark: 'spark3', container: 'test-job' }] } };
+  const held = new Map([[conv.id, ['Held result.']]]), state = { saved: 0, woke: 0, removed: 0 };
+  const ctx = {
+    tellAgain, tell: async () => false, chatData: () => ({ conversations: [conv] }), accessList: () => ({ owner: 'owner' }),
+    saveChats: () => { state.saved++; }, fleetEvent: () => {}, maskSecrets: text => text,
+    consoleStopped: new Set(), sparkName: node => node.id, wakeWork: () => { state.woke++; },
+    jobs: new Map(), nodeById: id => ({ id }), NAME_RE: /^[\w-]+$/, healOwner: () => ({}), stopWhatRan: async () => '',
+    savedRunsNow: () => ({ runs: { op: { operation: 'op', title: 'Test run', chat: conv.id } } }), savedRunWords: String,
+    SAVED_RUNS_FILE: 'saved-runs.json', SELF_TEST_FILE: 'self-test.json',
+    unlinkSync: () => { state.removed++; }, writePrivate: () => {},
+    readKept: () => ({ spark: 'spark3', chat: conv.id }), containerStates: async () => ({}),
+    tellHeld: held, tellReplyText: msg => msg.content, tellButtons: () => [{ id: 'choice', label: 'Go' }]
+  };
+  const choices = {
+    'job end': ['21-apps.mjs', 'jobEnded', [{ id: 'spark3' }, { name: 'test-job', exitCode: 0, labels: { 'spark.chat': conv.id } }]],
+    'saved-run recovery': ['18-run-record.mjs', 'savedRunsRecover', []],
+    'self-test recovery': ['21-selftest.mjs', 'selfTestRecover', []],
+    'install result': ['21-updates.mjs', 'updTell', [{ conv: conv.id, channel: 'telegram' }, 'Installed the tested build.']],
+    'carry reply': ['20-tell.mjs', 'tellCarry', [conv.id, { content: 'The work finished.' }, true]],
+    'held carry result': ['20-tell.mjs', 'tellCarry', [conv.id, null]]
+  };
+  const [part, name, args] = choices[entry], source = readFileSync(join(REPO, 'service', 'src', part), 'utf8');
+  const fn = new Function(...Object.keys(ctx), `${fnOf(source, name)}\nreturn ${name};`)(...Object.values(ctx));
+  return { invoke: () => fn(...args), conv, held, state };
+}
+for (const entry of RESULT_ENTRIES) {
+  test(`${entry}: a temporary send failure is retried and delivered once; current return values and page effects stay intact`, async () => {
+    let mark = 'first', fails = true;
+    const pending = [], calls = [], delivered = [], drops = [];
+    const tellAgain = new Function('tellTry', 'tgPairingMark', 'tellDropped', 'TELL_TRIES', 'tellWait', 'setTimeout', `${fnOf(TELL_SRC(), 'tellAgain')}\nreturn tellAgain;`)(
+      async (why, text, opts) => { calls.push({ why, text, opts, mark }); if (fails) { fails = false; return 'later'; } delivered.push(text); return 'sent'; },
+      () => mark, (what, fields) => drops.push({ what, ...fields }), 4, n => 60000 * 2 ** (n - 1),
+      (fn, ms) => { pending.push({ fn, ms }); return { unref() {} }; });
+    const run = resultEntry(entry, tellAgain), returned = await run.invoke();
+    // Fire-and-forget callers finish their synchronous state work while the send promise settles.
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    assert.equal(calls.length, 1);
+    assert.equal(delivered.length, 0);
+    assert.equal(pending.length, 1, 'a lost first send must schedule another send');
+    assert.equal(pending[0].ms, 60000);
+    if (entry.includes('carry')) {
+      assert.equal(returned, false, 'tellCarry keeps its boolean API after a deferred send');
+      assert.equal(run.held.size, 0);
+      if (entry === 'carry reply') assert.deepEqual(calls[0].opts, { buttons: [{ id: 'choice', label: 'Go' }], last: true });
+    } else {
+      assert.equal(returned, entry === 'install result' ? run.conv : undefined);
+      assert.equal(run.conv.messages.length, 1, 'the page result is written once, before any retry');
+      assert.equal(run.state.saved, 1);
+    }
+    if (entry === 'job end') { assert.equal(run.state.woke, 1); assert.deepEqual(run.conv.task.jobs, []); }
+    if (entry.includes('recovery')) assert.equal(run.state.removed, 1, 'cleanup does not wait for Telegram');
+    await pending.shift().fn();
+    assert.equal(calls.length, 2);
+    assert.equal(delivered.length, 1);
+    assert.equal(calls[1].text, calls[0].text);
+    assert.equal(calls[1].mark, 'first');
+    assert.deepEqual(pending, [], 'no more tries after delivery');
+    assert.deepEqual(drops, []);
+    if (entry.includes('carry')) {
+      const succeeding = resultEntry(entry, tellAgain);
+      assert.equal(await succeeding.invoke(), true, 'tellCarry returns true only for an immediate successful send');
+    } else assert.equal(run.conv.messages.length, 1, 'retry does not post a second page result');
+  });
+
+  for (const next of [null, 'another pairing']) {
+    test(`${entry}: ${next === null ? 'disconnect' : 're-pair'} before the retry drops it without sending to another chat`, async () => {
+      let mark = 'first';
+      const pending = [], calls = [], drops = [];
+      const tellAgain = new Function('tellTry', 'tgPairingMark', 'tellDropped', 'TELL_TRIES', 'tellWait', 'setTimeout', `${fnOf(TELL_SRC(), 'tellAgain')}\nreturn tellAgain;`)(
+        async () => { calls.push(mark); return 'later'; }, () => mark, (what, fields) => drops.push({ what, ...fields }), 4, () => 60000,
+        fn => { pending.push(fn); return { unref() {} }; });
+      const run = resultEntry(entry, tellAgain);
+      await run.invoke();
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      assert.equal(pending.length, 1);
+      mark = next;
+      await pending.shift()();
+      assert.deepEqual(calls, ['first'], 'the new or disconnected pairing gets no retry');
+      assert.equal(drops.length, 1);
+      assert.equal(drops[0].chat, run.conv.id);
+      assert.equal(drops[0].tries, 1);
+      assert.equal(drops[0].err, 'another pairing');
+      assert.deepEqual(pending, []);
+    });
+  }
+}

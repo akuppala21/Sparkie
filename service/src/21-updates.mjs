@@ -1,5 +1,5 @@
 /* ───────── Spark Console's own updates, from chat: is a newer tested build out (design C 2.3, step 5) ───────── */
-// Area: features        Rules: R58        Tests: check-update.test.mjs, install-update.test.mjs, tools.test.mjs
+// Area: features        Rules: R32, R58        Tests: check-update.test.mjs, install-update.test.mjs, tools.test.mjs, tasks-telegram.test.mjs
 // Owns: update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 // Timers: updResultLook (every 10 s while an install asked from chat waits for its result)        Wakes: none
 // check_update runs `pull.sh check --json` on the hub (the copy every install leaves beside go-back.sh), as /key GITHUB
@@ -217,7 +217,7 @@ function updTell(asked, line) {
     saveChats();
   }
   fleetEvent({ type: 'notice', text: line });
-  if (asked.channel === 'telegram') tell('result', line).catch(() => {});
+  if (asked.channel === 'telegram') tellAgain('result', line, {}, 'update', { chat: asked.conv || null }).catch(() => {});
   return conv;
 }
 // The yes: answered within UPD_YES_WAIT_MS; a check that takes longer goes on, and what it comes to is told in the chat.
