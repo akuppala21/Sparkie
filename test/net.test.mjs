@@ -517,16 +517,20 @@ const atOncePart = async words => {
   const chat = await newChat(), a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; sleep 4`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
   const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
-  await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
-  const copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
-  rmSync(copy);
-  rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
-  const p = await pressing;
-  assert.equal(p.status, 200, p.text);
-  const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
-  // (mended, and put back whole: what each test does last when nothing else closed the guard)
-  const close = async () => { if (NET_OPEN_STATES.includes(newest()?.state)) { writeFileSync(copy, KEYS_LINE, { mode: 0o600 }); await say(chat, '/putback').catch(() => {}); } keysReset(); writeFileSync(aliases, was); };
-  return { chat, g: newest(), aliases, was, said, copy, close };
+  let copy = null;
+  // (mended, and put back whole: what each test does last when nothing else closed the guard, and here on a failure)
+  const close = async () => { await pressing.catch(() => {}); if (NET_OPEN_STATES.includes(newest()?.state)) { if (copy && !existsSync(copy)) writeFileSync(copy, KEYS_LINE, { mode: 0o600 }); await say(chat, '/putback').catch(() => {}); } keysReset(); writeFileSync(aliases, was); };
+  try {
+    // (the guard armed: its pending mark and its timer both there, the helper writing one a moment before the other)
+    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')) && timerWaits(newest().id), { every: 50, what: 'the guard armed, its timer waiting' });
+    copy = join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys');
+    rmSync(copy);
+    rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
+    const p = await pressing;
+    assert.equal(p.status, 200, p.text);
+    const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
+    return { chat, g: newest(), aliases, was, said, copy, close };
+  } catch (e) { await close(); throw e; }
 };
 test('at once, a put-back in part (the helper’s count): told with both ways on and the keep command exactly as typed; held open, with a needs-you line, and a second change there refused with both ways; mended, /putback puts it back whole', { timeout: 300000 * SLOW }, async () => {
   const s = await atOncePart('add my key and an alias on spark 3');
