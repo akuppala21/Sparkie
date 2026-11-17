@@ -19581,9 +19581,9 @@ function guardAnswer(id, out) {
 const GUARD_TAIL = 65536;
 // A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn). From
 // the helper's own numbers (restore.sh, guard.py): its command's unit given 60 s to stop and 30 more after SIGKILL,
-// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound, and another put-back holding the
-// guard's lock for up to 120 s before it: 90 + 3 × 120 + 40 + 120 = 610 s, and 50 to spare. A try in which more than one
-// call hangs can outlast it: the put-back goes on on the Spark, and the console reads no answer from this call.
+// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound: 90 + 3 × 120 + 40 = 490 s, and 170
+// to spare. A put-back already under way ahead of it (restore.sh waits for its lock, with no bound of its own), or a try
+// in which more than one call hangs, can outlast it: the put-back goes on on the Spark, and the console reads no answer.
 const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
@@ -22614,14 +22614,13 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
-// What root never runs, by the sorter's own fields (no list of spellings of root's own beside them): code the command
-// runs that isn't all on the button (its scripts: a file named as a word; its unshown: every interpreter given code
-// inline, from input, a module or a file, awk with system or getline, sed's e or w, find -exec, xargs, git -c naming a
-// program, make, an editor, and, as root, an interpreter that loads from a folder the owner can write), and work it
-// starts later, outside the button and the net (its later: systemd-run, at, batch, crontab, a schedule or unit file
-// written). The refusal says the plain truth: root never runs code it doesn't show, nor work that starts off the button
-// later (there is no way round it, a file run by name included); the steps go on the button as plain commands, and a
-// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH (a limit of root's). Or null.
+// What root never runs, read from the sorter's own fields alone (root keeps no list of spellings of its own): a file the
+// command runs as code (scripts), code it runs that the button doesn't show (unshown, what the sorter marks so, in its
+// words), and work it starts later, off the button and outside the net (later: systemd-run, at, crontab, a schedule,
+// unit or drop-in written). The refusal says the plain truth: root never runs code the button doesn't show, and Spark
+// Console offers no way to run it (a file run by name is a script); the steps go on the button as plain commands, and a
+// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH. A part the sorter couldn't
+// read at all is rootUnread's; a command the shell reader can't read, rootUnreadable's. The refusal's words, or null.
 function rootUnseen(sorted) {
   if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
   if (sorted?.unshown) return `Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}). Give its steps as plain commands instead, each one on the button.`;
@@ -22702,9 +22701,10 @@ async function rootChange(input, viewer, ctx = {}) {
   // (a command the reader can't read whole: as root it isn't run)
   const doubt = rootUnreadable(command);
   if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
-  // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
+  // (a mount or swap made inside root's own unit never reaches the Spark: said, and what works instead: by hand, as a
+  // unit or drop-in is, since writing one as root is refused too, rootUnseen's later)
   const mounts = rootMounts(command);
-  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
+  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Make it by hand on ${at}, over SSH, in your own terminal.`);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });

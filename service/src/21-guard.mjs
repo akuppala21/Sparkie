@@ -115,9 +115,9 @@ function guardAnswer(id, out) {
 const GUARD_TAIL = 65536;
 // A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn). From
 // the helper's own numbers (restore.sh, guard.py): its command's unit given 60 s to stop and 30 more after SIGKILL,
-// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound, and another put-back holding the
-// guard's lock for up to 120 s before it: 90 + 3 × 120 + 40 + 120 = 610 s, and 50 to spare. A try in which more than one
-// call hangs can outlast it: the put-back goes on on the Spark, and the console reads no answer from this call.
+// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound: 90 + 3 × 120 + 40 = 490 s, and 170
+// to spare. A put-back already under way ahead of it (restore.sh waits for its lock, with no bound of its own), or a try
+// in which more than one call hangs, can outlast it: the put-back goes on on the Spark, and the console reads no answer.
 const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {

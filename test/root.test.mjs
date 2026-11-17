@@ -291,7 +291,7 @@ test('as root, a mount, unmount or swap is refused with how to do it instead: re
   // (end to end, the owner's own call: refused before anything is asked)
   const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'mount /dev/sdb1 /data', root: true } });
   assert.equal(r.status, 403, r.text);
-  assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.');
+  assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Make it by hand on Spark 3, over SSH, in your own terminal.');
 });
 
 // Round two with the outside reviewer (A-16, root's own half): an interpreter given its program inline carried no unshown
