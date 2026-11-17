@@ -13246,7 +13246,7 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
     // work that starts later, when written with content)
     if (!read && (write || ctx.removing || ctx.noContent)) {
       if (WAY_FILES.some(sortReach(p, w.glob && /[*?[]/.test(p), wide)) || (!/[*?[]/.test(p) && WAY_LIBS.test(p))) raise(r, 'lockout', `It changes ${sortQ(p)}, a way-in program's own file or one it loads: SSH, Tailscale or the logins may not start again.`);
-      if (!ctx.removing && !ctx.noContent && (sortLaterPlace(p, ctx) || (wide && (p === '/' || SORT_UNIT_DIRS.test(p) || /^\/etc(?:$|\/(?:cron\.|init\.d|rc\d\.d|udev|logrotate\.d|update-motd\.d|profile\.d|apt\/apt\.conf\.d|systemd$))/.test(p))))) sortLaterWords(ctx, r, 'a schedule, a unit or a start-up file written');
+      if (!ctx.removing && !ctx.noContent && (sortLaterPlace(p, ctx) || (wide && (p === '/' || SORT_UNIT_DIRS.test(p) || /^\/etc(?:$|\/(?:cron\.|init\.d|rc\d\.d|udev|logrotate\.d|update-motd\.d|profile\.d|apt\/apt\.conf\.d|systemd$))/.test(p))))) sortLaterWords(ctx, r, SORT_UNIT_DIRS.test(p) || /\/(?:cron|at)(?:[./]|$)|crontab|\.(?:timer|service)$/.test(p) ? 'a schedule or a unit written' : 'a start-up or hook file written');
     }
   }
   if (all.doubt) unsure(all.doubt);
