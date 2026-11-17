@@ -357,9 +357,9 @@ test('as root, a command part of which the sorter couldn’t read is refused, un
   } finally { await press(chat, a.no.id); }
 });
 
-// The reviewer's commands end to end: each after an unknown program, an option or a sign the sorter doubts. Waits for
-// the sorter's step-f2-sorter on main (it reads every part, and names what it couldn't read).
-test('as root, the reviewer’s commands with a doubt in front are refused, and kill 1 after one is the lock-out class (F1)', { todo: 'waits for step-f2-sorter on main (sorted.unreadable, every part read)', timeout: 120000 * SLOW }, async () => {
+// The reviewer's commands end to end: each after an unknown program, an option or a sign the sorter doubts (the sorter
+// reads every part since step-f2-sorter, and names what it couldn't read).
+test('as root, the reviewer’s commands with a doubt in front are refused, and kill 1 after one is the lock-out class (F1)', { timeout: 120000 * SLOW }, async () => {
   for (const c of ['ldconfig; bash /tmp/repair.sh', `nvidia-ctk runtime configure --runtime=docker && python3 -c "exec(open('/tmp/repair.py').read())"`,
     'dpkg --configure -a; systemd-run --on-active=600 /opt/tools/repair', `echo "fixing…"; python3 -c "exec(open('/tmp/repair.py').read())"`, 'bash /tmp/repair.sh # é']) {
     const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: c, root: true } });
