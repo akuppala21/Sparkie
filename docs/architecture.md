@@ -4,6 +4,8 @@ Checked against the code on 2026-11-15 (the parts are in `docs/code-map.md`, tim
 `docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
+Growth and test boundaries: `docs/architecture-growth.md`.
+
 ## 1. In one paragraph
 
 Spark Console is one Node process with no dependencies, a systemd user unit on the hub (the Spark `config.json`

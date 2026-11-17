@@ -7,10 +7,10 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pick, buildMap, findMaps, noteMissed, failedIn, checkAffected, ALWAYS_PARTS, LANDING_ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
+import { choose, pick, buildMap, findMaps, noteMissed, failedIn, checkAffected, ALWAYS_PARTS, LANDING_ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
 import { EACH_FILE } from './lock.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@test' };
@@ -292,4 +292,18 @@ test('each part the always lists name is in service/src/; one that isn’t is sa
       ['affected', 'tools/parts.mjs', `names ${landingGone} (ALWAYS_PARTS, LANDING_ALWAYS_PARTS), which service/src/ doesn’t have`]]);
     assert.deepEqual(checkAffected(), [], 'this tree');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Importing a pure part directly must not make its tests disappear from the generated-server coverage pick.
+test('a changed brain adapter includes its direct-import tests as well as measured integration coverage', () => {
+  const r = choose({ landing: true,
+    map: { tests: ['test/brain.test.mjs'], fns: { '13-ask.mjs:askBlock@1-3': [0] } },
+    changes: [{ path: 'service/src/13-ask.mjs', status: 'M', hunks: [{ s: 2, n: 1, t: 2, add: ['  return 2;'] }] }],
+    oldText: () => 'function askBlock() {\n  return 1;\n}',
+    newText: () => 'function askBlock() {\n  return 2;\n}',
+  });
+  assert.equal(r.all, false, r.why);
+  assert.ok(r.files.includes('test/brain-ask.test.mjs'));
+  assert.ok(existsSync(new URL('./brain-ask.test.mjs', import.meta.url)), 'the declared direct test exists');
+  assert.ok(r.files.includes('test/brain.test.mjs'));
 });

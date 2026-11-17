@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (29179 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (29181 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -249,8 +249,8 @@ Each Spark's status comes from the portal's own worker.py (now shipped with the 
 
 What one model needs is said by its brain setup, never by the chat loop (contract 3.11). A setup may carry an `ask` block: how its brain is asked (thinking, maxTokens, sampling, templateKwargs, as today's setups say beside it) and what the loop does for it (mergeRoles, thinkTags, tokenBudget). The chat loop (howAsked, modelStep, turnRounds in 14-rounds.mjs; brainContext in 14-chats.mjs) and the brain check (brainAsk, 21-brain-check.mjs) go through the functions here. A setup with none of the loop's fields is asked and read as the first brain was (a Qwen on SGLang): what it is sent does not …
 
-- **Area:** brain. **Rules:** R50. **Tests:** brain.test.mjs
-- **Lines:** 132
+- **Area:** brain. **Rules:** R50. **Tests:** brain.test.mjs, brain-ask.test.mjs
+- **Lines:** 134
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

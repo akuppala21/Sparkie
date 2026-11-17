@@ -49,6 +49,8 @@ export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worke
 export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'internet', 'sparkie', 'install', 'go-back'].map(n => `test/${n}.test.mjs`);
 export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
+// Direct-import tests do not execute server.mjs, so its coverage map cannot discover this edge.
+export const DIRECT_TESTS = { '13-ask.mjs': ['test/brain-ask.test.mjs'] };
 const MOST = 0.5;          // a function run by more than this share of the test files: everything
 const MAX_PARTS = 8;       // more parts changed than this: everything
 const HISTORY = 500;       // how far back along base a map is looked for
@@ -272,6 +274,7 @@ export function choose({ map, changes, oldText, newText, missed = [], landing = 
   if (generated && !parts.size) return all('service/server.mjs changed but none of its parts did');
   if (parts.size > MAX_PARTS) return all(`${parts.size} parts changed (more than ${MAX_PARTS})`);
   const picked = new Set(SHORT_CHECK);
+  for (const part of parts) for (const file of DIRECT_TESTS[part] || []) picked.add(file);
   for (const f of owners.values()) {
     if (!f.tests.length || f.tests.some(i => !map.tests[i])) return all(`${f.part} ${f.name} has no reliable measured test coverage`);
     if (!landing && f.tests.length > map.tests.length * MOST) return all(`${f.part} ${f.name} is run by ${f.tests.length} of ${map.tests.length} test files`);

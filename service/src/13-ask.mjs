@@ -1,5 +1,5 @@
 /* ───────── how the brain is asked and read: its setup's ask block (B9, R50) ───────── */
-// Area: brain        Rules: R50        Tests: brain.test.mjs
+// Area: brain        Rules: R50        Tests: brain.test.mjs, brain-ask.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // What one model needs is said by its brain setup, never by the chat loop (contract 3.11). A setup may carry an `ask`
@@ -130,3 +130,5 @@ function answerReader(setup) {
     result: () => ({ calls: calls.filter(c => c && c.name), finish, usage }),
   };
 }
+
+export { askBlock, withAsk, askOf, askSet, askedMessages, usageAsked, overBudget, answerReader };
