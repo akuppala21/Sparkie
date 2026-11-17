@@ -799,6 +799,12 @@ test('final read 2, R1: the reviewer\'s 246 plain orders, row by row: 224 run at
     if (button) assert.ok(FR2_BUTTON[text], `why "${text}" is a button`);
   }
   assert.equal(FR2_ORDERS.filter(r => !r[2]).length, 224);
+  // (two orders with no joining word, a verb and a word or two between; and the owner's slash words, which code answers,
+  // never a change asked of Sparkie though a "/" before an order is only a mark)
+  for (const [text, kinds] of [['stop qwen start gemma', 'stop,start'], ['kill qwen restart gemma on 4', 'stop,restart'], ['/stop gemma', 'stop']]) {
+    assert.ok(kinds.split(',').every(k => changeIntent(text).asked.includes(k)), `${text}: ${JSON.stringify(changeIntent(text))}`);
+  }
+  for (const word of ['/stop', '/undo', '/undo update', '/restart sparkie', '/putback', '/pause', '/STOP ']) assert.deepEqual(changeIntent(word).asked, [], word);
 });
 
 test('final read 2, W1, W2, Q1, C1: the reviewer\'s 249 sentences that are no order, row by row: 202 ask nothing, none of a group the rulings close', () => {
@@ -828,6 +834,8 @@ test('final read 2, the net\'s F7 and F8: each sentence\'s verb is an order wher
     assert.equal(orderAt(sentence, sentence.search(new RegExp(`\\b${verb}\\b`))), order, `${text} (${verb})`);
   }
   assert.equal(NET_ORDERS.filter(r => r[2]).length, 58);
+  // ("for the last time" and "for the last week" tell no past: the net's own test, "add my key on spark 3 for the last time")
+  for (const text of ['add my key on spark 3 for the last time', 'restart sshd on spark 3, it has been down for the last week']) assert.equal(orderAt(text, 0), true, text);
 });
 
 test('S4: a Spark said another way is that Spark; a word only like one, or a model\'s own number, names none', () => {
@@ -897,7 +905,9 @@ test('A-20, final read 2 (S3, T1): a stop runs at once only on a Spark this mess
 test('the reader stays short work on megabytes of the worst input', () => {
   const n = 400000;
   for (const text of ['wait '.repeat(n), 'no wait, '.repeat(n), '`'.repeat(n), '"a '.repeat(n), '```'.repeat(n), 'a:\n'.repeat(n), '2026-11-15 10:00 x\nplain\n'.repeat(n / 10),
-    'fix the build '.repeat(n / 5), "don't ".repeat(n), ', '.repeat(n) + 'wait', 'the '.repeat(n) + 'fix', '> x\n'.repeat(n), '    x\n'.repeat(n), 'File "'.repeat(n)]) {
+    'fix the build '.repeat(n / 5), "don't ".repeat(n), ', '.repeat(n) + 'wait', 'the '.repeat(n) + 'fix', '> x\n'.repeat(n), '    x\n'.repeat(n), 'File "'.repeat(n),
+    // (final read 2: orders joined by a place, each read where its sentence's first quote mark is, read once)
+    'stop qwen on 3 '.repeat(n / 5), 'ok '.repeat(n / 4) + 'stop gemma and restart qwen']) {
     let best = Infinity;
     for (let i = 0; i < 3; i++) { const t0 = performance.now(); changeIntent(text); best = Math.min(best, performance.now() - t0); }
     assert.ok(best < 3000 * SLOW, `${JSON.stringify(text.slice(0, 20))}: ${Math.round(best)} ms`);
