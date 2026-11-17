@@ -22,14 +22,13 @@ const rootLine = at => `It runs as root on ${at}, with no wall around it: the ne
 const ROOT_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT_SECONDS) || 1800;
 const rootSeconds = lockout => Math.min(ROOT_SECONDS, lockout ? 600 : 1800);
 
-// What root never runs, by the sorter's own fields (no list of spellings of root's own beside them): code the command
-// runs that isn't all on the button (its scripts: a file named as a word; its unshown: every interpreter given code
-// inline, from input, a module or a file, awk with system or getline, sed's e or w, find -exec, xargs, git -c naming a
-// program, make, an editor, and, as root, an interpreter that loads from a folder the owner can write), and work it
-// starts later, outside the button and the net (its later: systemd-run, at, batch, crontab, a schedule or unit file
-// written). The refusal says the plain truth: root never runs code it doesn't show, nor work that starts off the button
-// later (there is no way round it, a file run by name included); the steps go on the button as plain commands, and a
-// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH (a limit of root's). Or null.
+// What root never runs, read from the sorter's own fields alone (root keeps no list of spellings of its own): a file the
+// command runs as code (scripts), code it runs that the button doesn't show (unshown, what the sorter marks so, in its
+// words), and work it starts later, off the button and outside the net (later: systemd-run, at, crontab, a schedule,
+// unit or drop-in written). The refusal says the plain truth: root never runs code the button doesn't show, and Spark
+// Console offers no way to run it (a file run by name is a script); the steps go on the button as plain commands, and a
+// timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH. A part the sorter couldn't
+// read at all is rootUnread's; a command the shell reader can't read, rootUnreadable's. The refusal's words, or null.
 function rootUnseen(sorted) {
   if (sorted?.scripts?.length) return `Nothing was asked or run: as root, give the command itself, not a script (${String(sorted.scripts[0]).slice(0, 80)}): a script’s text isn’t on the button and can change before your press.`;
   if (sorted?.unshown) return `Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (${String(sorted.unshown).replace(/\.$/, '').slice(0, 160)}). Give its steps as plain commands instead, each one on the button.`;
@@ -66,6 +65,22 @@ function rootMounts(command, depth = 0) {
 function rootUnreadable(command) {
   try { shellParse(shellLex(String(command)).toks); return null; } catch (e) { return String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200); }
 }
+// One program with its words and nothing more (one command, no chain or pipe, no group, no redirection, nothing set
+// before it, no $( ) or <( ) in a word): what root still asks when part of a command could not be read, as an unknown
+// program's own words. Read by the sorter's own reader; a command it can't read is not that.
+function rootOnePlain(command) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return false; }
+  const c = items.length === 1 && items[0].length === 1 ? items[0][0] : null;
+  return Boolean(c && !c.group && !c.assigns.length && !c.redirs.length && c.words.length && c.words.every(w => !(w.subs || []).length));
+}
+// Part of a command the sorter couldn't read at all (its unreadable: an unclosed quote, a form the shell reader doesn't
+// know, a part past its bounds): what that part does is on no field, so as root it isn't run, unless the whole command is
+// one plain program (asked, with its unknown-program line). The refusal's words, or null. F1.
+function rootUnread(sorted, command) {
+  if (!sorted?.unreadable || rootOnePlain(command)) return null;
+  return `Nothing was asked or run: as root, a command is run only when Spark Console can read all of it, and part of this one it can’t (${String(sorted.unreadable).replace(/\.$/, '').slice(0, 200)}). Give each step as its own command.`;
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -87,12 +102,17 @@ async function rootChange(input, viewer, ctx = {}) {
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (part of it the sorter couldn't read at all, its unreadable: what that part does is on no field, so as root it isn't
+  // run, unless the whole command is one plain program, asked with its unknown-program line. F1)
+  const unread = rootUnread(sorted, command);
+  if (unread) throw new HttpError(403, unread);
   // (a command the reader can't read whole: as root it isn't run)
   const doubt = rootUnreadable(command);
   if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
-  // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
+  // (a mount or swap made inside root's own unit never reaches the Spark: said, and what works instead: by hand, as a
+  // unit or drop-in is, since writing one as root is refused too, rootUnseen's later)
   const mounts = rootMounts(command);
-  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);
+  if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Make it by hand on ${at}, over SSH, in your own terminal.`);
   const seconds = rootSeconds(lockout);
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });

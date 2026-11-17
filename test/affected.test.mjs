@@ -282,8 +282,8 @@ test('each part the always lists name is in service/src/; one that isn’t is sa
     for (const p of new Set([...ALWAYS_PARTS, ...LANDING_ALWAYS_PARTS])) if (p !== gone && p !== landingGone) writeFileSync(join(root, 'service', 'src', p), '\n');
     writeFileSync(join(root, 'service', 'src', '14-turns.mjs'), '\n');
     assert.deepEqual(checkAffected(root).map(p => [p.check, p.file, p.message.split(':')[0]]), [
-      ['affected', 'tools/affected.mjs', `names ${gone} (ALWAYS_PARTS), which service/src/ doesn’t have`],
-      ['affected', 'tools/affected.mjs', `names ${landingGone} (ALWAYS_PARTS, LANDING_ALWAYS_PARTS), which service/src/ doesn’t have`]]);
+      ['affected', 'tools/parts.mjs', `names ${gone} (ALWAYS_PARTS), which service/src/ doesn’t have`],
+      ['affected', 'tools/parts.mjs', `names ${landingGone} (ALWAYS_PARTS, LANDING_ALWAYS_PARTS), which service/src/ doesn’t have`]]);
     assert.deepEqual(checkAffected(), [], 'this tree');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

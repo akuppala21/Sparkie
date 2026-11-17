@@ -1784,7 +1784,13 @@ async function capi(path, method = 'GET', body) {
     const missing = !data || res.status === 502;
     throw Object.assign(new Error(missing ? 'Spark Console’s service didn’t answer. It restarts for a moment after an update; try again shortly.' : data.error || `Spark Console’s service returned an error (${res.status}). Try again; if it keeps happening, look at Spark Console’s log on ${nodeName(portalHostId())} › Logs.`), { status: res.status, missing });
   }
+  removalNote(data);
   return data;
+}
+// A removal whose note outside the state couldn't be written says so in its answer (noted: false, R23): shown as it is,
+// until it is closed.
+function removalNote(data) {
+  if (data?.noted === false && typeof data.note === 'string' && data.note) toast(data.note, { kind: 'info', timeout: 0 });
 }
 
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
@@ -1897,14 +1903,20 @@ async function loadSessions() {
   runLive();
 }
 async function signOutDevice(s) {
-  await capi(`auth/sessions/${s.id}`, 'DELETE');
-  if (s.current) { location.reload(); return; }
+  const r = await capi(`auth/sessions/${s.id}`, 'DELETE');
+  if (s.current) { await signedOutNote(r); location.reload(); return; }
   toast(`${s.name} is signed out`);
   await loadSessions();
 }
 async function signOutHere() {
-  try { await capi('auth/signout', 'POST', {}); } catch (e) { toast(e.message, { kind: 'bad' }); return; }
+  let r;
+  try { r = await capi('auth/signout', 'POST', {}); } catch (e) { toast(e.message, { kind: 'bad' }); return; }
+  await signedOutNote(r);
   location.reload();
+}
+// (a sign-out that reloads the page says its waiting note first, or it would be gone with the page)
+async function signedOutNote(r) {
+  if (r?.noted === false && r.note) await dialog({ title: 'Signed out', description: r.note, cancel: null });
 }
 // Your devices → the ones signed in without Tailscale.
 function sessionsSection() {

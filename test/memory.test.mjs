@@ -20,7 +20,8 @@
 // (SPARK_CONSOLE_MEMORY_OFF names) sends what was sent before; a pick at 40,000 lines takes under 5 ms (p95). Wishes
 // only past the block (G2c): the system prompt then holds the owner's wishes, oldest first, and one fixed line (no fact,
 // and a new fact leaves it as it is); with the wishes over the block the newest stay, the line counts the rest, a wish
-// left out is still picked with its source, and the needs-you line stands until they fit again.
+// left out is still picked with its source, and the needs-you line stands until they fit again. A word is rare among the
+// owner's own lines: an agent's lines don't count (F2 C9).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
@@ -640,6 +641,21 @@ test('G2c: past the block the system prompt holds the owner\'s wishes, oldest fi
     assert.equal(wishes.length, 10);
     assert.equal(memBlockOf(sent[0].system), [HEAD, ...wishes.map(oldLine), TAIL].join('\n'));
     assert.deepEqual((await needsNow()).filter(l => WISHES_LEFT.test(l)), []);
+  } finally { script([]); fresh(); }
+});
+
+// Round two's final read (F2 C9): an agent's lines don't count in which words are rare, so a dozen of its lines holding
+// one word can't keep the owner's line with that word out of view.
+test('the picks count only the owner’s lines: an agent’s twelve lines holding a word leave it rare among the owner’s, and the owner’s line with it and one more rare word is picked', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  const facts = Array.from({ length: 60 }, (_, i) => seededLine(i, `Fact ${i}: report ${i} was filed with the long summary attached for the office`));
+  const mine = seededLine(60, 'The kestrelwing gantry fan on the hall rack rattles when it is cold');
+  const theirs = Array.from({ length: 12 }, (_, i) => seededLine(61 + i, `Kestrelwing note ${i} from the nightly sweep`, 'fact', 'night-agent'));
+  seed([...facts, mine, ...theirs]);
+  try {
+    const { sent } = await turnOn('is the kestrelwing gantry still rattling?');
+    assert.deepEqual(picksOf(sent[0]), [pickOf(mine)], String(sent[0].lastUser).slice(0, 2000));
+    assert.ok(!JSON.stringify(sent).includes('Kestrelwing note'), 'an agent’s line was sent');
   } finally { script([]); fresh(); }
 });
 
