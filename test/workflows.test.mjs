@@ -240,8 +240,9 @@ describe('done means it answers, and known problems are fixed', () => {
       id = r.json.id;
       const w = await finished(r.json.id);
       assert.equal(w.status, 'failed', JSON.stringify(w));
-      assert.match(w.error, /^It didn’t start: it ran out of memory while loading \(3 attempts\)\. Even a short context didn’t fit \(16,384 tokens, the shortest it is cut to without asking\)/, w.error);
-      assert.ok(w.recentLog.some(l => /Starting it with a shorter context \(32,768 tokens, then 16,384; never shorter without asking\)\. \(attempt 3 of 3\)/.test(l)), w.recentLog.join('\n'));
+      // (W-14: no "without asking" where no ask follows, and the one way on that runs it shorter, a setup that sets it)
+      assert.match(w.error, /^It didn’t start: it ran out of memory while loading \(3 attempts\)\. Even a short context didn’t fit \(16,384 tokens, the shortest Spark Console cuts it to by itself\): it needs a Spark with more free memory, or a smaller version of the model\. To run it with a shorter context, start it with a setup that sets one itself \(a recipe setup, or its own spark\.json\): a setup’s own context is never made longer\.$/m, w.error);
+      assert.ok(w.recentLog.some(l => /Starting it with a shorter context \(32,768 tokens, then 16,384, the shortest Spark Console cuts it to by itself\)\. \(attempt 3 of 3\)/.test(l)), w.recentLog.join('\n'));
       const args = readFileSync(mock('spark4', 'last-run-args'), 'utf8').split('\n');
       assert.equal(args[args.findLastIndex(a => a === '--context-length' || a === '--max-model-len') + 1], '16384', args.join(' '));
       assert.notEqual(stateOf('spark4', `sc-${NEMO}`), 'running', 'nothing of it runs');
