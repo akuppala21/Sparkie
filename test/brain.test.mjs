@@ -11,7 +11,9 @@
 // tools; a Library model's spark.json `ask` block is kept with its setup, checked, and its brain is asked that way.
 // At the brain's own 45-minute limit (pure: startMain and switchMain from their part, with a clock that runs on): a
 // start leaves the container loading and says it may still be loading; a switch with a setup to go back to removes it
-// and says so, as does the setup gone back to when it too stays silent; a first switch with none leaves it loading.
+// and says so, as does the setup gone back to when it too stays silent, but only once a look says it is gone: Docker
+// answering nothing, refusing, or only stopping it, the words say what was asked and that it couldn't be confirmed; a
+// first switch with none leaves it loading.
 //
 // Sparkie's own model (the brain) when a change of Spark Console's goes wrong. Switching it: a setup that can't start is
 // refused before anything stops; a failed switch says whether the old model came back, and leaves no half-started
@@ -312,24 +314,28 @@ describe('another brain\'s habits, said by its setup', { concurrency: 1 }, () =>
 describe('the brain’s 45-minute limit: the words say what happened to the container', () => {
   const src = readFileSync(join(REPO, 'service', 'src', '13-main-model.mjs'), 'utf8');
   const lift = head => { const at = src.indexOf(head); assert.ok(at >= 0, head); return src.slice(at, src.indexOf('\n}\n', at) + 2); };
-  const slow = /^const MAIN_SLOW = .*$/m.exec(src)?.[0] || '';
+  const slow = /^const MAIN_SLOW = .*$/m.exec(src)?.[0] || '', words = /^const unconfirmedWords = .*$/m.exec(src)?.[0] || '';
   // A stand-in Spark 2: each setup either answers once started or stays silent ("loading") for good; every command is
-  // kept, in order. The clock moves a minute each time it is read.
-  function brainWith(silent, main) {
+  // kept, in order. The clock moves a minute each time it is read. Its Docker (`rm`): 'ok' removes the container,
+  // 'refused' leaves it running, 'exited' leaves it there stopped, 'no answer' answers nothing (a look then can't tell).
+  function brainWith(silent, main, { rm = 'ok' } = {}) {
     const cmds = [], notes = [];
-    let current = null, clock = 0;
+    let current = null, clock = 0, there = null;
     const run = async (node, script) => {
       cmds.push(script);
-      if (script.startsWith('START ')) { current = script.slice(6); return { code: 0, out: '', err: '' }; }
+      if (script.startsWith('START ')) { current = script.slice(6); there = 'running'; return { code: 0, out: '', err: '' }; }
       if (script.includes('curl -sf')) return { code: 0, out: silent.includes(current) ? 'running\nLoading safetensors' : 'up\n', err: '' };
+      if (rm === 'no answer' && /^docker (rm|inspect)\b/.test(script)) return { code: 255, out: '', err: 'ssh: connect to host spark2: Connection timed out' };
+      if (script.startsWith('docker rm -f')) { there = rm === 'ok' ? null : rm === 'exited' ? 'exited' : there; return { code: 0, out: '', err: '' }; }
+      if (script.startsWith("docker inspect -f '{{.State.Status}}'")) return { code: 0, out: `${there || 'missing'}\n`, err: '' };
       return { code: 0, out: '', err: '' };
     };
     const names = ['run', 'note', 'step', 'mainPlan', 'mainNode', 'nodeById', 'stopContainer', 'copyModel', 'markBrainLeftDown', 'mainRunCommand',
-      'sleep', 'Date', 'repoOf', 'recordVerified', 'q', 'stopMain', 'ASSISTANT_NAME', 'saveMainChoice', 'ROUTES', 'saveRoutes', 'checkBrainSoon', 'initial'];
-    const make = new Function(...names, `let MAIN = initial;\n${slow}\n${lift('async function startMain(')}\n${lift('async function switchMain(')}\nreturn { startMain, switchMain };`);
+      'sleep', 'Date', 'repoOf', 'recordVerified', 'q', 'stopMain', 'ASSISTANT_NAME', 'saveMainChoice', 'ROUTES', 'saveRoutes', 'checkBrainSoon', 'STOPPED_STATES', 'initial'];
+    const make = new Function(...names, `let MAIN = initial;\n${slow}\n${words}\n${lift('async function startMain(')}\n${src.includes('async function mainLook(') ? lift('async function mainLook(') : ''}\n${lift('async function switchMain(')}\nreturn { startMain, switchMain };`);
     const fns = make(run, (job, t) => notes.push(t), (job, t) => notes.push(`step: ${t}`), async m => ({ title: m.title, steps: [] }), () => ({ id: 'spark2' }), () => ({ id: 'spark2' }),
       async () => {}, async () => {}, () => {}, m => `START ${m.title}`, async () => {}, { now: () => (clock += 60000) }, x => x, async () => {}, x => `'${x}'`,
-      async (job, m) => { cmds.push(`STOP ${m.title}`); }, 'Sparkie', () => {}, {}, () => {}, () => false, main);
+      async (job, m) => { cmds.push(`STOP ${m.title}`); }, 'Sparkie', () => {}, {}, () => {}, () => false, ['exited', 'dead', 'created', 'missing'], main);
     return { ...fns, cmds, notes, job: {} };
   }
   const OLD = { title: 'Old', container: 'sparkie-main', node: 'spark2', port: 30100 }, NEW = { title: 'New', container: 'sparkie-main', node: 'spark2', port: 30100 };
@@ -354,7 +360,8 @@ describe('the brain’s 45-minute limit: the words say what happened to the cont
     let err;
     await b.switchMain(b.job, NEW, []).catch(e => { err = e; });
     assert.equal(err?.message, 'New didn’t start, and Old didn’t come back either, so Sparkie is down. To start it again, type /restart sparkie in Spark Console’s chat. It didn’t answer within 45 minutes, so it was removed to start Old again.');
-    assert.match(since(b.cmds, 'START Old').at(-1), /^docker rm -f 'sparkie-main'/, 'the one gone back to is removed too');
+    assert.deepEqual(since(b.cmds, 'START Old').slice(-2).map(c => c.split(' ').slice(0, 3).join(' ')), ['docker rm -f', 'docker inspect -f'],
+      'the one gone back to is removed too, and a look says it is gone');
     assert.ok(b.notes.includes('Old didn’t come back either: It didn’t answer within 45 minutes; it is removed too.'), b.notes.join('\n'));
     assert.doesNotMatch([...b.notes, err.message].join('\n'), /may still be loading/);
   });
@@ -365,4 +372,16 @@ describe('the brain’s 45-minute limit: the words say what happened to the cont
     assert.equal(err?.message, 'New didn’t start. It didn’t answer within 45 minutes. It may still be loading; check its logs.');
     assert.deepEqual(since(b.cmds, 'START New'), [], 'nothing stops or removes it after its start');
   });
+  // (the final read, W-13: where the one gone back to didn't come back, "removed" only from a look that says it is gone)
+  for (const [rm, still] of [['no answer', 'it may still be loading'], ['refused', 'it may still be loading'], ['exited', 'it isn’t running, but it is still there']]) {
+    test(`a switch whose setup gone back to stays silent, and Docker ${rm === 'no answer' ? 'answers nothing to' : rm === 'refused' ? 'refuses' : 'only stops it at'} the removal: the words don’t say removed`, async () => {
+      const b = brainWith(['New', 'Old'], OLD, { rm });
+      let err;
+      await b.switchMain(b.job, NEW, []).catch(e => { err = e; });
+      assert.equal(err?.message, `New didn’t start, and Old didn’t come back either, so Sparkie is down. To start it again, type /restart sparkie in Spark Console’s chat. It didn’t answer within 45 minutes. Spark Console asked Docker to remove it to start Old again, but couldn’t confirm it is gone: ${still}.`);
+      assert.ok(b.notes.includes(`Old didn’t come back either: It didn’t answer within 45 minutes. Spark Console asked Docker to remove it, but couldn’t confirm it is gone: ${still}.`), b.notes.join('\n'));
+      assert.doesNotMatch([...b.notes, err.message].join('\n'), /\b(?:was|is) removed\b|removed too/);
+      assert.match(b.cmds.at(-1), /^docker inspect -f '\{\{\.State\.Status\}\}' 'sparkie-main'/, 'the words come from a look after the removal');
+    });
+  }
 });
