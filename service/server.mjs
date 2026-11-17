@@ -21190,15 +21190,12 @@ function workKeyCode(sorted) {
   const said = list.slice(0, 3).map(u => u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 120)).join('; ');
   throw new HttpError(409, `Not run: it runs code the command doesn’t show (${said}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
 }
-// Nor to a command the sorter couldn't read all of (its unreadable, R-3: a loop, a test, a function, a shell it reads
-// another way), nor to one that runs a program it doesn't know (its unknownProgram), whose scripts it can't tell. Until
-// the sorter gives unreadable, its own words for such a doubt stand in for it.
-const WORK_DOUBT = /\bthe sorter (?:does not|doesn’t|doesn't|could not|couldn’t) read|\bthe sorter reads only bash/;
+// Nor to a command the sorter couldn't read all of (its unreadable, R-3: a part its reader cannot read, so what it
+// runs can't be told), nor to one that runs a program it doesn't know (its unknownProgram), whose scripts it can't
+// tell. Said before workKeyCode's words, which such a command also meets: these say why.
 function workKeyDoubt(sorted) {
-  const u = sorted?.unreadable, said = s => String(s).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160);
-  const doubt = Array.isArray(u) ? u.filter(Boolean).map(said).join('; ') : typeof u === 'string' && u ? said(u) : u === true ? 'part of it'
-    : u === undefined && sorted?.class === 'risky' && WORK_DOUBT.test(String(sorted?.why || '')) ? said(sorted.why) : '';
-  if (doubt) throw new HttpError(409, `Not run: the sorter couldn’t read all of this command (${doubt}), so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+  const said = s => String(s).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160);
+  if (typeof sorted?.unreadable === 'string' && sorted.unreadable) throw new HttpError(409, `Not run: the sorter couldn’t read all of this command (${said(sorted.unreadable)}), so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
   if (typeof sorted?.unknownProgram === 'string' && sorted.unknownProgram) throw new HttpError(409, `Not run: it runs “${said(sorted.unknownProgram)}”, a program the sorter doesn’t know, so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Run a script by its name with the key (bash x.sh, python3 x.py), and ask again. Nothing ran.`);
 }
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
@@ -21238,7 +21235,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
   if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
   // (then code it runs unseen, workKeyCode: after the walls' own refusal, whose words come first)
-  if (keys.length) { workKeyCode(sorted); workKeyDoubt(sorted); }
+  if (keys.length) { workKeyDoubt(sorted); workKeyCode(sorted); }
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
   // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
