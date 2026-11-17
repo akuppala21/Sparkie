@@ -83,7 +83,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoval`, `putBackSeed`, `putBackRoute` | yes | no |
-| `auth-unnoted.json` | `22-putback` | `putBackUnnotedSave`; `putBackUnnotedSave` is called by `putBackRemoval`, `putBackRetry` | yes | no |
+| `auth-unnoted.json` | `22-putback` | `putBackUnnotedSave`; `putBackUnnotedSave` is called by `putBackKeep` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |

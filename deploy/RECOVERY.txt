@@ -24,6 +24,9 @@ SSH, Tailscale, the firewall, users or any model.
      bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand
    If it says the build from before couldn't be put back whole (a full disk), nothing of it was lost: its copy is kept
    and the way back stays armed. Make room (df -h ~ shows how much is free), then run the same line again.
+   While it stays armed every install waits. If it can never go back (a file of the copy that can't be read), give
+   the way back up and keep the build that runs now (the build from before is then only in a snapshot, step 1):
+     bash ~/.local/share/spark-console/update-guard/update-guard.sh disarm
 
 If the page loads but Sparkie doesn't answer, type one of these alone in your own chat on the page.
 Code answers them, not Sparkie's model:

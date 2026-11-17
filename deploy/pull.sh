@@ -56,14 +56,18 @@ usage() {
   exit 2
 }
 # The result of this install, for the record (and, later, for the console to tell): written whole, owner-only.
+# wayBackArmed: an update's way back is still armed as it is written (its copy kept, this update's or an earlier one's):
+# the console reads that, not the wording.
 result() {  # result <kept|not kept|refused> <why> [build]
+  local armed=no
+  [ ! -s "$SHARE/update-guard/guard" ] || armed=yes
   ( umask 077; mkdir -p "$STATE" ) && python3 -I -c 'import datetime, json, os, sys, tempfile
-path, tree, res, why, build = sys.argv[1:6]
-d = {"tree": tree, "build": build or None, "result": res, "why": why[:600],
+path, tree, res, why, build, armed = sys.argv[1:7]
+d = {"tree": tree, "build": build or None, "result": res, "why": why[:600], "wayBackArmed": armed == "yes",
      "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".update-result.", suffix=".tmp")
 with os.fdopen(fd, "w") as f: json.dump(d, f)
-os.replace(tmp, path)' "$RESULT" "$WANT" "$1" "$2" "${3:-}" || echo "  NOTE: couldn't write $RESULT." >&2
+os.replace(tmp, path)' "$RESULT" "$WANT" "$1" "$2" "${3:-}" "$armed" || echo "  NOTE: couldn't write $RESULT." >&2
 }
 refuse() { echo "  STOP: $1 Nothing was changed." >&2; [ -z "$WANT" ] || result refused "$1"; exit 1; }
 # A question for the person at this terminal: no terminal, no yes (a test may answer from a file, only with ALL_LOCAL).
@@ -95,7 +99,7 @@ stopped() {
 # another run of it holds its lock), that is said first, with how to try again; nothing otherwise.
 still_armed() {
   [ -s "$SHARE/update-guard/guard" ] || return 0
-  echo "the build from before couldn't be put back whole, and its copy is kept (make room if the disk is full, then run bash $SHARE/update-guard/update-guard.sh put-back hand); "
+  echo "the build from before couldn't be put back whole, and its copy is kept (make room if the disk is full, then run bash $SHARE/update-guard/update-guard.sh put-back hand); if it can never go back, bash $SHARE/update-guard/update-guard.sh disarm keeps the build that runs now (the build from before can then be had only from an install snapshot); "
 }
 # Cut off (Ctrl-C, the terminal closed) once the way back is armed: it puts back what differs, and the result says what
 # answers then. (A cut at the very end, while the confirmed build's copy is being removed, leaves that build running.)
@@ -642,8 +646,16 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
     # (ARMING: this process group, as the guard file names it, while the way back is being armed)
     ARMING=$(ps -o pgid= -p $$ | tr -d ' ')
-    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$ARMING" 9>&- \
-      || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
+    # (its words are shown here, and its last line, the reason, goes in the result: the chat that asked never sees this
+    # terminal)
+    local armed_says='' armed_ok=0
+    armed_says=$(bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$ARMING" 9>&- 2>&1) || armed_ok=$?
+    [ -z "$armed_says" ] || printf '%s\n' "$armed_says"
+    if [ "$armed_ok" != 0 ]; then
+      result refused "The way back couldn't be armed: $(printf '%s\n' "$armed_says" | sed -n '/[^[:space:]]/p' | tail -n 1 | sed 's/^ *//'), so the new build wasn't installed."
+      echo "  STOP: The way back couldn't be armed (see above), so the new build wasn't installed. Nothing was changed." >&2
+      exit 1
+    fi
     ARMED=yes
     trap interrupted INT TERM HUP
   else
