@@ -157,7 +157,11 @@ Object.assign(SORT_HANDLERS, {
       // (a local source is only read, unless it is moved away)
       // (a local target is written over: what was there goes, unless it is copied first; a local source is what it sends)
       if (!m && !lastOne) ctx.srcs.push(w.text);
-      if (m && lastOne) ctx.farDests.push(sortNorm(/^[~/]/.test(m[2]) ? m[2] : `~/${m[2]}`, null, ctx.home));
+      // (into a folder there, surely one, each local source by the name it lands under: a key to a key's place, K3)
+      if (m && lastOne) {
+        const to = sortNorm(/^[~/]/.test(m[2]) ? m[2] : `~/${m[2]}`, null, ctx.home), locals = plain.slice(0, -1).filter(v => !/^(?:[^@/:]*@)?[^/:]+:/.test(v.text)).map(v => v.text.replace(/\/+$/, '').split('/').pop());
+        ctx.farDests.push(...(/(?:^|\/)\.?$/.test(m[2]) && locals.length && locals.every(Boolean) ? locals.map(b => `${to.replace(/\/+$/, '')}/${b}`) : [to]));
+      }
       if (!m) { if (lastOne || a.some(v => /^--remove-source/.test(v.text))) r.deletes = true; return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text))); }
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);

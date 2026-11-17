@@ -397,7 +397,9 @@ function sortKeyLeaves(cmd, ctx, c, onward, mark) {
   if (!keys.length) return null;
   const wrote = [...ctx.wrote].filter(p => !mark.wrote.has(p) && !srcs.includes(p) && !/^\/dev\/(?:null|stdout|stderr)$/.test(p));
   const dest = wrote.find(p => !keyWord(p) && !keys.includes(p) && !ctx.intoDirs.includes(p));
-  const far = ctx.farDests.slice(mark.far), sent = ctx.reach.size > mark.reach && !(far.length && far.every(p => keyWord(p)));
+  // (sent to another machine, unless each key lands under a key's name there: the one name given, or its own in a folder)
+  const far = ctx.farDests.slice(mark.far), landed = k => (far.length === 1 ? far[0] : far.find(p => p.endsWith(`/${k.replace(/\/+$/, '').split('/').pop()}`)));
+  const sent = ctx.reach.size > mark.reach && !(far.length && keys.every(k => { const p = landed(k); return p != null && keyWord(p); }));
   const where = c.class === 'look' ? 'what it shows' : onward ? 'the next program, or the words of another' : ctx.outs.slice(mark.outs)[0] ?? dest ?? (sortPartOut(cmd) ? 'a file' : null)
     ?? (sent ? 'another machine' : null) ?? (c.unshown ? 'code the sorter does not read' : null);
   return where ? { key: keys[0], where } : null;

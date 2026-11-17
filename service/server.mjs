@@ -14044,7 +14044,11 @@ Object.assign(SORT_HANDLERS, {
       // (a local source is only read, unless it is moved away)
       // (a local target is written over: what was there goes, unless it is copied first; a local source is what it sends)
       if (!m && !lastOne) ctx.srcs.push(w.text);
-      if (m && lastOne) ctx.farDests.push(sortNorm(/^[~/]/.test(m[2]) ? m[2] : `~/${m[2]}`, null, ctx.home));
+      // (into a folder there, surely one, each local source by the name it lands under: a key to a key's place, K3)
+      if (m && lastOne) {
+        const to = sortNorm(/^[~/]/.test(m[2]) ? m[2] : `~/${m[2]}`, null, ctx.home), locals = plain.slice(0, -1).filter(v => !/^(?:[^@/:]*@)?[^/:]+:/.test(v.text)).map(v => v.text.replace(/\/+$/, '').split('/').pop());
+        ctx.farDests.push(...(/(?:^|\/)\.?$/.test(m[2]) && locals.length && locals.every(Boolean) ? locals.map(b => `${to.replace(/\/+$/, '')}/${b}`) : [to]));
+      }
       if (!m) { if (lastOne || a.some(v => /^--remove-source/.test(v.text))) r.deletes = true; return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text))); }
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);
@@ -14740,7 +14744,9 @@ function sortKeyLeaves(cmd, ctx, c, onward, mark) {
   if (!keys.length) return null;
   const wrote = [...ctx.wrote].filter(p => !mark.wrote.has(p) && !srcs.includes(p) && !/^\/dev\/(?:null|stdout|stderr)$/.test(p));
   const dest = wrote.find(p => !keyWord(p) && !keys.includes(p) && !ctx.intoDirs.includes(p));
-  const far = ctx.farDests.slice(mark.far), sent = ctx.reach.size > mark.reach && !(far.length && far.every(p => keyWord(p)));
+  // (sent to another machine, unless each key lands under a key's name there: the one name given, or its own in a folder)
+  const far = ctx.farDests.slice(mark.far), landed = k => (far.length === 1 ? far[0] : far.find(p => p.endsWith(`/${k.replace(/\/+$/, '').split('/').pop()}`)));
+  const sent = ctx.reach.size > mark.reach && !(far.length && keys.every(k => { const p = landed(k); return p != null && keyWord(p); }));
   const where = c.class === 'look' ? 'what it shows' : onward ? 'the next program, or the words of another' : ctx.outs.slice(mark.outs)[0] ?? dest ?? (sortPartOut(cmd) ? 'a file' : null)
     ?? (sent ? 'another machine' : null) ?? (c.unshown ? 'code the sorter does not read' : null);
   return where ? { key: keys[0], where } : null;
