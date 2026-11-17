@@ -13024,17 +13024,33 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '~/.config/environment.d', '/etc/netplan', '/etc/NetworkManager', '/etc/network', '/etc/hosts', '/etc/hostname', '/etc/resolv.conf',
   '/etc/systemd/network', '/etc/systemd/resolved.conf', '/etc/systemd/resolved.conf.d', '/etc/hosts.allow', '/etc/hosts.deny', '/etc/iproute2',
   '/etc/wpa_supplicant', '/etc/ufw', '/etc/default/ufw', '/etc/iptables', '/etc/nftables.conf', '/etc/firewalld', '/var/lib/tailscale',
-  '/etc/default/tailscaled', '/etc/default/ssh', '/var/lib/systemd/linger', '/etc/nologin', '/run/nologin', '~/.config/spark-console',
+  '/etc/default/tailscaled', '/etc/default/ssh', '/var/lib/systemd/linger', '/proc/sys/net', '/sys/class/net', '/etc/nologin', '/run/nologin', '~/.config/spark-console',
   '/etc/systemd/system/multi-user.target.wants/ssh.service', '/etc/systemd/system/multi-user.target.wants/tailscaled.service',
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
 LOCK_PATHS.push(...LOCK_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
-// The ways in's own programs, by each place the system keeps them (merged /usr or not): moved, removed, rewritten or made
-// not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next start (A-16's "beside").
-LOCK_PATHS.push(...['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
+// The ways in's own programs and what they load, by each place the system keeps them (merged /usr or not): changed,
+// moved, removed or made not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next
+// start (A-16's "beside"). Counted only when the command writes, moves or removes one, or a folder above one (sortTouch):
+// naming one (docker exec … /bin/bash) is no change to it (E1).
+const WAY_FILES = ['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
   'sbin/wpa_supplicant', 'sbin/tailscaled', 'sbin/netplan', 'sbin/sudo', 'bin/sudo', 'bin/su', 'bin/login', 'bin/passwd', 'bin/tailscale', 'bin/nmcli', 'bin/netplan', 'bin/bash', 'bin/sh',
   'bin/dash', 'bin/zsh', 'lib/openssh', 'lib/systemd/systemd', 'lib/systemd/systemd-logind', 'lib/systemd/systemd-networkd', 'lib/systemd/systemd-resolved',
-  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security'].flatMap(p => [`/${p}`, `/usr/${p}`]));
+  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security', 'bin/systemctl', 'bin/dbus-daemon', 'bin/dbus-broker', 'lib/systemd/libsystemd-shared',
+  'lib/systemd/systemd-journald'].flatMap(p => [`/${p}`, `/usr/${p}`]);
+// (and the libraries every way in loads, by name in the system's library folders: the loader, libc, libpam, libcrypto,
+// libssl, libsystemd, libnss, libcrypt, libz, libselinux, libaudit, libresolv; L3)
+const WAY_LIBS = /^\/(?:usr\/)?lib(?:64|32)?(?:\/(?:aarch64|x86_64)-linux-gnu)?\/(?:ld-linux[^/]*|lib(?:c|pam|pam_misc|crypto|ssl|systemd|nss_[^/.]+|crypt|z|selinux|audit|resolv|dl|pthread|m|gcc_s|cap|tinfo|wrap|keyutils|gssapi_krb5|krb5|k5crypto|com_err|krb5support)\.so[.\d]*)$/;
+// Where a written file is work that starts later by itself (L2): schedules, systemd's units and generators, init
+// scripts, udev rules, logrotate's and apt's hooks, the message of the day, the loader's preload, the start files. Only a
+// file written there with content counts: a removal, a move away, a copy's source or an empty file does not (L1).
+const LATER_DOORS = /^\/etc\/(?:crontab|anacrontab|rc\.local|ld\.so\.preload|profile|bash\.bashrc|environment)$|^\/(?:etc|var\/spool)\/(?:cron\.(?:d|hourly|daily|weekly|monthly)|cron\/crontabs|init\.d|rc\d\.d|profile\.d|update-motd\.d|logrotate\.d|udev\/rules\.d|apt\/apt\.conf\.d|systemd\/(?:system|user)-(?:generators|environment-generators|sleep|shutdown))\/[^/]+$|^\/var\/spool\/(?:cron|at)\/[^/]+(?:\/[^/]+)?$|^\/(?:usr\/)?lib\/(?:udev\/rules\.d|systemd\/(?:system|user)-(?:generators|sleep|shutdown))\/[^/]+$|^\/root\/\.(?:bashrc|profile|bash_profile|bash_login|zshrc|zprofile)$/;
+// (cron and run-parts pass over a name with a dot or a ~: moving a job to job.disabled stops it)
+const sortLaterPlace = (p, ctx) => { const base = p.slice(p.lastIndexOf('/') + 1);
+  if (/^\/etc\/cron\.(?:d|hourly|daily|weekly|monthly)\//.test(p) && /[.~]/.test(base)) return false;
+  // (apt's settings run a program only through a hook: settings shown whole that name none, a proxy, start nothing)
+  if (/^\/etc\/apt\/apt\.conf\.d\//.test(p)) { const shown = ctx?.stdinText ?? (/^(?:echo|printf)$/.test(ctx?.cmd?.find(w => !w.unknown && !/=/.test(w.text))?.text ?? '') ? ctx.cmd.map(w => w.text).join(' ') : null); return shown == null || /invoke|pre-install|script|::exec|\bpost-?/i.test(shown); }
+  return LATER_DOORS.test(p) || (SORT_UNIT_DIRS.test(p) && /\.(?:service|socket|timer|path|mount|automount|target|slice|swap)$|\.(?:service|socket|timer|path|mount|target)\.d\/[^/]+\.conf$|\.(?:wants|requires)\/[^/]+$/.test(p)) || /^~\/\.config\/autostart\/[^/]+$/.test(p); };
 const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
@@ -13087,8 +13103,6 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
-  // (a folder of units, a unit's own file or drop-in, by a pattern too: not systemd's settings, journald.conf)
-  if (touched === true && (RISKY_PATHS[2][0].test(p) || SORT_UNIT_DIRS.test(p) || /^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket|target|mount)(?:\.d(?:\/|$)|$)/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -13117,6 +13131,12 @@ function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
+    // (written, moved or removed, not only read: a way-in program's own file or library, or a folder above one; a file of
+    // work that starts later, when written with content)
+    if (!read && (write || ctx.removing || ctx.noContent)) {
+      if (WAY_FILES.some(sortReach(p, w.glob && /[*?[]/.test(p), wide)) || (!/[*?[]/.test(p) && WAY_LIBS.test(p))) raise(r, 'lockout', `It changes ${sortQ(p)}, a way-in program's own file or one it loads: SSH, Tailscale or the logins may not start again.`);
+      if (!ctx.removing && !ctx.noContent && (sortLaterPlace(p, ctx) || (wide && (p === '/' || SORT_UNIT_DIRS.test(p) || /^\/etc(?:$|\/(?:cron\.|init\.d|rc\d\.d|udev|logrotate\.d|update-motd\.d|profile\.d|apt\/apt\.conf\.d|systemd$))/.test(p))))) sortLaterWords(ctx, r, 'a schedule, a unit or a start-up file written');
+    }
   }
   if (all.doubt) unsure(all.doubt);
   // (a write by another program where git owned the folder: its settings may have come with it)
@@ -13432,7 +13452,8 @@ const SORT_HANDLERS = {
     if (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' '))) return raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.');
     if (!a.some(w => /^-\w*[er]/.test(w.text))) sortUnshown(r, 'the jobs the crontab file or its input holds');
     raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.');
-    sortLaterWords(ctx, r, 'crontab', x);
+    // (crontab -r takes every job away: nothing starts later, L1)
+    if (!a.some(w => /^-\w*r$/.test(w.text))) sortLaterWords(ctx, r, 'crontab', x);
   },
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
@@ -13536,7 +13557,10 @@ const SORT_HANDLERS = {
       for (let k = 0; k < t.length; k++) { if (takes.test(t[k])) k++; else if (!t[k].startsWith('-')) pats.push(t[k]); }
       const full = n === 'pkill' && t.some(s => /^-\w*f|^--full$/.test(s)), exact = t.some(s => (n === 'pkill' ? /^-\w*x|^--exact$/ : /^-\w*e|^--exact$/).test(s)) || (n === 'killall' && !t.some(s => /^-\w*r|^--regexp$/.test(s)));
       const ci = t.some(s => /^-\w*[iI]|^--ignore-case$/.test(s)), user = t.some(s => /^-(?:u|U|-uid|-euid|-user)$/.test(s));
-      for (const p of pats.length ? pats : user ? ['.'] : []) {
+      // (as root a name can be any process's; one chosen by user, group, session, terminal or a pid file can't be told; L3)
+      if (ctx.root) lock('as root may kill any process, a way in among them');
+      else if (!pats.length && t.some(s => /^-[uUgGPstF]|^--(?:uid|euid|user|group|pgroup|parent|session|terminal|pidfile|ns)/.test(s))) lock('kills by user, group, session or a pid file, which may be a way in');
+      else for (const p of pats.length ? pats : user ? ['.'] : []) {
         // (only a short pattern of plain signs, with at most three * or +, is read: it can't make the sorter slow)
         const safe = p.length <= 200 && /^[\w .:/@=,^$[\]-]*$/.test(p.replace(/\.[*+]/g, '')) && (p.match(/[*+]/g) || []).length <= 3 && !/\[[^\]]*$/.test(p);
         let re = null;
@@ -13547,9 +13571,16 @@ const SORT_HANDLERS = {
     }
     sortOpen(ctx, r, `${sortQ(n)} needs the processes the run wall hides.`);
   }])),
+  // (a network driver taken out of the kernel cuts the network, a way in: L3)
+  ...Object.fromEntries(['modprobe', 'rmmod'].map(n => [n, (a, ctx, r) => {
+    const out = n === 'rmmod' || a.some(w => /^-\w*r$|^--remove$/.test(w.text)), mods = a.filter(w => !w.text.startsWith('-'));
+    if (out && (!mods.length || mods.some(w => w.unknown || /^(?:r8169|r8152|e1000e?|igb|igc|ixgbe|i40e|ice|mlx[45]_\w+|bnxt\w*|tg3|atlantic|virtio_net|tun|tap|bridge|bonding|8021q|veth|macvlan|vxlan|wireguard|ipv6|nf_\w+|x_tables|ip_tables|ip6_tables|iptable_\w+|ip6table_\w+|nft_\w+|nf_tables|br_netfilter|cdc_\w+|ath\w*|iwlwifi|iwlmvm|brcmfmac|mt7\w+|rtw\w+|qmi_wwan|usbnet)$/.test(w.text)))) return raise(r, 'lockout', `${sortQ(n)} takes a network driver out of the kernel (or one it can't name): the network, a way in, stops.`);
+    raise(r, 'risky', `${sortQ(n)}: the kernel, a driver, firmware or a release upgrade.`);
+  }])),
   // (init scripts and their tools are systemctl by another name; telinit and init change the run level)
   'invoke-rc.d': (a, ctx, r, x) => SORT_HANDLERS.service(a.filter(w => !w.text.startsWith('-')), ctx, r, x),
-  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-')); return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
+  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-'));
+    if (!/^(?:disable|remove)$/.test(p[1]?.text ?? '')) r.later ??= `update-rc.d ${p[0]?.text ?? ''} starts an init script at every boot, outside this command and the net`; return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
   ...Object.fromEntries(['telinit', 'init'].map(n => [n, (a, ctx, r) => {
     const v = a.find(w => !w.text.startsWith('-'));
     if (!v || v.unknown || /^(?:[1sS]|single|rescue|emergency)$/.test(v.text)) return (r.lasting ??= `${n} to one user stops the net’s own timer with everything else, so only a restart puts it back.`), raise(r, 'lockout', `${sortQ(n)} ${sortQ(v?.text ?? '')} takes the Spark to one user, or a level the sorter can't read: SSH and the network stop.`);
@@ -14368,7 +14399,10 @@ function sortCmd(cmd, ctx, r, inPipe, onward = false) {
       later.push(d.w);
     }
     for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0, a.unknown ? null : a.text.replace(/^[^=]*=/, ''));
-    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
+    // (the text a program is handed on its input, here-text: what a file written from it holds, sortLaterPlace)
+    const wasText = ctx.stdinText;
+    ctx.stdinText = typeof stdin === 'string' ? stdin : null;
+    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); ctx.stdinText = wasText; }
     // (after what it does, so the more dangerous answer stands)
     if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
   } finally {
@@ -15679,8 +15713,14 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'set-default' && plain.slice(1).some(u => u.unknown || !/^(?:graphical|multi-user)\.target$/.test(u.text))) { raise(r, 'lockout', 'systemctl set-default picks the target the Spark starts in next time, which may have no SSH or network.'); r.lasting ??= 'systemctl set-default takes effect at the next start, after the net has kept or put it back: the net can’t put that back.'; }
     if (/^(?:status|show|cat|list-\S+|is-\S+|get-default|show-environment|help)$/.test(v)) return at ? raise(r, 'change', `systemctl ${sortQ(v)} needs systemd’s bus, which a look’s wall hides.`) : sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`);
     if (!SYSTEMCTL_CHANGE.test(v)) unsure(`The sorter doesn’t know systemctl ${sortQ(v)}.`);
+    // (systemd's environment for every service from now on, L2)
+    if (/^(?:set|import)-environment$/.test(v)) r.later ??= `systemctl ${v} sets what every service started later runs with, outside this command and the net`;
     for (const u of plain.slice(1)) {
       if (u.unknown) unsure('systemctl names a unit through a $ or a command.');
+      // (a unit by its path: a file the sorter doesn't read, started from now on and at every boot; S3)
+      if (u.text.includes('/') && /^(?:enable|link|start|restart|reenable|preset)$/.test(v)) { sortUnshown(r, `the unit file ${u.text}, which the sorter does not read`); r.later ??= `systemctl ${v} ${u.text} starts a unit from a file, later and at every boot, outside this command and the net`; }
+      // (a slice or a core target stopped, killed or frozen: every service, SSH and Tailscale among them, L3)
+      if (/^(?:stop|kill|freeze|isolate|restart|mask|disable)$/.test(v) && /^(?:-|system|user|machine|init)\.slice$|^(?:multi-user|basic|sysinit|network|network-online|sockets|getty|default|graphical)\.target$/.test(u.text)) raise(r, 'lockout', `systemctl ${sortQ(v)} ${sortQ(u.text)} stops every service under it, SSH and Tailscale among them.`);
       // (systemctl matches a pattern itself, quoted or not; an instance, name@x, is its template's unit)
       const pat = u.glob || /[*?[]/.test(u.text), base = u.text.replace(/@.*$/, '').replace(/\.(?:service|socket)$/, '');
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);

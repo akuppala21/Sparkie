@@ -161,7 +161,10 @@ function sortCmd(cmd, ctx, r, inPipe, onward = false) {
       later.push(d.w);
     }
     for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0, a.unknown ? null : a.text.replace(/^[^=]*=/, ''));
-    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
+    // (the text a program is handed on its input, here-text: what a file written from it holds, sortLaterPlace)
+    const wasText = ctx.stdinText;
+    ctx.stdinText = typeof stdin === 'string' ? stdin : null;
+    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); ctx.stdinText = wasText; }
     // (after what it does, so the more dangerous answer stands)
     if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
   } finally {

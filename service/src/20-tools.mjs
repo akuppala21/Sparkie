@@ -341,8 +341,14 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'set-default' && plain.slice(1).some(u => u.unknown || !/^(?:graphical|multi-user)\.target$/.test(u.text))) { raise(r, 'lockout', 'systemctl set-default picks the target the Spark starts in next time, which may have no SSH or network.'); r.lasting ??= 'systemctl set-default takes effect at the next start, after the net has kept or put it back: the net can’t put that back.'; }
     if (/^(?:status|show|cat|list-\S+|is-\S+|get-default|show-environment|help)$/.test(v)) return at ? raise(r, 'change', `systemctl ${sortQ(v)} needs systemd’s bus, which a look’s wall hides.`) : sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`);
     if (!SYSTEMCTL_CHANGE.test(v)) unsure(`The sorter doesn’t know systemctl ${sortQ(v)}.`);
+    // (systemd's environment for every service from now on, L2)
+    if (/^(?:set|import)-environment$/.test(v)) r.later ??= `systemctl ${v} sets what every service started later runs with, outside this command and the net`;
     for (const u of plain.slice(1)) {
       if (u.unknown) unsure('systemctl names a unit through a $ or a command.');
+      // (a unit by its path: a file the sorter doesn't read, started from now on and at every boot; S3)
+      if (u.text.includes('/') && /^(?:enable|link|start|restart|reenable|preset)$/.test(v)) { sortUnshown(r, `the unit file ${u.text}, which the sorter does not read`); r.later ??= `systemctl ${v} ${u.text} starts a unit from a file, later and at every boot, outside this command and the net`; }
+      // (a slice or a core target stopped, killed or frozen: every service, SSH and Tailscale among them, L3)
+      if (/^(?:stop|kill|freeze|isolate|restart|mask|disable)$/.test(v) && /^(?:-|system|user|machine|init)\.slice$|^(?:multi-user|basic|sysinit|network|network-online|sockets|getty|default|graphical)\.target$/.test(u.text)) raise(r, 'lockout', `systemctl ${sortQ(v)} ${sortQ(u.text)} stops every service under it, SSH and Tailscale among them.`);
       // (systemctl matches a pattern itself, quoted or not; an instance, name@x, is its template's unit)
       const pat = u.glob || /[*?[]/.test(u.text), base = u.text.replace(/@.*$/, '').replace(/\.(?:service|socket)$/, '');
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);

@@ -251,7 +251,8 @@ const SORT_HANDLERS = {
     if (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' '))) return raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.');
     if (!a.some(w => /^-\w*[er]/.test(w.text))) sortUnshown(r, 'the jobs the crontab file or its input holds');
     raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.');
-    sortLaterWords(ctx, r, 'crontab', x);
+    // (crontab -r takes every job away: nothing starts later, L1)
+    if (!a.some(w => /^-\w*r$/.test(w.text))) sortLaterWords(ctx, r, 'crontab', x);
   },
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
@@ -355,7 +356,10 @@ const SORT_HANDLERS = {
       for (let k = 0; k < t.length; k++) { if (takes.test(t[k])) k++; else if (!t[k].startsWith('-')) pats.push(t[k]); }
       const full = n === 'pkill' && t.some(s => /^-\w*f|^--full$/.test(s)), exact = t.some(s => (n === 'pkill' ? /^-\w*x|^--exact$/ : /^-\w*e|^--exact$/).test(s)) || (n === 'killall' && !t.some(s => /^-\w*r|^--regexp$/.test(s)));
       const ci = t.some(s => /^-\w*[iI]|^--ignore-case$/.test(s)), user = t.some(s => /^-(?:u|U|-uid|-euid|-user)$/.test(s));
-      for (const p of pats.length ? pats : user ? ['.'] : []) {
+      // (as root a name can be any process's; one chosen by user, group, session, terminal or a pid file can't be told; L3)
+      if (ctx.root) lock('as root may kill any process, a way in among them');
+      else if (!pats.length && t.some(s => /^-[uUgGPstF]|^--(?:uid|euid|user|group|pgroup|parent|session|terminal|pidfile|ns)/.test(s))) lock('kills by user, group, session or a pid file, which may be a way in');
+      else for (const p of pats.length ? pats : user ? ['.'] : []) {
         // (only a short pattern of plain signs, with at most three * or +, is read: it can't make the sorter slow)
         const safe = p.length <= 200 && /^[\w .:/@=,^$[\]-]*$/.test(p.replace(/\.[*+]/g, '')) && (p.match(/[*+]/g) || []).length <= 3 && !/\[[^\]]*$/.test(p);
         let re = null;
@@ -366,9 +370,16 @@ const SORT_HANDLERS = {
     }
     sortOpen(ctx, r, `${sortQ(n)} needs the processes the run wall hides.`);
   }])),
+  // (a network driver taken out of the kernel cuts the network, a way in: L3)
+  ...Object.fromEntries(['modprobe', 'rmmod'].map(n => [n, (a, ctx, r) => {
+    const out = n === 'rmmod' || a.some(w => /^-\w*r$|^--remove$/.test(w.text)), mods = a.filter(w => !w.text.startsWith('-'));
+    if (out && (!mods.length || mods.some(w => w.unknown || /^(?:r8169|r8152|e1000e?|igb|igc|ixgbe|i40e|ice|mlx[45]_\w+|bnxt\w*|tg3|atlantic|virtio_net|tun|tap|bridge|bonding|8021q|veth|macvlan|vxlan|wireguard|ipv6|nf_\w+|x_tables|ip_tables|ip6_tables|iptable_\w+|ip6table_\w+|nft_\w+|nf_tables|br_netfilter|cdc_\w+|ath\w*|iwlwifi|iwlmvm|brcmfmac|mt7\w+|rtw\w+|qmi_wwan|usbnet)$/.test(w.text)))) return raise(r, 'lockout', `${sortQ(n)} takes a network driver out of the kernel (or one it can't name): the network, a way in, stops.`);
+    raise(r, 'risky', `${sortQ(n)}: the kernel, a driver, firmware or a release upgrade.`);
+  }])),
   // (init scripts and their tools are systemctl by another name; telinit and init change the run level)
   'invoke-rc.d': (a, ctx, r, x) => SORT_HANDLERS.service(a.filter(w => !w.text.startsWith('-')), ctx, r, x),
-  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-')); return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
+  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-'));
+    if (!/^(?:disable|remove)$/.test(p[1]?.text ?? '')) r.later ??= `update-rc.d ${p[0]?.text ?? ''} starts an init script at every boot, outside this command and the net`; return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
   ...Object.fromEntries(['telinit', 'init'].map(n => [n, (a, ctx, r) => {
     const v = a.find(w => !w.text.startsWith('-'));
     if (!v || v.unknown || /^(?:[1sS]|single|rescue|emergency)$/.test(v.text)) return (r.lasting ??= `${n} to one user stops the net’s own timer with everything else, so only a restart puts it back.`), raise(r, 'lockout', `${sortQ(n)} ${sortQ(v?.text ?? '')} takes the Spark to one user, or a level the sorter can't read: SSH and the network stop.`);
