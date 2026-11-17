@@ -7,7 +7,8 @@
 #   bash spark-console/deploy/plugs.sh pair <n>     pair Spark <n>'s plug (asks for a Matter code from the Tapo app;
 #                                                   installs the controller first if it isn't there yet); the hub's own
 #                                                   plug is paired read-only: its readings, never its switch (below)
-#   bash spark-console/deploy/plugs.sh name <p> <n> plug <p> (its number in status), already paired, is Spark <n>'s;
+#   bash spark-console/deploy/plugs.sh name <from> <to>  reassign an existing Spark's plug by Spark numbers
+#   bash spark-console/deploy/plugs.sh name <n> --label '<name>'  assign an unassigned plug by its unique Tapo name
 #                                                   the hub's is first made read-only and proven, as pair does
 #   bash spark-console/deploy/plugs.sh status       every paired plug: its Spark, on or off, watts
 #   bash spark-console/deploy/plugs.sh check        why a plug can't be found (the hub's network side; changes nothing)
@@ -26,7 +27,7 @@
 # The hub's own plug: nothing on the hub may be able to cut its own power. `pair <the hub's number>` pairs it, then at
 # once lowers the controller's own rights on that plug to View (Matter's access list, kept by the plug itself), then
 # proves it: an "on" command (harmless, the plug is on) must come back refused. If that can't be shown, the plug is
-# unpaired again straight away. `name <p> <the hub's number>` does the same to a plug already paired with full rights (a
+# unpaired again straight away. `name <from Spark> <the hub's number>` does the same to a plug paired with full rights (a
 # Spark that has become the hub). Read-only, the controller can't switch it, change its rights back or open it to anyone
 # else; only the Tapo app (its first admin) can, which is where you restart the hub from your phone if it ever freezes.
 # Its MAC is kept, so that plug can never be paired with full rights as another Spark's. Every action runs only on the
@@ -38,18 +39,25 @@ IMAGE='ghcr.io/matter-js/matterjs-server:1.5.5@sha256:ee149c7c67eff0e90f131e8f0d
 
 # spark_n <word>: the Spark a number (or id) names, when hub.env has it. The hub's is read-only, proven before it's kept.
 spark_n() { case "$1" in [1-9]|[1-9][0-9]|spark[1-9]|spark[1-9][0-9]) [[ " $SPARKS " != *" spark${1#spark} "* ]] || echo "spark${1#spark}" ;; esac; }
-ACTION="${1:-install}" SPARK=''
+ACTION="${1:-install}" SPARK='' SELECTOR=''
 case "$ACTION" in
   install|status|check|remove) ;;
   pair)
     SPARK=$(spark_n "${2:-}")
     [ -n "$SPARK" ] || { echo "Say which Spark the plug is on, by its number: pair <n> (deploy/hub.env: $SPARKS)." >&2; exit 2; } ;;
   name)
-    # An already-paired plug (its number in `status`) and the Spark it's on: name <p> <n>
-    [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "Say the plug's number from status, then its Spark: name <p> <n>" >&2; exit 2; }
-    NODE="$2"
-    SPARK=$(spark_n "${3:-}")
-    [ -n "$SPARK" ] || { echo "Say which Spark it's on: name $NODE <n> (deploy/hub.env: $SPARKS)." >&2; exit 2; } ;;
+    if [ "$#" = 4 ] && [ "$3" = --label ] && [ -n "$4" ]; then
+      SPARK=$(spark_n "${2:-}")
+      SELECTOR="label:$4"
+    elif [ "$#" = 3 ]; then
+      FROM=$(spark_n "${2:-}")
+      [ -n "$FROM" ] || { echo "Say the existing Spark, then the new Spark: name <from> <to>." >&2; exit 2; }
+      SPARK=$(spark_n "${3:-}")
+      SELECTOR="spark:$FROM"
+    else
+      echo "Use Spark numbers: name <from> <to>; for an unassigned plug: name <n> --label '<name from status>'." >&2; exit 2
+    fi
+    [ -n "$SPARK" ] || { echo "Say which Spark it's on (deploy/hub.env: $SPARKS)." >&2; exit 2; } ;;
   *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 
@@ -67,7 +75,7 @@ python3() { command python3 -I "$@"; }
 C=spark-console-plugs
 DATA="$HOME/.config/spark-console/matter"
 MAP="$HOME/.local/state/spark-console/plugs.json"
-ACTION="$1" SPARK="${2:-}" NODE="${3:-}"
+ACTION="$1" SPARK="${2:-}" SELECTOR="${3:-}" NODE=''
 SETUP=2   # bump when the docker run below changes, so `pair` brings an older controller up to date by itself
 
 # Talks to the controller from inside its own container (Node has WebSocket built in): ping; nodes; commission (the
@@ -118,7 +126,10 @@ except Exception:
 spark_of = {v.get('node'): k for k, v in plugs.items() if isinstance(v, dict)}
 if not nodes:
     print('No plugs are paired yet.')
-for n in sorted(nodes, key=lambda n: n.get('node_id') or 0):
+def order(n):
+    spark = spark_of.get(n.get('node_id'), '')
+    return (0, int(spark[5:])) if re.fullmatch(r'spark[1-9][0-9]*', spark) else (1, str((n.get('attributes') or {}).get('0/40/5', '')))
+for n in sorted(nodes, key=order):
     a = n.get('attributes') or {}
     def first(pattern):
         for k, v in a.items():
@@ -128,7 +139,7 @@ for n in sorted(nodes, key=lambda n: n.get('node_id') or 0):
     on, mw = first(r'\d+/6/0'), first(r'\d+/144/8')
     spark = spark_of.get(n.get('node_id'))
     who = (spark.replace('spark', 'Spark ') + (' (read-only)' if plugs[spark].get('readOnly') else
-           f" (the hub's, NOT read-only yet: plugs.sh name {n.get('node_id')} {spark[5:]})" if spark == hub else '')) if spark else 'not matched to a Spark'
+           f" (the hub's, NOT read-only yet: plugs.sh name {spark[5:]} {spark[5:]})" if spark == hub else '')) if spark else 'Unassigned plug'
     state = 'on' if on is True else 'off' if on is False else 'on/off unknown'
     try:
         power = f'{float(mw) / 1000:.0f} W'
@@ -144,7 +155,44 @@ for n in sorted(nodes, key=lambda n: n.get('node_id') or 0):
             mac = ''
         if mac:
             break
-    print(f"plug {n.get('node_id')}: {who}, {state}, {power}{gone}" + (f"  (MAC {mac})" if mac else ''))
+    label = a.get('0/40/5')
+    named = f', name {json.dumps(label, ensure_ascii=False)}' if isinstance(label, str) and label else ', no name (set a unique name in the Tapo app)'
+    print(f"{who}: {state}, {power}{gone}{named}" + (f"  (MAC {mac})" if mac else ''))
+PY
+
+# Resolve the owner's Spark number, or one unique unassigned plug name. Controller ids stay inside this script.
+read -r -d '' SELECT <<'PY' || true
+import json, sys
+path, selector, target = sys.argv[1:]
+nodes = json.load(sys.stdin) or []
+try:
+    plugs = json.load(open(path))
+except FileNotFoundError:
+    plugs = {}
+def stop(words):
+    print(words, file=sys.stderr)
+    sys.exit(2)
+if selector.startswith('spark:'):
+    source = selector[6:]
+    node = (plugs.get(source) or {}).get('node')
+    if node is None:
+        stop(f"{source.replace('spark', 'Spark ')} has no assigned plug. Use status; for an unassigned plug, use name <Spark> --label '<name>'.")
+    found = [n for n in nodes if n.get('node_id') == node]
+else:
+    label = selector[6:]
+    found = [n for n in nodes if (n.get('attributes') or {}).get('0/40/5') == label]
+    if len(found) != 1:
+        stop('That plug name does not match exactly one paired plug. Use status, and give unassigned plugs unique names in the Tapo app.')
+    node = found[0].get('node_id')
+    assigned = next((k for k, v in plugs.items() if isinstance(v, dict) and v.get('node') == node), None)
+    if assigned:
+        stop(f"That plug is already assigned to {assigned.replace('spark', 'Spark ')}. Use name <from Spark> <to Spark>.")
+if len(found) != 1 or not isinstance(node, int) or isinstance(node, bool):
+    stop('That Spark’s assigned plug is not in the controller’s list. Use status; nothing was reassigned.')
+occupied = plugs.get(target)
+if isinstance(occupied, dict) and occupied.get('node') != node:
+    stop(f"{target.replace('spark', 'Spark ')} already has another plug assigned; nothing was reassigned.")
+print(node)
 PY
 
 # One node (get_node) in, one answer out: its MAC (mac), the On/Off endpoint (onoff), or the subjects of this
@@ -314,8 +362,9 @@ try:
     plugs = json.load(open(path))
 except Exception:
     plugs = {}
+old = next((v for v in plugs.values() if isinstance(v, dict) and v.get('node') == node), {})
 plugs = {k: v for k, v in plugs.items() if isinstance(v, dict) and v.get('node') != node and k != spark}
-plugs[spark] = {'node': node, **({'readOnly': True} if read_only else {}), **({'mac': mac} if mac else {})}
+plugs[spark] = {**old, 'node': node, **({'readOnly': True} if read_only else {}), **({'mac': mac} if mac else {})}
 tmp = f'{path}.{os.getpid()}.tmp'
 with open(tmp, 'w') as f:
     json.dump(plugs, f, indent=2)
@@ -334,7 +383,7 @@ undo_pair() {
   if ask remove_node "{\"node_id\": $1}" </dev/null >/dev/null 2>&1; then
     echo "Unpaired it again: the controller has no rights on that plug." >&2
   else
-    echo "Couldn't unpair plug $1 from here. Spark Console never reads or switches a plug it hasn't kept, but to be tidy: in the Tapo app, open that plug's Matter settings and remove the other connection." >&2
+    echo "Couldn't unpair that plug from here. Spark Console never reads or switches a plug it hasn't kept; in the Tapo app, open that plug's Matter settings and remove the other connection." >&2
   fi
 }
 
@@ -375,7 +424,7 @@ case "$ACTION" in
     if ! OUT="$(printf '%s' "$CODE" | ask commission)"; then
       echo "Pairing didn't finish. What $HUB_SAYS sees of the plugs:" >&2
       check_net >&2 || true
-      [ "$SPARK" != "$HUB" ] || [ -z "$(hub_node)" ] || echo "If $HUB_SAYS's plug is already paired here with full rights (status shows it), make it read-only with: bash spark-console/deploy/plugs.sh name <its number> $HUB_N" >&2
+      [ "$SPARK" != "$HUB" ] || [ -z "$(hub_node)" ] || echo "If $HUB_SAYS's plug is already assigned here with full rights (status shows it), make it read-only with: bash spark-console/deploy/plugs.sh name $HUB_N $HUB_N" >&2
       exit 1
     fi
     unset CODE
@@ -399,23 +448,22 @@ case "$ACTION" in
   name)
     [[ $SPARK =~ ^spark[1-9][0-9]*$ ]] || { echo "Say which Spark it's on." >&2; exit 2; }
     need_running
-    ask nodes </dev/null | python3 -c 'import json, sys; sys.exit(0 if any(n.get("node_id") == int(sys.argv[1]) for n in json.load(sys.stdin) or []) else 1)' "$NODE" ||
-      { echo "The controller has no plug $NODE. See the list: bash spark-console/deploy/plugs.sh status" >&2; exit 1; }
+    NODE="$(ask nodes </dev/null | python3 -c "$SELECT" "$MAP" "$SELECTOR" "$SPARK")"
     MAC="$(ask get_node "{\"node_id\": $NODE}" </dev/null 2>/dev/null | python3 -c "$NODEINFO" mac 2>/dev/null || true)"
     if [ "$SPARK" = "$HUB" ]; then
       # The hub's own plug, paired with full rights before its Spark became the hub: lowered to View and proven, as a
       # new pairing of it is; kept as the hub's only then.
       if [ "$NODE" = "$(hub_node)" ] && [ "$(hub_kept_read_only)" = yes ]; then
-        echo "Plug $NODE is $HUB_SAYS's already, and read-only."
+        echo "$HUB_SAYS's plug is assigned already, and read-only."
       else
-        echo "Making plug $NODE read-only for this controller, then checking it refuses its commands …"
-        read_only "$NODE" || { echo "Plug $NODE wasn't kept as $HUB_SAYS's. If it is that plug, remove this controller's connection from it in the Tapo app, then pair it again: bash spark-console/deploy/plugs.sh pair $HUB_N" >&2; exit 1; }
+        echo "Making $HUB_SAYS's plug read-only for this controller, then checking it refuses its commands …"
+        read_only "$NODE" || { echo "That plug wasn't kept as $HUB_SAYS's. If it is that plug, remove this controller's connection from it in the Tapo app, then pair it again: bash spark-console/deploy/plugs.sh pair $HUB_N" >&2; exit 1; }
         map_node "$HUB" "$NODE" read-only "$MAC"
         echo "$HUB_SAYS's plug is read-only here: its readings come through, and the plug refuses any switch from $HUB_SAYS."
       fi
     else
       if [ "$NODE" = "$(hub_node)" ] || { [ -n "$MAC" ] && [ "$MAC" = "$(hub_mac)" ]; }; then
-        echo "Plug $NODE is the hub's ($HUB_SAYS's), which stays read-only." >&2; exit 2
+        echo "That plug is the hub's ($HUB_SAYS's), which stays read-only." >&2; exit 2
       fi
       map_node "$SPARK" "$NODE" '' "$MAC"
     fi
@@ -444,7 +492,7 @@ if [ "$ACTION" = pair ]; then
   printf '%s\n' "$CODE" | "${SSH[@]}" "$HOST" "bash ~/.cache/spark-console/plugs-remote.sh pair $SPARK"
   unset CODE
 elif [ "$ACTION" = name ]; then
-  "${SSH[@]}" "$HOST" "bash ~/.cache/spark-console/plugs-remote.sh name $SPARK $NODE" </dev/null
+  "${SSH[@]}" "$HOST" "bash ~/.cache/spark-console/plugs-remote.sh name $SPARK $(printf %q "$SELECTOR")" </dev/null
 else
   "${SSH[@]}" "$HOST" "bash ~/.cache/spark-console/plugs-remote.sh $ACTION" </dev/null
 fi

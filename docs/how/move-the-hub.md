@@ -1,8 +1,7 @@
 # Move the hub to another Spark
 
-The hub runs Spark Console and Sparkie: `deploy/hub.env` says which Spark it is for the scripts, `service/config.json`
-(its Spark with host "local") for the service. From Spark 2 to Spark 1 (2026-11-16), in this order. Two consoles never
-run at once: the state is copied first, then the install starts the new one. From the Mac, with
+`deploy/hub.env` selects the hub for scripts; `service/config.json` marks it "local". Move Spark 2 to Spark 1 in
+this order, with only one console running. From the Mac:
 `D=spark-console/deploy S1=akuppala@100.119.233.101 S2=akuppala@100.79.155.126`.
 
 ## Touch
@@ -10,22 +9,23 @@ run at once: the state is copied first, then the install starts the new one. Fro
 1. A build whose `hub.env` and `config.json` both name Spark 1, with its whole-suite lock (`node test/lock.mjs`).
 2. Spark 1, by hand there (with the same `S2`): Node.js 22 (the NodeSource line `install.sh` prints);
    `sudo loginctl enable-linger $USER`; `ssh-keygen`, then `ssh-copy-id` to Spark 2, 3 and 4. The brain's model,
-   draft and image (`main.presets` in `config.json`), from Spark 2: `rsync -aL $S2:.cache/huggingface/hub/models--<model>
+   draft and image (`main.presets` in `config.json`), from Spark 2: `rsync -rLt $S2:.cache/huggingface/hub/models--<model>
    :.cache/huggingface/hub/models--<draft> ~/.cache/huggingface/hub/` and `ssh $S2 docker save <image> | docker load`
    (the same image id).
 3. Spark 1's shutdown rule off: `bash $D/power-setup.sh --undo 1`.
 4. Stop Spark 2's console: `ssh $S2 'systemctl --user disable --now spark-console-api spark-console-watchdog.timer;
    docker stop spark-console-plugs'` (its brain stops with `docker stop sparkie-main`).
 5. Copy the hub's files, sign-ins left out: `bash $D/copy-hub-state.sh 2 1`. It refuses while either runs a console.
-   It also moves the copied `main.json` to Spark 1 (a saved setup's Spark, a route to Spark 2's own loopback), each
-   change printed and the file as it came kept beside it. `--start-brain` opts in to startup; a saved Stop stays stopped. Check copied snapshot links resolve.
+   It remaps the copied `main.json` to Spark 1, printing each change and keeping the original. `--start-brain` opts in to startup; a saved Stop stays stopped. Check copied snapshot links resolve.
 6. Install on Spark 1: `NOTE='the hub moves to Spark 1' bash $D/host-on-portal.sh` (its default; it refuses Spark 2).
    It starts the console with the copied state and checks it as the owner. Then `bash $D/cutover.sh`: the `:8443/`
    route (Spark 1 has no portal, so nothing is switched off).
 7. The passkey, on the tailnet: `https://akspark1.<tailnet>.ts.net:8443/`, account menu, Your passkey (the old one is
    for the old address). Devices sign in again.
-8. Plugs: `bash $D/plugs.sh` (the controller on Spark 1, with the copied keys); `bash $D/plugs.sh status` gives Spark
-   1's plug `<p>`; `bash $D/plugs.sh name <p> 1` makes it read-only and proves it. Spark 2's: the Tapo app removes
+8. Plugs: `bash $D/plugs.sh` (the controller on Spark 1, with the copied keys); `bash $D/plugs.sh status` lists
+   plugs by Spark. `bash $D/plugs.sh name 1 1` makes the mapped hub plug read-only and proves it. If unassigned, give
+   it a unique name in Tapo, then `bash $D/plugs.sh name 1 --label 'Spark 1'` (use its exact name from status).
+   Reassignment is `name <from Spark> <to Spark>`; controller numbers stay internal. Spark 2's: the Tapo app removes
    the controller's connection and gives a new Matter code; `bash $D/plugs.sh pair 2`. Then
    `bash $D/power-setup.sh 2`. Until Spark 2's plug is paired again, the console reads it but can't switch it.
 9. `bash $D/open-to-internet.sh`: Spark 1's 8443 to the internet. Its 443 is never touched.

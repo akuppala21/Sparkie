@@ -33,13 +33,31 @@ const savedToken = () => {
   } catch { return null; }
 };
 
+// A new Tailscale address may still be fetching its TLS certificate on the first connection.
+// Only that initial read may retry; an uncertain mutation is never submitted again.
+let consoleAnswered = false;
 async function api(path, body, { quiet = false, method } = {}) {
-  const token = savedToken();
-  const r = await fetch(`${BASE}${path}`, {
-    method: method || (body ? 'POST' : 'GET'), signal: AbortSignal.timeout(30000),
-    headers: { ...(body ? { 'content-type': 'application/json', 'x-spark-console': '1', origin: ORIGIN } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  }).catch(e => { console.error(`Spark Console doesn't answer at ${BASE} (${e.cause?.code || e.message}). Check this machine's internet connection.`); process.exit(1); });
+  const token = savedToken(), verb = method || (body ? 'POST' : 'GET');
+  let r;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      r = await fetch(`${BASE}${path}`, {
+        method: verb, signal: AbortSignal.timeout(30000),
+        headers: { ...(body ? { 'content-type': 'application/json', 'x-spark-console': '1', origin: ORIGIN } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      consoleAnswered = true;
+      break;
+    } catch (e) {
+      if (!consoleAnswered && verb === 'GET' && !body && attempt === 0) {
+        console.error('The first connection did not finish. Checking again in a second…');
+        await sleep(1000);
+        continue;
+      }
+      console.error(`Spark Console doesn't answer at ${BASE} (${e.cause?.code || e.message}). Check this machine's internet connection.`);
+      process.exit(1);
+    }
+  }
   const text = await r.text();
   let json = null;
   try { json = JSON.parse(text); } catch {}

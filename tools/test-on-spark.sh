@@ -25,7 +25,8 @@
 # request the same way.
 # On the Spark each queue folder has its own copy of a work folder, ~/sparkie-tests-<folder>-<queue folder> (2026-11-15:
 # two queues ran the main folder on one Spark at once in ~/sparkie-tests-spark-console; the later copy put newer code
-# under the earlier run, whose fleets started after it found no lock for their build). A queue runs one at a time.
+# under the earlier run, whose fleets started after it found no lock for their build). Each dispatch now adds a UUID;
+# successful runs remove their scratch copy after verified results are retrieved. Failed/uncertain copies stay for diagnosis.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BASE=$(dirname "$HERE")
@@ -67,6 +68,16 @@ fi
 
 HOST=${1:?Say which Spark: tools/test-on-spark.sh akuppala@<address> [--watch]   (or: --ask [test files])}
 MODE=${2:-once}
+# Only configured compute addresses are accepted. Aliases could resolve to the always-on hub.
+python3 -I - "$HERE/service/config.json" "$HOST" <<'PY_HOST' || exit 2
+import json, sys
+c = json.load(open(sys.argv[1]))
+allowed = {n.get("host") for n in c.get("nodes", []) if n.get("host") not in (None, "local")}
+target = sys.argv[2].rsplit("@", 1)[-1]
+if target not in allowed:
+    print("Tests run only on a configured compute address: " + ", ".join(sorted(allowed)) + ". The hub is never a test runner.", file=sys.stderr)
+    sys.exit(2)
+PY_HOST
 
 # git's hash of a folder's files as test/lock.mjs names them (its gitFields: a throwaway index, the lock left out), or
 # nothing without git.
@@ -83,8 +94,7 @@ run_once() {
   local dir=$1 remote=$2 files=$3 slow=$4 conc=$5 name=$6 inner map="" tree="" stamp rc=0
   # A new directory and receipt for every dispatch, including selected tests. A lost SSH connection can never
   # turn an earlier log into this run's success. Never qualify a copy whose source changed during transfer.
-  stamp=$(mktemp -d "$OUT/.dispatch.XXXXXX") || return 1
-  stamp=${stamp##*/}
+  stamp=".dispatch.$(python3 -I -c 'import uuid; print(uuid.uuid4().hex)')" || return 1
   remote="$remote-${stamp#.dispatch.}"
   case "$remote" in *[!A-Za-z0-9._-]*) echo "Not a safe test folder name." >&2; return 1 ;; esac
   rm -f "$OUT/$name.lock.json" "$OUT/$name.affected-map.json" "$OUT/$name.log"
@@ -108,6 +118,8 @@ run_once() {
     if grep -q "^Wrote test/affected-map.json" "$OUT/$name.log"; then scp -q "$HOST:$remote/test/affected-map.json" "$OUT/$name.affected-map.json" || return 1; fi
   fi
   grep -E "$SUMMARY" "$OUT/$name.log"
+  # Only this completed dispatch's scratch files. Failed/unknown dispatches stay for diagnosis.
+  ssh "$HOST" "rm -rf -- ~/$remote ~/$remote-run.log" || echo "Tests passed; scratch files remain at $HOST:$remote for later cleanup." >&2
   echo "$(date +%H:%M:%S) $name: done"
   return 0
 }

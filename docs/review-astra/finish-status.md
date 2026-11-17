@@ -76,10 +76,10 @@ claims and live endpoint state in that handoff were not reverified by this audit
 | Handoff item | Current disposition / next evidence |
 |---|---|
 | A; B1/B2/B6/B8 | Brain startup/image/cache/intent repairs are in the source; actual workflow validation and the qualifying eval remain required above. The old "I've stopped" fragment remains insufficient evidence of a specific false claim. |
-| B3, long Mac ControlPaths | Both `deploy/copy-hub-state.sh` and `deploy/plugs.sh` now use short `/tmp/sc-ssh.XXXXXX` directories. Their long-temp-path regression still needs a passing hosted result. No Mac fleet was run here. |
+| B3, long Mac ControlPaths | Both `deploy/copy-hub-state.sh` and `deploy/plugs.sh` now use short `/tmp/sc-ssh.XXXXXX` directories. Long-temp-path regressions are added for both scripts; hosted results are pending. No Mac fleet was run here. |
 | B4, migration weights | The move card now uses dereferencing copy and mentions link checks. Prove all snapshot links and shards are readable as the runtime user, and reconcile `deploy/REBUILD.txt`; copied link names alone are insufficient. |
 | B5, first validation request | The installer's final `test-changes` request is still one shot in the audited source. Add bounded retry for transient connection/certificate readiness, preserving actual workflow failure. |
-| B7, plug names | The move card still exposes Matter node ids. The Spark-only naming/selection request needs its script/card change and regression; internal controller ids can remain internal. |
+| B7, plug names | The script/card now use Spark numbers for mapped plugs and a unique Tapo label for unassigned setup. Controller ids stay internal; hub-rights and identity regressions await hosted results. |
 | C, T42/T45 | Keep explicit proof pending: owner-specified context is never shortened without asking; losing one Spark during an across start restores the reachable side promptly and preserves recovery for the other. Do not mark covered from a loosely similar test name. |
 | C, `/keep`, budgets | `/keep` is explicitly unbuilt in R71. The handoff's 200 GB download/100 GB hub-floor promises still need a tested implementation or owner-approved disposition. Existing generic disk floors are not proof of those numbers. |
 | C, delivery/update retries | The handoff lists five result lines sent once and update retry only after restart. Reproduce before choosing the smallest retry repair; do not promise durable delivery or automatic retry from an in-memory record. |

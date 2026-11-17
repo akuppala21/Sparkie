@@ -257,7 +257,7 @@ const [cmd, argsJson] = a.slice(6), args = argsJson ? JSON.parse(argsJson) : {};
 fs.appendFileSync(H + '/docker.log', JSON.stringify({ cmd, args }) + '\\n');
 const ctl = JSON.parse(fs.readFileSync(H + '/ctl.json', 'utf8'));
 const mac = id => Buffer.from(ctl.macs[id].split('-').map(x => parseInt(x, 16))).toString('base64');
-const node = id => ({ node_id: id, available: true, attributes: { '0/51/0': [{ 4: mac(id) }], '0/62/5': 1, '0/31/0': [{ 1: 5, 2: 2, 3: [112233], 254: 1 }], '1/6/0': true, '1/144/8': 40000 } });
+const node = id => ({ node_id: id, available: true, attributes: { '0/51/0': [{ 4: mac(id) }], '0/62/5': 1, '0/31/0': [{ 1: 5, 2: 2, 3: [112233], 254: 1 }], '1/6/0': true, '1/144/8': 40000, ...(ctl.labels?.[id] ? { '0/40/5': ctl.labels[id] } : {}) } });
 switch (cmd) {
   case 'commission': fs.readFileSync(0); console.log(JSON.stringify({ node_id: ctl.next })); break;
   case 'get_node': console.log(JSON.stringify(node(args.node_id))); break;
@@ -269,12 +269,12 @@ switch (cmd) {
 }
 `;
   const MAC = { 4: '58-D8-12-C2-00-01', 2: '58-D8-12-C2-00-03', 9: '58-D8-12-C2-00-09' };
-  const home = ({ plugs, installedAs = 'spark1', macs = MAC }) => {
+  const home = ({ plugs, installedAs = 'spark1', macs = MAC, labels = { 4: 'Spark 1', 2: 'Spark 3', 9: 'Spare plug' } }) => {
     const h = tmp('shd-plugs-'), st = join(h, '.local', 'state', 'spark-console');
     mkdirSync(join(h, 'bin')); mkdirSync(st, { recursive: true }); mkdirSync(join(h, 'spark-console-service'));
     sh(join(h, 'bin', 'ssh'), LOCAL_SSH);
     sh(join(h, 'bin', 'docker'), DOCKER);
-    writeFileSync(join(h, 'ctl.json'), JSON.stringify({ macs, next: 9 }));
+    writeFileSync(join(h, 'ctl.json'), JSON.stringify({ macs, next: 9, labels }));
     writeFileSync(join(h, 'spark-console-service', 'config.json'), JSON.stringify({ nodes: [{ id: installedAs, host: 'local' }], user: 'x' }));
     writeFileSync(join(st, 'plugs.json'), JSON.stringify(plugs));
     return h;
@@ -285,15 +285,15 @@ switch (cmd) {
   const sent = h => lines(join(h, 'docker.log')).map(l => JSON.parse(l));
   const aclTo = (h, node) => sent(h).filter(c => c.cmd === 'set_acl_entry' && c.args.node_id === node).map(c => c.args.entry.map(e => e.privilege));
 
-  test('name <p> 1: Spark 1’s plug, paired with full rights before it became the hub, is lowered to View and proven, then kept read-only', () => {
+  test('name 1 1: Spark 1’s plug, paired with full rights before it became the hub, is lowered to View and proven, then kept read-only', () => {
     const h = home({ plugs: { spark1: { node: 4, mac: MAC[4] }, spark3: { node: 2 } } });
-    const r = plugsSh(h, ['name', '4', '1']);
+    const r = plugsSh(h, ['name', '1', '1']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.deepEqual(aclTo(h, 4), [[1]], 'its own rights lowered to View');
     assert.ok(sent(h).some(c => c.cmd === 'device_command' && c.args.node_id === 4 && c.args.command_name === 'on'), 'the proof: an "on" refused');
     assert.deepEqual(plugsJson(h), { spark1: { node: 4, readOnly: true, mac: MAC[4] }, spark3: { node: 2 } });
     assert.match(r.stdout, /Spark 1's plug is read-only here/);
-    assert.match(r.stdout, /plug 4: Spark 1 \(read-only\)/);
+    assert.match(r.stdout, /Spark 1 \(read-only\):/);
     assert.deepEqual(lines(join(h, 'ssh-hosts.log')), [S1, S1], 'it went to the hub');
   });
 
@@ -305,24 +305,95 @@ switch (cmd) {
     assert.deepEqual(plugsJson(h).spark1, { node: 9, readOnly: true, mac: MAC[9] });
     const s = home({ plugs: { spark1: { node: 4, mac: MAC[4] } } }), st = plugsSh(s, ['status']);
     assert.equal(st.status, 0, st.stderr);
-    assert.match(st.stdout, /plug 4: Spark 1 \(the hub's, NOT read-only yet: plugs\.sh name 4 1\)/);
+    assert.match(st.stdout, /Spark 1 \(the hub's, NOT read-only yet: plugs\.sh name 1 1\):/);
   });
 
-  test('the hub’s plug is never kept as another Spark’s: pair 3 with its MAC is unpaired again, name with its node is refused', () => {
+  test('the hub’s plug is never kept as another Spark’s: pair 3 with its MAC is unpaired again, name with its Spark number is refused', () => {
     const h = home({ plugs: { spark1: { node: 4, readOnly: true, mac: MAC[9] } } });
     const r = plugsSh(h, ['pair', '3'], '12345678901\n');
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stderr, /That's the hub's plug \(Spark 1's, MAC 58-D8-12-C2-00-09\)\. It's only ever kept read-only, by: bash spark-console\/deploy\/plugs\.sh pair 1/);
     assert.ok(sent(h).some(c => c.cmd === 'remove_node' && c.args.node_id === 9), 'unpaired again');
     assert.deepEqual(plugsJson(h), { spark1: { node: 4, readOnly: true, mac: MAC[9] } });
-    const n = home({ plugs: { spark1: { node: 4, readOnly: true, mac: MAC[4] } } }), x = plugsSh(n, ['name', '4', '3']);
+    const n = home({ plugs: { spark1: { node: 4, readOnly: true, mac: MAC[4] } } }), x = plugsSh(n, ['name', '1', '3']);
     assert.equal(x.status, 2, x.stdout + x.stderr);
-    assert.match(x.stderr, /Plug 4 is the hub's \(Spark 1's\), which stays read-only\./);
+    assert.match(x.stderr, /That plug is the hub's \(Spark 1's\), which stays read-only\./);
     assert.deepEqual([plugsJson(n), aclTo(n, 4)], [{ spark1: { node: 4, readOnly: true, mac: MAC[4] } }, []]);
   });
 
+  test('status uses stable Spark ordering and keeps controller numbers internal', () => {
+    const h = home({ plugs: { spark4: { node: 20003 }, spark1: { node: 40001, readOnly: true }, spark2: { node: 90009 } },
+      macs: { 20003: MAC[2], 40001: MAC[4], 90009: MAC[9] }, labels: { 20003: 'Spark 4', 40001: 'Spark 1', 90009: 'Spark 2' } });
+    const r = plugsSh(h, ['status']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.stdout.split('\n').filter(l => /^Spark \d/.test(l)).map(l => l.split(':')[0]), ['Spark 1 (read-only)', 'Spark 2', 'Spark 4']);
+    assert.doesNotMatch(r.stdout + r.stderr, /\b(?:20003|40001|90009)\b/);
+  });
+
+  test('name 3 4 moves the mapped plug by Spark number and preserves its stored identity and metadata', () => {
+    const original = { node: 2, mac: MAC[2], readOnly: true, note: 'saved plug identity' };
+    const h = home({ plugs: { spark1: { node: 4, readOnly: true, mac: MAC[4] }, spark3: original } });
+    const r = plugsSh(h, ['name', '3', '4']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(plugsJson(h), { spark1: { node: 4, readOnly: true, mac: MAC[4] }, spark4: original });
+    assert.deepEqual(aclTo(h, 2), [], 'renaming a compute plug never expands its controller rights');
+  });
+
+  test('an unassigned plug can be selected by its unique name without a controller number', () => {
+    const h = home({ plugs: { spark1: { node: 4, readOnly: true, mac: MAC[4] }, spark3: { node: 2 } } });
+    const status = plugsSh(h, ['status']);
+    assert.match(status.stdout, /Unassigned plug:.*name "Spare plug"/);
+    const r = plugsSh(h, ['name', '2', '--label', 'Spare plug']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(plugsJson(h).spark2, { node: 9, mac: MAC[9] });
+    assert.deepEqual(plugsJson(h).spark1, { node: 4, readOnly: true, mac: MAC[4] });
+  });
+
+  test('unassigned labels must be unique; an occupied destination and an old controller number are refused without remapping', () => {
+    for (const [args, labels] of [
+      [['name', '2', '--label', 'Same name'], { 2: 'Same name', 9: 'Same name' }],
+      [['name', '3', '--label', 'Spare plug'], { 9: 'Spare plug' }],
+      [['name', '9', '2'], { 9: 'Spare plug' }],
+    ]) {
+      const original = { spark1: { node: 4, readOnly: true, mac: MAC[4] }, spark3: { node: 2 } };
+      const h = home({ plugs: original, labels }), r = plugsSh(h, args);
+      assert.notEqual(r.status, 0, r.stdout + r.stderr);
+      assert.deepEqual(plugsJson(h), original);
+      assert.ok(sent(h).every(c => c.cmd === 'nodes'), 'no ACL or pairing change');
+    }
+  });
+
+  test('an unassigned plug with the known hub MAC cannot be assigned to compute by label', () => {
+    const original = { spark1: { node: 4, readOnly: true, mac: MAC[4] } };
+    const h = home({ plugs: original, macs: { ...MAC, 9: MAC[4] } });
+    const r = plugsSh(h, ['name', '2', '--label', 'Spare plug']);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /That plug is the hub's/);
+    assert.deepEqual(plugsJson(h), original);
+    assert.deepEqual(aclTo(h, 9), []);
+  });
+
+  test('an unassigned plug name is passed literally to the hub, never run as shell text', () => {
+    const h = home({ plugs: {} });
+    const marker = join(h, 'must-not-run'), label = `Spare $(touch ${marker})`;
+    writeFileSync(join(h, 'ctl.json'), JSON.stringify({ macs: MAC, next: 9, labels: { 9: label } }));
+    const r = plugsSh(h, ['name', '2', '--label', label]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(existsSync(marker), false);
+    assert.deepEqual(plugsJson(h).spark2, { node: 9, mac: MAC[9] });
+  });
+
+  test('assigning an unassigned hub plug by name still lowers rights and proves switch refusal', () => {
+    const h = home({ plugs: { spark3: { node: 2 } } });
+    const r = plugsSh(h, ['name', '1', '--label', 'Spark 1']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(plugsJson(h).spark1, { node: 4, readOnly: true, mac: MAC[4] });
+    assert.deepEqual(aclTo(h, 4), [[1]]);
+    assert.ok(sent(h).some(c => c.cmd === 'device_command' && c.args.node_id === 4), 'access refusal is still proven');
+  });
+
   test('on a Spark whose installed console isn’t the hub’s it stops before the controller is asked anything; a Spark hub.env doesn’t name is refused', () => {
-    for (const [args, input] of [[['status']], [['pair', '1'], '12345678901\n'], [['name', '4', '1']], [['install']]]) {
+    for (const [args, input] of [[['status']], [['pair', '1'], '12345678901\n'], [['name', '1', '1']], [['install']]]) {
       const h = home({ plugs: {}, installedAs: 'spark2' }), r = plugsSh(h, args, input);
       assert.equal(r.status, 2, `${args}: ${r.stdout}${r.stderr}`);
       assert.match(r.stderr, /Stopped: the plug controller runs only on the hub, Spark 1, and Spark Console here runs as Spark 2\. Nothing was changed\./);
@@ -586,3 +657,39 @@ exec bash -c "$*"
     }
   });
 });
+
+for (const [script, args, stopped] of [['plugs.sh', ['status'], 77], ['copy-hub-state.sh', ['2', '1'], 2]]) {
+  test(`${script}: a macOS-style long TMPDIR never lengthens the SSH ControlPath`, () => {
+    const h = tmp('shd-short-socket-'), bin = join(h, 'bin');
+    mkdirSync(bin);
+    const longTmp = join(h, 'very-long-macos-temporary-directory-'.repeat(5));
+    mkdirSync(longTmp);
+    // macOS mktemp can ignore TMPDIR for its default -d form. Emulate that failure mode explicitly.
+    sh(join(bin, 'mktemp'), `#!/bin/bash
+if [ "$#" = 1 ] && [ "$1" = -d ]; then exec /usr/bin/mktemp -d "$TMPDIR/mac-temp.XXXXXX"; fi
+exec /usr/bin/mktemp "$@"
+`);
+    sh(join(bin, 'ssh'), `#!/bin/bash
+for arg in "$@"; do
+  case "$arg" in ControlPath=*) p="\${arg#ControlPath=}"; printf '%s\\n' "$p" >> "$SOCKET_LOG";
+    [ "\${#p}" -lt 100 ] || { echo 'ControlPath too long' >&2; exit 88; } ;; esac
+done
+case " $* " in *' -O '*) exit 0 ;; esac
+echo 'Stopped by the SSH stand-in before any remote command.' >&2
+exit 77
+`);
+    const log = join(h, 'socket-paths');
+    const r = spawnSync('bash', [join(DEPLOY, script), ...args], { encoding: 'utf8', timeout: TIMEOUT,
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: h, TMPDIR: longTmp, SOCKET_LOG: log } });
+    assert.equal(r.status, stopped, r.stdout + r.stderr);
+    const paths = lines(log);
+    assert.ok(paths.length > 0, 'the script reached its SSH boundary');
+    for (const path of paths) {
+      assert.match(path, /^\/tmp\/sc-ssh\.[^/]+\/(?:ssh|%C)$/);
+      assert.ok(Buffer.byteLength(path) < 100, path);
+      assert.ok(!path.includes(longTmp), path);
+    }
+    assert.doesNotMatch(r.stderr, /ControlPath too long/);
+    for (const dir of new Set(paths.map(dirname))) assert.ok(!existsSync(dir), 'control directory was removed');
+  });
+}

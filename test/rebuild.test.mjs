@@ -56,7 +56,7 @@ describe('deploy/REBUILD.txt, the rebuild steps', () => {
   });
 
   test('each command line uses only what a fresh Spark 2 (DGX OS) or the Mac already has', () => {
-    const HAS = new Set(['ls', 'head', 'scp', 'mkdir', 'chmod', 'tar', 'sudo', 'bash', 'for', 'do', 'done', 'grep', 'rm', 'ssh-copy-id']);
+    const HAS = new Set(['ls', 'head', 'scp', 'mkdir', 'chmod', 'tar', 'sudo', 'bash', 'for', 'do', 'done', 'grep', 'rm', 'ssh-copy-id', 'rsync', 'find']);
     const lines = TEXT.split('\n').filter(l => /^ {5}\S/.test(l));
     assert.ok(lines.length >= 6, lines.join('\n'));
     for (const l of lines) {
@@ -65,6 +65,16 @@ describe('deploy/REBUILD.txt, the rebuild steps', () => {
         if (w) assert.ok(HAS.has(w), `“${l.trim()}” needs ${w}`);
       }
     }
+  });
+
+  test('model recovery copies link targets without carrying root ownership, and checks both links and ownership', () => {
+    assert.match(TEXT, /rsync -rLt <spark>:\.cache\/huggingface\/hub\/models--<model>/);
+    assert.match(TEXT, /rsync -rLt <spark>:\.cache\/huggingface\/hub\/models--<draft>/);
+    assert.match(TEXT, /find -L ~\/\.cache\/huggingface\/hub -type l -print/);
+    assert.match(TEXT, /find ~\/\.cache\/huggingface\/hub ! -user "\$USER" -print/);
+    assert.match(TEXT, /Stop on any copy error/);
+    assert.match(TEXT, /Both find checks must print nothing/);
+    assert.doesNotMatch(TEXT, /(?:chmod|chown) -R/);
   });
 
   test('the 7 days and the sign-ins left out are the code’s own; plain words, in a size a phone shows', () => {
