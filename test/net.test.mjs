@@ -583,7 +583,7 @@ test('at once, a put-back in part (the helper’s count): told with both ways on
 
 // The owner's keep by hand, exactly as the words give it (keep --as-left, the helper's own: plain keep after a put-back
 // that did not finish is refused, since the step-f2-helper round), then /putback reads "kept already": kept as it stands.
-test('at once, a put-back in part: the owner’s keep by hand, as the words give it, then /putback, closes it as kept as it stands', { todo: 'waits for step-f2-helper on main (keep --as-left)', timeout: 300000 * SLOW }, async () => {
+test('at once, a put-back in part: the owner’s keep by hand, as the words give it, then /putback, closes it as kept as it stands', { timeout: 300000 * SLOW }, async () => {
   const s = await atOncePart('add my key and another alias on spark 3');
   try {
     const { g } = s;
