@@ -53,7 +53,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // "rounds": [[calls], [calls], …] for a model that looks something up and then acts on what it saw (round 2 comes after
 // round 1's results). A call is made whether or not that tool was offered (Spark Console runs any action it is asked for:
 // R46), so a scripted call no longer shows a tool was offered; "offered": true on a call makes it only when it was
-// (test/tools.test.mjs tests what is offered).
+// (test/tools.test.mjs tests what is offered). A rule's "answer" (words) is what it says once its calls are done (or
+// at once, with none), in place of what each tool said (the eval's cases, test/eval/cases.json).
 const sparkOf = n => (n ? { spark: `spark${n}` } : {});
 const RULES = [
   [/\bwhat(?:'|’)?s running\b|\bwhat is running\b/i, () => [[{ name: 'running_models', arguments: {} }]]],
@@ -201,6 +202,13 @@ async function mainReply(b, port, res, log = true) {
       s.send({ tool_calls: [{ index: i, function: { arguments: args.slice(cut) } }] });
     }
     s.send({}, 'tool_calls');
+    return s.end();
+  }
+  // (a rule's own answer, once its calls are done)
+  const scripted = DIR && ['user', 'tool'].includes(last.role) ? ruleFor(words)?.answer : null;
+  if (typeof scripted === 'string') {
+    await s.words(scripted, 5);
+    s.send({}, 'stop');
     return s.end();
   }
   // Back with the tools' results: say what each one said.
