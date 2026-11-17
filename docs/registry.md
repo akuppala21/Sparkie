@@ -157,7 +157,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 
 | Part | May wake |
 |---|---|
-| `21-power` | a compute Spark it powered off, or one shut down with a switchable plug, never Spark 2: power_on, a start or call that needs it (powerThen), power.wake |
+| `21-power` | a compute Spark it powered off, or one shut down with a switchable plug, never the hub: power_on, a start or call that needs it (powerThen), power.wake |
 
 ## Events and operation types
 

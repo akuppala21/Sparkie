@@ -6,14 +6,14 @@
 // with the stand-in fleet, and removes the fleet's temporary folder; so does closing the terminal or ending whatever
 // started it. Reload the browser after changing a file in public/: nothing is cached and there is no build step.
 //
-// What it plays: on Spark 2, Tailscale serves public/ at / and /console/ and passes /console/api on to the service's
+// What it plays: on the hub, Tailscale serves public/ at / and /console/ and passes /console/api on to the service's
 // socket, adding who the visitor is. Here one stand-in fleet (test/start-mock.mjs, the same one the tests use) runs the
 // real service, and this tool serves public/ and passes /console/api/* to that service's socket, with the headers
 // Tailscale would add for the visitor chosen:
 //   --as owner    (the default) the owner on the tailnet: Tailscale-User-Login: owner@test, so no passkey is asked
 //   --as public   from the internet: Tailscale-Funnel-Request, no identity (the page shows its public face)
 // Headers the browser itself sends under those names are dropped, as Tailscale drops them. The browser's Origin (this
-// address) is replaced by the configured one (config.json's origin), which is what the page sends on Spark 2, so the
+// address) is replaced by the configured one (config.json's origin), which is what the page sends on the hub, so the
 // service's cross-site check passes for the page and still refuses any other site.
 //
 // What the page has to show (seeded through the service's own API and the stand-in fleet's own switches, never by
@@ -45,7 +45,7 @@ const FACES = {
   owner: { 'tailscale-user-login': OWNER, 'tailscale-user-name': 'Test Owner', 'x-forwarded-for': TAILNET_VISITOR },
   public: { 'tailscale-funnel-request': '?1', 'x-forwarded-for': INTERNET_VISITOR },
 };
-// The content types Spark 2's route gives (Go's file server, with Ubuntu's mime.types for the manifest).
+// The content types the hub's route gives (Go's file server, with Ubuntu's mime.types for the manifest).
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
@@ -81,7 +81,7 @@ function options(argv) {
   return { ...o, port: Number(o.port), public: realpathSync(o.public) };
 }
 
-/* ───────── the page's folder, as Spark 2's route serves it ───────── */
+/* ───────── the page's folder, as the hub's route serves it ───────── */
 const say = (res, status, text, headers = {}) => {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(`${text}\n`);

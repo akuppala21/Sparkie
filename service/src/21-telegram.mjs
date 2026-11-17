@@ -4,7 +4,7 @@
 // Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
 //   Sparkie answers, 5 minutes at most)
 // Wakes: none
-// Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long polling): no route, port or Funnel,
+// The hub asks Telegram for new messages over one outbound HTTPS connection (long polling): no route, port or Funnel,
 // so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired
 // with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as
 // the page. Everyone else gets silence. Going back a build, memory and saved workflows wait as an owner-only button in
@@ -55,13 +55,13 @@ function tgSetState(state) {
   if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under your account menu → Agents and Telegram.' });
 }
 const TG_WORDS = {
-  'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
+  'forget-failed': `Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on ${hubName()} by hand before Spark Console restarts.`,
   'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
   'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
   off: 'Not connected.',
   ok: 'Working.',
   pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
-  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  'secrets-unreadable': `The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on ${hubName()}.`,
   'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
   unreachable: 'Can’t reach Telegram. Trying again by itself.',
 };

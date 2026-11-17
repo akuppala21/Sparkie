@@ -37,6 +37,8 @@ writeFileSync(join(pureDir, 'ahead.mjs'), [
   'class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }',
   'const ACTIONS = new Map(), action = a => ACTIONS.set(a.name, a), sparkArg = { type: "string" };',
   'const node = { id: "spark3", host: "100.0.0.3" }, sparkOf = () => node, sparkName = () => "Spark 3", journalId = () => "j_test";',
+  // (the hub, as the stand-in fleet has it: its name and id, 01-setup.mjs's hubName and hubId)
+  'const hubName = () => "Spark 2", hubId = () => "spark2";',
   // (a mask that knows one key's shape, hf_…: enough to see that a command the mask would change never runs ahead)
   String.raw`const journal = () => {}, jErr = () => null, jSub = () => [], noteReach = () => {}, maskSecrets = s => String(s).replace(/\bhf_[A-Za-z0-9]{20,}/g, "[hidden]"), agentKeys = () => [];`,
   'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null, ladder: [], sortOpts: null }, knownOffline = () => hooks.offline;',

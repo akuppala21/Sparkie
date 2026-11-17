@@ -6,8 +6,9 @@ a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md
 
 ## 1. In one paragraph
 
-Spark Console is one Node process with no dependencies, a systemd user unit on Spark 2. It manages every Spark in its
-list by running shell scripts over SSH (local bash on Spark 2), and it calls model servers directly over HTTP. It does
+Spark Console is one Node process with no dependencies, a systemd user unit on the hub (the Spark `config.json`
+marks local: Spark 1 since 2026-11-16; Spark 2 is a compute Spark like 3 and 4). It manages every Spark in its list by
+running shell scripts over SSH (local bash on the hub), and it calls model servers directly over HTTP. It does
 not serve the page: Tailscale serves `public/` as files and hands only `/console/api` to the service's socket. When
 the owner opens it, port 10000 of the same name goes to a second socket, the app door (R40), which shows the owner's
 kept apps and nothing of the console. Its code is in parts in `service/src/`, joined in name order into
@@ -28,7 +29,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address, named keys"]
-  JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off Spark 2, rewritten or deleted"]
+  JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off the hub, rewritten or deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP; every WebSocket upgrade refused"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -36,15 +37,15 @@ flowchart TD
   V1["/v1 gateway (sparkieApi)"]
   APPDOOR["App door (21-door, R40): door.sock behind Tailscale :10000 on the same name, its own handler; the owner only, one kept app per browser"]
   CHAT["Sparkie turn (sparkieTurn, 14-chats, 14-rounds)"]
-  BRAIN["Chat-route model: the brain (sparkie-main on Spark 2) by default"]
+  BRAIN["Chat-route model: the brain (sparkie-main on the hub) by default"]
   RUN["runAction: owner, inputs, (reads return here), may-change, pause, intent gate if via sparkie, workflow state, breaker, run, audit"]
   REG["Action registry: reads and changes"]
   WF["Workflow state: workflows.lock.json and validations.json"]
   JOBS["Jobs and per-Spark claims (07-jobs)"]
-  SSH["spawnOn and run (02-ssh): ssh, or local bash on Spark 2"]
+  SSH["spawnOn and run (02-ssh): ssh, or local bash on the hub"]
   FLEET["Sparks: Docker containers, model servers on port 8000, apps kept running on their own ports, model files, worker.py"]
   SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, plugs 15 s, inventory on demand and from the heal loops"]
-  PLUGS["Plug controller on Spark 2 (deploy/plugs.sh): Tapo plugs over Matter"]
+  PLUGS["Plug controller on the hub (deploy/plugs.sh): Tapo plugs over Matter"]
   POWER["Power (21-power): power_off, power_on, power_settings, the idle loop; power.json"]
   HEAL["Healing: maybeHeal, healPass every 60 s (bringBack, watchBrain, keepBrain)"]
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
@@ -84,7 +85,7 @@ flowchart TD
   PGATE -->|"POST /rollback"| ROLL
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
-  TG -->|"polled from Spark 2: the paired chat's words, a turn with ctx.channel telegram"| CHAT
+  TG -->|"polled from the hub: the paired chat's words, a turn with ctx.channel telegram"| CHAT
   TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
   CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, an ask with its buttons while approvals from there are on, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
@@ -101,8 +102,8 @@ flowchart TD
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
   RUN -->|"run and write_file are lookups to runAction: the ladder makes a change's checks"| WORK
-  WORK -->|"helperCall, one script (ssh, or local bash on Spark 2) with sudo -n: a look, or a change with its copies first (21-runner)"| HELPER
-  WORK -->|"root (21-root; a lock-out change only as root) after the dangerous ask's press, a change on Spark 2 (21-hub) after its button's"| NETG
+  WORK -->|"helperCall, one script (ssh, or local bash on the hub) with sudo -n: a look, or a change with its copies first (21-runner)"| HELPER
+  WORK -->|"root (21-root; a lock-out change only as root) after the dangerous ask's press, a change on the hub (21-hub) after its button's"| NETG
   NETG -->|"armed in the same call; the ways in tried from outside; then keep or putback (21-guard)"| HELPER
   HELPER -->|"a short-lived systemd unit for each command; the put-back from the Spark's own timer"| FLEET
   WORK -->|"on box: docker run and exec over ssh, no helper"| BOX
@@ -133,7 +134,7 @@ flowchart TD
   STATE -->|"pause, validations"| RUN
   STATE -->|"desired list, heal tries, the brain's left-down mark; parked or powered off: never healed"| HEAL
   SENSE -->|"wall power, read only"| PLUGS
-  JOBS -->|"power jobs only: switchPlug, never Spark 2’s plug (R41)"| PLUGS
+  JOBS -->|"power jobs only: switchPlug, never the hub’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
   STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; sent when a Spark comes online, before a power-off and hourly, only if the state changed; backup.json keeps the last try and the last good copy"| BACKUP
@@ -193,7 +194,7 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
 has `sortCommand` (`20-sort.mjs`) sort it. A look runs in the root helper's look wall (a few exact forms, like docker ps, as fixed text outside it). Anything else goes to
 `workChange` (`21-ladder.mjs`): a plain change the owner's own words asked for, with nothing read since, runs at once
 (`runChange` in `21-runner.mjs`: the copies, the journal's start line, the run wall); the rest is a button or the
-dangerous ask (`dangerAsk` in `20-danger.mjs`). A root command (a lock-out change is done only as root) and a change on Spark 2 run only
+dangerous ask (`dangerAsk` in `20-danger.mjs`). A root command (a lock-out change is done only as root) and a change on the hub run only
 after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still answer, else put back.
 
 ## 4. Known traps
@@ -219,7 +220,7 @@ after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the wa
   last only.
 - **Gates differ by door.** The passkey gate covers the owner’s page routes only; the intent gate only via `sparkie`.
   `POST /actions`, `/mcp` and `/v1` rely on `runAction` and each action’s rails.
-- **Trust is a header on a socket.** Anything running as the owner’s user on Spark 2 can open `api.sock`, send the
+- **Trust is a header on a socket.** Anything running as the owner’s user on the hub can open `api.sock`, send the
   owner’s login and be the owner. This matters for self-update and hosting. The installer’s checks use this on purpose
   (R30).
 - **The `via` lists disagree.** `api` is paused like an agent, skipped by the hourly count and the failure count, and

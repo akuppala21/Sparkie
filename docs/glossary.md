@@ -6,7 +6,7 @@ something the next phase builds (`docs/design-2026-11-13/README.md`).
 
 | Word | What it means | Name in code | Don't say |
 |---|---|---|---|
-| hub | The Spark that runs the console and the brain. Spark 2 today | `brainSparks`, `MAIN.node` | portal host; "Spark 2" for the role |
+| hub | The Spark that runs the console and the brain: the one `config.json` marks host "local". Spark 1 since 2026-11-16 (Spark 2 before) | `hubId`, `hubName`, `brainSparks`, `MAIN.node` | portal host; "Spark 1" or "Spark 2" for the role |
 | compute Spark | Every other Spark on the list: models, apps and jobs run there | `NODES`, less the hub | "Spark 3 or 4" for the role |
 | workload | Anything that runs on a Spark: a model, an app, a job. What the `workloads` action lists | `knowledge.workloads`, `workloads` | pipeline |
 | app | A container that isn't a model and is kept running (Open WebUI, Jupyter). A dev box is an editor or a notebook run with no password | `keep_running`, label `spark.app=1`, `devBox` | service |

@@ -68,7 +68,7 @@ function keepNamed(name, value) {
     keys[name] = { value, at: new Date().toISOString() };
     return { ...s, keys };
   });
-  return { kept: true, line: `Kept your key ${name}${had ? ', in place of the one you gave before' : ''}. It stays in the secrets file on Spark 2 and is never shown, not even to Sparkie.` };
+  return { kept: true, line: `Kept your key ${name}${had ? ', in place of the one you gave before' : ''}. It stays in the secrets file on ${hubName()} and is never shown, not even to Sparkie.` };
 }
 // GITHUB: `pull.sh setup` tries it with one fetch and keeps it only if GitHub takes it; the repository stays the one set
 // up. Kept means the secrets file holds it afterwards.
@@ -76,7 +76,7 @@ async function keepGithub(value) {
   const repo = secretsRead()?.github?.repo, home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
   const script = home && `${home}/.local/share/spark-console/pull.sh`;
   if (!script || !existsSync(script) || typeof repo !== 'string' || !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
-    return { kept: false, line: `The GitHub token wasn’t kept: the install from GitHub isn’t set up on Spark 2 yet. Set it up there once, in a terminal: ${PULL_SETUP}` };
+    return { kept: false, line: `The GitHub token wasn’t kept: the install from GitHub isn’t set up on ${hubName()} yet. Set it up there once, in a terminal: ${PULL_SETUP}` };
   }
   if (!GITHUB_TOKEN_RE.test(value)) return { kept: false, line: 'The GitHub token wasn’t kept: that isn’t one (letters, digits and _ only).' };
   // (the token goes in on its input, as `setup` reads it with no terminal; a test's own GitHub only under ALL_LOCAL)
@@ -100,7 +100,7 @@ async function keepBeat(value, via) {
   const url = `https://${value.replace(/^https?:\/\//i, '').toLowerCase()}`;
   if (!BEAT_URL_RE.test(url)) return { kept: false, line: 'The heartbeat’s address wasn’t kept: it is https://hc-ping.com/ and the check’s id, from Healthchecks.io, with nothing after it.' };
   await beatSave(url, via);
-  return { kept: true, line: 'Kept the heartbeat’s address. Spark Console now sends hc-ping.com an empty request every 5 minutes, so Healthchecks.io tells you when Spark 2 goes quiet.' };
+  return { kept: true, line: `Kept the heartbeat’s address. Spark Console now sends hc-ping.com an empty request every 5 minutes, so Healthchecks.io tells you when ${hubName()} goes quiet.` };
 }
 
 // The owner's message that gave a key, in their chat `conv`: kept, then the chat keeps the words with the value replaced

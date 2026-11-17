@@ -37,7 +37,8 @@ import { readFileSync, appendFileSync, existsSync, rmSync, writeFileSync, rename
 
 const MAIN_PORT = Number(process.env.MOCK_MODEL_PORT), BENCH_PORT = Number(process.env.MOCK_BENCH_PORT), SERVE_PORT = Number(process.env.MOCK_SERVE_PORT);
 if (!process.env.MOCK_ROOT || !MAIN_PORT || !BENCH_PORT) process.exit(0);
-const M = `${process.env.MOCK_ROOT}/spark2/.mock`, DIR = process.env.MOCK_DIR;
+// (the hub's folder: spark2's, the stand-in fleet's own, unless the fleet was started with another hub, MOCK_HUB)
+const M = `${process.env.MOCK_ROOT}/${process.env.MOCK_HUB || 'spark2'}/.mock`, DIR = process.env.MOCK_DIR;
 const up = () => {
   try {
     if (!/^sparkie-main\|running\|/m.test(readFileSync(`${M}/containers`, 'utf8'))) return false;

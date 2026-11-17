@@ -3,7 +3,7 @@
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
-// reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup
+// reads back as one. boxFill takes an exact tree id from the console's own bare copy on the hub (the one pull.sh setup
 // makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in
 // fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive
 // of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any
@@ -22,7 +22,7 @@ const FILL_BOUNDS = '5,000 files and folders, 8 MiB a file, 64 MiB in all, 255 b
 // The links the repository itself keeps for the stand-in fleet (its model cache): left out of a fill, so the box never
 // holds them and a read back never says they went. A link anywhere else refuses the fill; a read back takes none.
 const FILL_LINKS_LEFT = 'test/mock/root/';
-// The eval sets a box may hold: those the console's own source as it runs has under test/eval/ (on Spark 2 the installed
+// The eval sets a box may hold: those the console's own source as it runs has under test/eval/ (on the hub the installed
 // copy, ~/spark-console-src, which the installer ships without an eval set that tests a brain, R47; on the stand-in fleet
 // the repository, or for a test the folder SPARK_CONSOLE_SOURCE_DIR names). A fill leaves out of the box any file under
 // test/eval/ that source lacks (git's list and stream alike), a read back never says one went, and a box that holds one
@@ -36,7 +36,7 @@ function fillEvalShipped() {
   return out;
 }
 const fillEvalLeft = (path, shipped) => path.startsWith(FILL_EVAL) && !shipped.has(path);
-// The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
+// The console's own bare copy of the repository on the hub, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
 const boxFills = new Map();   // the caller (boxKey) → { tree, box, cid, spark, at }
@@ -156,10 +156,10 @@ const fillHub = () => { const hub = NODES.find(n => n.host === 'local'); if (!hu
 async function fillTreeList(tree) {
   const r = await fillStream(fillHub(), `[ -d "$HOME/.local/share/spark-console/repo.git" ] || exit 4; [ "$(${FILL_GIT} cat-file -t ${tree} 2>/dev/null)" = tree ] || exit 3; exec ${FILL_GIT} ls-tree -r -t -l -z --full-tree ${tree}`,
     { max: FILL_MAX_ENTRIES * 400 });
-  if (r.code === 4) throw new HttpError(409, 'Spark Console’s copy of the repository isn’t on Spark 2 yet (pull.sh setup makes it), so the box can’t be filled. Nothing was changed.');
+  if (r.code === 4) throw new HttpError(409, `Spark Console’s copy of the repository isn’t on ${hubName()} yet (pull.sh setup makes it), so the box can’t be filled. Nothing was changed.`);
   if (r.code === 3) throw new HttpError(409, `${tree} isn’t a tree in Spark Console’s copy of the repository. Nothing was changed.`);
   if (r.over) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
-  if (r.code !== 0) throw new HttpError(502, `git couldn’t list the tree on Spark 2: ${fillShow(r.err.split('\n')[0] || `exit ${r.code}`)}. Nothing was changed.`);
+  if (r.code !== 0) throw new HttpError(502, `git couldn’t list the tree on ${hubName()}: ${fillShow(r.err.split('\n')[0] || `exit ${r.code}`)}. Nothing was changed.`);
   const blobs = new Map(), trees = new Set(), links = new Set(), left = new Set(), seen = new Map(), shipped = fillEvalShipped();
   let bytes = 0;
   for (const rec of r.out.toString('latin1').split('\0').filter(Boolean)) {
@@ -200,7 +200,7 @@ async function fillGate(viewer, ctx) {
     if (!rail.checked) throw Object.assign(new HttpError(409, `Sparkie’s brain isn’t checked (${rail.why}), so filling or reading back a box waits for the owner’s yes. Nothing was done.`), { rail: true });
   }
 }
-// The box a caller holds, on a compute Spark that is still allowed one (never Spark 2 or the brain's: R1).
+// The box a caller holds, on a compute Spark that is still allowed one (never the hub or the brain's: R1).
 function fillBoxNode(b) {
   const node = nodeById(b.spark);
   if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: b.spark })} holds the brain or is the hub, so its box isn’t used. Nothing was changed.`);
@@ -235,7 +235,7 @@ async function boxFill(viewer, ctx, tree) {
     // 1. git's list, then git's own archive of it, each taken entry by entry, before the box is touched
     const list = await fillTreeList(tree);
     const a = await fillStream(fillHub(), `${FILL_GIT} archive --format=tar --prefix=${FILL_FOLDER}/ ${tree}`, { max: FILL_MAX_BYTES + FILL_MAX_ENTRIES * 1024 + 65536 });
-    if (a.over || a.code !== 0) throw new HttpError(502, `git couldn’t make the tree’s archive on Spark 2${a.over ? ' within the bounds' : `: ${fillShow(a.err.split('\n')[0] || `exit ${a.code}`)}`}. Nothing was changed.`);
+    if (a.over || a.code !== 0) throw new HttpError(502, `git couldn’t make the tree’s archive on ${hubName()}${a.over ? ' within the bounds' : `: ${fillShow(a.err.split('\n')[0] || `exit ${a.code}`)}`}. Nothing was changed.`);
     const got = tarRead(a.out, FILL_FOLDER, new Set([...list.links, ...list.left])), dirs = [...new Set(got.files.flatMap(f => f.path.split('/').slice(0, -1).map((_, i, p) => p.slice(0, i + 1).join('/'))))];
     const same = got.files.length === list.blobs.size && got.files.every(f => { const b = list.blobs.get(f.path); return b && b.mode === f.mode && fillBlobId(f.data) === b.oid; })
       && dirs.every(d => list.trees.has(d));
@@ -301,7 +301,7 @@ async function boxReadBack(viewer, ctx) {
       if (was && was.oid === blob && was.mode === f.mode) continue;
       // (bytes only: hash-object, no filter, no path given; the id it answers must be the console's own)
       const w = await fillStream(fillHub(), `${FILL_GIT} hash-object -w --no-filters -t blob --stdin`, { input: f.data, max: 4096 });
-      if (w.code !== 0 || w.out.toString('latin1').trim() !== blob) throw new HttpError(502, `git couldn’t keep a file read back from the box on Spark 2 (${fillShow(f.path)}). Nothing more was taken.`);
+      if (w.code !== 0 || w.out.toString('latin1').trim() !== blob) throw new HttpError(502, `git couldn’t keep a file read back from the box on ${hubName()} (${fillShow(f.path)}). Nothing more was taken.`);
       changes.push({ path: f.path, blob, mode: f.mode });
     }
     const there = new Set(got.files.map(f => f.path));

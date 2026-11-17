@@ -18,7 +18,7 @@
 // owner's yes 120. A change that runs at once has 10 at most, and one asked for more is asked first (the ladder), so
 // the owner's press gives it the time: the wall's analysis keeps an at-once change's time limit short (it is what bounds
 // what a wrongly sorted change could do with the processors, the disk's traffic and a port), and 10 is the design's own
-// smallest bound for an operation (Spark 2, the lock-out class). Root, Spark 2 and the lock-out class take no minutes:
+// smallest bound for an operation (the hub, the lock-out class). Root, the hub and the lock-out class take no minutes:
 // each is refused (21-root.mjs, 21-work.mjs, 21-net.mjs); root's own limit is the helper's (30 minutes, 10 in the lock-out class).
 const LONG_MOST = { look: 1, atOnce: 10, asked: 120 };
 const LONG_WHY = { look: 'a look runs for one minute at most', atOnce: 'a change that runs without your yes is kept short (asked first, it may have up to 120)', asked: 'a command runs for 120 minutes at most' };

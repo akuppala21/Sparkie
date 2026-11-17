@@ -6,7 +6,7 @@
 // (memory-past.json, marked retired), then the journal, the owner's own words first. Each piece says when (at) and where
 // it is from (source). The answer starts with one line that counts everything that matched (inAll), and next reads on
 // from where the last answer stopped, leaving out what was kept after the first page, so nothing repeats. when is a word
-// that code turns into dates on Spark 2's calendar. A name Spark Console knows in the words finds the live lines about
+// that code turns into dates on the hub's calendar. A name Spark Console knows in the words finds the live lines about
 // it through memory's index (memoryLinesAbout); other words are matched in the lines' text. Who sees what: memory's own
 // rules for lines (R45: the live lines as memory gives them, `about` on the owner's own call only; the retired ones to
 // the owner only, in Spark Console, never to an agent, an agent's chat or Telegram), the journal's for records (R43);
@@ -22,7 +22,7 @@ const recallWords = about => [...tokensOf(about || '')].map(w => {
   const n = /^spark(\d{1,2})$/.exec(w)?.[1], alt = n ? new RegExp(`\\bsparks?[\\s_-]*${n}(?![0-9])`) : null;
   return { w, in: text => text.includes(w) || Boolean(alt?.test(text)) };
 });
-// A when word as [from, to), on Spark 2's calendar; a week starts on Monday.
+// A when word as [from, to), on the hub's calendar; a week starts on Monday.
 function recallSpan(when, now = new Date()) {
   if (!when) return [null, null];
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate(), mon = d - ((now.getDay() + 6) % 7);

@@ -19,7 +19,7 @@ import { homedir, hostname } from 'node:os';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
-const BASE = arg('url', 'https://akspark2.tailab9aa9.ts.net:8443/console/api').replace(/\/$/, '');
+const BASE = arg('url', 'https://akspark1.tailab9aa9.ts.net:8443/console/api').replace(/\/$/, '');
 const ORIGIN = new URL(BASE).origin;
 const [cmd = 'status', ...rest] = process.argv.slice(2).filter(a => a !== '--url' && a !== arg('url'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));

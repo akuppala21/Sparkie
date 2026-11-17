@@ -18,7 +18,7 @@
 // in the look wall, so a wrong "look" still can't write or send; anything else goes to the ladder (21-ladder.mjs): the
 // run wall with the copy first, an ask, or nowhere. The mistake that matters is a
 // "change", run at once, that should have been asked: a change that names a way in anywhere (even to read it) is lockout.
-// at: 'compute' or 'hub' (Spark 2: any change there is risky). root: the typed root (a look stays a look; a script, a
+// at: 'compute' or 'hub' (the hub: any change there is risky). root: the typed root (a look stays a look; a script, a
 // one-liner, more than one program, or a write outside the root folders is risky). dir: where it starts (~). hosts: the
 // fleet's names → 'compute' or the hub. brain: the brain's container and model names (naming one is risky, kind brain).
 // home: the owner's home there. written: what the task's earlier commands wrote (as placed lists it), counted as written here.
@@ -64,7 +64,7 @@ const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_
 function sortAssign(name, ctx, r, prefix, value = null) {
   ctx.sets?.add(name);
   ctx.setTo?.set(name, value);
-  // (where Docker connects: a host there that is Spark 2, or one that can't be told, R64)
+  // (where Docker connects: a host there that is the hub, or one that can't be told, R64)
   if (/^DOCKER_(?:HOST|CONTEXT)$/i.test(name)) { if (value == null || /CONTEXT/i.test(name)) sortToHub('', ctx, r, name, true); else if (!/^(?:unix|fd|npipe):|^$/.test(value)) sortToHub(usesHost(value) ?? value.replace(/:\d+$/, ''), ctx, r, name); }
   if (DANGER_ENV.test(name)) { if (!/^(?:DOCKER_\w+|\w*_PROXY|HF_ENDPOINT|TMPDIR|IFS|CDPATH|GLOBIGNORE|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS|DBUS_\w+|SYSTEMD_\w+|SUDO_\w+)$/i.test(name)) sortUnshown(r, `what ${name} names: a program, a start file or a library loaded by itself`); raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`); }
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
@@ -340,9 +340,9 @@ function sortKeyOut(text, ctx) {
   const sent = [...lookWords(text).words, ...ctx.seen].filter(w => keyWord(w) && !used.has(w));
   return sent.length ? 'another machine' : null;
 }
-// After the parts: on Spark 2 a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
+// After the parts: on the hub a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
 function sortAt(r, ctx) {
-  if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', 'It changes Spark 2, which runs the console and the brain: anything that changes Spark 2 is asked first.');
+  if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', `It changes ${hubName()}, which runs the console and the brain: anything that changes ${hubName()} is asked first.`);
   if (ctx.root && r.class === 'change' && !r.simple) raise(r, 'risky', 'As root, only a plain command (one program, with no chaining, redirection or wrapper) runs at once: this one is asked.');
 }
 function sortCommand(command, opts) {

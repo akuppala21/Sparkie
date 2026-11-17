@@ -283,7 +283,7 @@ async function signinRoute(req, res, path, viewer) {
     limited(recoveryHits, req, 10);
     const b = asObject(await readBody(req, 2000)), want = recoveryNorm(b.code);
     if (want.length !== 20) throw new HttpError(400, 'Type the whole recovery code: four groups of five letters and numbers.');
-    if (secretsRead() === null) throw new HttpError(503, 'Recovery codes can’t be read on Spark 2 right now. Use Tailscale, or your passkey.');
+    if (secretsRead() === null) throw new HttpError(503, `Recovery codes can’t be read on ${hubName()} right now. Use Tailscale, or your passkey.`);
     const left = useRecoveryCode(want, clientAddress(req));
     if (left === null) throw new HttpError(403, 'That recovery code didn’t work. Each one works once.');
     const { token, session } = newSession(owner, 'browser', b.name, clientAddress(req), 'recovery');

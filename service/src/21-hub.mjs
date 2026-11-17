@@ -1,15 +1,15 @@
-/* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
+/* ───────── a change on the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
 // Area: features        Rules: R1, R60, R71, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
+// The hub runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
 // (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's
 // words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the
-// sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (never from here: the
-// owner makes it by hand on Spark 2; the fresh visit, A13c, was put off); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
+// sorter calls not done; root (21-root.mjs: never on the hub) and the root helper's own line; a pause; the lock-out class (never from here: the
+// owner makes it by hand on the hub; the fresh visit, A13c, was put off); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
 // removes or changes the brain's container or its model files; nothing that starts a model, a job or any other workload
 // there; nothing that touches Spark Console's own unit, state, secrets or repository copy (only its installer changes
-// those); nothing about Spark 2's power or its plug. Then it is always asked: one button, one
+// those); nothing about the hub's power or its plug. Then it is always asked: one button, one
 // command a press, built here (a delete it cannot see is the dangerous ask, 20-danger.mjs), never at once. The press
 // sorts it again and runs it through the lock-out net's seam (netGuarded, 21-net.mjs): the call reaches the root helper
 // through the owner's service manager, so the command runs outside the console's own unit (helperScript's and
@@ -22,13 +22,13 @@
 // service manager) and /var/lib/docker are hidden, Docker's group is left out, the model folders are given read-only
 // (--protect) and the console's own are read-only; its button says so. A console restart leaves its unit to the net: at
 // start netRecover finds the guard by its id and puts it back, which stops the unit first, or the Spark's own timer
-// does; it never runs again. (minutes, A6's long command, is not on Spark 2 yet: 21-work.mjs refuses it.)
+// does; it never runs again. (minutes, A6's long command, is not on the hub yet: 21-work.mjs refuses it.)
 
 // The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_HUB=0); nothing else can.
 const HUB_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_HUB === '0');
 // The run wall's cap there (design A 2.7: 2 GB).
 const HUB_MEMORY = 2;
-const HUB_NOT = 'Spark 2 runs only Spark Console and the brain; nothing was asked or run.';
+const HUB_NOT = `${hubName()} runs only Spark Console and the brain; nothing was asked or run.`;
 // Spark Console's own folders, as the sorter places a path (~/…): its state, its share (releases, the way back), its
 // settings and secrets, its caches, its code and source.
 const HUB_OWN_PLACES = /^~\/(?:\.local\/state\/spark-console|\.local\/share\/spark-console|\.config\/spark-console|\.cache\/spark-console|spark-console(?:-src|-service)?)(?:\/|$)/;
@@ -86,13 +86,13 @@ function hubBrainNames() {
   return [...names, ...globs];
 }
 
-// The owner's standing rules for Spark 2 (each said in its own words): why it is never done there, or null.
+// The owner's standing rules for the hub (each said in its own words): why it is never done there, or null.
 function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
   const text = String(command), progs = hubPrograms(text), has = set => progs.find(p => set.has(p.prog));
   const unit = progs.find(p => ['systemctl', 'service'].includes(p.prog) && p.args.some(a => HUB_UNIT_VERBS.test(a)));
   // Its plug, and its power (its words anywhere, as the plug's: awk 'BEGIN{system("reboot")}', x=reboot; $x)
   if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b|\b(?:reboot|poweroff|shutdown|halt|kexec)\b/i.test(text) || has(HUB_POWER)
-    || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return 'it touches Spark 2’s power or its plug, which are never changed from here';
+    || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return `it touches ${hubName()}’s power or its plug, which are never changed from here`;
   // Spark Console's own unit, state, secrets and repository copy (the installer's, and only through its own actions)
   const own = [STATE_DIR, SECRETS_FILE, `${homedir()}/spark-console-src`].filter(Boolean).map(hubEsc).join('|');
   const places = [...(sorted?.placed || []), ...(sorted?.wide || [])].filter(x => typeof x === 'string');
@@ -109,18 +109,18 @@ function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
   return null;
 }
 
-// A change on Spark 2 (workChange, with HUB_ON): refused, asked, or, from the ask's own press, run inside the net.
+// A change on the hub (workChange, with HUB_ON): refused, asked, or, from the ask's own press, run inside the net.
 async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
   whoMayLook(viewer, ctx);
   // (as on every Spark, whatever the caller says: not done, root, the root helper's line, a pause)
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
-  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'Nothing ran: Spark 2 runs Spark Console and the brain, so nothing runs there as root.');
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, `Nothing ran: ${sparkName(node)} runs Spark Console and the brain, so nothing runs there as root.`);
   if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
   const why = hubRefuses(command, sorted, ctx, dir, widen);
-  if (why) throw new HttpError(403, `Not done on Spark 2: ${why}. ${HUB_NOT}`);
-  if (sorted.class === 'lockout') throw new HttpError(403, `Not done on Spark 2: a change that can lock you out of Spark 2 is never made from Spark Console, which runs there: if it cut you off, nothing here could put it back. Make it by hand on Spark 2, in your own terminal. ${sorted.why} Nothing was asked or run.`);
-  if (widen.fleet === true || (Array.isArray(sorted?.reach) && sorted.reach.includes('fleet'))) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
+  if (why) throw new HttpError(403, `Not done on ${sparkName(node)}: ${why}. ${HUB_NOT}`);
+  if (sorted.class === 'lockout') throw new HttpError(403, `Not done on ${sparkName(node)}: a change that can lock you out of ${sparkName(node)} is never made from Spark Console, which runs there: if it cut you off, nothing here could put it back. Make it by hand on ${sparkName(node)}, in your own terminal. ${sorted.why} Nothing was asked or run.`);
+  if (widen.fleet === true || (Array.isArray(sorted?.reach) && sorted.reach.includes('fleet'))) throw new HttpError(403, `Not done on ${sparkName(node)}: a change there reaches no other Spark. ${HUB_NOT}`);
   const dangerous = (sorted.kinds || []).filter(k => k === 'delete');
   // The owner's yes, pressed (the dangerous ask's press carries its pair): sorted again, its scripts read again.
   if (ctx.button && ctx.ownerConfirmed && (!dangerous.length || ctx.danger)) {
@@ -131,7 +131,7 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     if (!was || was.spark !== node.id || was.command !== command || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     if (!was.unread && Object.keys(was.sums).length) {
       const now = await workScripts(node, sorted.scripts, dir, command, sorted);
-      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on Spark 2 (${now.unread}), so nothing ran.`);
+      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${sparkName(node)} (${now.unread}), so nothing ran.`);
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again('a script it runs changed after you were asked');
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
@@ -140,30 +140,30 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
   // its press then refused)
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `${netOpenWords(open, sparkName(node))} Nothing was asked or run.`);
-  // (no root helper on Spark 2, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
+  // (no root helper on the hub, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
   // nothing is asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   // The owner's own call with no chat to show a button in (the API): nothing is asked there.
-  if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
+  if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, `Not run: every change on ${sparkName(node)} is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.`);
   return hubAsk(node, command, sorted, viewer, ctx, dir);
 }
 
 // The ask, built by code: the exact command, why it is asked, how it runs and what is checked after, what put-back
 // covers, what Sparkie read before proposing it, each script's hash. A delete it cannot see is the dangerous ask.
-// The command on Spark 2's button, framed so none of its own lines can read as the button's (S-4): one line as
+// The command on the hub's button, framed so none of its own lines can read as the button's (S-4): one line as
 // "$ command"; with a line break, how many lines it has, and each after │, so "Asked because …" in a command stays
 // the command's. (The ladder's builder frames its own button; one shared function can take this one's place.)
 function hubCommandLines(command) {
   const parts = String(command).split(/\r\n|[\r\n\u2028\u2029]/);
-  if (parts.length === 1) return ['Run this on Spark 2?', `$ ${command}`];
-  return [`Run this on Spark 2? Its command has ${parts.length} lines, each shown after │:`, ...parts.map(l => `│ ${l}`)];
+  if (parts.length === 1) return [`Run this on ${hubName()}?`, `$ ${command}`];
+  return [`Run this on ${hubName()}? Its command has ${parts.length} lines, each shown after │:`, ...parts.map(l => `│ ${l}`)];
 }
-async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
+async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = `every change on ${sparkName(node)} is asked, one command a press: it runs Spark Console and the brain`) {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command, sorted));
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
-  // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
+  // (where the press runs it, built by code: the brain chooses dir, and on the hub nothing is copied first)
   const starts = `It starts in ${dir}.`;
   const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_CHECKED} ${HUB_WALL}`;
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
@@ -210,9 +210,9 @@ function hubRoute() {
   });
 }
 const hubJson = s => { try { return JSON.parse(s); } catch { return null; } };
-// What those checks are, said on the ask: Spark Console asking itself on Spark 2 (its own socket, the owner's login in a
+// What those checks are, said on the ask: Spark Console asking itself on the hub (its own socket, the owner's login in a
 // header; Tailscale's own list of its route), not a visit through your browser or passkey.
-const HUB_CHECKED = 'These are Spark Console’s own checks, made on Spark 2 itself: they don’t prove your browser or passkey still reach it.';
+const HUB_CHECKED = `These are Spark Console’s own checks, made on ${hubName()} itself: they don’t prove your browser or passkey still reach it.`;
 const HUB_WAYS = {
   // (a put-back puts files back; it doesn't start a container: the brain is started again by the owner's word)
   after: lost => (lost.includes('brain') ? 'The put-back puts back files only; it doesn’t start the brain again: /restart sparkie does.' : ''),

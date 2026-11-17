@@ -61,7 +61,7 @@ function describeChange(method, path, body = {}) {
     return d ? `Let ${d.kind === 'terminal' ? 'a terminal' : 'a browser'} called “${d.name}” sign in as you (code ${d.userCode}, asked from ${d.from || 'an unknown address'})`
       : `Let the device with code ${clean(body.code, 12)} sign in as you`;
   }
-  if (method === 'POST' && path === '/workflows/validate') return 'Validate the changed workflows: run each one’s check with a small model on Spark 3 or 4, then put things back';
+  if (method === 'POST' && path === '/workflows/validate') return `Validate the changed workflows: run each one’s check with a small model on a compute Spark (never ${hubName()}), then put things back`;
   if (method === 'POST' && path === '/rollback') return 'Go back to the build installed before this one (Spark Console restarts)';
   if (method === 'POST' && path === '/auth/recovery') return 'Make 10 new recovery codes (the old ones stop working)';
   if (method === 'PUT' && path === '/telegram') return 'Connect a Telegram bot, so you can talk to Sparkie from Telegram once you pair your chat';

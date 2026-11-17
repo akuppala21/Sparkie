@@ -1,4 +1,4 @@
-/* ───────── the outside heartbeat: an outside service notices when Spark 2 stops ───────── */
+/* ───────── the outside heartbeat: an outside service notices when the hub stops ───────── */
 // Area: safety        Rules: R32, R51        Tests: beat.test.mjs, app-keys.test.mjs
 // Owns: none
 // Timers: beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that,
@@ -7,10 +7,10 @@
 // Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>), pasted in their own chat
 // (20-keys.mjs) or with the passkey (PUT /heartbeat),
 // Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot)
-// when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing
+// when the hub or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing
 // changed. The request carries nothing: no body, no query, no cookie, one fixed User-Agent. The host is fixed; what the
 // owner saves only names the check, and a redirect is never followed. The address is a secret (whoever holds it can beat
-// in Spark 2's place): it is kept only in the secrets file (03-secrets.mjs), given only by the owner, and is in no
+// in the hub's place): it is kept only in the secrets file (03-secrets.mjs), given only by the owner, and is in no
 // answer, log, event or audit line. No address saved: nothing is ever sent. The tick starts in the local port's listen
 // callback (25-backup-and-start.mjs), like Telegram's loop, so a second copy never beats, and its first beat waits a
 // minute: a console that dies a few seconds after each start (systemd starts it again 3 s later) never keeps the check
@@ -67,10 +67,10 @@ function beatStart(wait = 0) {
 const beatLate = () => beat.failingSince !== null && Date.now() - beat.failingSince >= BEAT_LATE_MS;
 const BEAT_WORDS = {
   off: 'No check is saved, so nothing is sent. Make a check at Healthchecks.io (period 5 minutes, grace 10 minutes) and save its ping address here with your passkey.',
-  unreadable: 'The secrets file can’t be read, so no beat is sent. Fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  unreadable: `The secrets file can’t be read, so no beat is sent. Fix or remove ~/.config/spark-console/secrets.json on ${hubName()}.`,
   waiting: 'Saved. The first beat goes out shortly.',
   ok: 'Working: hc-ping.com hears from Spark Console every 5 minutes.',
-  failing: 'hc-ping.com isn’t taking the beats. Check that Spark 2 reaches the internet and that the check still exists at Healthchecks.io.',
+  failing: `hc-ping.com isn’t taking the beats. Check that ${hubName()} reaches the internet and that the check still exists at Healthchecks.io.`,
 };
 // What GET /heartbeat shows: never the address.
 function beatView() {

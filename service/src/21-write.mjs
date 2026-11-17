@@ -190,7 +190,7 @@ async function writeFile(input, viewer, ctx = {}) {
   const key = writeKey(text);
   if (key) throw no(400, `The text holds ${key}, so it isn’t written or shown on a button: give the key by its name.`);
   const place = writePlace(input.path), sortAs = `cat > ${q(place.rel)}`, sorted = sortCommand(sortAs, runnerSortOpts(node, ctx, place.dir));
-  // (Spark 2, a brain Spark, root, a pause, not done, the lock-out class: refused before anything is read, as for run)
+  // (the hub, a brain Spark, root, a pause, not done, the lock-out class: refused before anything is read, as for run)
   runnerNever(node, sorted, ctx);
   // (the lock-out class is never written, nor handed to the lock-out net, which runs a command bare: its press would run
   // the plain write the sorter was handed, with nothing on its input)
@@ -237,7 +237,7 @@ async function writeFile(input, viewer, ctx = {}) {
 
 action({
   name: 'write_file', title: 'Write a file on a Spark', kind: 'read', changes: true, scope: 'fleet:read', who: 'owner', group: 'reading',
-  description: 'Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on Spark 2, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; a key is given by its name, never in the text. With on "box", a file in your box under /work, written from inside it.',
+  description: `Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on ${hubName()}, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; a key is given by its name, never in the text. With on "box", a file in your box under /work, written from inside it.`,
   input: { type: 'object', properties: {
     on: { ...sparkArg, box: true, description: 'Where: a Spark id, like spark3 ("Spark 3" works too), or "box".' },
     path: { type: 'string', maxLength: 1024, pattern: '^[^\\x00-\\x1f]+$', description: 'The file: ~/…, a whole path, or a path from ~/work.' },

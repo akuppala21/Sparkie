@@ -1,8 +1,9 @@
 # Working on Spark Console
 
-Spark Console is one Node service on Spark 2 that runs the owner's NVIDIA DGX Sparks: models, apps and jobs on the
-other Sparks, and Sparkie, the local brain the owner talks to. This page is the front door for whoever changes it
-(Sparkie, an agent or a person): read it, then your task's card, then what that card names.
+Spark Console is one Node service on the hub (the Spark `service/config.json` marks local: Spark 1 since 2026-11-16)
+that runs the owner's NVIDIA DGX Sparks: models, apps and jobs on the other Sparks, and Sparkie, the local brain the
+owner talks to. This page is the front door for whoever changes it (Sparkie, an agent or a person): read it, then
+your task's card, then what that card names.
 
 The contract (`docs/contract.md`) says what must be true; the rules (`docs/rules/`) say how; code that falls short is
 recorded (a "Today" note in its rule), never fixed by quietly editing either.
@@ -11,9 +12,9 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
 - Keep every rule in `docs/rules/` (one line each in `docs/rules.md`); don't add to the gaps a rule's "Today" notes.
-- Nothing but the brain's own start puts a model or workload on Spark 2 (R1), and nothing powers it off (R41).
+- Nothing but the brain's own start puts a model or workload on the hub (R1), and nothing powers it off (R41).
 - SSH, Tailscale, the firewall and users on a compute Spark change only inside the put-back net, after the owner's
-  press (R3, contract 8.3); root only where the owner turned it on, always asked and inside the net; on Spark 2 every
+  press (R3, contract 8.3); root only where the owner turned it on, always asked and inside the net; on the hub every
   change is asked and a lock-out change refused. Add no path around the net, and change none of them yourself here.
 - Don't delete the owner's data. Stopping something isn't deleting.
 - Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
@@ -94,7 +95,7 @@ No card fits? Search `docs/rules.md`.
    kept in memory may be lost at a restart.
 4. Anything new that changes a Spark goes through `runAction`, a claim, a job and `run`; a command or a file write
    goes through `run`'s ladder and the root helper (R61, R42). Don't copy the paths that skip them today (R11).
-5. Nothing starts on Spark 2; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access
+5. Nothing starts on the hub; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access
    but through the put-back net.
 6. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
 7. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect

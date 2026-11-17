@@ -283,7 +283,7 @@ async function clusterPlan(modelName, nodeIds, viewer, known = null, probes = ne
 // A setup may tune NCCL, but never point the parts at a different cable or a different meeting point: these are always
 // Spark Console's. The interfaces found on these Sparks win (a setup written on someone else's machine names their
 // interface names), and the parts always meet at the first Spark's cable address (--dist-init-addr / --master-addr).
-// SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE is the brain's own: on Spark 2 it keeps SGLang's rendezvous in a file
+// SGLANG_DISTRIBUTED_INIT_METHOD_OVERRIDE is the brain's own: on the hub it keeps SGLang's rendezvous in a file
 // (file:///tmp/sglang-rdv). Carried over with the brain's setup to two Sparks, each part met only itself in its own
 // container's file, then waited for the other in Gloo's setup forever (2026-11-10, four real starts).
 const CLUSTER_PINNED_ENV = new Set(['NCCL_SOCKET_IFNAME', 'GLOO_SOCKET_IFNAME', 'UCX_NET_DEVICES', 'TP_SOCKET_IFNAME', 'NCCL_IB_HCA', 'MN_IF_NAME',

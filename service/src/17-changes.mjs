@@ -542,7 +542,7 @@ function alreadyStarting(j, model, viewer, ctx) {
   return { outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
     note: 'It’s already being started; nothing new was done.', next: `wait_operation {"id":"${j.id}"} to follow it.` };
 }
-// Sparkie's Spark (Spark 2) is the brain's: no other workload starts there, named or not (docs/contract.md 8.3).
+// Sparkie's Spark (the hub) is the brain's: no other workload starts there, named or not (docs/contract.md 8.3).
 // The brain's Spark: where Sparkie's model runs, and the one Spark Console itself runs on.
 function brainSparks() { return [...new Set([MAIN?.node, NODES.find(n => n.host === 'local')?.id].filter(Boolean))]; }
 // The compute Sparks: every Spark on the list but the hub (the brain's and the console's own). Placement that names no
@@ -671,7 +671,7 @@ async function startModel(args, viewer, ctx) {
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent.');
     const job = launch(viewer, ctx, m, placed, how);
-    if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
+    if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are the brain’s own)`);
     for (const line of passedOver) note(job, line);
     return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };

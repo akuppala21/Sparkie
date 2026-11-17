@@ -582,7 +582,7 @@ async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 600
 }
 // The small chat models a test run starts, best first: not an embedding model, safe for agents, on disk; under 30 GB
 // first; then one that has worked here as an ordinary start (the brain's own runs don't count: they need its draft model
-// and Spark 2), then one from Recipes (a known setup), then one that hasn't just failed to start; the smallest.
+// and the hub), then one from Recipes (a known setup), then one that hasn't just failed to start; the smallest.
 function testModels(inv) {
   const workedHere = new Set(verifiedList().filter(v => !v.brain && !needsDraftModel(v.args || [])).map(v => v.model));
   const failedHere = new Set([...jobs.values()].filter(j => j.status === 'failed' && j.model).map(j => j.model));
@@ -592,7 +592,7 @@ function testModels(inv) {
       || failedHere.has(a.name) - failedHere.has(b.name) || a.sizeBytes - b.sizeBytes);
 }
 // One tap after an install (docs/contract.md 6.3): each workflow that isn't validated runs its real check with a small
-// model on Spark 3 or 4 (never Spark 2): start, stop, start again (restart), stop. Whatever was running there and had to
+// model on a compute Spark (never the hub): start, stop, start again (restart), stop. Whatever was running there and had to
 // stop is started again at the end. It's the owner's validation run, so every step carries it.
 async function validateChanged(viewer, job) {
   const want = WORKFLOWS.map(w => workflowStatus(w.id)).filter(st => st.state === 'needs-validation').map(st => st.id);
@@ -608,7 +608,7 @@ async function validateChanged(viewer, job) {
     else note(job, '“Find setups for a model” waits for its first run: no model on disk is in Recipes yet.');
   }
   if (!want.some(id => id !== 'find_setups')) return;
-  // Spark 3 or 4 (never Spark 2, and Spark 1 only if nothing else), the one running the least first.
+  // A compute Spark (never the hub; spark1 last, as when it was one), the one running the least first.
   const brain = brainSparks();
   // Not a Spark holding part of a model across two Sparks: the test never stops what the owner runs there (seen
   // 2026-11-11: GLM across Spark 3 and 4, and the test's start was refused). Their first real run validates them.
@@ -710,7 +710,7 @@ async function undoUpdate(via) {
       p.on('error', e => resolve({ code: -1, err: e.message }));
       p.on('close', code => resolve({ code, err }));
     });
-    if (r.code !== 0) throw new HttpError(500, `Couldn’t start going back: ${String(r.err).trim().slice(0, 200) || `systemd-run exited ${r.code}`}. On Spark 2 run: bash ${snap.restore}`);
+    if (r.code !== 0) throw new HttpError(500, `Couldn’t start going back: ${String(r.err).trim().slice(0, 200) || `systemd-run exited ${r.code}`}. On ${hubName()} run: bash ${snap.restore}`);
   }
   audit({ via, actor: via === 'page' ? 'owner' : via, action: 'rollback', args: { to: snap.stamp }, ok: true });
   fleetEvent({ type: 'notice', text: `Going back to how Spark Console was before the update on ${snap.stamp}. It restarts in a moment.` });
@@ -718,7 +718,7 @@ async function undoUpdate(via) {
 }
 action({
   name: 'test_changes', title: 'Test the changes', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'checks',
-  description: 'Use after an update, or when the owner asks to test the changes: gives each changed workflow its test run (a small model on Spark 3 or 4, putting back what it stopped). Not needed for Sparkie’s own starts: the owner’s request is a validation run by itself.',
+  description: `Use after an update, or when the owner asks to test the changes: gives each changed workflow its test run (a small model on a compute Spark, never ${hubName()}, putting back what it stopped). Not needed for Sparkie’s own starts: the owner’s request is a validation run by itself.`,
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => { const job = startTestChanges(viewer, ctx.via || 'agent'); return { outcome: 'started', operation: job.id, next: `wait_operation {"id":"${job.id}"}` }; },
 });

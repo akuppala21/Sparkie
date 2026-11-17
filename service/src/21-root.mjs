@@ -2,7 +2,7 @@
 // Area: features        Rules: R70, R60, R71, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on Spark 2 or a Spark
+// run with root: true (21-work.mjs; design A 2.13, step 12; R70). On a compute Spark only, never on the hub or a Spark
 // holding the brain, never with a key, minutes, fleet or gpu, never while changes are paused. It is never run at once,
 // whatever the owner's words, and never covered by a go-ahead or the standing list: it is always the dangerous ask
 // (20-danger.mjs, R54), "ROOT on Spark 3" (and "CAN LOCK YOU OUT" for the lock-out class), and only that ask's press runs
@@ -125,7 +125,7 @@ async function rootChange(input, viewer, ctx = {}) {
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
   if (first.rootOff) return needsOwner(node, 'root off', `Root is off on ${at}: ${first.rootOff}`);
-  // (as the ladder's and Spark 2's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
+  // (as the ladder's and the hub's asks: the sorter's delete and brain kinds, "DELETES FOR GOOD" with what goes; and the
   // folder it starts in, workStartsIn. rootLine already says the net puts back nothing but the ways in)
   const also = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;

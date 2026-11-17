@@ -87,7 +87,7 @@ nv=; fan=; for d in "$SYS"/class/hwmon/hwmon*; do [ -z "$nv" ] && [ "$(cat "$d/n
 printf 'read\\t%s\\t%s\\t%s\\n' "$z" "$nv" "$fan"`;
 const reading = (v, div, max) => { const n = Number(v) / div; return v !== '' && v != null && Number.isFinite(n) && n >= 0 && n <= max ? Math.round(n * 10) / 10 : null; };
 const FRESH_READING_MS = 3 * 60000;
-// The last readings, if under three minutes old (a console restart or Spark 2 being down leaves none near the time).
+// The last readings, if under three minutes old (a console restart or the hub being down leaves none near the time).
 function lastReading(s) {
   const fresh = x => (x?.at && Date.now() - Date.parse(x.at) < FRESH_READING_MS ? x : null), g = fresh(s?.gpu), r = fresh(s?.readings), w = fresh(s?.wall);
   if (!g && !r) return null;

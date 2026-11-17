@@ -12,12 +12,12 @@
 // change ran is read from its audit line's ranOn, else its result, never the brain's arguments. The eval ends with code
 // 2 when a run made one.
 //
-// It needs Sparkie's model, which runs on Spark 2. From this computer, with a tunnel to it:
-//   ssh -N -L 30100:127.0.0.1:30100 akuppala@100.79.155.126 &
+// It needs Sparkie's model, which runs on the hub. From this computer, with a tunnel to it:
+//   ssh -N -L 30100:127.0.0.1:30100 akuppala@100.119.233.101 &
 //   node test/eval.mjs                 (all cases in test/eval/cases.json, 3 runs each)
 //   node test/eval.mjs --only start-named,ambiguous-qwen --runs 1 --brain-port 30100
 //   node test/eval.mjs --setup aphex-agent     (asked the way the brain's agent setup is: thinking on, its sampling)
-//   node test/eval.mjs --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api   (no tunnel: through the one model address)
+//   node test/eval.mjs --brain-url https://akspark1.tailab9aa9.ts.net:8443/console/api   (no tunnel: through the one model address)
 //   node test/eval.mjs --cap all       every tool every round, as before the tool groups (R46); --cap 24 (the default) is
 //                                      the core and two groups. Run both to measure what the cap costs; each result
 //                                      file names its cap.
@@ -123,7 +123,7 @@ const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); retur
 const BROKEN_KIND = 'spark-console-eval-broken';
 
 // --store <file>: only send a saved record to the console, as the owner (Tailscale says who you are), and say what it said.
-const STORE = arg('store', null), CONSOLE = String(arg('console', 'https://akspark2.tailab9aa9.ts.net:8443/console/api')).replace(/\/$/, '');
+const STORE = arg('store', null), CONSOLE = String(arg('console', 'https://akspark1.tailab9aa9.ts.net:8443/console/api')).replace(/\/$/, '');
 if (STORE) {
   const record = JSON.parse(readFileSync(STORE, 'utf8')), origin = arg('origin', new URL(CONSOLE).origin);
   if (record?.kind === BROKEN_KIND) { console.error(`Not kept: that run isn't a score: ${record.broken?.length || 'some'} of its runs were no result (${(record.broken || []).map(b => `${b.case} run ${b.run}`).join(', ')}). Its results file has them.`); process.exit(1); }
@@ -138,7 +138,7 @@ if (STORE) {
   process.exit(json?.stored === false && !json?.waiting ? 1 : 0);
 }
 
-// --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api: no tunnel needed. The relay below passes the stand-in
+// --brain-url https://akspark1.tailab9aa9.ts.net:8443/console/api: no tunnel needed. The relay below passes the stand-in
 // fleet's calls to Spark Console's one model address (contract 9.9), which passes them to the brain.
 const BRAIN_URL = arg('brain-url', null), STAND_IN = process.argv.includes('--stand-in');
 if (STAND_IN && BRAIN_URL) { console.error('--stand-in uses the stand-in brain; leave out --brain-url.'); process.exit(1); }
@@ -333,7 +333,7 @@ if (!STAND_IN) {
   if (!ok) {
     console.error(`The brain doesn't answer${BRAIN_URL ? ` at ${BRAIN_URL}` : ` on ${BRAIN}`}, so there's nothing to score.`);
     console.error(BRAIN_URL ? 'Is it running? Check Models → Sparkie in Spark Console.'
-      : 'From any machine on the tailnet, no tunnel is needed:\n  node test/eval.mjs --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api');
+      : 'From any machine on the tailnet, no tunnel is needed:\n  node test/eval.mjs --brain-url https://akspark1.tailab9aa9.ts.net:8443/console/api');
     process.exit(1);
   }
 }

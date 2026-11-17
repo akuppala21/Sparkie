@@ -393,11 +393,11 @@ function planOf(wf, st, rawInput, ctx) {
   const who = ctx.via === 'page' ? 'owner' : ctx.via === 'agent' ? 'agent' : ctx.via === 'gateway' ? 'call' : null;
   const inputs = Object.entries(input).filter(([k]) => !PLAN_SKIP.has(k)).map(([k, v]) => ({ name: k, value: Array.isArray(v) ? v.join(' + ') : String(v),
     source: who || (fromWords(Array.isArray(v) ? v.join(' ') : v) ? 'said' : 'live') }));
-  if (wf.id === 'start_model' && !input.spark && !input.sparks) inputs.push({ name: 'spark', value: 'the Spark with room (never Spark 2)', source: 'chosen' });
+  if (wf.id === 'start_model' && !input.spark && !input.sparks) inputs.push({ name: 'spark', value: `the Spark with room (never ${hubName()})`, source: 'chosen' });
   return { workflow: wf.id, title: wf.title, version: st.version, inputs,
     checks: [ctx.via === 'sparkie' ? 'the target is the one your words name' : 'the inputs passed the workflow’s checks',
       st.state === 'active' ? 'this workflow has been tried and works on your Sparks' : 'this is its first run on your Sparks',
-      'it only stops what it’s allowed to, and leaves Spark 2 alone'] };
+      `it only stops what it’s allowed to, and leaves ${hubName()} alone`] };
 }
 // The models a request could mean: every recipe, and every model on disk that isn't one of them, with the words that
 // name each and its exact names (id, title, repo).

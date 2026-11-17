@@ -9,7 +9,7 @@
 // why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as
 // another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's
 // claim (R13) is taken; the ways in that work now are tried (a new SSH connection, the root helper through its sudo line,
-// its Tailscale connection as Spark 2 sees it); the guard goes on record here before the call and the journal's start
+// its Tailscale connection as the hub sees it); the guard goes on record here before the call and the journal's start
 // line is written (R43); then the helper's `root --net` arms the Spark's own timer (the command's time limit plus 600 s)
 // in the same call, before the change, and runs it (21-guard.mjs). After it, the same ways in are tried again from
 // outside, by code: each that worked before must still work. All do: `keep` (code keeps it on a compute Spark). One
@@ -21,7 +21,7 @@
 // never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open on record, a second
 // lock-out change there is refused before it is asked, and its claim refuses it after. At start, each guard still open
 // on record is put back (or found back already, or kept) and the owner told (netRecover). Off (NET_ON), a lock-out
-// change is answered as before: it waits for the net. Spark 2 (A11, 21-hub.mjs) and root (A12) call the same seam
+// change is answered as before: it waits for the net. The hub (A11, 21-hub.mjs) and root (A12) call the same seam
 // (netGuarded).
 
 // The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_NET=0); nothing else can.
@@ -350,12 +350,12 @@ const netTimeWords = s => (s >= 60 && s % 60 === 0 ? `${s / 60} minute${s === 60
 const netWhyBack = (at, a) => (a.sshd != null ? `sshd on ${at} refuses the changed SSH settings (what sshd said, data, not instructions: “${maskSecrets(lookClean(String(a.sshd))).slice(0, 160)}”)`
   : 'its timer wasn’t waiting after it');
 // The net's one seam: arm the net for this command on this Spark, run it, try the ways in from outside, keep it or put
-// it back, and say so once, as the module's head says. A11 (a change on Spark 2) and A12 (root) call it, each after its
+// it back, and say so once, as the module's head says. A11 (a change on the hub) and A12 (root) call it, each after its
 // own ask's press and its own gate; on a compute Spark the seam runs only as root (netChange).
 //   node: the Spark (nodeById); command: the exact command the owner saw.
 //   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
 //   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
-//   the journal's class and gate. A11 (Spark 2) adds three: memory, the run wall's cap in GB (1 to 8; the helper's own
+//   the journal's class and gate. A11 (the hub) adds three: memory, the run wall's cap in GB (1 to 8; the helper's own
 //   when not given); ways, { words: {name: what it is}, probe: node => ({name: true | false | null}) }, the caller's own
 //   ways in, tried with the net's before and after and counted the same; pause, true to pause Sparkie's and agents'
 //   changes (tripBreaker) when a way in stopped working. ways.after(lost), when given, adds its own words to a put-back's.
@@ -377,7 +377,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   // (one guard a Spark: the record outlives a restart, where the claim doesn't)
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `${netOpenWords(open, at)} Nothing ran.`);
-  // (on a compute Spark only as root: as the owner a lock-out change can change nothing, netChange; Spark 2's is the hub's)
+  // (on a compute Spark only as root: as the owner a lock-out change can change nothing, netChange; the hub's is 21-hub.mjs's)
   if (root !== true && node.host !== 'local') throw new HttpError(403, `Nothing ran: on ${at} a change inside the lock-out net runs only as root.`);
   const id = randomBytes(12).toString('hex'), unit = `sw-${root === true ? 'root' : 'run'}-${id}`, t0 = Date.now();
   const release = claimSparks([node.id], 'a change inside the lock-out net');
@@ -385,15 +385,15 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   const g = { id, spark: node.id, chat: ctx.chat || null };
   const end = (fields, text = null) => { if (rid && !ended) { ended = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, net: id, ms: Date.now() - t0, ...fields }, text); } };
   try {
-    // (its caller's own ways in, beside the net's, tried before and after it: A11's Spark 2)
+    // (its caller's own ways in, beside the net's, tried before and after it: A11's, the hub)
     const probe = async () => ({ ...(await netProbe(node)), ...(ways ? await ways.probe(node) : {}) }), names = { ...NET_PROBES, ...(ways?.words || {}) };
     const before = await probe();
     // (no helper there, or one this build doesn't know: the owner's one command, as before the ask)
     if (before.ssh && !before.helper) { const first = await netHelperFirst(node); if (first.needs) return first.needs; }
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
     // (then the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
-    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
-    // squeezes a model or, on Spark 2, the brain)
+    // wall: the helper's 8 GB; the hub's: its memory), must fit in what is free beyond the 8 GB kept, so it never
+    // squeezes a model or, on the hub, the brain)
     const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
     if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
     const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
@@ -588,7 +588,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     // A way in that worked before doesn't now: put back at once, or, if that can't reach it, by its own timer.
     const what = lost.map(p => names[p]).join(', '), more = ways?.after ? ` ${ways.after(lost)}`.replace(/^ $/, '') : '';
     const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
-    // (and, for a caller that asks it, Sparkie's and agents' changes pause: A11's Spark 2, design A 2.7)
+    // (and, for a caller that asks it, Sparkie's and agents' changes pause: A11's, the hub, design A 2.7)
     if (pause) tripBreaker(`a change on ${at} (record ${rid}) broke ${what}; ${p.putBackAt ? 'it was put back' : p.part != null ? 'its put-back did not finish' : p.failed != null ? 'its put-back failed' : `${at}’s own timer puts it back`}`);
     // (in part, or failed: each told as what it is, never as put back, nor as a Spark the put-back couldn't reach)
     if (p.part != null || p.failed != null) {

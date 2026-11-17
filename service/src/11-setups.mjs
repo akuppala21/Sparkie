@@ -276,7 +276,7 @@ function needsDraftModel(args = []) {
   return Boolean(alg) && alg !== 'NGRAM' && !a.some(x => x.startsWith('--speculative-draft-model-path'));
 }
 // The brain's proven run, made ordinary for another Spark: the same engine, image and settings (proven on these Sparks
-// for this exact model), without what ties it to Spark 2: the speculative draft model, a context stretched past the
+// for this exact model), without what ties it to the hub: the speculative draft model, a context stretched past the
 // model's own, and the brain's cache folders. Checked like any other setup.
 function plainFromBrain(v, model, viewer) {
   if (!(CONFIG.imageSources || []).some(p => String(v.image || '').startsWith(p))) return null;
@@ -287,7 +287,7 @@ function plainFromBrain(v, model, viewer) {
     if (flag.startsWith('--speculative-')) continue;
     if (flag === '--context-length' || flag === '--max-model-len') {
       const n = Number(value);
-      // Stretched (YaRN on Spark 2) past the model's own: back to the model's own, or left to the engine.
+      // Stretched (YaRN on the hub) past the model's own: back to the model's own, or left to the engine.
       if (native) out.push(flag, String(Math.min(n, native)));
       else if (n && n <= 262144) out.push(flag, String(n));
       continue;
@@ -321,8 +321,8 @@ function resolveHow(body, viewer, modelName, sparks, library) {
     if (!v) throw new HttpError(404, 'That verified run isn’t recorded any more.');
     if (v.model !== modelName && !sameRepo(v.repo, model?.repo)) throw new HttpError(409, 'That verified run is for another model.');
     if (v.sparks !== sparks) throw new HttpError(409, `That run used ${v.sparks} Spark${v.sparks > 1 ? 's' : ''}.`);
-    // The brain's own runs (Spark 2, with its draft model and stretched context) are recipes to look at, not to repeat.
-    if (v.brain || needsDraftModel(v.args)) throw new HttpError(409, 'That run is the brain’s own setup, with a draft model and context only Spark 2 has, so it can’t be repeated as an ordinary start.');
+    // The brain's own runs (the hub, with its draft model and stretched context) are recipes to look at, not to repeat.
+    if (v.brain || needsDraftModel(v.args)) throw new HttpError(409, `That run is the brain’s own setup, with a draft model and context only ${hubName()} has, so it can’t be repeated as an ordinary start.`);
     if (v.source === 'seen' && v.approved !== true) throw new HttpError(409, 'That run was learned from a container started outside Spark Console; it needs the owner’s OK before it can be deployed.');
     // Every past run is checked again, as strictly as a new setup: its image source, its flags and its environment.
     if (!(CONFIG.imageSources || []).some(p => String(v.image || '').startsWith(p))) throw new HttpError(409, `That run’s image (${v.image}) isn’t from a source Spark Console trusts.`);

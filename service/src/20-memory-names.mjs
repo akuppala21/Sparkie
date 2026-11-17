@@ -23,7 +23,7 @@ const NOT_NAMES = new Set(['default', 'main', 'test', 'tests', 'model', 'models'
   'sparkie', 'spark', 'sparks', 'setup', 'setups', 'container', 'box', 'job', 'jobs', 'home', 'work', 'local', 'none', 'new', 'all']);
 // Words, lower case, with web addresses taken out (whatever has :// in it, starts www., or is a host and a path:
 // "huggingface.co/zai-org/…"), and Sparks said by number made one word each ("Sparks 3 and 4" is spark3 spark4;
-// "akspark2" stays one word, Spark 2's only by its alias).
+// "akspark3" stays one word, Spark 3's only by its alias).
 const ADDRESS = /:\/\/|^\W*www\.|^[^/]*\.[a-z]{2,}\//;
 const nameWords = text => String(text || '').toLowerCase().split(/\s+/).filter(w => !ADDRESS.test(w)).join(' ')
   .replace(/\bsparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g, (m, a, rest) => ` ${[a, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
@@ -91,7 +91,7 @@ function memoryNamesIn(text, max = ABOUT_MAX) {
   return [...new Set(kept.map(m => m.name))].slice(0, max);
 }
 
-// Spark 2's own day, YYYY-MM-DD; whether a line is past its last day (`until`, G4: 20-memory-time.mjs); live if not.
+// The hub's own day, YYYY-MM-DD; whether a line is past its last day (`until`, G4: 20-memory-time.mjs); live if not.
 // (memoryEnded takes one argument: it is handed to filter.)
 const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');

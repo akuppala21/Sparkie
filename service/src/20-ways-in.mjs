@@ -3,10 +3,10 @@
 // Owns: funnel-seen.json (writers: noteFunnel; deploy/open-to-internet.sh --undo removes it)
 // Timers: none        Wakes: none
 // The owner reaches Spark Console through ways in that can each close with no warning: a Tailscale key that expires
-// (Spark 2's takes every way in but Telegram with it; a compute Spark's cuts that Spark off), the console's user without
-// linger on Spark 2 (its services stop at logout and stay off after a reboot until someone logs in), and Funnel switched
+// (the hub's takes every way in but Telegram with it; a compute Spark's cuts that Spark off), the console's user without
+// linger on the hub (its services stop at logout and stay off after a reboot until someone logs in), and Funnel switched
 // off. Each is read on a look the console already takes, never on a timer of its own: Tailscale's own status
-// (`tailscale status --json`, read by refreshBlocked in 23-http.mjs every 60 s: Spark 2 is Self, a compute Spark the peer
+// (`tailscale status --json`, read by refreshBlocked in 23-http.mjs every 60 s: the hub is Self, a compute Spark the peer
 // holding its tailnet address, so no command runs on another Spark), and linger and Funnel with the route check
 // (checkRoute, at start and every 60 s). Each look only reads. What they found is kept in memory (a restart looks again
 // within a minute), and waysInNeeds turns it into needs-you lines (20-needs.mjs): a key within 14 days of expiring, or
@@ -47,7 +47,7 @@ function noteTailnet(code, out) {
   Object.assign(waysIn, { keys, ssh, keysAt: Date.now(), keysMiss: false });
 }
 
-// Linger for the console's own user on Spark 2, read as the installer reads it. One look at a time.
+// Linger for the console's own user on the hub, read as the installer reads it. One look at a time.
 function lookLinger() {
   const hub = NODES.find(n => n.host === 'local');
   if (!hub || waysIn.lingerBusy) return;

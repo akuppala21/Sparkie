@@ -48,7 +48,9 @@ const CONFIG = {
   // Containers the console never stops on its own (deploy plans, agents): name patterns, * matches anything. The
   // owner's qwen-recipe benchmarks by default; a container labelled spark.protect=true is always protected too.
   protect: ['qwen-recipe-*'],
-  ...readJsonFile('config.json'),
+  // (the stand-in fleet hands its console a Spark list of its own, its hub where its folders hold the brain:
+  // test/start-mock.mjs; nothing else can)
+  ...(process.env.SPARK_CONSOLE_ALL_LOCAL === '1' && process.env.SPARK_CONSOLE_CONFIG_FILE ? JSON.parse(readFileSync(process.env.SPARK_CONSOLE_CONFIG_FILE, 'utf8')) : readJsonFile('config.json')),
 };
 if (process.env.PORT) CONFIG.port = Number(process.env.PORT);
 // Where the API sits on the console's address (the model address is <API_MOUNT>/v1, the agent door <API_MOUNT>/mcp).
@@ -75,6 +77,13 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // config.json's list is only the starting point until the portal answers.
 let NODES = (CONFIG.nodes || []).map(n => ({ ...n }));
 const nodeById = id => NODES.find(n => n.id === id);
+// The hub: the one Spark config.json marks host "local". Spark Console and the brain run there and nothing else does.
+// Every rule that protects it and every sentence that names it asks hubId() or hubName(), never an id, a number or an
+// address; a Spark list from elsewhere (access.json's nodes: refreshNodes) never makes another Spark the hub.
+const HUB_ID = (CONFIG.nodes || []).find(n => n?.host === 'local')?.id || null;
+const hubId = () => HUB_ID || NODES.find(n => n.host === 'local')?.id || null;
+// The hub's name as the owner reads it (sparkName), or words that stay true when no Spark is marked.
+function hubName() { const id = hubId(); return id ? sparkName(nodeById(id) || { id }) : 'the Spark that runs Spark Console'; }
 const NODE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const PROTECT_RES = (Array.isArray(CONFIG.protect) ? CONFIG.protect : []).filter(x => typeof x === 'string' && x)
   .map(g => new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`));
@@ -127,7 +136,7 @@ const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STAT
 // ~/.curlrc). A change inside the run wall may write most of the home; nothing it writes there is obeyed by them. Under
 // ALL_LOCAL the tests' own PATH is kept, so the stand-ins are found.
 const FIXED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
-// On Spark 2 the service's own PATH is that one too, whatever the service manager handed it (a desktop login there can
+// On the hub the service's own PATH is that one too, whatever the service manager handed it (a desktop login there can
 // put ~/.local/bin first): ssh, bash, timeout and every local command Node starts are found on it.
 if (!ALL_LOCAL) process.env.PATH = FIXED_PATH;
 const PATH_FIRST = ALL_LOCAL ? '' : `PATH=${FIXED_PATH}; export PATH; `;

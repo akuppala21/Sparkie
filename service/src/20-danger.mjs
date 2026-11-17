@@ -13,7 +13,7 @@
 // minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
 // close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5),
 // and so do run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c), a delete on
-// Spark 2 (21-hub.mjs, A11) and a command as root (21-root.mjs, A12: the lock-out class too); on the stand-in fleet a test raises one through dangerForTest.
+// the hub (21-hub.mjs, A11) and a command as root (21-root.mjs, A12: the lock-out class too); on the stand-in fleet a test raises one through dangerForTest.
 const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
 // Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
 const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
@@ -35,7 +35,7 @@ const dangerPlain = (s, n = 200) => String(s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}
 // character, nor a space that is not a space to the shell: what is shown is what runs.
 const DANGER_HIDDEN = /(?![\n\t ])[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]/u;
 const dangerHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? '?' : d.toTimeString().slice(0, 5); };
-// The day and the time, in Spark 2's time: "2026-11-15 10:00".
+// The day and the time, in the hub's time: "2026-11-15 10:00".
 const dangerDay = t => {
   const d = new Date(t), two = n => String(n).padStart(2, '0');
   return Number.isNaN(d.getTime()) ? '?' : `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${d.toTimeString().slice(0, 5)}`;
@@ -43,7 +43,7 @@ const dangerDay = t => {
 const dangerSha = s => createHash('sha256').update(s).digest('hex');
 const dangerSame = (typed, digits) => typeof digits === 'string' && /^\d{2}$/.test(typed) && timingSafeEqual(Buffer.from(typed), Buffer.from(digits));
 
-// Line 1: the kinds and the place, in capitals. A command of two kinds is one ask: "ROOT on Spark 2 · CAN LOCK YOU OUT".
+// Line 1: the kinds and the place, in capitals. A command of two kinds is one ask: "ROOT on Spark 3 · CAN LOCK YOU OUT".
 function dangerHead(kinds, where) {
   const place = where ? sparkName(nodeById(where) || { id: dangerPlain(where, 40) }) : 'Spark Console';
   return kinds.map((k, i) => (i ? DANGER_HEAD[k][0] : `${DANGER_HEAD[k][0]} ${DANGER_HEAD[k][1]} ${place}`)).join(' · ');
@@ -77,14 +77,14 @@ function dangerMore(f) {
   if (f.install) {
     const d = Array.isArray(f.install.differs) ? f.install.differs : null;
     out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerDay(f.install.testedAt) : 'never'}.`,
-      !d ? 'What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository.'
+      !d ? `What differs from the build installed now isn’t known: its commit isn’t in ${hubName()}’s copy of the repository.`
         : d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
     // (a proposal of Sparkie's own code: GitHub's run, the protected paths and tests it changes, the review, C8d)
     if (f.install.proposal) out.push(dangerPlain(f.install.proposal, 700));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
-  // (on Spark 2: where it starts, how it runs there and what is checked after it, a line each, 21-hub.mjs)
+  // (on the hub: where it starts, how it runs there and what is checked after it, a line each, 21-hub.mjs)
   for (const l of [].concat(f.hub || [])) out.push(dangerPlain(l, 400));
   for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));
   // (run with minutes, A6: how long the press lets it run, as the plain ask's button says, 21-long.mjs)

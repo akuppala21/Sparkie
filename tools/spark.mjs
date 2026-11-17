@@ -18,7 +18,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 
 const DIR = `${homedir()}/.config/spark-console`, FILE = `${DIR}/agent.json`;
-const DEFAULT_URL = 'https://akspark2.tailab9aa9.ts.net:8443/console/api/mcp';
+const DEFAULT_URL = 'https://akspark1.tailab9aa9.ts.net:8443/console/api/mcp';
 const die = (msg, code = 2) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 // The key only ever goes to an https address that ends in /mcp (plain http only to this machine, for testing).
 const goodUrl = u => /^https:\/\/[A-Za-z0-9.-]+(:\d+)?\/\S*mcp$/.test(u) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/\S*mcp$/.test(u);

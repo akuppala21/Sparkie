@@ -126,7 +126,7 @@ async function statusFor(viewer, fresh) {
   const value = fresh || !statusCache || Date.now() - statusCache.at > STATUS_EVERY + 5000 ? await collectStatus() : statusCache.value;
   // (a Spark Spark Console powered off on purpose carries its mark, 21-power.mjs: when, why, what was parked)
   // (the wall reading is taken again here, never from the cached copy: a plug plugs.json no longer maps to that Spark,
-  // or Spark 2's read-only mark taken away, shows at once, R41)
+  // or the hub's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
     return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' && !off.problem } : {}) };

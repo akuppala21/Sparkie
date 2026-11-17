@@ -1,10 +1,10 @@
-/* ───────── the journal: what was said, called, run and seen here, kept on Spark 2 (B1, R43) ───────── */
+/* ───────── the journal: what was said, called, run and seen here, kept on the hub (B1, R43) ───────── */
 // Area: record        Rules: R7, R22, R26, R43        Tests: journal.test.mjs, door.test.mjs, fuzz.test.mjs
 // Owns: none (its own files, journal-YYYY-MM.jsonl and .out in JOURNAL_DIR, are outside the state folder; one writer,
 //   journal)
 // Timers: none        Wakes: none
 // Spark Console's own record of what happens through it, so it is still known after a restart (operation_log forgets
-// then) and can be looked up (recall). Append-only: never rewritten, never deleted, never copied off Spark 2. Its folder
+// then) and can be looked up (recall). Append-only: never rewritten, never deleted, never copied off the hub. Its folder
 // (JOURNAL_DIR, 0700, files 0600) is outside the state folder, so neither the daily copy nor an install snapshot takes
 // it. Two files a month: journal-YYYY-MM.jsonl, one short line per record (1,500 bytes at most), and journal-YYYY-MM.out,
 // a record's long text (a tool's result, an operation's log), written in pieces as it is read and masked piece by piece;
@@ -21,7 +21,7 @@ const J_PIECE = Math.max(64, Number(ALL_LOCAL && process.env.SPARK_CONSOLE_JOURN
 const J_OVERLAP = Math.min(16384, Math.floor(J_PIECE / 4));
 const J_MAX = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_JOURNAL_MAX_BYTES) || 16 * 2 ** 20;
 const J_LARGE = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_JOURNAL_NEEDS_BYTES) || 20 * 2 ** 30;
-const JOURNAL_REFUSED = 'Couldn’t write the record of this change on Spark 2 (its disk may be full), so nothing was changed. Free some space there, then ask again.';
+const JOURNAL_REFUSED = `Couldn’t write the record of this change on ${hubName()} (its disk may be full), so nothing was changed. Free some space there, then ask again.`;
 // When a write last failed and last worked (the needs-you line), and the changes a restart cut off (for a day).
 let journalProblem = null, journalWorked = 0, journalCut = null, journalDirSet = false;
 const journalId = () => `j_${randomBytes(6).toString('hex')}`;

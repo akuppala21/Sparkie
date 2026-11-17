@@ -2,7 +2,7 @@
 // Area: knowledge        Rules: R41        Tests: plugs.test.mjs, power.test.mjs
 // Owns: plugs.json (writers: none; deploy/plugs.sh writes it)
 // Timers: refreshPlugs (every 15 s, after a first read 2 s after start)        Wakes: none
-// deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-console-plugs) on Spark 2, with its
+// deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-console-plugs) on the hub, with its
 // WebSocket on 127.0.0.1:5580 only, and writes which plug (a controller node) is on which Spark to plugs.json. This part
 // reads every 15 seconds: whether each plug is on and what the whole Spark draws at the wall (watts, volts, amps).
 // switchPlug is the one place in the service that switches a plug (21-power.mjs calls it, R41): only a plug
@@ -15,7 +15,7 @@ const PLUGS_EVERY = Number(process.env.SPARK_CONSOLE_PLUGS_MS || 15000);
 const PLUG_STALE_MS = Math.max(90000, PLUGS_EVERY * 4);
 let plugs = { at: 0, bySpark: {}, problem: null };
 
-// Which plug is on which Spark: plugs.json is {"spark3": {"node": 2}, "spark2": {"node": 4, "readOnly": true}, …},
+// Which plug is on which Spark: plugs.json is {"spark3": {"node": 2}, "<the hub>": {"node": 4, "readOnly": true}, …},
 // written by deploy/plugs.sh. The brain's Spark and the console's own are read only when marked readOnly, which
 // plugs.sh writes only after the plug itself refused the controller's command (the controller holds View there).
 function plugMap() {
@@ -50,7 +50,7 @@ function plugAsk(command, args = {}, timeoutMs = 8000) {
     };
     const timer = setTimeout(() => finish(new Error('The plug controller didn’t answer in time.')), timeoutMs);
     try { ws = new WebSocket(PLUGS_URL); } catch (e) { finish(new Error(`The plug controller can’t be reached: ${e.message}`)); return; }
-    ws.onerror = () => finish(new Error('The plug controller isn’t answering on Spark 2.'));
+    ws.onerror = () => finish(new Error(`The plug controller isn’t answering on ${hubName()}.`));
     ws.onclose = () => finish(new Error('The plug controller closed the connection.'));
     ws.onmessage = ev => {
       let m;
@@ -112,7 +112,7 @@ async function refreshPlugs() {
 // A Spark's wall reading, or null when it has no paired plug. Old readings are never shown as current.
 function wallFor(spark) {
   const w = plugs.bySpark[spark];
-  // (only a plug plugs.json maps to this Spark now: a mapping taken away, or Spark 2's read-only mark, counts at once,
+  // (only a plug plugs.json maps to this Spark now: a mapping taken away, or the hub's read-only mark, counts at once,
   // never one reading later, R41)
   if (!w || plugMap()[spark] !== w.plug) return null;
   if (!w.answering) return w;

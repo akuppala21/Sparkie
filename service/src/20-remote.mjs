@@ -15,25 +15,25 @@ const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
 const sortNear = (h, ctx) => !!h && (!h.includes('.') || !!sortHost(ctx, h.split('.')[0]) || /^(?:10|127)\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^169\.254\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^\[|(?:^|\.)(?:local|lan|home\.arpa|internal|ts\.net|localhost)\.?$/i.test(h));
 const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
   && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
-// A command for Spark 2 from a compute Spark (the final read `net`, 7): ssh, scp, rsync, sftp, git, docker -H or
-// DOCKER_HOST, tailscale ssh. Spark 2 by any name or address the console knows is not done: commands for Spark 2 go
-// through Spark 2's own path (run with on: spark2), where its rules hold. A host that can't be told (a $, a name ssh's own
+// A command for the hub from a compute Spark (the final read `net`, 7): ssh, scp, rsync, sftp, git, docker -H or
+// DOCKER_HOST, tailscale ssh. The hub by any name or address the console knows is not done: commands for the hub go
+// through the hub's own path (run with on: its id), where its rules hold. A host that can't be told (a $, a name ssh's own
 // settings may point anywhere, an address of the tailnet or the home network the console doesn't know, a host option)
-// may be Spark 2: the dangerous ask (kind brain, Spark 2 being the brain's), saying so.
+// may be the hub: the dangerous ask (kind brain, the hub being the brain's), saying so.
 const sortHubHost = (h, ctx) => { const x = String(h ?? '').replace(/^\[|\]$/g, '').replace(/\.$/, ''); return sortHost(ctx, x) ?? sortHost(ctx, x.split('.')[0]); };
 function sortToHub(h, ctx, r, via, unknown = false) {
   if (ctx.at !== 'compute') return;
   const place = unknown ? null : sortHubHost(h, ctx);
-  if (place === 'hub') return raise(r, 'notdone', `${via} reaches Spark 2 (${sortQ(h)}): a command for Spark 2 is run on Spark 2 (run with on: "spark2"), where its own rules hold, never from another Spark.`);
+  if (place === 'hub') return raise(r, 'notdone', `${via} reaches ${hubName()} (${sortQ(h)}): a command for ${hubName()} is run on ${hubName()} (run with on: "${hubId()}"), where its own rules hold, never from another Spark.`);
   if (place === 'compute') return;
   if (unknown || !String(h ?? '').includes('.') || sortNear(String(h), ctx)) {
     ctx.kinds.add('brain');
     // (the dangerous ask's reason says why, before any other risky one)
     raise(r, 'risky', '');
-    if (r.class === 'risky') r.why = `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be Spark 2 (a name ssh’s own settings or the tailnet point anywhere): Spark 2 runs the console and the brain, so it is asked the dangerous way.`;
+    if (r.class === 'risky') r.why = `${via} reaches ${unknown ? 'a host named by a $, a command or an option' : sortQ(h)}, which may be ${hubName()} (a name ssh’s own settings or the tailnet point anywhere): ${hubName()} runs the console and the brain, so it is asked the dangerous way.`;
   }
 }
-// The names Spark 2 goes by that its callers may leave out: the console's own address and its first label, and the
+// The names the hub goes by that its callers may leave out: the console's own address and its first label, and the
 // hub's id, alias and address on the list of Sparks (as runnerSortOpts gives the compute Sparks').
 function sortHubNames(ctx) {
   try { const h = new URL(String(CONFIG.origin)).hostname.toLowerCase(); if (h) { ctx.hosts[h] ??= 'hub'; ctx.hosts[h.split('.')[0]] ??= 'hub'; } } catch { /* no address */ }

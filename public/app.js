@@ -17,7 +17,7 @@ const TERMINAL = new Set(['completed', 'partial', 'failed', 'interrupted']);
 const underWay = j => !TERMINAL.has(j.status);
 const STORE = { theme: 'spark-console:theme', history: 'spark-console:history' };
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-// Spark Console's service on Spark 2. The same address whether the page is opened at / or at /console/.
+// Spark Console's service on the hub. The same address whether the page is opened at / or at /console/.
 const CONSOLE_API = '/console/api/';
 // The install script replaces 'dev' with a hash of the shipped UI files and writes the same hash to version.json.
 const BUILD = 'dev';
@@ -325,6 +325,8 @@ function portalHostId() {
     return null;
   }
 }
+// The hub's name (the Spark that runs Spark Console and the brain), as the page has it.
+const hubLabel = () => (portalHostId() ? nodeName(portalHostId()) : 'the Spark that runs Spark Console');
 const hardware = n => `${HARDWARE[n.id] || 'DGX Spark'} · ${String(n.gpu || 'NVIDIA GB10').replace(/^NVIDIA\s+/, '')}`;
 const sshCommand = id => (conn(id) ? `ssh ${conn(id).alias || `${conn(id).user}@${conn(id).ip}`}` : null);
 const sshDirect = id => (conn(id) ? `ssh ${conn(id).user}@${conn(id).ip}` : null);
@@ -1227,7 +1229,7 @@ const noticeRow = n => h('div', { class: 'notice-row' }, icon('alert'),
 function jobRow(j, { onOpen, open = false } = {}) {
   const done = TERMINAL.has(j.status), failed = j.status === 'failed';
   const first = String(j.error || '').split('\n')[0];
-  // Where it ran, unless the title already says ("Start X on Spark 2").
+  // Where it ran, unless the title already says ("Start X on Spark 3").
   const ids = j.nodeIds || (j.nodeId ? [j.nodeId] : []), where = ids.every(id => jobLabel(j).includes(nodeName(id))) ? null : jobTarget(j);
   const main = [
       h('span', { class: `row-icon ${failed ? 'bad' : done && j.status !== 'interrupted' ? 'ok' : 'warn'}` },
@@ -1286,7 +1288,7 @@ function workflowsFold() {
     }), testable.length || lastTest?.status === 'failed' ? h('div', { class: 'workflow-actions' },
       testing ? h('p', { class: 'muted' }, 'Testing now. It shows at the top of Activity.')
         : testable.length ? h('button', { class: 'btn sm primary', type: 'button', onclick: e => busy(e.currentTarget, async () => {
-          if (!(await dialog({ title: 'Test the changes?', confirm: 'Test them', description: 'Spark Console tries each change once with a small model on a spare Spark (never Spark 2). Anything running there stops for a few minutes and starts again at the end.' }))) return;
+          if (!(await dialog({ title: 'Test the changes?', confirm: 'Test them', description: `Spark Console tries each change once with a small model on a spare Spark (never ${hubLabel()}). Anything running there stops for a few minutes and starts again at the end.` }))) return;
           try { await capi('workflows/validate', 'POST', {}); toast('Testing started'); await loadJobs(); draw(); } catch (x) { failToast(x); }
         }) }, icon('check'), 'Test the changes') : null,
       // A test that failed: undoing the last update is one click (docs/contract.md 6.3).
@@ -2165,7 +2167,7 @@ function serviceMissing(what, outdated = false) {
   }
   const command = 'bash spark-console/deploy/host-on-portal.sh';
   return h('div', { class: 'card' }, empty('server', 'Update the Spark Console service',
-    `${what} need a newer Spark Console service on Spark 2. Run this on your Mac once, then refresh:`,
+    `${what} need a newer Spark Console service on ${hubLabel()}. Run this on your Mac once, then refresh:`,
     h('div', { class: 'connect-line' }, h('code', {}, command),
       h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': 'Copy command', onclick: () => copy(command) }, icon('copy')))));
 }

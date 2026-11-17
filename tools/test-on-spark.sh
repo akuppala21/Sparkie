@@ -4,7 +4,7 @@
 #
 # The tests run inside a container that has no network and no access to Docker, as the Spark's own user, and can write
 # only the copy of the folder being tested. They can't touch a model, a container or anything else on the Spark.
-# Never on Spark 2: it is the hub. Use a compute Spark that is on.
+# Never on the hub (the Spark service/config.json marks local). Use a compute Spark that is on.
 #
 #   tools/test-on-spark.sh akuppala@<spark>            this folder's whole suite, once (test/lock.mjs)
 #   tools/test-on-spark.sh akuppala@<spark> --watch    wait for requests and run them one at a time (leave it running)

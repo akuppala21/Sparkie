@@ -12,7 +12,7 @@
 // again, and when a way in differs the set is put back, Sparkie's and agents' changes pause (tripBreaker) and the owner
 // is told what differed; then the end line. A command whose end is unknown (the Spark stopped answering, or the console
 // was cut off) is never run again by itself: the owner is told, once (here, or by journalAfterRestart at the next
-// start). It never runs on Spark 2 or on a Spark holding the brain, never as root (root is 21-root.mjs's, inside the net), and
+// start). It never runs on the hub or on a Spark holding the brain, never as root (root is 21-root.mjs's, inside the net), and
 // never while changes are paused, whatever its caller says. Its one caller is run's ladder (21-ladder.mjs, A7c): at
 // once behind hostClear, or after the owner's yes (asked: a risky change too). An end it can't know holds the Spark's
 // claim until systemd says the unit is gone or its time limit has passed (here, and runnerHold after a console
@@ -34,7 +34,7 @@ const runnerSortOpts = (node, ctx = {}, dir = '~') => ({ at: node.host === 'loca
   ...(Array.isArray(ctx.written) && ctx.written.length ? { written: ctx.written } : {}),
   hosts: Object.fromEntries(NODES.flatMap(n => [[n.id, n.host === 'local' ? 'hub' : 'compute'], ...(n.host && n.host !== 'local' ? [[n.host, 'compute']] : [])])),
   brain: [MAIN?.container, MAIN?.served, MAIN?.model].filter(x => typeof x === 'string') });
-// Whatever its caller says, the runner refuses: Spark 2, a Spark holding the brain, root (sudo or su in it, or the root
+// Whatever its caller says, the runner refuses: the hub, a Spark holding the brain, root (sudo or su in it, or the root
 // helper named), a time when changes are paused, and anything but a plain change.
 function runnerRefuses(node, sorted, ctx, asked = false) {
   runnerNever(node, sorted, ctx);

@@ -1,15 +1,15 @@
 {
   "port": 8810,
-  "origin": "https://akspark2.tailab9aa9.ts.net:8443",
+  "origin": "https://akspark1.tailab9aa9.ts.net:8443",
   "user": "akuppala",
   "nodes": [
     {
       "id": "spark1",
-      "host": "100.119.233.101"
+      "host": "local"
     },
     {
       "id": "spark2",
-      "host": "local"
+      "host": "100.79.155.126"
     },
     {
       "id": "spark3",
@@ -38,7 +38,7 @@
   "main": {
     "presets": {
       "aphex": {
-        "node": "spark2",
+        "node": "spark1",
         "title": "Qwen 3.8 27B · Aphex",
         "served": "qwen-aphex",
         "about": "1M context · one request at a time",
@@ -99,7 +99,7 @@
         }
       },
       "aphex-x4": {
-        "node": "spark2",
+        "node": "spark1",
         "title": "Qwen 3.8 27B · Aphex · 4 at once",
         "served": "qwen-aphex",
         "about": "1M context · up to 4 requests at once (you, agents and checkers)",
@@ -160,7 +160,7 @@
         }
       },
       "aphex-agent": {
-        "node": "spark2",
+        "node": "spark1",
         "title": "Qwen 3.8 27B · Agent",
         "served": "qwen-aphex",
         "about": "for agent work (contract 3.8): thinking on · native 262K context · up to 4 at once",
@@ -223,7 +223,7 @@
         "maxChanges": 12
       },
       "aphex-agent-fast": {
-        "node": "spark2",
+        "node": "spark1",
         "title": "Qwen 3.8 27B · Agent · fast start",
         "served": "qwen-aphex",
         "about": "the agent setup, starting faster: weights read without mmap, every compile cache kept (contract 9.24)",

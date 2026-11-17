@@ -5,7 +5,7 @@
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root":
-// root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside
+// root is run's root: true, 21-root.mjs). Handed on: a change on the hub to hubChange (21-hub.mjs: always asked, inside
 // the net) and the lock-out class to netChange (21-net.mjs: done only as root, so answered "set root"); a write_file or a
 // command given a key is refused in both.
 // At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
@@ -254,7 +254,7 @@ function workWrittenFirst(sorted, path) {
 }
 const workWrittenLine = p => `It runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`;
 const WORK_WRITTEN_KEY = 'Not run: it runs a script this same command writes, so its text can’t be shown or pinned before you say yes, and a key goes only to code you are shown. Write or download the script first, then ask to run it with the key. Nothing was asked or run.';
-// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
+// What the press does with a pinned script (R72), said once on the run's own asks (not the hub's, which the net runs:
 // 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
 // (runnerPins, 21-runner.mjs), and run by its path.
 const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'] : []);
@@ -337,7 +337,7 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
   return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
 }
 // The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
-// Sparks' buttons: Spark 2's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
+// Sparks' buttons: the hub's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
 // command is on its own "$ " line; one with a line break, or a sign that doesn't show (a control, format, unassigned
 // or private sign, a line or paragraph break, a space but the plain one), is said in how many lines it has, each after
 // "│ ", so no line of it can pass for one of the button's own. more: text of code's after its lines.
@@ -388,7 +388,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const offer = dangerous.length || spec || keys.length ? null : aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen);
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   // (the sorter's reason is on the ask for each kind: a delete's on line 3, one outside the wall on its own line, the
-  // brain's (it may be Spark 2, a protected container's id) on a line of its own when neither already says it)
+  // brain's (it may be the hub, a protected container's id) on a line of its own when neither already says it)
   const sorterWhy = String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, ''), whyShown = (dangerous.includes('delete') && !more.gone?.length) || String(shown.outside || '').includes(sorterWhy.replace(/\.$/, ''));
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : sorterWhy } } : {}),
@@ -469,10 +469,10 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
-  // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below. Never a write_file's
+  // (the hub, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below. Never a write_file's
   // plain write nor a command given a key, which the hub would run bare: those are refused there, as below)
   if (node.host === 'local' && HUB_ON && !spec && !keys.length) return hubChange(node, command, sorted, viewer, ctx, dir, widen);
-  // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
+  // (the hub, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   // (the lock-out class: the net's, 21-net.mjs; with the net switched off (a stand-in fleet's) refused, saying so. Never a write_file's,
@@ -499,7 +499,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
     // (a press that wasn't the dangerous ask's, of a command the sorter now calls a dangerous kind (the brain's names
-    // changed since its plain ask): asked again, as the dangerous ask, as Spark 2's press is, 21-hub.mjs)
+    // changed since its plain ask): asked again, as the dangerous ask, as the hub's press is, 21-hub.mjs)
     if (!workPressCovers(sorted, ctx)) return again('it now deletes for good or names the brain, which only the dangerous ask, with its two digits, can run');
     // (the Spark's claim first, so nothing else of this console changes it between the scripts' read below and the run;
     // let go just before runChange, which takes it again in this same tick, with nothing awaited between, R72)

@@ -2,7 +2,7 @@
 // Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs
 // Owns: tmp (writers: selfTree; a folder: each send's work, removed on every exit)        Timers: none        Wakes: none
 // propose_update {do: start|send|drop|install, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
-// as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and
+// as a pull request, all by code. start fills this chat's box with main's tree from the hub's copy of the repository and
 // notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by
 // entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files
 // with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses
@@ -100,15 +100,15 @@ function selfConfigBad(repo) {
   }
   return null;
 }
-// git in Spark 2's copy of the repository, as pull.sh runs it, in an environment of its own (nothing of the service's):
+// git in the hub's copy of the repository, as pull.sh runs it, in an environment of its own (nothing of the service's):
 // no system or global config, the copy's own checked first (selfConfigBad), no prompt, no hooks, no fsmonitor, no
 // credential helper; https only, and file too on the stand-in fleet. A push adds the token's header (selfPush), for that
 // one git only; hide is that token, kept out of any error.
 function selfGit(args, { input = null, config = [], indexFile = null, raw = false, hide = null } = {}) {
   const repo = selfRepo();
-  if (!repo || !existsSync(repo)) return Promise.reject(new HttpError(409, `Spark 2 has no copy of the repository to work from (${UPD_SETUP}).`));
+  if (!repo || !existsSync(repo)) return Promise.reject(new HttpError(409, `${hubName()} has no copy of the repository to work from (${UPD_SETUP}).`));
   const bad = selfConfigBad(repo);
-  if (bad) return Promise.reject(new HttpError(409, `Spark 2’s copy of the repository has settings Spark Console didn’t put there (${bad}), so nothing was done with it.`));
+  if (bad) return Promise.reject(new HttpError(409, `${hubName()}’s copy of the repository has settings Spark Console didn’t put there (${bad}), so nothing was done with it.`));
   const cfg = [['core.hooksPath', '/dev/null'], ['core.fsmonitor', 'false'], ['credential.helper', ''], ['core.quotePath', 'false'], ['core.attributesFile', '/dev/null'], ...config];
   const env = { HOME: selfHome(), PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false', SSH_ASKPASS: '', GIT_ALLOW_PROTOCOL: ALL_LOCAL ? 'https:file' : 'https',
@@ -141,7 +141,7 @@ function selfGithub() {
   let g;
   try { g = JSON.parse(readFileSync(SECRETS_FILE, 'utf8')).github; } catch { g = null; }
   if (!g || !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(String(g.repo)) || typeof g.token !== 'string' || !g.token) {
-    throw new HttpError(409, 'No GitHub token is kept on Spark 2 for its repository, so nothing can be pushed. Give one in your own chat: /key GITHUB, then the token (Contents and Pull requests: write).');
+    throw new HttpError(409, `No GitHub token is kept on ${hubName()} for its repository, so nothing can be pushed. Give one in your own chat: /key GITHUB, then the token (Contents and Pull requests: write).`);
   }
   return { repo: g.repo, token: g.token };
 }
@@ -242,7 +242,7 @@ async function selfStart(viewer, ctx) {
   const open = await selfOpen();
   if (open) throw new HttpError(409, `A proposal is open already (${open.branch}${selfMine(open, ctx) ? ', from this chat' : ', from another chat'}): send it or drop it first. Nothing was started.`);
   const commit = await selfGit(['rev-parse', '--verify', '-q', 'refs/heads/main^{commit}']).catch(() => '');
-  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new HttpError(409, 'Spark 2’s copy of the repository has no main yet: check for updates once, then ask again.');
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new HttpError(409, `${hubName()}’s copy of the repository has no main yet: check for updates once, then ask again.`);
   const tree = await selfGit(['rev-parse', `${commit}^{tree}`]);
   await selfBoxFill(viewer, ctx, tree);
   const id = randomBytes(4).toString('hex'), chat = await selfGit(['hash-object', '-w', '--stdin'], { input: Buffer.from(ctx.conv) });
@@ -447,7 +447,7 @@ async function selfInstallFacts(viewer, ctx) {
   if (!selfMine(open, ctx) && !gone) throw new HttpError(409, `The open proposal (${open.branch}) is another chat’s: ask there. Nothing was asked.`);
   const { repo } = selfGithub(), owner = repo.split('/')[0];
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
-  if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
+  if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head ${hubName()} sent (${open.head.slice(0, 12)}), so nothing was asked.`);
   const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
   // (passed: the full run itself, by its name, passed, and every other check finished with none failed, cancelled or timed
   // out; a skipped job, such as the mark job on a pull request, or a neutral one, is no failure. Any other check passing

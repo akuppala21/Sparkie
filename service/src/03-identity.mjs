@@ -190,7 +190,9 @@ async function refreshNodes(req) {
   const before = new Set(NODES.map(n => n.id));
   NODES = list.map(n => ({
     id: n.id, name: n.name || null, ip: n.ip, user: n.user || CONFIG.user, alias: n.alias || `ak${n.id}`,
-    host: n.local || LOCAL_IPS.has(n.ip) || nodeById(n.id)?.host === 'local' ? 'local' : n.ip,
+    // (the hub is config.json's alone: a list that still marks another Spark local, from before the hub moved, makes it
+    // no hub, and its commands go to it, never to this machine)
+    host: (HUB_ID ? n.id === HUB_ID : n.local || LOCAL_IPS.has(n.ip) || nodeById(n.id)?.host === 'local') ? 'local' : n.ip,
   }));
   for (const [id, entry] of samplers) {
     if (nodeById(id)) continue;

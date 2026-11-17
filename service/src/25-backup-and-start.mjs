@@ -7,7 +7,7 @@
 // Wakes: none
 // People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one
 // is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark
-// or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as
+// or this one), one file a day, keeping the last 14, so losing the hub's disk loses little (F17). Each copy arrives as
 // <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move
 // it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or
 // one tar couldn't finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes

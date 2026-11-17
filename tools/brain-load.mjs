@@ -1,9 +1,9 @@
 // The brain's speed profile: for each number of requests at once, it sends that many streamed chats and measures each
 // one's first words, tokens per second, and the total. Rule 3.5 (docs/contract.md) is judged by the hammer test below.
 //
-// On Spark 2, or from any machine on the tailnet through Spark Console's one model address (no tunnel needed):
+// On the hub, or from any machine on the tailnet through Spark Console's one model address (no tunnel needed):
 //   node tools/brain-load.mjs                       (http://127.0.0.1:30100, the model it serves, 1, 3 and 4 at once)
-//   node tools/brain-load.mjs --url https://akspark2.tailab9aa9.ts.net:8443/console/api
+//   node tools/brain-load.mjs --url https://akspark1.tailab9aa9.ts.net:8443/console/api
 //   node tools/brain-load.mjs --url http://127.0.0.1:30100 --at 1,2,3,4,6 --tokens 256 --rounds 3
 //
 // The hammer test (contract 3.5): many sub-agents working flat out while the owner chats. Nothing may fail or time out,
@@ -46,8 +46,8 @@ const models = await fetch(`${URL_}/v1/models`, { signal: AbortSignal.timeout(15
   console.error(`Nothing answers at ${URL_}/v1/models (${e.cause?.code || e.message}).`);
   console.error(URL_.includes('127.0.0.1')
     ? 'From another machine on the tailnet, no tunnel is needed: measure through Spark Console\'s one model address with\n'
-      + '  node tools/brain-load.mjs --url https://akspark2.tailab9aa9.ts.net:8443/console/api\n'
-      + '(or open the SSH tunnel: ssh -N -L 30100:127.0.0.1:30100 akuppala@100.79.155.126)'
+      + '  node tools/brain-load.mjs --url https://akspark1.tailab9aa9.ts.net:8443/console/api\n'
+      + '(or open the SSH tunnel: ssh -N -L 30100:127.0.0.1:30100 akuppala@100.119.233.101)'
     : 'Is the brain running? Check Models → Sparkie in Spark Console.');
   process.exit(1);
 });

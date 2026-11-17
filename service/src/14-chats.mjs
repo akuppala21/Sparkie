@@ -53,17 +53,17 @@ function ownChat(viewer, id) {
 }
 
 // What Sparkie never changes, and how the changes that could lock the owner out are made: in its prompt and in what it
-// says it can do (abilities, 16-reads.mjs). Written for the pieces turned on (the lock-out net, Spark 2, root: M2w).
+// says it can do (abilities, 16-reads.mjs). Written for the pieces turned on (the lock-out net, the hub, root: M2w).
 // (whose keys and access: Spark Console's own; the users and keys of a Spark change only inside the net, CHANGES_ASKED,
 // which the abilities text says and run's own text says too)
 const NEVER_CHANGES = 'Spark Console’s own keys, or who may use Spark Console';
-const CHANGES_ASKED = 'On a compute Spark a change to SSH, Tailscale, the firewall or users runs only inside the put-back net, after the owner’s press. A command as root runs only on a compute Spark where the owner turned root on, always asked and always inside that net. On Spark 2 every change is asked and runs inside the net; one that could lock the owner out is refused, and so is a long one (minutes).';
+const CHANGES_ASKED = `On a compute Spark a change to SSH, Tailscale, the firewall or users runs only inside the put-back net, after the owner’s press. A command as root runs only on a compute Spark where the owner turned root on, always asked and always inside that net. On ${hubName()} every change is asked and runs inside the net; one that could lock the owner out is refused, and so is a long one (minutes).`;
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
 // (One a line, in this order: the prompt and the brain's catalog say them so.)
 const TOOL_LINES = [
   [['forget_memory'], 'forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees.'],
   [['workflows'], 'The workflows tool lists every workflow: when to use each, its inputs and its known problems.'],
-  [['power_off', 'power_on', 'power_settings'], 'To shut a Spark down or turn it on, call power_off or power_on with the Sparks the owner named (never for a model: that’s stop_model or start_model); power_settings sets how many idle minutes before Spark Console powers a Spark off by itself (0 turns that off). Spark 2 runs Spark Console and you, and is never powered off from here.'],
+  [['power_off', 'power_on', 'power_settings'], `To shut a Spark down or turn it on, call power_off or power_on with the Sparks the owner named (never for a model: that’s stop_model or start_model); power_settings sets how many idle minutes before Spark Console powers a Spark off by itself (0 turns that off). ${hubName()} runs Spark Console and you, and is never powered off from here.`],
   [['read_page'], 'What you know from training may be out of date. For anything new or version-specific (new models, releases, engine versions and flags, error messages), look it up with search_web first and read one or two good results with read_page, then answer and say where the answer came from.'],
 ];
 // offered: the tools this round offers (null: every action).
@@ -122,7 +122,7 @@ function outcomeText(label, out, agentChat = false) {
 // own fields: "done" only for one that ran and ended with exit 0. Else what happened: it didn't run and why (with the
 // owner's one-time command when the result carries it: needsOwner marked it told, and here it is shown), nothing was
 // written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
-// these words in its history. null for any other result. (The net's, Spark 2's and root's carry their own, note.)
+// these words in its history. null for any other result. (The net's, the hub's and root's carry their own, note.)
 function pressRan(label, out, agentChat = false) {
   if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
   const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';

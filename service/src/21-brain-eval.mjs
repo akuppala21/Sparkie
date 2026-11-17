@@ -11,7 +11,7 @@
 // one for a brain with no profile yet (409). sparkie_setup's brainCheck shows the brain serving now (inUse) and
 // whether an eval is on record for what this build's brain reads (the lock's brainReads) on today's case set, or
 // which of the two is missing. Today's case set is the one this build's lock names (evalSet, test/lock.mjs), else
-// test/eval/cases.json beside this build: on Spark 2 the copy of the source every install keeps (~/spark-console-src).
+// test/eval/cases.json beside this build: on the hub the copy of the source every install keeps (~/spark-console-src).
 // The rail (21-brain-rail.mjs, R52) acts on it. A record that could let Sparkie change things without asking (a full
 // run of the main set that met the bar), posted once a passkey is set up, waits for the owner's yes on the page instead
 // of being kept; every kept record says how it was kept and is sealed. A slot keeps five of those and five of the rest

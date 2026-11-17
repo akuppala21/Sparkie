@@ -23,6 +23,8 @@ writeFileSync(join(dir, 'own.mjs'), [
   'class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }',
   'const ACTIONS = new Map(), action = a => ACTIONS.set(a.name, a), sparkArg = { type: "string" };',
   'const sparkName = () => "Spark 3", maskSecrets = String, ran = [];',
+  // (the hub, as the stand-in fleet has it: its name and id, 01-setup.mjs's hubName and hubId)
+  'const hubName = () => "Spark 2", hubId = () => "spark2";',
   'const run = async (node, command) => { ran.push(command); return { code: 0, out: `\\nRESULT ${Buffer.from("{}").toString("base64")}\\n` }; };',
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies-prune.mjs'), 'utf8'),

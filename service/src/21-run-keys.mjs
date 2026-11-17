@@ -87,7 +87,7 @@ function runKeysPrints(command) {
 // The keys kept by name (the secrets file's keys), read now; a file that can't be read gives nothing to anyone.
 function runKeysKept() {
   const s = secretsRead();
-  if (s === null) throw new HttpError(500, 'The secrets file on Spark 2 can’t be read, so no key was given and nothing ran.');
+  if (s === null) throw new HttpError(500, `The secrets file on ${hubName()} can’t be read, so no key was given and nothing ran.`);
   return s.keys && typeof s.keys === 'object' && !Array.isArray(s.keys) ? s.keys : {};
 }
 // What is never given a key, whatever is said (the ladder's first check for a command given one, and the runner's again

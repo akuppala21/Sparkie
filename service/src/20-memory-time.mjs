@@ -3,7 +3,7 @@
 // Owns: none        Timers: none        Wakes: none
 // Design G's third addition (A3, step 4). The brain eval switches it off with `time` in SPARK_CONSOLE_MEMORY_OFF
 // (test/eval.mjs): then memory is as the build before this one kept it, and an `until` given to remember is not kept.
-// - `until`: the last day a line is true (YYYY-MM-DD, Spark 2's own day). After it the line is in no prompt and no
+// - `until`: the last day a line is true (YYYY-MM-DD, the hub's own day). After it the line is in no prompt and no
 //   pick; `memory {past: true}` shows it as past (why "expired"), and the next save of memory moves it to
 //   memory-past.json. It is never deleted. A day already gone when the line is saved is refused. Sparkie keeps a line
 //   with an end at once only when the owner's words hold a time word ("until Friday"); else it is a button.
@@ -102,11 +102,11 @@ function memoryDayWords(day) {
   return t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', ...(day.slice(0, 4) === memoryDay().slice(0, 4) ? {} : { year: 'numeric' }) }).replace(',', '');
 }
 // The day as the brain is told it, one line of the turn's record (brainContext), where it decides a line's `until`:
-// Spark 2's weekday and date. Never in the system prompt or a tool's text, so what the brain reads is the same from one
+// the hub's weekday and date. Never in the system prompt or a tool's text, so what the brain reads is the same from one
 // day to the next. None with `time` off. (SPARK_CONSOLE_TODAY: a fixed day, on the stand-in fleet only.)
 function memoryTodayLine() {
   if (memoryOffFor('time')) return null;
   const fixed = ALL_LOCAL && /^\d{4}-\d\d-\d\d$/.test(process.env.SPARK_CONSOLE_TODAY || '') ? process.env.SPARK_CONSOLE_TODAY : null;
   const day = fixed || memoryDay(), t = new Date(`${day}T12:00:00`);
-  return `Today on Spark 2: ${t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '')} (${day}).`;
+  return `Today on ${hubName()}: ${t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '')} (${day}).`;
 }

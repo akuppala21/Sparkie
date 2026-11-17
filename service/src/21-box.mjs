@@ -3,7 +3,7 @@
 // Owns: none
 // Timers: none        Wakes: none
 // run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a
-// chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a
+// chat), on a compute Spark that is on, never on the hub or a Spark holding the brain (R1), looked at again before a
 // box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned
 // by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no
 // new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its
@@ -143,7 +143,7 @@ const boxKey = ctx => (ctx.chat ? `chat ${ctx.chat}` : `${ctx.via || 'api'} ${ct
 const boxName = key => `${BOX_PREFIX}${createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
 // Who is asking: Sparkie, an agent, or the owner's own call (their press, the API, Telegram's words, the page).
 const boxBy = ctx => (ctx.via === 'sparkie' ? 'sparkie' : ctx.via === 'agent' || ctx.agentId || ctx.agent ? 'agent' : 'owner');
-// Never on Spark 2 (the hub) or a Spark holding the brain (R1): checked before each open and each use.
+// Never on the hub or a Spark holding the brain (R1): checked before each open and each use.
 const boxBarred = node => !node || node.host === 'local' || brainSparks().includes(node.id);
 // The compute Sparks a box may open on, the caller's last one first; those known to be off are left out.
 function boxPlaces(prefer) {
@@ -207,7 +207,7 @@ async function boxOpen(key, ctx, command) {
     const image = String(CONFIG.work?.images?.python || '');
     if (!BOX_IMAGE.test(image)) throw new HttpError(409, 'No box image pinned by digest is set in config.json (work.images.python), so no box opened. Nothing ran.');
     const { all, up } = boxPlaces(was?.spark);
-    if (!all.length) throw new HttpError(409, 'There is no compute Spark on the list (a box never opens on Spark 2 or on the brain’s Spark), so no box opened. Nothing ran.');
+    if (!all.length) throw new HttpError(409, `There is no compute Spark on the list (a box never opens on ${hubName()} or on the brain’s Spark), so no box opened. Nothing ran.`);
     let noRoom = null;
     for (const node of up) {
       if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: '?' })} holds the brain or is the hub, so no box opens there.`);
@@ -247,7 +247,7 @@ async function boxOpen(key, ctx, command) {
       throw new HttpError(409, `The box on ${at} failed its check from inside and was removed: ${why || 'the check’s answer was not its own'}. Nothing ran.`);
     }
     if (noRoom) { rec.outcome = 'noroom'; throw new HttpError(409, noRoom); }
-    throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
+    throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on ${hubName()} or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
   } catch (e) { rec.err = e; throw e; } finally {
     boxClaims.delete(key);
     boxRecord(ctx, { id: rid, unit: rec.name, args: { spark: rec.spark, command: String(command).slice(0, 600) }, ok: !rec.err, outcome: rec.outcome,

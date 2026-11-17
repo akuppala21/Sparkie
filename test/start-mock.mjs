@@ -15,7 +15,7 @@
 //
 // By hand: node test/start-mock.mjs [--keep]   (prints the addresses; Ctrl-C stops it)
 import { spawn } from 'node:child_process';
-import { mkdtempSync, cpSync, rmSync, readFileSync, writeFileSync, truncateSync, mkdirSync, renameSync, existsSync, openSync, closeSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, cpSync, rmSync, readFileSync, writeFileSync, truncateSync, mkdirSync, renameSync, existsSync, openSync, closeSync, appendFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -113,8 +113,41 @@ function knownContainers(root, offline) {
   return { workloads, sparks: {} };
 }
 
-// The service's own settings (read-only): its configured origin and Sparkie's model setup.
-export const serviceConfig = () => JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8'));
+// The service's settings as service/config.json ships them (read-only).
+export const shippedConfig = () => JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8'));
+// The stand-in fleet's own hub: its folder (test/mock/root/spark2) holds the brain, its models and Spark Console's own
+// files, and the suite's words name it. So a stand-in console is handed config.json with this Spark as the hub (host
+// "local", the node of every brain setup that names the shipped hub, the address its name gives), whichever Spark
+// config.json marks; startMock's `hub` asks for another (hub-move.test.mjs: config.json's own, Spark 1 since 2026-11-16).
+export const STANDIN_HUB = 'spark2';
+// The tailnet address of a Spark config.json marks local (it gives none there), for a stand-in whose hub is another.
+const HUB_ADDRESSES = { spark1: '100.119.233.101', spark2: '100.79.155.126' };
+export function configFor(hub = STANDIN_HUB, cfg = shippedConfig()) {
+  const was = (cfg.nodes || []).find(n => n.host === 'local')?.id;
+  const on = node => (node === was ? hub : node);
+  return { ...cfg,
+    origin: was && hub !== was ? String(cfg.origin).replace(`//ak${was}.`, `//ak${hub}.`) : cfg.origin,
+    nodes: (cfg.nodes || []).map(n => ({ ...n, host: n.id === hub ? 'local' : n.host === 'local' ? HUB_ADDRESSES[n.id] || `${n.id}.test` : n.host })),
+    ...(cfg.main ? { main: cfg.main.presets ? { ...cfg.main, presets: Object.fromEntries(Object.entries(cfg.main.presets).map(([id, p]) => [id, { ...p, node: on(p.node) }])) }
+      : { ...cfg.main, node: on(cfg.main.node) } } : {}) };
+}
+// The settings the stand-in console is handed by default (above): its configured origin and Sparkie's model setup.
+export const serviceConfig = () => configFor();
+// A stand-in fleet whose hub is another Spark (startMock's `hub`): that Spark's folder and the stand-in hub's change
+// places, and so does every id in the fleet's lists (containers, the cable links, the Sparks that start offline), so
+// the brain, its models and the console's own files are on the new hub and the old one is a plain compute Spark.
+// access.json is left as it is, the old hub still marked local, as a list made before a move would be.
+function moveHub(root, stateDir, offlineFile, hub) {
+  if (hub === STANDIN_HUB) return;
+  const swap = s => s.replace(new RegExp(`\\b(${STANDIN_HUB}|${hub})\\b`, 'g'), m => (m === hub ? STANDIN_HUB : hub));
+  const was = join(root, STANDIN_HUB), to = join(root, hub), aside = join(root, `${hub}.moving`);
+  renameSync(to, aside); renameSync(was, to); renameSync(aside, was);
+  for (const spark of readdirSync(root)) {
+    const f = join(root, spark, '.mock', 'containers');
+    if (existsSync(f)) writeFileSync(f, swap(readFileSync(f, 'utf8')));
+  }
+  for (const f of [join(stateDir, 'links.json'), offlineFile]) writeFileSync(f, swap(readFileSync(f, 'utf8')));
+}
 
 // prepare({ dir, root, stateDir }): runs after the fleet and state are copied and before the service starts (to seed
 // state files: events.jsonl, heal-tries.json, an unreadable verified.json, …), once per attempt (below).
@@ -206,7 +239,7 @@ function madeUpRecord(lock, p) {
 // evalProfile (test/eval.mjs only): a brain check's profile from an earlier fleet of the same run, put in this fleet's
 // brain-profiles.json before the service starts (so it doesn't check the brain itself at start), and used by recordEval.
 async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null,
-  lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000, evalProfile = null } = {}, attempt) {
+  lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000, evalProfile = null, hub = STANDIN_HUB } = {}, attempt) {
   hookExit();
   // This build's lock (above), unless the test brings its own: made before this start's ports are chosen.
   let lock = null;
@@ -227,12 +260,22 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: e
   writeFileSync(join(stateDir, 'links.json'), readFileSync(join(MOCK, 'links.json')), { mode: 0o600 });
   // Sparkie's model as service/config.json describes it, but on the stand-in model's free port (state's main.json
   // overrides a preset with the same id), so it never meets another copy's stand-in on the usual port.
-  const cfg = serviceConfig(), presets = cfg.main ? (cfg.main.presets || { [cfg.main.id || 'default']: cfg.main }) : {};
+  const cfg = configFor(hub), presets = cfg.main ? (cfg.main.presets || { [cfg.main.id || 'default']: cfg.main }) : {};
   if (Object.keys(presets).length) {
     writeFileSync(join(stateDir, 'main.json'), JSON.stringify({ current: Object.keys(presets)[0],
       presets: Object.fromEntries(Object.entries(presets).map(([id, p]) => [id, { ...p, port: modelPort }])) }), { mode: 0o600 });
   }
+  // (the Spark list this console is handed, its hub the stand-in fleet's own unless the test asks: configFor)
+  const configFile = join(dir, 'config.json');
+  writeFileSync(configFile, JSON.stringify(cfg, null, 2));
   writeFileSync(offlineFile, readFileSync(join(MOCK, 'offline')));
+  moveHub(root, stateDir, offlineFile, hub);
+  // (Tailscale on the hub, as the stand-in tailscale answers status: its own name and address first)
+  if (hub !== STANDIN_HUB) {
+    const peer = id => ({ HostName: `ak${id}`, TailscaleIPs: [`100.64.0.${id.replace(/^spark/, '')}`], Online: true });
+    writeFileSync(join(dir, 'status.json'), JSON.stringify({ BackendState: 'Running', Self: { HostName: `ak${hub}`, TailscaleIPs: [`100.64.0.${hub.replace(/^spark/, '')}`] },
+      Peer: Object.fromEntries(['spark1', 'spark2', 'spark3', 'spark4'].filter(id => id !== hub).map(id => [`nodekey:${id.replace(/^spark/, '')}`, peer(id)])) }));
+  }
   if (knowledge) writeFileSync(join(stateDir, 'knowledge.json'), JSON.stringify(knownContainers(root, readFileSync(offlineFile, 'utf8'))), { mode: 0o600 });
   await prepare?.({ dir, root, stateDir });
   if (evalProfile?.key && lock && evalOnRecord) writeFileSync(join(stateDir, 'brain-profiles.json'), JSON.stringify({ profiles: { [evalProfile.key]: { ...evalProfile, evals: {} } } }), { mode: 0o600 });
@@ -243,6 +286,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: e
   Object.assign(env, {
     PATH: `${join(MOCK, 'bin')}:${process.env.PATH}`,
     MOCK_ROOT: root, MOCK_DIR: dir, MOCK_KEEP: keep ? '1' : '0', MOCK_MODEL_PORT: String(modelPort), MOCK_BENCH_PORT: String(benchPort), MOCK_SERVE_PORT: String(servePort),
+    MOCK_HUB: hub, SPARK_CONSOLE_CONFIG_FILE: configFile,
     // Every start keeps its secrets (recovery codes, Telegram's token) and its journal in its own folder, never the
     // developer's home.
     SPARK_CONSOLE_SECRETS_FILE: secretsFile, SPARK_CONSOLE_JOURNAL_DIR: journalDir,

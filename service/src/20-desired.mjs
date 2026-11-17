@@ -257,7 +257,7 @@ action({
 // (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
 const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 // The chat's newest change undo can't put back (C-16), from the journal's two newest months: a command inside the
-// lock-out net (a lock-out change on a compute Spark, root, every change on Spark 2: its start line carries `net` and no
+// lock-out net (a lock-out change on a compute Spark, root, every change on the hub: its start line carries `net` and no
 // set of copies) unless it never ran, or a change other than a model's or an app's (those are the list's revisions,
 // below) that did something: power, a file saved, memory, a saved workflow, an update, a cancel. Undo's own lines and
 // what changes nothing on the Sparks (find_setups, test_changes, the self-test) are none.

@@ -263,13 +263,14 @@ contract is the owner's to change. The code named is in `service/src/`.
 | 8.14: plain root commands are among the changes that run at once | Root is always the dangerous ask | `rootChange` in `21-root.mjs` |
 | 8.15: one command for each Spark, once | Root also needs `--with-root` | `deploy/root-for-sparkie.sh`; `root_off` in the helper |
 | 8.14's lock-out bullet, T15, T74: a lock-out change is asked first and runs inside the net | As the owner's own command on a compute Spark it is answered "set root": nothing is asked or run. Asked, and run inside the net, only with `root: true` where root is on | `netChange` in `21-net.mjs`, `rootChange` |
-| 8.15: a net wall beside the look and run walls | On a compute Spark nothing runs in one: a lock-out change runs as root, which has no wall. Only Spark 2's change runs walled inside the net | `netGuarded`; R70 |
-| 8.11 ("every command on Spark 2"), 6.6, T74's last sentence, T51, T91 | On Spark 2 a look is not armed and runs at once; a lock-out change and root are refused, not asked; a command on the console's own state, unit or socket is refused before any ask | `21-work.mjs`; `hubChange`, `hubRefuses`; `rootChange` |
+| 8.15: a net wall beside the look and run walls | On a compute Spark nothing runs in one: a lock-out change runs as root, which has no wall. Only the hub's change runs walled inside the net | `netGuarded`; R70 |
+| 8.11 ("every command on Spark 2"), 6.6, T74's last sentence, T51, T91 | On the hub a look is not armed and runs at once; a lock-out change and root are refused, not asked; a command on the console's own state, unit or socket is refused before any ask | `21-work.mjs`; `hubChange`, `hubRefuses`; `rootChange` |
 | 8.14's risky list, T127: a root script is asked first | A root command that runs a script, or other code it does not show, or has a part the sorter can't read, is refused | `rootUnseen`, `rootUnread` in `21-root.mjs` |
 | 8.14: a command in the box runs at once | Opening a box is a change: Sparkie's call is refused while changes are paused, and a brain not checked gets one button | `boxGate` in `21-box.mjs` |
 | 8.15: until the owner's command has run for a Spark, the two tools do not work there | The box works without the helper | `boxOpen` in `21-box.mjs` |
-| 8.18: "ROOT on Spark 2"; "the press runs those same bytes or nothing" | Nothing runs as root on Spark 2. The ask shows a script's SHA-256, not its text; the press and the unit's first lines check it again; the script runs by its path. No installer is downloaded once and held | `workScripts` in `21-ladder.mjs`, `runnerPins` in `21-runner.mjs` |
+| 8.18: "ROOT on Spark 2"; "the press runs those same bytes or nothing" | Nothing runs as root on the hub. The ask shows a script's SHA-256, not its text; the press and the unit's first lines check it again; the script runs by its path. No installer is downloaded once and held | `workScripts` in `21-ladder.mjs`, `runnerPins` in `21-runner.mjs` |
 | 8.14: services change at once | By our reading, not run: the run wall hides `/run`, so a plain change cannot reach a user service, and a system service needs root | R63 |
+| Every sentence that names Spark 2 as the hub or the brain's Spark (the reworded list waits for the owner's yes) | The hub is Spark 1, by the owner's decision of 2026-11-16: the Spark `config.json` marks host "local". Spark 2 is a compute Spark like 3 and 4 | `hubId`, `hubName` in `01-setup.mjs`; `service/config.json` |
 
 **Trades the owner has been told.**
 

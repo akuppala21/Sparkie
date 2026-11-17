@@ -85,7 +85,7 @@ function openProblems() {
     () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
     // The ways in, watched ahead (20-ways-in.mjs): a Tailscale key near expiry, linger off, Funnel off.
     () => waysInNeeds(add, here),
-    // At the last check_update (21-updates.mjs): GitHub refused the install's token, or git isn't on Spark 2.
+    // At the last check_update (21-updates.mjs): GitHub refused the install's token, or git isn't on the hub.
     () => updNeeds(add),
   ];
   for (const f of sources) { try { f(); } catch {} }

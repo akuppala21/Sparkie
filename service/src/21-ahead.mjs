@@ -13,7 +13,7 @@
 // may give it too. It stands in only for the request's own rules (2 and 3 of design A 2.5: the owner's words asked for
 // a change and named the Spark, and nothing was read since): the sorter, the wall, the pause, the rail (R52), the
 // copies and the journal all still apply, and the run's record says gate "go-ahead". Never ahead (aheadWhyNot), and so
-// never offered: an agent's change; Spark 2 or a Spark holding the brain; root; a key read or sent; a script (its hash
+// never offered: an agent's change; the hub or a Spark holding the brain; root; a key read or sent; a script (its hash
 // is for one press); what an earlier command of the task fetched or wrote; what came from what Sparkie read (R54's
 // "came from"), in this request or an earlier message of the chat (workEarlier); a dangerous ask's kinds; anything the
 // sorter calls risky, lock-out, open or not done; a protected folder; a change that runs with --home or --open after
@@ -73,7 +73,7 @@ const aheadWritten = (sorted, written) => (Array.isArray(written) ? written : []
 // widen (runnerWiden)}; the sorter's own installs, gpu and reach too.
 function aheadWhyNot(sorted, command, f) {
   if (f.agent) return 'an agent asked for it';
-  if (f.hub) return 'it is on Spark 2';
+  if (f.hub) return `it is on ${hubName()}`;
   if (f.brain) return 'that Spark holds the brain';
   if (f.root || sorted?.kinds?.includes('root') || sorted?.answer) return 'it runs as root';
   if (maskSecrets(command) !== command || lookWords(command).words.some(w => keyWord(w))) return 'it reads or sends a key';

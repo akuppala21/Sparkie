@@ -11,7 +11,7 @@
 // yes covers the box it names. The idle power-off counts a box as use and leaves the Spark on. A container named and
 // labelled like a box that this console doesn't have open (one left from before a restart, which ends at its own time;
 // one opening now) is said as what it is, and refuses the power-off as anything else Spark Console can't stop does.
-// Spark 2 never holds a box (boxBarred) and its plug is never switched (R41): nothing here touches either.
+// The hub never holds a box (boxBarred) and its plug is never switched (R41): nothing here touches either.
 const POWER_BOX_LOOK = `docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Label "spark-console.box"}}' 2>/dev/null`;
 const POWER_BOX_RE = /^[0-9a-f]{12,64}\|(spark-console-box-[0-9a-f]{12})\|running\|(spark-console-box-[0-9a-f]{12})$/;
 const POWER_BOX_OTHER = 'labelled as a box, but not one Spark Console has open now: one left from before a restart ends by itself within 2 hours of opening';
