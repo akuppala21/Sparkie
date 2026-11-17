@@ -23,8 +23,7 @@ const HUB_ENV = readFileSync(join(DEPLOY, 'hub.env'), 'utf8');
 const val = (text, k) => (new RegExp(`^${k}=(.*)$`, 'm').exec(text) || [])[1];
 const SPARKS = { spark1: '100.119.233.101', spark2: '100.79.155.126', spark3: '100.122.49.9', spark4: '100.109.240.15' };
 const S1 = `akuppala@${SPARKS.spark1}`;
-// The root helper names the hub only in comments; its hash is pinned in the service, so they change with that pin.
-const NOT_YET = ['spark-console-root'];
+const NOT_YET = [];
 const TIMEOUT = 60000 * SLOW;
 const dirs = [];
 const tmp = prefix => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
