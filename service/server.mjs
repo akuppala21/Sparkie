@@ -9297,7 +9297,7 @@ async function undoUpdate(via) {
 }
 action({
   name: 'test_changes', title: 'Test the changes', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'checks',
-  description: `Use after an update, or when the owner asks to test the changes: gives each changed workflow its test run (a small model on a compute Spark, never ${hubName()}, putting back what it stopped). Not needed for Sparkie’s own starts: the owner’s request is a validation run by itself.`,
+  description: 'Use after an update, or when the owner asks to test the changes: gives each changed workflow its test run (a small model on Spark 3 or 4, putting back what it stopped). Not needed for Sparkie’s own starts: the owner’s request is a validation run by itself.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => { const job = startTestChanges(viewer, ctx.via || 'agent'); return { outcome: 'started', operation: job.id, next: `wait_operation {"id":"${job.id}"}` }; },
 });
@@ -27188,7 +27188,7 @@ function describeChange(method, path, body = {}) {
     return d ? `Let ${d.kind === 'terminal' ? 'a terminal' : 'a browser'} called “${d.name}” sign in as you (code ${d.userCode}, asked from ${d.from || 'an unknown address'})`
       : `Let the device with code ${clean(body.code, 12)} sign in as you`;
   }
-  if (method === 'POST' && path === '/workflows/validate') return `Validate the changed workflows: run each one’s check with a small model on a compute Spark (never ${hubName()}), then put things back`;
+  if (method === 'POST' && path === '/workflows/validate') return 'Validate the changed workflows: run each one’s check with a small model on Spark 3 or 4, then put things back';
   if (method === 'POST' && path === '/rollback') return 'Go back to the build installed before this one (Spark Console restarts)';
   if (method === 'POST' && path === '/auth/recovery') return 'Make 10 new recovery codes (the old ones stop working)';
   if (method === 'PUT' && path === '/telegram') return 'Connect a Telegram bot, so you can talk to Sparkie from Telegram once you pair your chat';

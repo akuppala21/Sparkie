@@ -100,9 +100,9 @@ async function inChat(chat, words, command) {
 }
 const answering = () => waitFor(async () => { const m = (await api('/main')).json; return m.state === 'running' && m.healthy === true; }, { timeout: 90000 * SLOW, what: 'Sparkie answering' });
 
-test('the console’s one address is akspark1’s: the fleet’s origin, whoami’s, and a write from the old one is refused', async () => {
+test('the console’s one address is akspark1’s: the fleet’s origin, the page’s (bootstrap), and a write from the old one is refused', async () => {
   assert.equal(T.fleet.origin, NEW_ORIGIN);
-  assert.equal((await api('/whoami')).json.main, NEW_ORIGIN);
+  assert.equal((await api('/bootstrap')).json.main, NEW_ORIGIN);
   const old = await api('/actions/fleet_status', { method: 'POST', body: {}, headers: { origin: 'https://akspark2.tailab9aa9.ts.net:8443' } });
   assert.equal(old.status, 403, old.text);
   assert.equal((await act('fleet_status', {})).status, 200);
