@@ -70,10 +70,10 @@ jobs:
           node-version: 26
       - name: Install browser test tools outside the product
         run: |
-          npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.56.1
-          "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
+          npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.65.1
+          google-chrome --version
       - name: Desktop and phone recovery flows
-        run: SPARK_BROWSER_MODULE="$RUNNER_TEMP/browser/node_modules/playwright/index.mjs" node tools/browser-check.mjs
+        run: SPARK_BROWSER_CHANNEL=chrome SPARK_BROWSER_MODULE="$RUNNER_TEMP/browser/node_modules/playwright/index.mjs" node tools/browser-check.mjs
 
   mark:
     needs: [suite, browser]

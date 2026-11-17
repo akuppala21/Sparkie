@@ -58,11 +58,20 @@ describe('the lock', () => {
       assert.ok(t.function.description?.length > 20, t.function.name);
       assert.equal(typeof t.function.parameters, 'object', t.function.name);
     }
-    assert.match(sent.system, /Spark 1/, 'the web prompt names the shipped hub');
-    assert.match(sent.catalog.telegram.system, /Spark 1/, 'the Telegram prompt names the same shipped hub');
+    // Hello gets only core tools. The power group's hub instructions live in the fingerprint's catalog until
+    // that group opens; inspect each captured fleet's own structured catalog, rather than the core system text.
+    const powerLine = catalog => catalog.brain.lines.find(line => line.tools.includes('power_off'));
+    assert.match(powerLine(sent.catalog).text, /Spark 1 runs Spark Console and you/, 'the web catalog names the shipped hub');
+    assert.match(powerLine(sent.catalog.telegram.catalog).text, /Spark 1 runs Spark Console and you/, 'the Telegram catalog names the same shipped hub');
     const reads = brainReadsOf(sent);
     assert.equal(reads, (await lockFor(T.fleet, { env: {} })).brainReads);
     assert.equal(brainReadsOf(structuredClone(sent)), reads);
+    for (const channel of ['web', 'telegram']) {
+      const changedHub = structuredClone(sent);
+      const catalog = channel === 'web' ? changedHub.catalog : changedHub.catalog.telegram.catalog;
+      powerLine(catalog).text = powerLine(catalog).text.replace('Spark 1', 'Spark 2');
+      assert.notEqual(brainReadsOf(changedHub), reads, `${channel}'s hub identity changes the qualification fingerprint`);
+    }
     const described = structuredClone(sent);
     described.tools[3].function.description += ' Now also something else.';
     assert.notEqual(brainReadsOf(described), reads);

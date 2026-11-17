@@ -56,8 +56,8 @@ test('A31: missing-cache planning refuses an unproven manifest before any GPU wo
   assert.equal(pinned.steps.find(step => step.kind === 'pull').image, ref);
 });
 test('A31: the run command uses the same immutable resolver and contains no mutable-tag fallback', () => {
-  const run = new Function('mainSnapshots', 'mainImageScript', 'q', 'CONFIG', 'HF_HUB', `${lift(main, 'function mainRunCommand(')}\nreturn mainRunCommand;`)(
-    () => 'model=snapshot; draft=', imageFns.mainImageScript, q, { modelsDir: 'models' }, '"$HOME/cache"');
+  const run = new Function('mainSnapshots', 'mainImageScript', 'q', 'CONFIG', 'HF_HUB', 'repoOf', `${lift(main, 'function mainRunCommand(')}\nreturn mainRunCommand;`)(
+    () => 'model=snapshot; draft=', imageFns.mainImageScript, q, { modelsDir: 'models' }, '"$HOME/cache"', name => String(name).replace('--', '/'));
   const command = run({ ...setup, model: 'brain', served: 'brain', store: 'hf', container: 'brain', port: 30100, engine: 'vllm', shmGiB: 16, args: [], env: {} });
   assert.ok(command.includes(imageFns.mainImageScript(setup)));
   assert.match(command, /\[ -n "\$img" \] \|\|/);

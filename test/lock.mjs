@@ -103,7 +103,13 @@ async function telegramSent(start) {
         await new Promise(r => setTimeout(r, 500));
         let sent = null;
         try { sent = JSON.parse(readFileSync(join(fleet.dir, 'brain-sent.json'), 'utf8')); } catch {}
-        if (String(sent?.words).includes(words) && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) return { system: sent.system, tools: sent.tools, params: sent.params ?? null };
+        if (String(sent?.words).includes(words) && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) {
+          // Hello opens no power tools, so its core prompt omits their hub-specific instructions. Keep this fleet's
+          // catalog too: it includes the power instructions and tools this Telegram brain can be offered later.
+          const catalog = await (await fetch(`${fleet.base}/actions`)).json();
+          if (!Array.isArray(catalog?.actions) || !catalog.brain) throw new Error('The Telegram fleet did not give its brain catalog.');
+          return { system: sent.system, tools: sent.tools, params: sent.params ?? null, catalog };
+        }
       }
     }
     throw new Error('The stand-in brain wasn’t sent a turn from the paired Telegram chat, so what it reads there couldn’t be marked.');
