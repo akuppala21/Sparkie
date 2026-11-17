@@ -230,7 +230,9 @@ async function placeStep(j, n, args, viewer, title) {
     note(j, `Step ${n}: ${args.container} goes on ${sparkName(nodeById(spark) || { id: spark })}: ${p.why}`);
   }
   if (consoleOff(spark)) {
-    const at = sparkName(nodeById(spark) || { id: spark }), why = `the saved workflow “${title}”`;
+    // (the reason by kind and this run's operation, never the title: fleet_status, an inside read, shows it, R26, F2 C5;
+    // the operation makes two runs' reasons two, so one's end never lets the other's Spark sleep)
+    const at = sparkName(nodeById(spark) || { id: spark }), why = `a saved workflow’s run, operation ${j.id}`;
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
