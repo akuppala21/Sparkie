@@ -154,7 +154,7 @@ only when one sentence of the owner's newest message tells it to, with nothing r
 asked. What the net cannot put back (a Tailscale sign-out, a package the ways in need) is not done. Always the
 dangerous ask. The press copies the ways in, arms a timer in that Spark's own systemd, runs the change, then tries
 the ways in from outside: all still work, kept; one doesn't, put back at once; no answer, the timer puts it back.
-`/putback` puts the newest open one back by code. Rules R60, R71, R70, R3. Parts `21-net.mjs`, `21-root.mjs`,
+`/putback` tries every open one, oldest first, by code. Rules R60, R71, R70, R3. Parts `21-net.mjs`, `21-root.mjs`,
 `21-guard.mjs`. Tests `net.test.mjs`, `root.test.mjs`, `root-helper.test.mjs`.
 
 **Change Spark 2.** Every change there is asked, one command a press, inside the net, with the console's own ways in
@@ -265,7 +265,7 @@ contract is the owner's to change. The code named is in `service/src/`.
 | 8.14's lock-out bullet, T15, T74: a lock-out change is asked first and runs inside the net | As the owner's own command on a compute Spark it is answered "set root": nothing is asked or run. Asked, and run inside the net, only with `root: true` where root is on | `netChange` in `21-net.mjs`, `rootChange` |
 | 8.15: a net wall beside the look and run walls | On a compute Spark nothing runs in one: a lock-out change runs as root, which has no wall. Only Spark 2's change runs walled inside the net | `netGuarded`; R70 |
 | 8.11 ("every command on Spark 2"), 6.6, T74's last sentence, T51, T91 | On Spark 2 a look is not armed and runs at once; a lock-out change and root are refused, not asked; a command on the console's own state, unit or socket is refused before any ask | `21-work.mjs`; `hubChange`, `hubRefuses`; `rootChange` |
-| 8.14's risky list, T127: a root script is asked first | A root command that runs a script, or other code it does not show, is refused | `rootUnseen` in `21-root.mjs` |
+| 8.14's risky list, T127: a root script is asked first | A root command that runs a script, or other code it does not show, or has a part the sorter can't read, is refused | `rootUnseen`, `rootUnread` in `21-root.mjs` |
 | 8.14: a command in the box runs at once | Opening a box is a change: Sparkie's call is refused while changes are paused, and a brain not checked gets one button | `boxGate` in `21-box.mjs` |
 | 8.15: until the owner's command has run for a Spark, the two tools do not work there | The box works without the helper | `boxOpen` in `21-box.mjs` |
 | 8.18: "ROOT on Spark 2"; "the press runs those same bytes or nothing" | Nothing runs as root on Spark 2. The ask shows a script's SHA-256, not its text; the press and the unit's first lines check it again; the script runs by its path. No installer is downloaded once and held | `workScripts` in `21-ladder.mjs`, `runnerPins` in `21-runner.mjs` |
@@ -576,7 +576,7 @@ and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60, R
 - Root has no wall, and the check on names is not one (R70 says so). Spell a command that removes the net's timer,
   root's switch or the sudo line past it.
 - A root command that runs a script, or other code it does not show, is refused now (`rootUnseen`), and so is a
-  mount. Find code that runs unseen and passes. And what a root command prints comes back to the brain and the
+  mount, and one with a part the sorter can't read at all, unless it is one plain program (`rootUnread`). Find code that runs unseen and passes. And what a root command prints comes back to the brain and the
   journal, masked only by shape.
 
 **7. Keys.** `service/src/20-keys.mjs`, `21-run-keys.mjs`, `03-secrets.mjs`; R51; `test/app-keys.test.mjs`,
