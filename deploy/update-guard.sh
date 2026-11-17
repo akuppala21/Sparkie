@@ -6,7 +6,9 @@
 #       source) to ~/.local/share/spark-console/update-guard/, with a copy of this script, and arms one timer in the
 #       owner's systemd (spark-console-update-guard.timer, 30 minutes) that runs this put-back. The timer is enabled,
 #       so after a restart of the hub it is armed again and fires 30 minutes after the user's services start. It is the
-#       one timer this adds, it lives for one install, and it is gone after either ending.
+#       one timer this adds, it lives for one install, and it is gone after either ending. A failed timer-triggered recovery is
+#       retried after a minute: at most three persisted attempts within 30 minutes of its first attempt. Direct pull
+#       rollback and recovery by hand keep their existing paths; neither spends this timer-only budget.
 #   update-guard.sh disarm      the new build was confirmed through the real address: timer and copy gone. Also the way
 #       on when a copy can never go back: the build that runs now stays, and the build from before can then be had
 #       only from an install snapshot (go-back.sh).
@@ -51,8 +53,17 @@ lock() {
 }
 held() { say "Another run of the way back still holds its lock ($SHARE/update-guard.lock), so nothing was changed$1. Try again once it has ended."; }
 field() { sed -n "s/^$1=//p" "$G/guard" 2>/dev/null | head -n 1; }
+# Cancel a failed run's pending restart before disarming or giving a later install this unit name. A missing unit
+# is fine; a manager that cannot stop a live or queued run is not. Never call this from the timer's own service.
+stop_retries() {
+  sc stop "$NAME.service" >/dev/null 2>&1 && return 0
+  case "$(sc is-active "$NAME.service" 2>/dev/null)" in inactive|failed|unknown) return 0 ;; esac
+  say "The update's pending way back couldn't be stopped. Its copy is kept; nothing else was installed."
+  return 1
+}
 timer_off() {
   sc disable --now "$NAME.timer" >/dev/null 2>&1
+  [ "${by:-}" = timer ] || stop_retries || return 1
   rm -f "$UNITS/$NAME.timer" "$UNITS/$NAME.service"
   sc daemon-reload >/dev/null 2>&1
   return 0
@@ -107,6 +118,12 @@ arm() {
   if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ''; return 1; fi
   if [ -e "$G" ] && ! whole; then rm -rf "$G"; fi
   [ ! -e "$G" ] || { say "An earlier update's way back is still armed ($G). To go on: $WAYS."; return 1; }
+  # The old run can still be waiting in RestartSec after its copy went. Stop it before this path names a new copy.
+  stop_retries || return 1
+  if ! sc reset-failed "$NAME.service" >/dev/null 2>&1; then
+    [ "$(sc show --property=LoadState --value "$NAME.service" 2>/dev/null)" = not-found ] \
+      || { say "The way back's retry count couldn't be reset. Nothing was installed."; return 1; }
+  fi
   local boot=''
   boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || boot=''
   ( umask 077; mkdir -p "$SHARE" && mkdir "$G" ) || { say "Couldn't make $G."; return 1; }
@@ -118,8 +135,15 @@ arm() {
   cat > "$UNITS/$NAME.service" <<EOF
 [Unit]
 Description=Spark Console: put the build from before the update back (the update was not confirmed)
+ConditionPathExists=%h/.local/share/spark-console/update-guard/guard
+StartLimitIntervalSec=infinity
+StartLimitBurst=3
 [Service]
 Type=oneshot
+Restart=on-failure
+RestartSec=60s
+TimeoutStartSec=9min
+TimeoutStopSec=10s
 ExecStart=/bin/bash %h/.local/share/spark-console/update-guard/update-guard.sh put-back timer
 EOF
   cat > "$UNITS/$NAME.timer" <<EOF
@@ -146,7 +170,7 @@ disarm() {
   lock || r=$?
   if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ', and the way back is still armed'; return 1; fi
   [ -d "$G" ] || { say "The way back had already put the build from before back."; return 1; }
-  timer_off
+  timer_off || return 1
   drop
   return 0
 }
@@ -179,8 +203,12 @@ os.replace(tmp, path)' "$STATE/update-result.json" "$tree" "$build" "$1" "${2:-n
 # kept <what happened>: the build from before isn't back. The copy, its guard file and its timer stay (the timer fires
 # again after a restart of the hub), and both ways on are said.
 kept() {
-  say "$1 Its copy is kept, and the way back stays armed. To go on: $WAYS."
-  result "$why; $1 Its copy is kept, and the way back stays armed. To go on: $WAYS." yes
+  local note="$1"
+  if [ "${by:-}" = timer ] && [ "$(field autoTries)" = 3 ]; then
+    note="$note Timer-triggered recovery has used its three tries; recovery by hand is needed."
+  fi
+  say "$note Its copy is kept, and the way back stays armed. To go on: $WAYS."
+  result "$why; $note Its copy is kept, and the way back stays armed. To go on: $WAYS." yes
 }
 # started: the service runs, or systemd is starting it (a start was taken), as systemd says.
 started() { sc is-active --quiet spark-console-api && return 0; case "$(sc is-active spark-console-api 2>/dev/null)" in activating|reloading) return 0 ;; esac; return 1; }
@@ -195,6 +223,43 @@ back_whole() {
   [ ! -d "$G/src" ] || same "$G/src" "$HOME/spark-console-src"
 }
 
+# A timer-triggered attempt consumes its place under the same lock, before any live file changes. The existing
+# guard record keeps this across hub restarts. Leave enough of its 30-minute budget for one bounded service start.
+take_try() {
+  python3 -I - "$G/guard" <<'PY'
+import os, re, sys, tempfile, time
+path = sys.argv[1]
+tmp = None
+try:
+    pairs = [line.split('=', 1) for line in open(path).read().splitlines()]
+    fields = dict(pairs)
+    if len(fields) != len(pairs): raise ValueError('duplicate fields')
+    tries, since = fields.get('autoTries', '0'), fields.get('autoSince', '0')
+    if not re.fullmatch('[0-3]', tries) or not re.fullmatch('[0-9]+', since): raise ValueError('bad retry record')
+    tries, since, now = int(tries), int(since), int(time.time())
+    if (tries == 0) != (since == 0): raise ValueError('incomplete retry record')
+    if tries >= 3 or (since and (now < since or now - since + 550 > 1800)):
+        print('Timer-triggered recovery reached its three-try or thirty-minute limit. The saved copy needs recovery by hand.')
+        sys.exit(1)
+    fields.update(autoTries=str(tries + 1), autoSince=str(since or now))
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.guard-')
+    with os.fdopen(fd, 'w') as f:
+        f.write(''.join(k + '=' + v + '\n' for k, v in fields.items()))
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, path); tmp = None
+    directory = os.open(os.path.dirname(path), os.O_RDONLY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+except Exception:
+    print("The automatic put-back's retry record couldn't be saved safely. The saved copy needs recovery by hand.")
+    sys.exit(1)
+finally:
+    if tmp:
+        try: os.unlink(tmp)
+        except OSError: pass
+PY
+}
+
 put_back() {
   local by="${1:-hand}" why="${2:-}" tree build from restart='' back='' now r=0 f u
   lock || r=$?
@@ -203,10 +268,14 @@ put_back() {
   if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ''; return 1; fi
   [ -d "$G" ] || { say "Nothing to put back: no update's way back is armed."; return 0; }
   whole || { say "The copy in $G isn't whole (an earlier run was cut off), so nothing is put back from it. It is removed."; timer_off; rm -rf "$G"; return 1; }
-  # However this ends from here, the service is started again (a start of a running service changes nothing).
-  trap 'sc daemon-reload >/dev/null 2>&1; sc start spark-console-api >/dev/null 2>&1' EXIT
   tree=$(field tree); build=$(field build); from=$(field from)
   [ -n "$why" ] || why='nothing confirmed the new build through the real address in time'
+  if [ "$by" = timer ]; then
+    local retry_note
+    if ! retry_note=$(take_try); then kept "$retry_note"; return 0; fi
+  fi
+  # However this ends from here, the service is started again (a start of a running service changes nothing).
+  trap 'sc daemon-reload >/dev/null 2>&1; sc start spark-console-api >/dev/null 2>&1' EXIT
   # From the timer: an install still running is stopped first.
   [ "$by" != timer ] || stop_install || true
   same "$G/ui" "$HOME/spark-console" && same "$G/service" "$HOME/spark-console-service" \
@@ -259,7 +328,7 @@ put_back() {
   for _ in $(seq 1 30); do now=$(socket_build); [ -z "$now" ] || break; sleep 1; done
   if [ -n "$now" ] && { [ "$now" = "$from" ] || [ -z "$restart" ]; }; then back=yes; fi
   # (the files are back whole, so the copy holds nothing the live folders don't: it goes, answering or not)
-  timer_off
+  timer_off || { kept "The files are back, but automatic retries couldn't be stopped."; return 1; }
   result "$why; $([ -n "$back" ] && echo "the build from before ($from) was put back and answers" || echo "the build from before was put back but doesn't answer")" no
   if [ -n "$back" ]; then say "The build from before the update ($from) is back and answers."
   else say "The build from before the update was put back, but it doesn't answer. See ~/.local/share/spark-console/RECOVERY.txt"; fi

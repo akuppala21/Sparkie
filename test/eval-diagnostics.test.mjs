@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { diagnosticAttempt, diagnosticMask, fixtureSecretSnapshot, retainAttempt, writeDiagnostics, DIAGNOSTICS_KIND } from './eval-diagnostics.mjs';
+import { diagnosticAttempt, diagnosticMask, diagnosticWaitMs, fixtureSecretSnapshot, retainAttempt, terminalOperations, writeDiagnostics, DIAGNOSTICS_KIND } from './eval-diagnostics.mjs';
 import { gradeRun, turnCalls } from './eval-grade.mjs';
 
 const identity = { case: 'stopped', run: 1, attempt: 1 };
@@ -96,4 +96,33 @@ test('both no-result attempts survive separately and diagnostic files replace br
     assert.throws(() => fixtureSecretSnapshot({ ...fleet, secretsFile: target }), /Not a fixture/);
     assert.equal(typeof diagnosticMask({}), 'function');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('diagnostic capture waits for case operations to finish without waiting for unrelated work or changing failures', async () => {
+  let tick = 0, looks = 0;
+  const snapshots = [
+    { jobs: [{ id: 'start', status: 'running' }, { id: 'other', status: 'running' }] },
+    { jobs: [{ id: 'start', status: 'completed' }, { id: 'other', status: 'running' }] },
+  ];
+  const result = await terminalOperations(async () => snapshots[looks++], ['start'], { waitMs: 1000, now: () => tick, pause: async ms => { tick += ms; } });
+  assert.deepEqual(result, { jobs: snapshots[1].jobs, open: [] });
+  assert.equal(looks, 2);
+  const failed = { jobs: [{ id: 'start', status: 'failed', error: 'Docker refused the start' }] };
+  assert.deepEqual(await terminalOperations(async () => failed, ['start'], { waitMs: 1000 }), { ...failed, open: [] }, 'a failed operation stays failed');
+  const timed = await terminalOperations(async () => snapshots[0], ['start', 'missing'], { waitMs: 0 });
+  assert.deepEqual(timed.open, ['start', 'missing'], 'the bound leaves incomplete evidence labeled');
+});
+
+test('diagnostic operation waits reject missing or invalid bounds before reading anything', async () => {
+  let reads = 0;
+  for (const waitMs of [undefined, NaN, Infinity, -1, '1000']) {
+    await assert.rejects(terminalOperations(async () => { reads++; return { jobs: [] }; }, ['start'], { waitMs }), /finite nonnegative bound/);
+  }
+  assert.equal(reads, 0);
+});
+test('diagnostics use only the case wait time left and never add another full task wait', () => {
+  assert.equal(diagnosticWaitMs(900000, 1000, 1000), 30000, 'a fresh real-brain wait is capped at 30 seconds');
+  assert.equal(diagnosticWaitMs(180000, 1000, 180500), 500, 'the remaining case budget caps the extra wait');
+  assert.equal(diagnosticWaitMs(180000, 1000, 181000), 0, 'an exhausted task wait gets no second budget');
+  assert.equal(diagnosticWaitMs(180000, 1000, 182000), 0);
 });

@@ -56,6 +56,24 @@ export function diagnosticAttempt(identity, raw, options = {}) {
 export function retainAttempt(attempts, identity, captured, result) {
   attempts.push({ ...(captured || { ...identity, captureError: 'The practice fleet did not provide diagnostic evidence.' }), notResult: result?.notResult === true, passed: result?.pass === true });
 }
+// Diagnostics share the case's wait budget and get at most 30 seconds; they never restart that budget.
+export function diagnosticWaitMs(waitMs, began, now = Date.now()) {
+  if (!Number.isFinite(waitMs) || waitMs < 0 || !Number.isFinite(began) || !Number.isFinite(now)) throw new TypeError('Diagnostic wait needs a finite nonnegative bound and clock');
+  return Math.min(30000, Math.max(0, waitMs - Math.max(0, now - began)));
+}
+// A reply may hand back an operation while it is still loading. Wait only for those case-linked operations, after
+// grading, so teardown does not erase their terminal outcome. Missing or still-running operations stay explicit.
+export async function terminalOperations(readJobs, ids, { waitMs, now = Date.now, pause = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+  if (!Number.isFinite(waitMs) || waitMs < 0) throw new TypeError('Operation wait needs a finite nonnegative bound');
+  const wanted = [...new Set(ids)], until = now() + waitMs;
+  for (;;) {
+    const snapshot = await readJobs();
+    if (!Array.isArray(snapshot?.jobs)) throw new Error('No operation snapshot');
+    const open = wanted.filter(id => !snapshot.jobs.some(j => j.id === id && ['completed', 'failed', 'cancelled'].includes(j.status)));
+    if (!open.length || now() >= until) return { jobs: snapshot.jobs, open };
+    await pause(Math.min(250, Math.max(0, until - now())));
+  }
+}
 export function writeDiagnostics(file, attempts, metadata = {}) {
   const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
   let fd;

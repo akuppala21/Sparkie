@@ -345,6 +345,9 @@ const START_FAILURES = [
     advice: 'The log below names the setting; take it out of the recipe, or try another version of the engine.',
     next: ({ fix, message }) => {
       const drop = rejectedFlags(message).filter(f => !(fix.dropFlags || []).includes(f) && !dig.OWN.has(dig.flagKey(f)));
+      // Removing a rejected context flag would silently restore the engine's default context. Leave that decision
+      // to the owner; the normal failure path puts back what this attempt stopped (contract 6.9).
+      if (drop.some(f => ['--context-length', '--max-model-len', '--max_seq_len', '--ctx-size', '-c'].includes(f))) return null;
       return drop.length ? { fix: { ...fix, dropFlags: [...(fix.dropFlags || []), ...drop] } } : null;
     } },
   { id: 'image', title: 'the engine’s image couldn’t be downloaded',

@@ -1,7 +1,7 @@
 # Land a step on main
 
-One small change at a time onto `main`: its affected tests on a compute Spark, then a fast-forward. The whole suite of
-`main` runs after every landing, in the background, and an install still needs it on that exact build (R29).
+Land one small change at a time on `main`, with its affected checks. The complete suite must still pass on the
+exact installed build (R29).
 
 Until the owner says compute Sparks are available, run development checks with GitHub's **Focused checks** manual
 workflow and name the affected `test/*.test.mjs` files. A focused pass never qualifies an install. Use **Full run**
@@ -26,6 +26,8 @@ The Spark-based `land.mjs` commands below still require a compute Spark; do not 
 - To see what the step rewords that is the owner's (a contract requirement or acceptance test, a Rule paragraph, a
   glossary meaning): `node tools/check-docs.mjs --meaning main`, by id with the old and new words (`--json` for a
   button); it exits 1 when there is any.
+
+[Update recovery](../update-recovery.md).
 
 ## Also update
 
@@ -52,7 +54,7 @@ The Spark-based `land.mjs` commands below still require a compute Spark; do not 
 
 ## Tests
 
-- `affected.test.mjs`, `land.test.mjs`.
+- `affected.test.mjs`, `land.test.mjs`, `update-guard.test.mjs`.
 
 ## Copy from
 

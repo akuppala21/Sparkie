@@ -6,6 +6,9 @@
 // arm changes nothing without the lock; a staged copy that isn't the saved one (cp said yes) changes nothing live;
 // restore.sh with --in-place-if-no-room puts back in place, checked, when there is no room beside, and says when
 // that isn't whole (exit 3). The final read of round two, S-5, S-7 and S-10.
+// Timer-triggered recovery gets at most three persisted attempts within 30 minutes of its first; direct-pull
+// rollback and recovery by hand keep their existing paths. Native limits, transient failure,
+// exhaustion across restarts, elapsed time, safe disarm and a later install are covered with the real guard script.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -195,5 +198,113 @@ describe('restore.sh in a snapshot, when room is what failed (S-7)', { concurren
     rmSync(join(h, 'cp-refuses'));
     r = run(h, [join(snap, 'restore.sh'), '--stand-in']);
     assert.deepEqual([get(h, 'spark-console/index.html'), get(h, 'spark-console-service/server.mjs')], ['old page\n', 'old server\n'], r.stdout + r.stderr);
+  });
+});
+
+// A small stand-in for the generated service's restart policy. Time moves by events; the real copied guard runs
+// on each event. This checks scheduling and retained-state behavior, not a real systemd manager.
+function retryManager(h) {
+  const unit = get(h, '.config/systemd/user/spark-console-update-guard.service');
+  const value = key => new RegExp(`^${key}=(.*)$`, 'm').exec(unit)?.[1];
+  let starts = 0, pending = true, sinceLog = calls(h).length;
+  return {
+    get pending() { return pending; },
+    get starts() { return starts; },
+    step() {
+      if (calls(h).slice(sinceLog).some(line => line === '--user stop spark-console-update-guard.service')) pending = false;
+      if (!pending || !armed(h) || starts >= Number(value('StartLimitBurst'))) return null;
+      starts++;
+      const r = run(h, [share(h, 'update-guard', 'update-guard.sh'), 'put-back', 'timer']);
+      pending = r.status !== 0 && value('Restart') === 'on-failure' && armed(h) && starts < Number(value('StartLimitBurst'));
+      sinceLog = calls(h).length;
+      return r;
+    }
+  };
+}
+const retryFields = h => Object.fromEntries(get(h, '.local/share/spark-console/update-guard/guard').trim().split('\n').map(line => line.split('=')));
+const failCopy = h => put(h, 'bin/cp', '#!/bin/sh\nif [ -e "$HOME/cant-copy" ]; then echo "cp: No space left on device" >&2; exit 1; fi\nexec /bin/cp "$@"\n', 0o755);
+const answerOld = h => put(h, 'bin/curl', '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"build":"cccccccccccc"}\'\n', 0o755);
+
+describe('the update timer retries safely within one saved budget', { concurrency: 1 }, () => {
+  test('the generated service bounds attempts, work, stop time and waits; only a whole guard can trigger it', () => {
+    const h = armedHome(), unit = get(h, '.config/systemd/user/spark-console-update-guard.service');
+    for (const line of ['ConditionPathExists=%h/.local/share/spark-console/update-guard/guard', 'StartLimitIntervalSec=infinity', 'StartLimitBurst=3', 'Restart=on-failure', 'RestartSec=60s', 'TimeoutStartSec=9min', 'TimeoutStopSec=10s'])
+      assert.ok(unit.split('\n').includes(line), line);
+    assert.ok(3 * (9 * 60 + 10) + 2 * 60 < 30 * 60, 'timer work plus termination and restart delays fit its recovery budget');
+    // Where it is installed, systemd's parser also checks the real generated unit, without starting it.
+    if (spawnSync('sh', ['-c', 'command -v systemd-analyze']).status === 0) {
+      const checked = spawnSync('systemd-analyze', ['verify', '--man=no', join(h, '.config/systemd/user/spark-console-update-guard.service')], { encoding: 'utf8' });
+      assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    }
+  });
+
+  test('a timer copy failure schedules another attempt; after room returns the retained copy is restored without reboot or owner retry', () => {
+    const h = armedHome(); answerOld(h); failCopy(h); put(h, 'cant-copy', '');
+    const manager = retryManager(h), first = manager.step();
+    assert.equal(first.status, 1, first.stdout + first.stderr);
+    assert.ok(manager.pending, 'the generated policy schedules another attempt');
+    assert.equal(retryFields(h).autoTries, '1');
+    assert.deepEqual([get(h, 'spark-console/index.html'), get(h, 'spark-console-service/server.mjs')], ['new page\n', 'new server\n']);
+    rmSync(join(h, 'cant-copy'));
+    const second = manager.step();
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.equal(manager.starts, 2);
+    assert.equal(manager.pending, false);
+    assert.deepEqual([get(h, 'spark-console/index.html'), get(h, 'spark-console-service/server.mjs'), svc(h), armed(h)], ['old page\n', 'old server\n', 'active', false]);
+    assert.equal(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).wayBackArmed, false);
+    assert.ok(!calls(h).includes('--user stop spark-console-update-guard.service'), 'the timer never stops its own process before durable completion');
+  });
+
+  test('three persistent failures keep the saved copy and say recovery by hand is needed; restarting the manager cannot spend a fourth attempt', () => {
+    const h = armedHome(); answerOld(h); failCopy(h); put(h, 'cant-copy', '');
+    const manager = retryManager(h);
+    for (let i = 1; i <= 3; i++) { const r = manager.step(); assert.equal(r.status, 1, r.stdout + r.stderr); assert.equal(retryFields(h).autoTries, String(i)); }
+    assert.equal(manager.pending, false);
+    assert.equal(manager.step(), null);
+    assert.match(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).why, /three tries; recovery by hand is needed/);
+    const afterRestart = retryManager(h).step();
+    assert.equal(afterRestart.status, 0, afterRestart.stdout + afterRestart.stderr);
+    assert.match(afterRestart.stdout, /three-try or thirty-minute limit/);
+    assert.equal(retryFields(h).autoTries, '3');
+    assert.equal(get(h, 'spark-console-service/server.mjs'), 'new server\n');
+    assert.equal(JSON.parse(get(h, '.local/state/spark-console/update-result.json')).wayBackArmed, true);
+    rmSync(join(h, 'cant-copy'));
+    const byHand = putBack(h);
+    assert.equal(byHand.status, 0, byHand.stdout + byHand.stderr);
+    assert.equal(armed(h), false, 'the owner can still recover by hand after the automatic budget is exhausted');
+  });
+
+  test('too little time left, a reversed clock or a malformed retry record leaves live files alone and keeps the copy', () => {
+    for (const fields of [
+      `autoTries=1\nautoSince=${Math.floor(Date.now() / 1000) - 1300}\n`,
+      `autoTries=1\nautoSince=${Math.floor(Date.now() / 1000) + 60}\n`,
+      'autoTries=wrong\nautoSince=0\n'
+    ]) {
+      const h = armedHome(); answerOld(h);
+      const path = share(h, 'update-guard', 'guard'); writeFileSync(path, readFileSync(path, 'utf8') + fields);
+      const r = retryManager(h).step();
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /recovery by hand/);
+      assert.deepEqual([get(h, 'spark-console/index.html'), get(h, 'spark-console-service/server.mjs'), armed(h)], ['new page\n', 'new server\n', true]);
+      assert.ok(!calls(h).some(line => /(?:daemon-reload|(?:start|stop|restart) spark-console-api)$/.test(line)), 'budget refusal starts no live service work, including exit traps');
+    }
+  });
+
+  test('disarm cancels a pending restart, and a later arm stops any old restart before creating its copy and resets the native limit', () => {
+    const h = armedHome(); failCopy(h); put(h, 'cant-copy', '');
+    const manager = retryManager(h);
+    assert.equal(manager.step().status, 1);
+    const r = run(h, [share(h, 'update-guard', 'update-guard.sh'), 'disarm']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(calls(h).includes('--user stop spark-console-update-guard.service'));
+    assert.equal(manager.step(), null, 'the old queued restart is canceled');
+    rmSync(join(h, 'cant-copy')); writeFileSync(join(h, 'systemctl.log'), '');
+    // Fail arm if it tries to stop the old service after the new guard already exists.
+    put(h, 'bin/systemctl', SYSTEMCTL.replace('v=\'\';', 'case "$*" in *"stop spark-console-update-guard.service"*) [ ! -e "$HOME/.local/share/spark-console/update-guard/guard" ] || exit 1 ;; esac\nv=\'\';'), 0o755);
+    const next = run(h, [GUARD_SH, 'arm', 'dddddddddddd', 'eeeeeeeeeeee', 'bbbbbbbbbbbb', '2147483646']);
+    assert.equal(next.status, 0, next.stdout + next.stderr);
+    const log = calls(h), stop = log.indexOf('--user stop spark-console-update-guard.service'), reset = log.indexOf('--user reset-failed spark-console-update-guard.service'), enable = log.indexOf('--user enable --now spark-console-update-guard.timer');
+    assert.ok(stop >= 0 && reset > stop && enable > reset, log.join('\n'));
+    assert.equal(retryFields(h).autoTries, undefined, 'a later install starts with a fresh budget');
   });
 });

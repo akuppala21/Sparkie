@@ -116,7 +116,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { TEST_DIR } from './start-mock.mjs';
 import { brainSent, brainReadsOf, shippedHub } from './lock.mjs';
-import { DIAGNOSTICS_KIND, diagnosticAttempt, fixtureSecretSnapshot, retainAttempt, writeDiagnostics } from './eval-diagnostics.mjs';
+import { DIAGNOSTICS_KIND, diagnosticAttempt, diagnosticWaitMs, fixtureSecretSnapshot, retainAttempt, terminalOperations, writeDiagnostics } from './eval-diagnostics.mjs';
 import { mask, turnCalls, gradeRun, diskSnapshot, railOf, FLEET_SKIP } from './eval-grade.mjs';
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
@@ -132,8 +132,8 @@ const STORE = arg('store', null), CONSOLE = String(arg('console', DEFAULT_CONSOL
 if (STORE) {
   const record = JSON.parse(readFileSync(STORE, 'utf8')), origin = arg('origin', new URL(CONSOLE).origin);
   if (record?.kind === DIAGNOSTICS_KIND) { console.error('Not kept: this file is diagnostic evidence, not an eval result.'); process.exit(1); }
-  if (record?.kind === DIAGNOSTIC_KIND || record?.serving?.verified === false) { console.error('Not kept: the serving brain identity was not verified. This is a diagnostic run only.'); process.exit(1); }
   if (record?.kind === BROKEN_KIND) { console.error(`Not kept: that run isn't a score: ${record.broken?.length || 'some'} of its runs were no result (${(record.broken || []).map(b => `${b.case} run ${b.run}`).join(', ')}). Its results file has them.`); process.exit(1); }
+  if (record?.kind === DIAGNOSTIC_KIND || record?.serving?.verified === false) { console.error('Not kept: the serving brain identity was not verified. This is a diagnostic run only.'); process.exit(1); }
   if (record?.memorySwitches?.off?.length) { console.error(`Not kept: that run had memory additions switched off (${record.memorySwitches.off.join(', ')}), so it measures them, not this build as it runs. Its results file has it.`); process.exit(1); }
   const r = await fetch(`${CONSOLE}/main/eval`, { method: 'POST', signal: AbortSignal.timeout(30000), headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin }, body: JSON.stringify(record) })
     .catch(e => { console.error(`Spark Console doesn’t answer at ${CONSOLE} (${e.cause?.code || e.message}).`); process.exit(1); });
@@ -165,8 +165,9 @@ const OFF = String(arg('memory-off', '')).split(',').map(s => s.trim()).filter(B
 if (OFF.some(s => !MEMORY_SWITCHES.includes(s))) { console.error(`--memory-off takes a list of: ${MEMORY_SWITCHES.join(', ')}.`); process.exit(1); }
 const TREE = arg('tree', null) ? resolve(arg('tree')) : null;
 if (TREE && !existsSync(join(TREE, 'test', 'start-mock.mjs'))) { console.error(`--tree ${TREE}: no test/start-mock.mjs there.`); process.exit(1); }
-const HUB = shippedHub(TREE || join(TEST_DIR, '..'));
-const { startMock } = await import(TREE ? pathToFileURL(join(TREE, 'test', 'start-mock.mjs')).href : './start-mock.mjs');
+const { startMock, STANDIN_HUB = 'spark2' } = await import(TREE ? pathToFileURL(join(TREE, 'test', 'start-mock.mjs')).href : './start-mock.mjs');
+// The scripted brain uses the fleet's normal hub, as the rest of the stand-in suite does. A real eval uses the shipped hub.
+const HUB = STAND_IN ? STANDIN_HUB : shippedHub(TREE || join(TEST_DIR, '..'));
 const ONLY = arg('only', null)?.split(',');
 const SET_NAME = arg('set', null);
 if (SET_NAME !== null && (!/^[a-z][a-z0-9-]{0,40}$/.test(SET_NAME) || arg('cases', null))) { console.error('--set takes the name of a case file in test/eval/ (--set memory), and not with --cases.'); process.exit(1); }
@@ -355,7 +356,7 @@ async function markOf() {
     const catalog = await fetch(`${fleet.base}/actions`).then(r => r.json()).catch(() => null);
     const changeActions = Array.isArray(catalog?.actions) ? catalog.actions.filter(a => a?.kind === 'change').map(a => String(a.name)) : null;
     if (!catalog?.brain) return { build, changeActions, reads: null, readsWhy: 'This build shows no brain catalog (GET /actions), so what its brain reads can’t be marked: it is from before the mark.' };
-    return { build, changeActions, reads: brainReadsOf(await brainSent(fleet, { start: options => startMock({ ...options, hub: HUB }) })) };
+    return { build, changeActions, reads: brainReadsOf(await brainSent(fleet, { start: options => startMock(STAND_IN ? options : { ...options, hub: HUB }) })) };
   } finally { await fleet.stop(); }
 }
 // The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
@@ -423,7 +424,7 @@ async function chatSince(api, chat, words) {
 // One run of a case on a fresh practice fleet. Its grade (gradeRun, eval-grade.mjs), or notResult with its error: the
 // rail wasn't checked before the chat, or a chat failed.
 async function runCase(c, evidence) {
-  let link = null, setup = null, caseChat = null, reply = null, captureError = null;
+  let link = null, setup = null, caseChat = null, reply = null, captureError = null, caseBegan = null;
   const fleet = await startMock({ hub: HUB,
     // (its own recorded eval, start-mock.mjs: the rail lets a clear change run at once there, as on a checked brain; the
     // real brain's check takes longer than the stand-in's; the profile of the run's one check, once there is one)
@@ -510,6 +511,7 @@ async function runCase(c, evidence) {
     const chat = agentToken ? null : JSON.parse((await api('/chats', {})).text).id;
     caseChat = chat;
     const t0 = Date.now();
+    caseBegan = t0;
     const r = agentToken ? await askAsAgent(fleet.mcp, agentToken, c.say) : await api(`/chats/${chat}/messages`, { text: c.say });
     const ms = Date.now() - t0;
     const done = r.done || r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
@@ -540,15 +542,21 @@ async function runCase(c, evidence) {
   } finally {
     // Capture while the fixture still exists; this never changes the observations gradeRun already received.
     try {
+      const initialCalls = turnCalls(link?.all());
+      // The chat can answer before its start operation ends. Keep the fixed grade, but let its evidence reach an end.
+      const jobs = await terminalOperations(async () => {
+        const r = await fetch(`${fleet.base}/jobs`, { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) throw new Error('operations unavailable');
+        return r.json();
+      }, initialCalls.map(c => c.result?.operation).filter(Boolean), { waitMs: diagnosticWaitMs(TASK_WAIT_S * 1000, caseBegan ?? Date.now()) }).catch(() => null);
       const snapshot = fixtureSecretSnapshot(fleet);
       const chatsFile = join(fleet.stateDir, 'chats.json');
       let conversations = [], repliesError = null;
       try { conversations = existsSync(chatsFile) ? JSON.parse(readFileSync(chatsFile, 'utf8')).conversations || [] : []; } catch { repliesError = 'Saved replies could not be read.'; }
-      const jobs = await fetch(`${fleet.base}/jobs`, { signal: AbortSignal.timeout(5000) }).then(async r => { if (!r.ok) throw new Error('operations unavailable'); return r.json(); }).catch(() => null);
       evidence.captured = diagnosticAttempt(evidence.identity, {
         capturedAt: new Date().toISOString(), chat: caseChat, reply, error: captureError, repliesError,
         replies: conversations.map(c => ({ chat: c.id, task: c.task || null, messages: (c.messages || []).filter(m => m.role === 'assistant') })),
-        calls: turnCalls(link?.all()), operations: jobs?.jobs || [], operationsError: jobs ? null : 'Operations could not be read before teardown.', operationLogLimit: 120,
+        calls: turnCalls(link?.all()), operations: jobs?.jobs || [], operationsOpen: jobs?.open || [], operationsError: jobs ? null : 'Operations could not be read before teardown.', operationLogLimit: 120,
         journal: journalOf(fleet),
       }, { snapshot, answerSecret: c.answerSecret || [] });
     } catch {

@@ -14,7 +14,9 @@ being replaced. Before removing each practice fleet, the runner captures:
 
 Use the full words to distinguish “I've stopped trying” from a claim that a workload stopped. Read the tool result
 and operation status before deciding what happened. The existing failed grade stays failed in either case.
-An operation still running at capture time is recorded that way; evidence does not wait beyond the eval's task wait.
+After grading, capture waits for operations its tool calls started, using only the case’s remaining task-wait budget
+and at most 30 more seconds. It does not restart the wait budget.
+Unrelated work never holds it up. Operations still running or missing at that limit are listed in `operationsOpen`.
 Unavailable saved replies or operations carry an explicit error while other evidence is retained.
 
 `test/eval-diagnostics.mjs` reuses the production masking definitions from `service/src/20-mcp.mjs` and
