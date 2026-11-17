@@ -891,13 +891,86 @@ describe('a model across two Sparks', { concurrency: 1 }, () => {
 const powerPart = readFileSync(join(REPO, 'service', 'src', '21-power.mjs'), 'utf8');
 const powerFn = name => new RegExp(`^async function ${name}\\([^]*?^\\}`, 'm').exec(powerPart)?.[0];
 const cancelAtBoundary = j => { if (j.cancelled) throw Object.assign(new Error('Cancelled by the owner'), { cancelled: true }); };
+// Exercise the real desired-list writers with the power job, before watchHeld has had its first round.
+const desiredPart = readFileSync(join(REPO, 'service', 'src', '20-desired.mjs'), 'utf8');
+const desiredFn = name => new RegExp(`^function ${name}\\([^]*?^\\}`, 'm').exec(desiredPart)?.[0];
+function firstDesired({ fail, statError, tests = new Set() } = {}) {
+  let saved, writes = 0;
+  const deps = {
+    DESIRED_FILE: 'desired.json', keyOf: x => `${x.spark}/${x.container}`, lookBegan: new WeakMap(), brainSparks: () => ['spark2'],
+    selfTestModels: () => tests,
+    lstatSync: () => { if (statError) throw Object.assign(new Error(statError), { code: statError }); if (saved === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); return {}; },
+    readKept: () => saved === undefined ? null : structuredClone(saved),
+    writePrivate: (_f, value) => { writes++; if (fail === writes) throw new Error('disk full'); saved = structuredClone(value); },
+  };
+  const functions = new Function(...Object.keys(deps), `${['seedDesired', 'parkDesired', 'desired'].map(desiredFn).join('\n')}\nreturn { seedDesired, parkDesired, desired };`)(...Object.values(deps));
+  return { ...functions, read: () => saved, put: value => { saved = value; }, writes: () => writes };
+}
+for (const failure of [null, 'seed', 'park']) {
+  test(`A-32: power-off before the first desired seed (${failure || 'saved'}) keeps the parking guard`, async () => {
+    const state = firstDesired({ fail: failure === 'seed' ? 1 : failure === 'park' ? 2 : 0 });
+    const changes = [], key = 'spark4/sc-earlier', job = {};
+    const inv = { sparks: [{ id: 'spark4', online: true, deployments: [{ container: 'sc-earlier', model: 'earlier', state: 'running' }] }] };
+    const deps = {
+      ...state, pausedCheck() {}, sparksWords: ids => ids.join(' and '), sparkName: n => n.id, step() {}, note() {}, nodeById: id => ({ id }),
+      powerLook: async () => ({ answers: true, inUse: [], apps: [], boxes: [] }), sudoReady: async () => true,
+      plugUnproven: async () => null, powerBoxesEnd: async () => {}, copyBeforeOff: async () => {}, inventory: async () => inv,
+      powerPlan: () => ({ models: [{ at: 'spark4', container: 'sc-earlier', sparks: ['spark4'] }] }), cancelCheck: cancelAtBoundary,
+      stopContainer: async j => { assert.equal(state.read()?.running[0]?.container, 'sc-earlier', 'saved before the first stop'); j.stoppedHere = [key]; changes.push('stop'); },
+      stoppedForSure: async () => {}, keyOf: x => `${x.spark}/${x.container}`,
+      unpark: async (_j, stopped) => { assert.deepEqual(stopped, [key]); changes.push('compensate'); }, pairWords: () => '',
+      offRecord: () => { assert.ok(state.read().running[0].parked, 'parked state persisted before recording power-off'); changes.push('record off'); },
+      wokeFor: new Set(), shutDownSpark: async () => { changes.push('shutdown'); return { code: 0, out: '' }; }, fields: () => [['0']],
+      POWER_OFF_WAIT_MS: 1000, minutesWords: () => 'a minute', waitAndCut: async () => { changes.push('cut'); },
+    };
+    const off = new Function(...Object.keys(deps), `${powerFn('powerOffJob')}\nreturn powerOffJob;`)(...Object.values(deps));
+    if (failure === 'seed') {
+      await assert.rejects(off(job, ['spark4'], {}, 'asked'), /disk full/);
+      assert.deepEqual(changes, [], 'no workload stop or shutdown when the initial save fails');
+    } else if (failure === 'park') {
+      await assert.rejects(off(job, ['spark4'], {}, 'asked'), /parked workloads couldn’t be saved.*nothing was shut down/);
+      assert.deepEqual(changes, ['stop', 'compensate']);
+    } else {
+      await off(job, ['spark4'], {}, 'asked');
+      assert.deepEqual(changes, ['stop', 'record off', 'shutdown', 'cut']);
+      assert.equal(state.read().revisions[0].seeded, true);
+      assert.deepEqual(job.parkedHere, [key]);
+    }
+  });
+}
+test('the first desired seed preserves hub, self-test and pair exclusions, and a list made during the look', async () => {
+  const model = (container, more = {}) => ({ container, model: container, state: 'running', ...more });
+  const inv = { sparks: [
+    { id: 'spark2', online: true, deployments: [model('hub')] },
+    { id: 'spark1', online: false, deployments: [model('last-seen')] },
+    { id: 'spark3', online: true, deployments: [model('pair', { cluster: 'spark3+spark4' }), model('test'), model('brain', { role: 'main' }), model('stopped', { state: 'exited' })] },
+    { id: 'spark4', online: true, deployments: [model('pair-part2', { rank: 1 })] },
+  ] };
+  const state = firstDesired({ tests: new Set(['spark3/test']) });
+  state.seedDesired(inv);
+  assert.deepEqual(state.read().running.map(x => `${x.spark}/${x.container}`), ['spark3/pair']);
+  assert.deepEqual(state.read().running[0].sparks, ['spark3', 'spark4']);
+  const newer = { revision: 8, running: [], revisions: [] };
+  // inventory is awaited by the caller; another completed operation can save its own list during that await.
+  const looked = await (async () => { state.put(newer); return inv; })();
+  state.seedDesired(looked);
+  assert.equal(state.read(), newer, 'the later list is never replaced by the earlier look');
+  assert.equal(state.writes(), 1);
+  for (const existing of [null, '{damaged', {}]) {
+    state.put(existing); state.seedDesired(inv);
+    assert.equal(state.read(), existing, 'any existing file is left alone');
+  }
+  const unreadable = firstDesired({ statError: 'EACCES' });
+  assert.throws(() => unreadable.seedDesired(inv), /EACCES/);
+  assert.equal(unreadable.writes(), 0);
+});
 for (const failure of ['write refused', 'missing entry']) {
   test(`A-32: parked-state ${failure} leaves hardware on and attempts compensation`, async () => {
     const changes = [], job = {}, key = 'spark4/sc-earlier';
     const deps = {
       pausedCheck() {}, sparksWords: ids => ids.join(' and '), step() {}, note() {}, nodeById: id => ({ id }),
       powerLook: async () => ({ answers: true, inUse: [], apps: [], boxes: [] }), sudoReady: async () => true,
-      plugUnproven: async () => null, powerBoxesEnd: async () => {}, copyBeforeOff: async () => {},
+      plugUnproven: async () => null, powerBoxesEnd: async () => {}, copyBeforeOff: async () => {}, seedDesired() {},
       inventory: async () => ({ sparks: [] }), powerPlan: () => ({ models: [{ at: 'spark4', container: 'sc-earlier', sparks: ['spark4'] }] }),
       cancelCheck: cancelAtBoundary, stopContainer: async j => { j.stoppedHere = [key]; changes.push('stop'); }, stoppedForSure: async () => {},
       parkDesired: () => { if (failure === 'write refused') throw new Error('disk full'); return []; },

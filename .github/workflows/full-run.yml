@@ -1,17 +1,20 @@
 # The full test run on GitHub (design C 2.2; safety review finding 15).
-#   suite  runs the repository's code (the build check, then the whole suite through test/lock.mjs) and can only read.
+#   suite / qualify run repository code with read permission; all three shards must pass before a lock is made.
 #   mark   runs none of it: after a passing suite on a push to main, it checks the lock the suite wrote, commits it on
 #          top of the tested commit and pushes that commit as the tag tested/<first 12 hex of the tested tree>.
 #          It never pushes to main.
 name: Full run
 
+# Development checks run on GitHub until the owner says compute Sparks are available.
+# Final release qualification stays on GitHub. No nightly schedule until it is ready.
+# Manual dispatch remains available; no nightly schedule is enabled yet.
+
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch (or pull request) cancels the older run.
+# A newer final release push to the same branch cancels the older run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,10 +28,51 @@ defaults:
 
 jobs:
   suite:
-    # One job for now. Split the suite into jobs side by side only if this one measures over 30 minutes (simplicity
-    # review, C3): test/lock.mjs prints the seconds each test file took at the end of its log.
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Generated files match
+        run: node tools/make.mjs --check
+      - name: All strict tests, divided across three standard runners
+        env:
+          SPARK_TEST_SLOW: 2
+          SPARK_TEST_CONCURRENCY: 2
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          node test/lock.mjs --shard="$SHARD/3" --receipts="$RUNNER_TEMP/receipts" 2>&1 | tee "$RUNNER_TEMP/suite.log"
+      - name: Keep this passing shard's receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: full-receipt-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/receipts/shard-*.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Keep test output even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: full-log-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/suite.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  qualify:
+    needs: suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -38,23 +82,32 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-      - name: server.mjs matches its parts
-        run: node tools/build-server.mjs --check
-      - name: The whole suite, then the lock
-        # The runner has 2 cores: two test files at a time, and twice the usual time limits.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: full-receipt-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/receipts
+          merge-multiple: false
+      - name: Verify every shard, then write the lock for this exact tree
         env:
           SPARK_TEST_SLOW: 2
-          SPARK_TEST_CONCURRENCY: 2
-        run: node test/lock.mjs
-      - name: Keep the lock for the mark
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          node test/lock.mjs --aggregate="$RUNNER_TEMP/receipts" --shards=3 2>&1 | tee "$RUNNER_TEMP/qualify.log"
+      - name: Keep the lock for this run and attempt
         uses: actions/upload-artifact@v7
         with:
-          name: workflows-lock
+          name: workflows-lock-${{ github.run_attempt }}
           path: service/workflows.lock.json
           if-no-files-found: error
-          retention-days: 1
-          overwrite: true
+          retention-days: 7
+      - name: Keep qualification output even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualify-log-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualify.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   browser:
     runs-on: ubuntu-24.04
@@ -73,10 +126,23 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/browser" --no-audit --no-fund playwright@1.65.1
           google-chrome --version
       - name: Desktop and phone recovery flows
-        run: SPARK_BROWSER_CHANNEL=chrome SPARK_BROWSER_MODULE="$RUNNER_TEMP/browser/node_modules/playwright/index.mjs" node tools/browser-check.mjs
+        env:
+          SPARK_BROWSER_CHANNEL: chrome
+          SPARK_BROWSER_MODULE: ${{ runner.temp }}/browser/node_modules/playwright/index.mjs
+        run: |
+          set -euo pipefail
+          node tools/browser-check.mjs 2>&1 | tee "$RUNNER_TEMP/browser.log"
+      - name: Keep browser output even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-log-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   mark:
-    needs: [suite, browser]
+    needs: [qualify, browser]
     if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -90,7 +156,7 @@ jobs:
       - name: The lock the suite wrote
         uses: actions/download-artifact@v8
         with:
-          name: workflows-lock
+          name: workflows-lock-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lock
       - name: Check the lock, then push the tested mark
         env:

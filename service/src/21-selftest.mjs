@@ -154,8 +154,8 @@ const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id
 const selfTestMine = x => { x.selfTest = true; };
 // The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
 // (made before anything starts; one that ended after `since` too, for a look at the Sparks from before its end), and one
-// a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither watchHeld's first
-// seed nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
+// a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither seedDesired's first
+// seed (watcher or power-off) nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
 function selfTestModels(since = Date.now()) {
   const rec = readKept(SELF_TEST_FILE);
   const runs = [...jobs.values()].filter(x => x.type === 'self-test' && x.container && (x.status === 'running' || (Date.parse(x.finishedAt) || 0) >= since));

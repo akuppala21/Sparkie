@@ -33,7 +33,13 @@ Use static registrations checked at build time. A new capability brings its acti
 
 Affected-test selection should combine declared module/interface dependencies with measured coverage. Coverage alone cannot prove a new function is exercised. Missing or changed shared boundaries conservatively widen the checks. The current function map covers generated server.mjs only; direct imports must be included before relying on that map to select their tests.
 
-Portable tests use standard hosted CPU runners. Hardware checks remain on the minimum necessary compute Sparks; serial claims protect shared hardware even if independent test shards run in parallel. GPU behavior, power switching and cable topology cannot be qualified by a CPU mock run.
+Portable tests currently use standard GitHub-hosted CPU runners while agent access to the compute Sparks is unavailable.
+When the owner says Sparks 2/3/4 are available, development checks move there; GitHub keeps the final release
+qualification. Start with five concurrent test files per available compute Spark and increase toward ten only after
+measuring memory, CPU and owner workload use. Partition selected files once across the available Sparks; do not repeat a
+whole suite on each. Nightly hosted runs begin only after the app is ready. Hardware checks remain on the minimum
+necessary compute Sparks; serial claims protect shared hardware even if independent test shards run in parallel. GPU
+behavior, power switching and cable topology cannot be qualified by a CPU mock run.
 
 ## Incremental migration
 

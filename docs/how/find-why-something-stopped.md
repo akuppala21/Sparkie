@@ -15,11 +15,13 @@ Look in this order:
 5. `sparkie_setup`: whether agents are paused or self-healing is off (the owner's switches).
 
 Then the code: `healReason`, `bringBack` and `healPass` (`20-heal.mjs`) for why healing skipped it; `maybeHeal` and
-`healTries` (`18-workflows.mjs`) for crash restarts; `desiredNow` and `watchHeld` (`20-desired.mjs`); `watchSpark`
-(`19-watcher.mjs`) for what the watcher saw; for apps, `healApp` (`21-apps.mjs`).
+`healTries` (`18-workflows.mjs`) for crash restarts; `desiredNow`, `seedDesired` and `watchHeld` (`20-desired.mjs`; the
+power-off job also seeds a missing list before its first stop); `watchSpark` (`19-watcher.mjs`) for what the watcher saw; for apps, `healApp` (`21-apps.mjs`).
 
 ## Also update
 
+- A power-off before the first watcher round: keep the fresh look’s seed before stops and the saved parked-state
+  guard before shutdown; cover missing state and failed saves in `power.test.mjs`.
 - A wrong skip or a wrong bring-back: a test in the closest heal test file that fails without the fix.
 
 ## Never

@@ -52,16 +52,30 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
   recorded). The lock comes
   back to `../spark-test-runs/`, naming the tree that was copied (`SPARK_TEST_TREE`), so `pull.sh` on the hub can find
   its commit on `main` (R58). Never on the hub.
-- **GitHub, on every push to `main` and every pull request** (`.github/workflows/full-run.yml`): one job runs the build
-  check and `node test/lock.mjs` two files at a time (`SPARK_TEST_SLOW=2`; the runner has 2 cores) and can only read.
-  On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build
-  and holds only the keys `lockFor` writes, and pushes it on top of the tested commit as the tag
-  `tested/<first 12 hex of the tree>`. From the commit that gave the lock `evalSet` (2026-11-14) until the job's list of
-  keys was fixed (2026-11-15) the job refused every lock, so no tree between those two has a tag; a `main` that holds the
-  fix is marked again when its full run passes. `lock.test.mjs` (“the mark job takes the lock lockFor writes on GitHub”)
-  now holds the job's keys to `lockFor`'s. The lock is no longer kept on `main`. Its minutes are not measured yet: the
-  end of the suite's log lists the seconds each file took. If the job is over 30 minutes, split it into jobs side by
-  side.
+- **GitHub, final release qualification** (`.github/workflows/full-run.yml`): every push to `main`, or a manual
+  full-run dispatch on a branch, runs the whole strict suite on three standard `ubuntu-24.04` hosted runners.
+  Each runs two files at once with `SPARK_TEST_SLOW=2`. Sorted file names are divided by position into three disjoint
+  lists; no tests are dropped. Three runners keep six files moving without overloading a two-core runner. This is
+  a starting choice, not a measured speed promise; file times in the logs show the next useful adjustment.
+  Each passing worker writes a receipt naming its exact files, clean commit, tree, GitHub run and attempt. A separate
+  read-only job refuses missing, duplicate, malformed or mixed receipts, verifies complete coverage, then writes the
+  usual lock only while the source tree is unchanged. The browser check has its own dependency install and must also
+  pass before a release is marked. Logs are kept for seven days, including failed runs; receipts and locks are artifacts.
+  On `main`, the separate `mark` job runs only git, jq and coreutils with write permission. It independently checks the
+  lock's shape, commit, tree, run and build, then adds only the lock as `tested/<first 12 hex of the tree>`. It never
+  pushes a branch. Manual branch runs keep their lock artifact but create no release tag. Superseded runs on the same
+  branch are canceled. To retry a failed full run, rerun **all jobs**: receipts from an earlier attempt cannot qualify.
+- **GitHub, development checks for now** (`.github/workflows/focused.yml`): manually dispatch with space-separated
+  existing `test/*.test.mjs` names. Three standard runners divide only those files, two at a time, with strict checks.
+  These results never create a lock or release tag. There is no automatic full suite for each branch edit or PR.
+  Use GitHub until the owner says compute Sparks are available; final release qualification stays on GitHub after
+  that. There is no nightly schedule yet. Standard hosted CPU runners use no larger or paid runner capacity, but
+  private-repository included minutes and account limits are unknown; this setup cannot promise zero billing.
+- **Whole-suite runner commands**: the existing `node test/lock.mjs` still runs the whole suite locally or on a
+  compute Spark. GitHub alone uses `--shard=1/3 --receipts=<outside-folder>` on each worker, then
+  `--aggregate=<downloaded-receipts-folder> --shards=3`. Shards require a clean GitHub checkout and current run attempt;
+  receipts are temporary evidence within that run, not reusable release records. Coverage-map recording remains on
+  the existing whole-suite runner (`SPARK_TEST_MAP=1`), not the hosted shards.
 - **A step onto `main`**: `node tools/land.mjs <branch>` runs only the files its change needs (R29). Recording the
   map (`SPARK_TEST_MAP=1`) on `workflows.test.mjs` here: 452 and 425 s without, 434 and 436 s with.
 - **This Mac, by hand, one file at a time**: `SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/<file>.test.mjs`.
@@ -80,7 +94,7 @@ made-up repos that searches and look-ups answer from (only with `SPARK_CONSOLE_A
 ## The root helper's tests
 
 `root-helper.test.mjs`, and every file that rehearses the helper (`rehearsal.mjs`), need Linux with GNU tools and
-bash 5: on macOS about 200 of its tests fail, so run them on a Spark. **No test proves a wall:** each shows the helper
+bash 5: on macOS about 200 of its tests fail, so run them on Linux (GitHub or a compute Spark). **No test proves a wall:** each shows the helper
 asked the stand-in `systemd-run` for it, and the stand-in builds none; the proof's verdicts are lines the stand-in
 prints. The exceptions: the lock-out net's put-back (`restore.sh`, `guard.py`) runs for real on the rehearsal's files,
 and the last group runs the proof's own attempts with no wall, to show each one a plain account can try gets through.

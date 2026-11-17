@@ -5621,7 +5621,7 @@ const CHANGE_FORMS = [
 // [group, what it holds (guide's description lists it), its words]
 // (The rows stay in this order: guide's description, its list of groups and the brain's catalog name them so.)
 const GROUP_WORDS = [
-  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
+  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b|\b(?:can|could|will|would)\s+(?:[\w./:+-]+\s+){1,5}(?:run|load)\s+on\s+spark\s*\d+\b|\b(?:can|could|will|would)\s+spark\s*\d+\s+(?:run|load|serve)\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
@@ -10494,9 +10494,9 @@ function dangerForTest(viewer, ctx, choices) {
     shown: file ? { script: readFileSync(file, 'utf8') } : t.shown || {}, call });
 }
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
-// Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
-// Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
+// Area: record        Rules: R9, R20, R21, R22, R38, R41, R57        Tests: power.test.mjs, desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
+// Timers: watchHeld (every 60 s; seeds desired.json if missing)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
 // isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console,
@@ -10663,21 +10663,26 @@ async function desiredNow({ check = false } = {}) {
     return { ...x, state: 'held', why, ...(!sp?.online ? { sparkOff: true } : !sp.dockerOk ? { dockerDown: true } : {}), ...(poweredOffNow(x) ? { poweredOff: true } : {}) };
   })) };
 }
+// First look, or a power-off before the watcher's first round: remember what is running before stopping it.
+// Check after the caller's awaited look, in the same tick as the save: another operation may have made the list.
+// Only a missing file is seeded. An unreadable file, a link or an existing list is never replaced.
+function seedDesired(inv) {
+  try { lstatSync(DESIRED_FILE); return; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  // Not the brain's Spark or the self-test's own model. A self-test note that can't be read refuses the seed.
+  const test = selfTestModels(lookBegan.get(inv) ?? Date.now());
+  const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank && !test.has(`${sp.id}/${d.container}`))
+    .map(d => ({ spark: sp.id, container: d.container, model: d.model, ...(d.cluster ? { sparks: d.cluster.split('+') } : {}), since: new Date().toISOString(), by: 'already running' })));
+  writePrivate(DESIRED_FILE, { revision: 1, running, revisions: [{ revision: 1, at: new Date().toISOString(), by: 'Spark Console', chat: null, operation: null, added: running.map(keyOf), removed: [], before: [], seeded: true }] });
+}
 // Tells the owner once when something on the list becomes held.
 const heldSaid = new Set();
 let heldLast = [];
 async function watchHeld() {
   try {
-    // First time: what Spark Console already runs is what should be running.
     if (!existsSync(DESIRED_FILE)) {
       const inv = await recentInventory().catch(() => null);
       if (!inv) return;
-      // (Not the brain's Spark: Sparkie's model looks after itself there, and nothing else starts there. Not the
-      // self-test's own model, R22: it would be the owner's from then on. A note that can't be read: next time.)
-      const test = selfTestModels(lookBegan.get(inv) ?? Date.now());
-      const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank && !test.has(`${sp.id}/${d.container}`))
-        .map(d => ({ spark: sp.id, container: d.container, model: d.model, ...(d.cluster ? { sparks: d.cluster.split('+') } : {}), since: new Date().toISOString(), by: 'already running' })));
-      writePrivate(DESIRED_FILE, { revision: 1, running, revisions: [{ revision: 1, at: new Date().toISOString(), by: 'Spark Console', chat: null, operation: null, added: running.map(keyOf), removed: [], before: [], seeded: true }] });
+      seedDesired(inv);
     }
     if (!desired().running.length) { heldLast = []; return; }
     const inv = await recentInventory().catch(() => null);
@@ -22948,6 +22953,9 @@ async function powerOffJob(j, ids, ctx, why, boxYes = false) {
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));
   cancelCheck(j);
+  // A power-off can beat the watcher's first seed. Keep this look's running models before any are stopped;
+  // an existing list stays as it is, and the saved parked-state check below still has to pass.
+  seedDesired(inv);
   try {
     for (const m of plan.models) {
       await stopContainer(j, m.at, m.container, null);
@@ -25219,8 +25227,8 @@ const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id
 const selfTestMine = x => { x.selfTest = true; };
 // The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
 // (made before anything starts; one that ended after `since` too, for a look at the Sparks from before its end), and one
-// a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither watchHeld's first
-// seed nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
+// a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither seedDesired's first
+// seed (watcher or power-off) nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
 function selfTestModels(since = Date.now()) {
   const rec = readKept(SELF_TEST_FILE);
   const runs = [...jobs.values()].filter(x => x.type === 'self-test' && x.container && (x.status === 'running' || (Date.parse(x.finishedAt) || 0) >= since));

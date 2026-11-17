@@ -70,6 +70,21 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.ok(first.tools.includes('container_logs') && first.tools.includes('operation_log'));
   });
 
+  test('model capacity questions offer a fit lookup without starting anything', { timeout: 120000 * SLOW }, async () => {
+    const questions = ['can gpt-oss-20b run on spark 4?', 'could Qwen/Qwen3-32B run on Spark 3?',
+      'will gemma 3 27b load on spark4?', 'can Spark 3 run gpt-oss-20b?'];
+    const from = requests().length, audits = auditLines().length;
+    await withScript([QUIET], async () => { for (const words of questions) await say(await newChat(), words); });
+    for (const words of questions) {
+      const [first] = rounds(words, from);
+      assert.deepEqual(sorted(first.tools), coreAnd('find'), words);
+      assert.ok(first.tools.includes('where_it_fits'), words);
+      assert.ok(first.tools.length <= TOOL_CAP, words);
+    }
+    const changes = new Set(catalog.actions.filter(a => a.kind !== 'read').map(a => a.name));
+    assert.ok(!auditLines().slice(audits).some(x => questions.includes(x.request) && changes.has(x.action)), 'a capacity question starts nothing');
+  });
+
   // Everyday requests, several for each group (most from the review's thirty, 2026-11-14): the groups each should be
   // offered in round one, exactly, and the prompt lines that come with them. A longer request keeps the groups it began
   // with. ([] is the core alone.) One a line, grouped by the groups they open: a new one goes at the end of its group's.

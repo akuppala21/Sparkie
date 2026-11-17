@@ -1,13 +1,12 @@
-# Fast feedback for named changes. These results never mark a release as fully tested.
+# Development checks run here until the owner says compute Sparks are available.
+# These results never mark a release as fully tested.
 name: Focused checks
 on:
-  push:
-    branches: ['codex/**']
   workflow_dispatch:
     inputs:
       files:
         description: Space-separated test/*.test.mjs files to run
-        required: false
+        required: true
         type: string
 permissions:
   contents: read
@@ -35,19 +34,25 @@ jobs:
         env:
           TEST_FILES: ${{ inputs.files }}
           TEST_SHARD: ${{ matrix.shard }}
-          SPARK_TEST_STRICT: 1
-          SPARK_TEST_SLOW: 2
+          SPARK_TEST_STRICT: '1'
+          SPARK_TEST_SLOW: '2'
         run: |
-          node --input-type=module <<'JS'
+          set -euo pipefail
+          node --input-type=module <<'JS' 2>&1 | tee "$RUNNER_TEMP/focused.log"
           import { existsSync } from 'node:fs';
           import { spawnSync } from 'node:child_process';
           const explicit = (process.env.TEST_FILES || '').trim();
-          const changed = spawnSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', 'test/'], { encoding: 'utf8' });
-          if (!explicit && changed.status !== 0) throw new Error('Cannot read changed tests.');
-          const baseline = ['build', 'api', 'door', 'sparkie', 'workloads-restart', 'workloads-heal', 'workflows', 'apps', 'restart-limit', 'power-wake', 'power-wake-pair'].map(n => `test/${n}.test.mjs`);
-          const files = [...new Set(explicit ? explicit.split(/\s+/) : [...baseline, ...changed.stdout.split('\n').filter(f => /^test\/[A-Za-z0-9_-]+\.test\.mjs$/.test(f) && existsSync(f))])].sort();
+          const files = [...new Set(explicit.split(/\s+/))].sort();
           if (!files.length || files.some(f => !/^test\/[A-Za-z0-9_-]+\.test\.mjs$/.test(f) || !existsSync(f))) throw new Error('Name existing test/*.test.mjs files.');
           console.log(`Selected ${files.length} files; shard ${process.env.TEST_SHARD}/3; commit ${process.env.GITHUB_SHA}`);
           const r = spawnSync(process.execPath, ['--test', '--test-concurrency=2', `--test-shard=${process.env.TEST_SHARD}/3`, ...files], { stdio: 'inherit' });
           process.exit(r.status ?? 1);
           JS
+      - name: Keep test output even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: focused-log-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/focused.log
+          if-no-files-found: ignore
+          retention-days: 7

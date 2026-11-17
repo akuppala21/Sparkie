@@ -302,7 +302,7 @@ test('the registry’s Text column: each lookup’s own inside marker, always, f
 // exactly what 20-desired's header declares (a new writer joins the header, not this test).
 test('this tree: desired.json’s six writers are found in the code', () => {
   const tree = readParts(REPO), found = new Set(tree.writes.filter(w => w.file === 'desired.json').map(w => w.who));
-  for (const w of ['desiredAfter', 'watchHeld', 'markUndone', 'handler', 'keepApp', 'forgetApp']) assert.ok(found.has(w), `${w} isn’t found writing desired.json`);
+  for (const w of ['desiredAfter', 'seedDesired', 'markUndone', 'handler', 'keepApp', 'forgetApp']) assert.ok(found.has(w), `${w} isn’t found writing desired.json`);
   const owns = tree.parts.find(p => p.file === '20-desired.mjs').header.fields.Owns;
   assert.deepEqual([...found].sort(), owned(owns).find(o => o.file === 'desired.json').writers.sort());
 });

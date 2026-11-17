@@ -435,6 +435,9 @@ async function powerOffJob(j, ids, ctx, why, boxYes = false) {
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));
   cancelCheck(j);
+  // A power-off can beat the watcher's first seed. Keep this look's running models before any are stopped;
+  // an existing list stays as it is, and the saved parked-state check below still has to pass.
+  seedDesired(inv);
   try {
     for (const m of plan.models) {
       await stopContainer(j, m.at, m.container, null);

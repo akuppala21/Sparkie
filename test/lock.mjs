@@ -21,7 +21,7 @@
 //
 // test/lock.test.mjs imports lockFor and the rest; importing this file runs nothing.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync, mkdirSync, lstatSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -141,10 +141,62 @@ export async function lockFor(fleet, { git = gitFields(), env = process.env } = 
 // coverage of that process and of everything it starts (the service too) goes to a folder named after the file.
 export const EACH_FILE = `data:text/javascript,${encodeURIComponent("const f = process.argv[1] || ''; if (process.env.NODE_V8_COVERAGE && /\\.test\\.mjs$/.test(f)) process.env.NODE_V8_COVERAGE += '/' + f.slice(f.lastIndexOf('/') + 1);")}`;
 
+// Hosted workers run disjoint files. Receipts are run-local evidence, never a substitute for the suite: only this
+// runner writes them, after its strict test process passes and its whole source tree is still unchanged.
+export function shardFiles(files, index, total) {
+  if (!Number.isInteger(total) || total < 1 || total > 16 || !Number.isInteger(index) || index < 1 || index > total
+    || !Array.isArray(files) || files.length < total || files.some(f => !/^test\/[\w-]+\.test\.mjs$/.test(f)) || new Set(files).size !== files.length)
+    throw new Error('Bad test shard or file list.');
+  return [...files].sort().filter((_, i) => i % total === index - 1);
+}
+export function shardIdentity(git, env = process.env) {
+  const run = runOf(env), attempt = env.GITHUB_RUN_ATTEMPT;
+  if (!git.tree || !git.commit || git.commit !== env.GITHUB_SHA || !run || !/^[1-9]\d*$/.test(attempt || ''))
+    throw new Error('Hosted shards need the unchanged checkout commit and this GitHub run and attempt.');
+  return { ...git, run, attempt };
+}
+export function assertFrozen(before, after) {
+  if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('Files changed while the suite ran, so nothing was marked as tested. Run it again.');
+}
+export function validateShardReceipts(receipts, { identity, files, total }) {
+  shardFiles(files, 1, total);
+  if (!Array.isArray(receipts) || receipts.length !== total) throw new Error('Missing or extra shard receipts.');
+  const seen = new Set();
+  for (const r of receipts) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)
+      || JSON.stringify(Object.keys(r).sort()) !== JSON.stringify(['attempt', 'commit', 'files', 'index', 'passed', 'run', 'schema', 'total', 'tree'])
+      || r.schema !== 1 || r.passed !== true || r.total !== total || seen.has(r.index)
+      || ['tree', 'commit', 'run', 'attempt'].some(k => r[k] !== identity[k])
+      || JSON.stringify(r.files) !== JSON.stringify(shardFiles(files, r.index, total)))
+      throw new Error('A shard receipt is malformed, repeated, incomplete or from another tree or run.');
+    seen.add(r.index);
+  }
+  return true;
+}
+export function readShardReceipts(dir, { attempt, total }) {
+  if (!/^[1-9]\d*$/.test(attempt || '') || !Number.isInteger(total) || total < 1 || total > 16)
+    throw new Error('Bad receipt run attempt or shard count.');
+  const expected = Array.from({ length: total }, (_, i) => `full-receipt-${attempt}-${i + 1}`);
+  if (JSON.stringify(readdirSync(dir).sort()) !== JSON.stringify([...expected].sort())) throw new Error('Missing or extra receipt artifacts.');
+  return expected.map((name, i) => {
+    const folder = join(dir, name), file = `shard-${i + 1}.json`, path = join(folder, file);
+    if (!lstatSync(folder).isDirectory() || JSON.stringify(readdirSync(folder)) !== JSON.stringify([file]))
+      throw new Error('Unexpected files in a receipt artifact.');
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > 1000000) throw new Error('Unexpected file in shard receipts.');
+    return JSON.parse(readFileSync(path, 'utf8'));
+  });
+}
+
 // By hand (not when a test imports this file, nor when a bare `node --test` picks it up). The paths are compared as real
 // paths: a folder reached through a link must still run.
 const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
 if (isMain() && !process.env.NODE_TEST_CONTEXT) {
+  const args = process.argv.slice(2), shardArg = args.find(a => a.startsWith('--shard=')), aggregateArg = args.find(a => a.startsWith('--aggregate='));
+  if (args.some(a => !/^--(?:shard=\d+\/\d+|receipts=.+|aggregate=.+|shards=\d+)$/.test(a))
+    || new Set(args.map(a => a.split('=')[0])).size !== args.length || (shardArg && aggregateArg)
+    || (shardArg ? args.length !== 2 || !args.some(a => a.startsWith('--receipts=')) : aggregateArg ? args.length !== 2 || !args.some(a => a.startsWith('--shards=')) : args.length))
+    throw new Error('Use no arguments, --shard=1/3 --receipts=<outside folder>, or --aggregate=<outside folder> --shards=3.');
   const fingerprint = () => {
     const h = createHash('sha256');
     for (const f of readdirSync(SERVICE).filter(f => /\.(mjs|py|json)$/.test(f) && f !== 'workflows.lock.json').sort()) h.update(f).update(readFileSync(join(SERVICE, f)));
@@ -154,6 +206,16 @@ if (isMain() && !process.env.NODE_TEST_CONTEXT) {
   const built = spawnSync(process.execPath, [join(REPO, 'tools', 'build-server.mjs'), '--check'], { stdio: 'inherit' });
   if (built.status !== 0) process.exit(1);
   const before = fingerprint(), git = gitFields();
+  const frozen = () => ({ fingerprint: fingerprint(), ...gitFields() });
+  const initial = { fingerprint: before, ...git };
+  const hosted = shardArg || aggregateArg ? shardIdentity(git) : null;
+  const allFiles = testFiles(REPO), [index, total] = shardArg ? shardArg.slice(8).split('/').map(Number) : [null, null];
+  const selected = shardArg ? shardFiles(allFiles, index, total) : allFiles;
+  if (hosted && process.env.SPARK_TEST_MAP === '1') throw new Error('Coverage maps use the whole local runner, not hosted shards.');
+  if (aggregateArg) {
+    const dir = aggregateArg.slice(12), total = Number(args.find(a => a.startsWith('--shards=')).slice(9));
+    validateShardReceipts(readShardReceipts(dir, { attempt: hosted.attempt, total }), { identity: hosted, files: allFiles, total });
+  }
   const cover = process.env.SPARK_TEST_MAP === '1' ? mkdtempSync(join(tmpdir(), 'cover-')) : null;
   if (cover) {
     rmSync(join(REPO, MAP_FILE), { force: true });   // a map from an earlier run never stands for this one
@@ -162,19 +224,24 @@ if (isMain() && !process.env.NODE_TEST_CONTEXT) {
   // (SPARK_TEST_CONCURRENCY: fewer test files at once on a slow machine, e.g. one whose security software checks every
   // process the stand-in fleet starts.) The usual report, then the seconds each file took (test/file-times.mjs).
   const reporters = ['--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=./test/file-times.mjs', '--test-reporter-destination=stdout'];
-  const suite = spawnSync(process.execPath, ['--test', ...(cover ? [`--import=${EACH_FILE}`] : []), `--test-concurrency=${Number(process.env.SPARK_TEST_CONCURRENCY) || 4}`, ...reporters, 'test/*.test.mjs'],
+  const suite = aggregateArg ? { status: 0 } : spawnSync(process.execPath, ['--test', ...(cover ? [`--import=${EACH_FILE}`] : []), `--test-concurrency=${Number(process.env.SPARK_TEST_CONCURRENCY) || 4}`, ...reporters, ...selected],
     { cwd: REPO, stdio: 'inherit', env: { ...process.env, SPARK_TEST_STRICT: '1', ...(cover ? { NODE_V8_COVERAGE: cover } : {}) } });
   if (suite.status !== 0) {
     console.error('\nThe suite didn’t pass, so nothing was marked as tested.');
     process.exit(1);
   }
-  if (fingerprint() !== before || (git.tree && gitFields().tree !== git.tree)) {
-    console.error('\nFiles changed while the suite ran, so nothing was marked as tested. Run it again.');
-    process.exit(1);
+  assertFrozen(initial, frozen());
+  if (shardArg) {
+    const dir = args.find(a => a.startsWith('--receipts=')).slice(11);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `shard-${index}.json`), `${JSON.stringify({ schema: 1, ...hosted, index, total, files: selected, passed: true })}\n`, { flag: 'wx' });
+    console.log(`Passed shard ${index}/${total}: ${selected.length} files; ${hosted.commit}, attempt ${hosted.attempt}.`);
+    process.exit(0);
   }
   const fleet = await startMock({ hub: shippedHub() });
   try {
     const lock = await lockFor(fleet, { git });
+    assertFrozen(initial, frozen());
     writeFileSync(join(SERVICE, 'workflows.lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
     console.log(`\nMarked build ${lock.build} as tested: ${Object.entries(lock.versions).map(([id, v]) => `${id} ${v}`).join(', ')}`);
   } finally { await fleet.stop(); }

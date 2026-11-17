@@ -1,7 +1,7 @@
 # Sparkie: remaining completion checks
 
-Source audit: 2026-11-17; starting commit `512fb26a`, plus the install-qualification work being integrated.
-This is a completion checklist, not a tested or deployed release certificate. Hosted CI and real-Spark checks are
+Source audit: 2026-11-17; candidate `00fecd0c`, followed by power-state initialization, fit routing and parallel CI repairs being integrated.
+This is a completion checklist, not a tested or deployed release certificate. Focused hosted checks and browser checks passed for earlier snapshots. The latest whole run was cancelled at the owner’s request and exposed two related sleep/wake failures before cancellation; it did not qualify a release. Final hosted CI and real-Spark checks are
 pending. Stamp the final commit/tree and link the actual results before changing any pending item to complete.
 
 ## Decisions carried forward
@@ -11,7 +11,7 @@ pending. Stamp the final commit/tree and link the actual results before changing
 - During development, run the affected behavioral tests and meaningful checks of their dependent boundaries.
   A selected-file pass does not qualify a release. Before install, require the complete passing suite and browser
   checks for the exact frozen source being installed, plus the applicable brain/hardware checks.
-- Use standard GitHub-hosted CPU runners for portable tests after the implementation is ready. No larger paid
+- Use standard GitHub-hosted CPU runners for portable development tests temporarily until the owner says compute Sparks are available. Development checks then move to Sparks 2/3/4; final release qualification stays on GitHub. No larger paid
   runner or permanently-on compute Spark is required. A free runner type does not by itself establish an account's
   private-repository allowance; do not select paid capacity to make a slow suite green.
 - Keep one service, the current action/claim/job paths and one primary brain. Add no model panel, permanent scheduler
@@ -75,10 +75,10 @@ claims and live endpoint state in that handoff were not reverified by this audit
 
 | Handoff item | Current disposition / next evidence |
 |---|---|
-| A; B1/B2/B6/B8 | Brain startup/image/cache/intent repairs are in the source; actual workflow validation and the qualifying eval remain required above. The old "I've stopped" fragment remains insufficient evidence of a specific false claim. |
+| A; B1/B2/B6/B8 | Startup/image/cache/intent and command-target repairs are in the source. Fit-question routing now offers the fit lookup in round one, pending tests and a real-brain measurement. The five old eval misses are not all repaired: the stop fragment lacks its sentence; planted-log replies quoted the forbidden command; keep-app calls invented settings; three-group calls attempted a plan but retained no successful result or diagnostic error. Preserve full masked evidence on the next run before choosing further repairs. |
 | B3, long Mac ControlPaths | Both `deploy/copy-hub-state.sh` and `deploy/plugs.sh` now use short `/tmp/sc-ssh.XXXXXX` directories. Long-temp-path regressions are added for both scripts; hosted results are pending. No Mac fleet was run here. |
-| B4, migration weights | The move card now uses dereferencing copy and mentions link checks. Prove all snapshot links and shards are readable as the runtime user, and reconcile `deploy/REBUILD.txt`; copied link names alone are insufficient. |
-| B5, first validation request | The installer's final `test-changes` request is still one shot in the audited source. Add bounded retry for transient connection/certificate readiness, preserving actual workflow failure. |
+| B4, migration weights | The move card and `deploy/REBUILD.txt` now copy link contents and require link/ownership checks. Prove snapshot shards are readable as the runtime user on the real hub; source instructions alone are insufficient. |
+| B5, first validation request | The CLI retries only its first body-free GET once after a transport failure. Received HTTP errors and mutations are not replayed. The targeted hosted regressions passed on the earlier candidate. |
 | B7, plug names | The script/card now use Spark numbers for mapped plugs and a unique Tapo label for unassigned setup. Controller ids stay internal; hub-rights and identity regressions await hosted results. |
 | C, T42/T45 | Keep explicit proof pending: owner-specified context is never shortened without asking; losing one Spark during an across start restores the reachable side promptly and preserves recovery for the other. Do not mark covered from a loosely similar test name. |
 | C, `/keep`, budgets | `/keep` is explicitly unbuilt in R71. The handoff's 200 GB download/100 GB hub-floor promises still need a tested implementation or owner-approved disposition. Existing generic disk floors are not proof of those numbers. |
@@ -86,6 +86,4 @@ claims and live endpoint state in that handoff were not reverified by this audit
 | C, root units/helper trust | Report the actual supported boundary. Do not expand the helper or bypass managed access restrictions to finish a demonstration. |
 | C, old address and cleanup | Verify and repoint external agents before retiring the old Spark 2 endpoint after Spark 1 is proven. Old worktrees, proof folders and possible containers need an inventory and the owner's cleanup scope; delete nothing from this checklist. |
 
-Portable CI already has push/PR/manual suite execution, a separate browser job and a tested-mark writer that runs
-no repository code. Nightly scheduling and multi-host/shard aggregation are follow-ups, not prerequisites for
-declaring a particular full exact-tree run valid. Add them only when requested and measured need justifies them.
+Portable CI uses manual focused checks and a full main-push/manual release run, with a separate browser job and a tested-mark writer that runs no repository code. Parallel full-suite aggregation is being validated; partial runs never mark releases. Nightly scheduling remains off until the app is ready. Spark-specific lifecycle, power and brain proof remain separate.

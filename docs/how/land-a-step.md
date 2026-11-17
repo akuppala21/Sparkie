@@ -3,6 +3,13 @@
 One small change at a time onto `main`: its affected tests on a compute Spark, then a fast-forward. The whole suite of
 `main` runs after every landing, in the background, and an install still needs it on that exact build (R29).
 
+Until the owner says compute Sparks are available, run development checks with GitHub's **Focused checks** manual
+workflow and name the affected `test/*.test.mjs` files. A focused pass never qualifies an install. Use **Full run**
+for the final complete check; it runs three strict shards and the browser check, and only a complete passing run on
+`main` creates the tested tag. Final release qualification stays on GitHub after compute Sparks return. No nightly
+schedule is enabled. If a full run needs another attempt, rerun all jobs so every receipt belongs to that attempt.
+The Spark-based `land.mjs` commands below still require a compute Spark; do not call them while none is available.
+
 ## Touch
 
 - Nothing in the service. Work on a branch in its own work folder (`git worktree add ../spark-console-<name> -b

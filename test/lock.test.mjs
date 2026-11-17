@@ -5,6 +5,8 @@
 // files, and doesn't touch git's own index; without git it names the runner's `SPARK_TEST_TREE` as `tree`; `run` only
 // on GitHub; the service still counts every workflow of the build as tested with the new lock; the mark job's check
 // (`full-run.yml`) names exactly the keys `lockFor` writes, and where jq is, takes that lock and refuses other shapes.
+// Hosted receipts cover each file exactly once, bind every shard to one tree, commit, run and attempt, reject malformed
+// or incomplete evidence, and refuse source changes before writing a lock.
 //
 // The tested mark, test/lock.mjs, without running the whole suite: the lock it writes for the stand-in fleet's build
 // names the files tested (tree, and commit when they are exactly a commit's), the GitHub run (only on GitHub) and what
@@ -13,7 +15,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, useFleet, REPO, SLOW, postInTwo } from './lib.mjs';
@@ -198,5 +200,100 @@ describe('what it names', () => {
     assert.equal(runOf({ ...GITHUB, GITHUB_RUN_ID: '42; rm -rf /' }), null);
     assert.equal(runOf({ ...GITHUB, GITHUB_REPOSITORY: '../x' }), null);
     assert.equal(runOf({ ...GITHUB, GITHUB_SERVER_URL: 'http://github.com' }), null);
+  });
+});
+
+// Hosted shards must jointly prove the same complete suite. These checks start no stand-in fleets themselves.
+describe('hosted shard qualification', () => {
+  const files = ['test/a.test.mjs', 'test/b.test.mjs', 'test/c.test.mjs', 'test/d.test.mjs', 'test/e.test.mjs'];
+  const identity = { tree: 'a'.repeat(40), commit: 'b'.repeat(40), run: 'https://github.com/someone/spark-console/actions/runs/4242', attempt: '2' };
+  const receipts = () => [1, 2, 3].map(index => ({ schema: 1, ...identity, index, total: 3, files: files.filter((_, i) => i % 3 === index - 1), passed: true }));
+
+  test('three shards cover each file once, independent of input order; invalid and empty shard plans refuse', async () => {
+    const { shardFiles } = await import('./lock.mjs');
+    const plans = [1, 2, 3].map(i => shardFiles([...files].reverse(), i, 3));
+    assert.deepEqual(plans.flat().sort(), files);
+    assert.equal(new Set(plans.flat()).size, files.length);
+    for (const [i, n] of [[0, 3], [4, 3], [1, 0], [1, 17], [1.5, 3], [1, 6]]) assert.throws(() => shardFiles(files, i, n));
+    assert.throws(() => shardFiles([...files, files[0]], 1, 3));
+    assert.throws(() => shardFiles(['../a.test.mjs'], 1, 1));
+  });
+
+  test('only every passing shard from this exact tree, commit, run and attempt qualifies', async () => {
+    const { validateShardReceipts } = await import('./lock.mjs');
+    const judge = rs => validateShardReceipts(rs, { identity, files, total: 3 });
+    assert.equal(judge(receipts()), true);
+    assert.equal(judge(receipts().reverse()), true);
+    for (const changed of [
+      rs => rs.pop(),
+      rs => rs.push(structuredClone(rs[0])),
+      rs => { rs[1] = structuredClone(rs[0]); },
+      rs => { rs[0].files.pop(); },
+      rs => { rs[0].files.push(files[1]); },
+      rs => { rs[0].files.reverse(); },
+      rs => { rs[0].files = 'test/a.test.mjs'; },
+      rs => { rs[0].passed = false; },
+      rs => { rs[0].passed = 1; },
+      rs => { rs[0].schema = 2; },
+      rs => { rs[0].total = 2; },
+      rs => { rs[0].index = 0; },
+      rs => { rs[0].extra = true; },
+      rs => { delete rs[0].files; },
+      rs => { rs[0] = null; },
+      ...['tree', 'commit', 'run', 'attempt'].map(key => rs => { rs[0][key] += '0'; })
+    ]) {
+      const rs = receipts(); changed(rs);
+      assert.throws(() => judge(rs), `refuse ${JSON.stringify(rs)}`);
+    }
+    for (const malformed of [null, {}, [], 'not json']) assert.throws(() => judge(malformed));
+  });
+
+  test('receipt input rejects malformed JSON, extra artifacts or files, folders, symlinks and oversized data', async () => {
+    const { readShardReceipts } = await import('./lock.mjs');
+    const dir = mkdtempSync(join(tmpdir(), 'lock-receipts-'));
+    const folder = join(dir, 'full-receipt-2-1'), path = join(folder, 'shard-1.json');
+    const read = () => readShardReceipts(dir, { attempt: '2', total: 1 });
+    try {
+      mkdirSync(folder);
+      writeFileSync(path, JSON.stringify(receipts()[0]));
+      assert.deepEqual(read(), [receipts()[0]]);
+      assert.throws(() => readShardReceipts(dir, { attempt: '1', total: 1 }));
+      assert.throws(() => readShardReceipts(dir, { attempt: '2', total: 2 }));
+      const extra = join(dir, 'full-receipt-2-4');
+      mkdirSync(extra); writeFileSync(join(extra, 'shard-1.json'), '{}');
+      assert.throws(read, 'extra artifact cannot hide a colliding receipt file');
+      rmSync(extra, { recursive: true });
+      writeFileSync(join(folder, 'extra.txt'), '{}');
+      assert.throws(read);
+      rmSync(join(folder, 'extra.txt'));
+      writeFileSync(path, '{broken');
+      assert.throws(read);
+      writeFileSync(path, ' '.repeat(1000001));
+      assert.throws(read);
+      rmSync(path);
+      mkdirSync(path);
+      assert.throws(read);
+      rmSync(path, { recursive: true });
+      const outside = mkdtempSync(join(tmpdir(), 'receipt-outside-'));
+      try {
+        writeFileSync(join(outside, 'shard-1.json'), '{}');
+        symlinkSync(join(outside, 'shard-1.json'), path);
+        assert.throws(read);
+        rmSync(path); rmSync(folder, { recursive: true });
+        symlinkSync(outside, folder);
+        assert.throws(read, 'artifact directory itself cannot be a symlink');
+      } finally { rmSync(outside, { recursive: true, force: true }); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('hosted qualification requires a clean commit and this GitHub attempt; any source mutation refuses', async () => {
+    const { shardIdentity, assertFrozen } = await import('./lock.mjs');
+    const git = { tree: identity.tree, commit: identity.commit }, env = { ...GITHUB, GITHUB_SHA: identity.commit };
+    assert.deepEqual(shardIdentity(git, env), identity);
+    for (const [g, e] of [[{ tree: git.tree }, env], [git, {}], [git, { ...env, GITHUB_SHA: 'c'.repeat(40) }], [git, { ...env, GITHUB_RUN_ATTEMPT: '' }], [git, { ...env, GITHUB_RUN_ATTEMPT: '2x' }]])
+      assert.throws(() => shardIdentity(g, e));
+    const before = { fingerprint: 'service bytes', ...git };
+    assert.doesNotThrow(() => assertFrozen(before, { ...before }));
+    for (const key of ['fingerprint', 'tree', 'commit']) assert.throws(() => assertFrozen(before, { ...before, [key]: `${before[key]}changed` }));
   });
 });

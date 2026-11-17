@@ -127,8 +127,8 @@ flowchart TD
   HEAL -->|"crash restart: restartChecked, direct. Brain keeper: a main-start job"| JOBS
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
-  JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
+  JOBS -->|"desired list (never the self-test's own model); power-off: seedDesired before stops, then parked marks; validation, chat notice, event; self-test.json while one runs"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld calls seedDesired (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
@@ -137,7 +137,7 @@ flowchart TD
   STATE -->|"desired list, heal tries, the brain's left-down mark; parked or powered off: never healed"| HEAL
   SENSE -->|"wall power, read only"| PLUGS
   JOBS -->|"power jobs only: switchPlug, never the hub’s plug (R41)"| PLUGS
-  JOBS -->|"a power-off: shutDownSpark"| SSH
+  JOBS -->|"a power-off: shutDownSpark after parked state is saved"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
   STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; sent when a Spark comes online, before a power-off and hourly, only if the state changed; backup.json keeps the last try and the last good copy"| BACKUP
 ```

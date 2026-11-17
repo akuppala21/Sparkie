@@ -88,7 +88,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`, `START_CODE`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `seedDesired`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`, `START_CODE`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan`; `seedDesired` is called by `watchHeld`, `powerOffJob` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
@@ -137,7 +137,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
 | `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
 | `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
-| `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
+| `watchHeld` | `20-desired` | every 60 s; seeds desired.json if missing |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
 | `tellAgain` | `20-tell` | a result Telegram didn't take, again after 1, 2 and 4 minutes |
