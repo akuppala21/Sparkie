@@ -6,7 +6,9 @@
 // (putback.test.mjs). Everything else the service writes (its state folder, chats) is left alone, but for one thing:
 // while $MOCK_DIR/stop-between is there, naming two files (say "secrets.json agents.json"), the service is killed
 // (SIGKILL, as a power cut) the moment it opens the second of the two to write it (its temporary file counts),
-// whichever comes first: a stop between two writes, either way round (putback.test.mjs).
+// whichever comes first: a stop between two writes, either way round (putback.test.mjs). While $MOCK_DIR/journal-short
+// is there, the first write to each journal file it opens takes only half of what it was given and says so, as a
+// nearly full disk does (with disk-full there too, the next write then fails).
 import fs, { existsSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 
@@ -15,6 +17,7 @@ if (/\/service\/server\.mjs$/.test(process.argv[1] || '') && !process.execArgv.i
   const sdir = process.env.SPARK_CONSOLE_SECRETS_FILE ? process.env.SPARK_CONSOLE_SECRETS_FILE.replace(/\/[^/]*$/, '/') : null, sfds = new Set();
   const sflag = `${process.env.MOCK_DIR}/secrets-full`, ssyncFlag = `${process.env.MOCK_DIR}/secrets-fsync-fail`;
   const stopFlag = `${process.env.MOCK_DIR}/stop-between`, written = new Set();
+  const shortFlag = `${process.env.MOCK_DIR}/journal-short`, wroteOn = new Set();
   const { openSync, closeSync, writeSync, fsyncSync, readFileSync } = fs;
   fs.openSync = function (path, ...rest) {
     const fd = openSync.call(this, path, ...rest);
@@ -26,8 +29,15 @@ if (/\/service\/server\.mjs$/.test(process.argv[1] || '') && !process.execArgv.i
     }
     return fd;
   };
-  fs.closeSync = function (fd) { fds.delete(fd); sfds.delete(fd); return closeSync.call(this, fd); };
+  fs.closeSync = function (fd) { fds.delete(fd); sfds.delete(fd); wroteOn.delete(fd); return closeSync.call(this, fd); };
   fs.writeSync = function (fd, ...rest) {
+    if (fds.has(fd) && !wroteOn.has(fd) && existsSync(shortFlag)) {
+      wroteOn.add(fd);
+      let [b, off, len] = rest;
+      if (typeof b === 'string') { b = Buffer.from(b); off = 0; len = b.length; } else { off ??= 0; len ??= b.length - off; }
+      return writeSync.call(this, fd, b, off, Math.max(1, Math.floor(len / 2)));
+    }
+    if (fds.has(fd)) wroteOn.add(fd);
     if ((fds.has(fd) && existsSync(flag)) || (sfds.has(fd) && existsSync(sflag))) throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', errno: -28, syscall: 'write' });
     return writeSync.call(this, fd, ...rest);
   };

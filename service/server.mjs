@@ -10865,12 +10865,23 @@ function jMasker(put) {
   };
 }
 function* jSlices(s) { for (let i = 0; i < s.length; i += J_PIECE) yield s.slice(i, i + J_PIECE); }
+// Every byte of text, or a throw: a write that takes only part (a nearly full disk) is written on from where it stopped,
+// and one that takes nothing more ends it. Gives the bytes written.
+function jWriteAll(fd, text) {
+  const b = Buffer.from(text);
+  for (let at = 0; at < b.length;) {
+    const n = writeSync(fd, b, at, b.length - at);
+    if (!(n > 0)) throw Object.assign(new Error('the disk took no more of the journal'), { code: 'ESHORT' });
+    at += n;
+  }
+  return b.length;
+}
 // Writes long text (a string, or anything iterable that gives text) to this month's .out (fd), masked, in one go, so it
 // is one stretch of the file: { o: [offset, length] }, and cut (the limit) when reading stopped there.
 function jBody(fd, body) {
   const offset = fstatSync(fd).size;
   let length = 0, read = 0, cut = null;
-  const m = jMasker(t => { if (t) length += writeSync(fd, t); });
+  const m = jMasker(t => { if (t) length += jWriteAll(fd, t); });
   for (const piece of typeof body === 'string' || Buffer.isBuffer(body) ? jSlices(String(body)) : body) {
     let t = String(piece ?? '');
     const n = Buffer.byteLength(t);
@@ -10913,16 +10924,19 @@ function journal(kind, fields = {}, body = null) {
       try { out = openSync(jFile(month, 'out'), 'a', 0o600); Object.assign(rec, jBody(out, body)); } catch (e) { rec.textLost = e.code || 'error'; }
       finally { if (out !== null) try { closeSync(out); } catch {} }
     }
-    const fd = openSync(jFile(month, 'jsonl'), 'a', 0o600);
+    const fd = openSync(jFile(month, 'jsonl'), 'a+', 0o600);
     let written = false;
     try {
-      writeSync(fd, `${jLine(rec)}\n`);
+      // (a line only partly written before, by a full disk or a power cut, is ended first, so this record is a line of
+      // its own; every reader skips the cut one. A line written only in part is not written: it throws, as a full disk does.)
+      const size = fstatSync(fd).size, last = Buffer.alloc(1);
+      jWriteAll(fd, `${size && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10 ? '\n' : ''}${jLine(rec)}\n`);
       written = true;
       if (fields.start) fsyncSync(fd);
     } catch (e) {
       // A start line written but not synced: the change is refused, so its end goes in at once (as far as it can), and a
       // restart never reports a change that never ran as cut off.
-      if (written && fields.start) try { writeSync(fd, `${jLine({ id, at: new Date().toISOString(), k: kind, end: true, ok: false, outcome: 'refused' })}\n`); } catch {}
+      if (written && fields.start) try { jWriteAll(fd, `${jLine({ id, at: new Date().toISOString(), k: kind, end: true, ok: false, outcome: 'refused' })}\n`); } catch {}
       throw e;
     } finally { closeSync(fd); }
     journalWorked = Date.now();
