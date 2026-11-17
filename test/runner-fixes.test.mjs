@@ -971,23 +971,43 @@ test('f2 R-2: the brain is not handed a script’s lines: the call’s result sa
   await choose(chat, t.choices.find(c => c.label === 'No').id);
 });
 
-// R-3: a key reached code no hash pins: a script inside a loop (the sorter stops at a doubt and lists no script), a
-// program the sorter doesn't know, and a folder run as a script (no file there: no hash). Each is refused with a key.
-test('f2 R-3: a key is refused for a command the sorter couldn’t read, a program it doesn’t know, and a folder run as a script', { timeout: 180000 * SLOW }, async () => {
+// R-3: a key reached code no hash pins. Since the sorter's round (step-f2-sorter) it reads a loop over a named script
+// and the common launchers (python3.12, uv run, accelerate launch, torchrun, pytest on a file) as wrappers of the
+// script they name: a key for those is asked, the script pinned and handed to the helper's --script. A key for a part
+// its reader cannot read (its unreadable), a program it doesn't know, or a folder run as a script is refused.
+test('f2 R-3: a key for a loop over a named script and for each launcher is asked with the script pinned and handed to --script; for what the sorter can’t read, a program it doesn’t know, a folder and a file not there it is refused', { timeout: 240000 * SLOW }, async () => {
   writeFileSync(at3('notes/f2loop.sh'), 'echo ran > notes/f2loop-out.txt\n');
+  writeFileSync(at3('notes/f2l.py'), 'print("ran")\n');
+  writeFileSync(at3('notes/test_f2.py'), 'def test_f2():\n    assert True\n');
   mkdirSync(at3('notes/f2pkg'), { recursive: true });
   writeFileSync(at3('notes/f2pkg/__main__.py'), 'open("notes/f2pkg-out.txt", "w").write("ran\\n")\n');
   const chat = await newChat();
   assert.match((await say(chat, '/key F2_KEY f2v-0123456789abcdef0123456789abcdef')).text, /^Kept your key F2_KEY\./);
-  const keyed = async (n, command, want) => {
-    const words = `run the f2 key step ${n} on spark 3`;
-    await turn(chat, words, [[RUN(command, '~', { keys: ['F2_KEY'] })]]);
-    assert.match(sentBack(words)[0]?.error || '', want, `${command}: ${JSON.stringify(sentBack(words))}`);
+  let n = 0;
+  const pinned = async (command, script) => {
+    const words = `run the f2 key step ${++n} on spark 3`, t = await turn(chat, words, [[RUN(command, '~', { keys: ['F2_KEY'] })]]);
+    const q = String(sentBack(words)[0]?.question || '');
+    assert.ok(q.includes(`\nIt runs ~/${script} (SHA-256 `), `${command}: asked with the script pinned: ${JSON.stringify(sentBack(words)).slice(0, 600)}`);
+    const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+    assert.equal(p.status, 200, p.text);
+    const bind = new RegExp(`^BindReadOnlyPaths=/run/spark-console/[0-9a-f]+/script-1:/.*/${script.replace(/[.]/g, '\\.')}$`);
+    assert.ok(propsOf(command).some(a => bind.test(a)), `${command}: handed to --script: ${JSON.stringify(propsOf(command))}`);
   };
-  await keyed(1, 'for i in 1; do bash notes/f2loop.sh; done', /^Not run: the sorter couldn’t read all of this command \(It holds the shell word for: a loop, a test or a function the sorter does not read\), so what it runs can’t be shown or pinned, and a key goes only to code you are shown\./);
-  await keyed(2, 'python3.12 notes/f2pkg', /^Not run: it runs “python3\.12”, a program the sorter doesn’t know, so what it runs can’t be shown or pinned, and a key goes only to code you are shown\./);
-  await keyed(3, 'python3 notes/f2pkg', /^Not run: it runs ~\/notes\/f2pkg, which isn’t a file that could be read there \(a folder, a file not there yet, or one it can’t read\), so its text can’t be shown or pinned, and a key goes only to code you are shown\./);
-  assert.ok(!existsSync(at3('notes/f2loop-out.txt')) && !existsSync(at3('notes/f2pkg-out.txt')), 'nothing ran');
+  await pinned('for i in 1; do bash notes/f2loop.sh; done', 'notes/f2loop.sh');
+  for (const c of ['python3.12 notes/f2l.py', 'uv run notes/f2l.py', 'accelerate launch notes/f2l.py', 'torchrun notes/f2l.py']) await pinned(c, 'notes/f2l.py');
+  await pinned('pytest notes/test_f2.py', 'notes/test_f2.py');
+  const refused = async (command, want) => {
+    const words = `run the f2 key step ${++n} on spark 3`;
+    await turn(chat, words, [[RUN(command, '~', { keys: ['F2_KEY'] })]]);
+    assert.equal(sentBack(words)[0]?.error, want, `${command}: ${JSON.stringify(sentBack(words)).slice(0, 400)}`);
+  };
+  await refused('for f in $(ls); do bash $f; done', 'Not run: the sorter couldn’t read all of this command (It holds the shell word for: a loop, a test or a function the sorter does not read), so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.');
+  await refused('frobnicate --all notes/f2l.py', 'Not run: it runs “frobnicate”, a program the sorter doesn’t know, so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Run a script by its name with the key (bash x.sh, python3 x.py), and ask again. Nothing ran.');
+  // (a folder run as a script: the sorter says what python3 runs from it is code no hash pins)
+  await refused('python3 notes/f2pkg', 'Not run: it runs code the command doesn’t show (what python3 runs from notes/f2pkg (a folder\'s __main__.py, or a file with no .py name), which no hash pins), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.');
+  // (a script named as a file that is no file there at the ask)
+  await refused('python3 notes/f2none.py', 'Not run: it runs ~/notes/f2none.py, which isn’t a file that could be read there (a folder, a file not there yet, or one it can’t read), so its text can’t be shown or pinned, and a key goes only to code you are shown. Run a script file by its name with the key, and ask again. Nothing was asked or run.');
+  assert.ok(!existsSync(at3('notes/f2pkg-out.txt')), 'the folder never ran');
   // (with no key the folder is asked, and its line says the truth)
   const words = 'run the f2 package on spark 3', t = await turn(chat, words, [[RUN('python3 notes/f2pkg')]]);
   assert.match(String(sentBack(words)[0]?.question), /\nIt runs ~\/notes\/f2pkg, which isn’t a file that could be read there as you’re asked \(a folder, a file not there yet, or one it can’t read\): its text can’t be shown or pinned, and a key is refused for it\.(?:\n|$)/);
