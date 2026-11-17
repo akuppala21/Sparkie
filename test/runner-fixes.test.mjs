@@ -812,7 +812,9 @@ test('a2 P-5: a script written to while its unit runs: what ran is what was hash
   assert.equal(wrote, 'EACCES', 'on the stand-in the script’s path holds the helper’s read-only copy while the unit runs');
   assert.equal(text('notes/p5-out.txt'), 'first\nsecond\n', 'the line written while it ran was not run');
   assert.equal(text('notes/p5.sh'), 'echo first > notes/p5-out.txt\nsleep 3\necho second >> notes/p5-out.txt\n', 'the owner’s file is back as it was');
-  assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
+  // (step-f2's H2 moved the helper's copies. Old: /run/spark-console/<id>/script-1, often noexec. New: root's own
+  // /var/lib/spark-console/pins/<id>/script-1, so a pinned file run by its path runs)
+  assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/var\/lib\/spark-console\/pins\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
 });
 
 // P-5, "the message before": what a request read from outside used to count only for that request, so a file read for a
