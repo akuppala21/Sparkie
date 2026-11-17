@@ -97,3 +97,19 @@ test('completed restoration removes an earlier cleanup warning and leaves no cle
   assert.deepEqual(job.asideHere, []);
   assert.deepEqual(logs, []);
 });
+
+test('proved refused restoration carries the same exact owed unit in notBack and clears it once restored', () => {
+  const { job } = refusalReport();
+  assert.deepEqual(job.notBack, [{ items: ['spark4/gpu-hold'], words: 'gpu-hold couldn’t be started again on Spark 4; start it from Spark Console' }]);
+  const call = new Function('rollbackKey', 'backUnits', 'nodeById', 'sparkName', 'note', `${words}\n${resultSource}\nreturn rollbackResult;`)(
+    m => `${m.spark}/${m.container}`, () => [], id => ({ id }), () => 'Spark 4', () => {});
+  call(job, { blocked: [], attempts: [], units: [{ members: [{ spark: 'spark4', container: 'gpu-hold', state: 'restored', wasRunning: true }] }] });
+  assert.equal(Object.hasOwn(job, 'notBack'), false);
+  assert.equal(Object.hasOwn(job, 'cleanUp'), false);
+});
+
+test('unproved restoration outcomes never become a notBack refusal', () => {
+  for (const options of [{ terminal: false }, { id: 'other' }, { state: 'running' }, { blocked: ['spark4'] }, { changed: true }, { newer: true }, { code: 0 }]) {
+    assert.equal(Object.hasOwn(refusalReport(options).job, 'notBack'), false, JSON.stringify(options));
+  }
+});

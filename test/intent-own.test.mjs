@@ -17,7 +17,7 @@ const SLOW = Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1);
 const part = name => readFileSync(join(REPO, 'service', 'src', name), 'utf8');
 // The intent reader, from normQuotes to the end of changeIntent (with the tables between), on a fleet of Sparks 2 to 4.
 const READER = (() => {
-  const src = part('16-actions.mjs'), a = src.indexOf('const normQuotes'), b = src.indexOf('// Never run from a channel');
+  const src = part('16-actions.mjs'), a = src.indexOf('const normQuotes'), b = src.indexOf('const PAGE_ONLY');
   assert.ok(a > 0 && b > a, 'the intent reader is in 16-actions.mjs');
   return new Function('NODES', `${src.slice(a, b)}\nreturn { changeIntent, ownSentences: typeof ownSentences === 'function' ? ownSentences : String, tokensOf, orderAt: typeof orderAt === 'function' ? orderAt : null };`)([{ id: 'spark2' }, { id: 'spark3' }, { id: 'spark4' }]);
 })();
@@ -850,7 +850,7 @@ test('S4: a Spark said another way is that Spark; a word only like one, or a mod
 // on a fleet of Sparks 1 to 4; the stand-ins: the model is named (namesModel), no saved workflow, no memory.
 const CHECK = (() => {
   const src = part('16-actions.mjs'), cut = (from, to) => { const a = src.indexOf(from), b = src.indexOf(to, a); assert.ok(a >= 0 && b > a, from); return src.slice(a, b); };
-  const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', '// Never run from a channel'),
+  const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', 'const PAGE_ONLY'),
     cut('// The kinds of request (CHANGE_WORDS)', '// A typed answer to Sparkie'), cut('// Which of Spark Console\'s models on that Spark', '// A change\'s plan'),
     cut('// What Sparkie may do straight away', '// ctx says who').replace('await namesModel(out, saidText)', 'true')].join('\n');
   const knowledge = { workloads: {} };

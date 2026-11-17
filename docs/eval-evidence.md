@@ -33,3 +33,7 @@ is never written. The file remains on the runner's machine until its owner remov
 `test/eval-diagnostics.test.mjs` covers masking, fragments, full-word distinctions with unchanged grades, retry
 retention, fail-closed omissions and private writes. `test/brain-eval.test.mjs` checks the runner writes evidence,
 retains both failed attempts, and refuses to store it before contacting a console.
+
+An inference server without verified serving identity produces `spark-console-eval-diagnostic`. Its wrong changes
+are still counted and still exit with code 2; the record cannot be stored to qualify a brain. The command regression
+checks both grading and that refusal.

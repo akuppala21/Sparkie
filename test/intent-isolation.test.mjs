@@ -11,7 +11,7 @@ import { REPO } from './start-mock.mjs';
 
 const source = readFileSync(join(REPO, 'service', 'src', '16-actions.mjs'), 'utf8');
 const cut = (from, to) => { const a = source.indexOf(from), b = source.indexOf(to, a); assert.ok(a >= 0 && b > a, from); return source.slice(a, b); };
-const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', '// Never run from a channel'),
+const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', 'const PAGE_ONLY'),
   cut('// The kinds of request (CHANGE_WORDS)', '// A typed answer to Sparkie'), cut('// Which of Spark Console\'s models on that Spark', '// A change\'s plan'),
   cut('// The models a request could mean:', '// What Sparkie may do straight away'), cut('// What Sparkie may do straight away', '// ctx says who')].join('\n');
 const RADIX = 'RadixArk--Qwen3.8-27B-NVFP4', GPT = 'gpt-oss-20b', NEMO = 'nvidia--Nemotron-3-Nano-30B-A3B-NVFP4';
@@ -107,5 +107,30 @@ describe('temporary replacement names do not invent a second model', () => {
     }
     const f = fixture([modelRow(canonical, { spark: 'spark4' }), modelRow(aside, { running: false })]);
     assert.deepEqual(f.containersSaid('spark3', 'restart nemotron').map(c => c.name), [aside], 'a canonical row on another Spark proves no local replacement family');
+  });
+});
+
+
+describe('a start keeps its own authority beside a duplicated setup classification', () => {
+  test('set up or install beside an explicit start does not turn its same-clause work tag into a second request', async () => {
+    for (const next of ['set up a folder called renders inside the work folder on Spark 3', 'install the requested package on Spark 3']) {
+      const f = fixture(), words = `start ${GPT} on Spark 3 with 64k context and then ${next}`;
+      const got = await f.check('start_model', { model: GPT, spark: 'spark4' }, words);
+      assert.equal(got.clear, true, words);
+      assert.deepEqual(got.input, { model: GPT, spark: 'spark3', contextTokens: 65536 });
+      assert.equal((await f.check('start_model', { model: RADIX, spark: 'spark3' }, words)).clear, false, 'the other step grants no different model');
+    }
+  });
+  test('a real separate work, stop, restart or ambiguous destination remains a button', async () => {
+    for (const words of [
+      `start ${GPT} on Spark 3 and then edit the file on Spark 3`,
+      `start ${GPT} on Spark 3 and then stop gemma on Spark 4`,
+      `start ${GPT} on Spark 3 and then restart gemma on Spark 4`,
+      `start ${GPT} on Spark 3 or 4 and then set up a folder on Spark 3`,
+      `start ${GPT} on Spark 3 with 64k context or start ${RADIX} on Spark 4`,
+      `start ${GPT} on Spark 3 with 64k context and`,
+      `set up ${GPT} on Spark 3 with 64k context and`,
+      `set up a folder on Spark 3 and then start ${GPT}`,
+    ]) assert.equal((await fixture().check('start_model', { model: GPT, spark: 'spark3' }, words)).clear, false, words);
   });
 });

@@ -44,7 +44,7 @@ flowchart TD
   REG["Action registry: reads and changes"]
   WF["Workflow state: workflows.lock.json and validations.json"]
   JOBS["Jobs and per-Spark claims (07-jobs)"]
-  RETURN["Failed-start recovery (17-rollback)"]
+  RETURN["Failed-start recovery (17-rollback): live pairs whole; stopped copies stay off"]
   SSH["spawnOn and run (02-ssh): ssh, or local bash on the hub"]
   FLEET["Sparks: containers, models on port 8000, apps on their own ports, model files, worker.py"]
   SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, plugs 15 s, inventory on demand and from the heal loops"]

@@ -25,7 +25,7 @@ function harness(initial = record()) {
     STATE_DIR: '/fake/state', openSync: () => 1, fsyncSync: () => {}, closeSync: () => {},
     NAME_RE: /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/, computeSparks: () => ['spark3', 'spark4'], SAVED_RUNS_FILE: 'saved-runs.json',
     savedRunsNow: () => structuredClone(state), writePrivate: (_, next) => { if (failWrite) throw new Error('disk full'); state = structuredClone(next); },
-    randomBytes, Date, JSON, Buffer, Symbol, console, Number, Set, Map,
+    randomBytes, Date, performance, JSON, Buffer, Symbol, console, Number, Set, Map,
     nodeById: id => ['spark3', 'spark4'].includes(id) ? { id } : null, sparkName: n => n.id,
     notBrainsSpark: ids => { if (ids.some(x => !['spark3', 'spark4'].includes(x))) throw new Error('hub'); },
     claimSparks: ids => { if (ids.some(x => busy.has(x))) throw new Error('busy'); ids.forEach(x => busy.set(x, true)); calls.push(['claim', ...ids]); return () => ids.forEach(x => busy.delete(x)); },
@@ -276,4 +276,45 @@ test('head adoption and a later negative stop cover both exact recorded parts of
   assert.equal((await h.api.rollbackOwned(h.read().runs[ID], 'spark3')).length, 0); assert.equal((await h.api.rollbackOwned(h.read().runs[ID], 'spark4')).length, 0);
   h.api.rollbackSupersede(['spark3/sc-new'], 'the owner stopped the across model'); await h.api.rollbackReturn(h.job());
   assert.ok(seen.every(x => h.containers.get(x.id).state === 'exited')); assert.equal(h.calls.filter(x => x[0] === 'stop').length, 2); assert.equal(h.read().runs[ID], undefined);
+});
+
+test('a wholly stopped historical pair preserves only its replaced compute copy and never claims the former hub', async () => {
+  const h = harness(null), calls = [], look = h.env.rollbackLook;
+  h.env.rollbackLook = async (spark, ref) => { calls.push([spark, ref]); return look(spark, ref); };
+  const inv = { library: [{ name: 'old', sizeBytes: 20e9 }], sparks: [
+    { id: 'spark2', deployments: [{ container: 'sc-old', model: 'old', cluster: 'spark2+spark3', state: 'exited' }] },
+    { id: 'spark3', deployments: [{ container: 'sc-old-part2', model: 'old', cluster: 'spark2+spark3', state: 'exited' }] },
+  ] };
+  h.containers.set('b'.repeat(64), { ...receipt('b', 'sc-old-part2'), spark: 'spark3' });
+  const job = { id: ID, createdAt: SINCE };
+  await h.api.rollbackPrepare(job, ['spark3', 'spark4'], ['spark3/sc-old-part2'], inv);
+  const saved = h.read().runs[ID];
+  assert.deepEqual(saved.targets, ['spark3', 'spark4']);
+  assert.deepEqual(saved.units.flatMap(u => u.members).map(m => [m.spark, m.container, m.wasRunning]), [['spark3', 'sc-old-part2', false]]);
+  assert.ok(calls.every(([spark]) => spark !== 'spark2'));
+  assert.deepEqual(h.calls, [], 'no extra claim or mutation reaches the old peer');
+  await h.api.rollbackReturn(job);
+  assert.equal(h.containers.get('b'.repeat(64)).state, 'exited');
+  assert.equal(h.read().runs[ID], undefined);
+  assert.ok(!h.calls.some(c => ['start', 'stop', 'remove'].includes(c[0])));
+});
+
+for (const peerState of ['running', undefined]) test(`a historical pair with ${peerState || 'unknown'} peer state keeps its whole-pair hub refusal`, async () => {
+  const h = harness(null), inv = { library: [], sparks: [
+    { id: 'spark2', deployments: [{ container: 'sc-old', model: 'old', cluster: 'spark2+spark3', state: peerState }] },
+    { id: 'spark3', deployments: [{ container: 'sc-old-part2', model: 'old', cluster: 'spark2+spark3', state: 'exited' }] },
+  ] };
+  await assert.rejects(h.api.rollbackPrepare({ id: ID, createdAt: SINCE }, ['spark3'], ['spark3/sc-old-part2'], inv), /hub/);
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.read().runs[ID], undefined);
+});
+
+test('a stopped historical copy that starts after planning refuses before recording or changing it', async () => {
+  const h = harness(null), inv = { library: [], sparks: ['spark2', 'spark3'].map((id, rank) => ({ id,
+    deployments: [{ container: `sc-old${rank ? '-part2' : ''}`, model: 'old', cluster: 'spark2+spark3', state: 'exited' }] })) };
+  h.containers.set('b'.repeat(64), { ...receipt('b', 'sc-old-part2', 'running'), spark: 'spark3' });
+  await assert.rejects(h.api.rollbackPrepare({ id: ID, createdAt: SINCE }, ['spark3'], ['spark3/sc-old-part2'], inv), /pair.*changed.*Nothing was stopped/);
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.read().runs[ID], undefined);
+  assert.equal(h.containers.get('b'.repeat(64)).state, 'running');
 });

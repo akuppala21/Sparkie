@@ -6381,7 +6381,11 @@ async function sparkieCheck(name, input, ctx) {
     const modelWords = [...tokensOf(String(out.model || ''))], namesIt = c => modelWords.length > 0 && modelWords.every(t => tokensOf(c.text).has(t) || squash(c.text).includes(t.replace(/\./g, '')));
     const startClauses = p.clauses.filter(c => c.kind === 'start' && namesIt(c));
     const own = startClauses.length === 1 ? startClauses[0] : p.clauses.length === 1 && p.clauses[0].kind === 'start' ? p.clauses[0] : null;
-    const onlyStarts = p.clauses.every(c => ['start', 'keep'].includes(c.kind));
+    // Set up and install have both start and work tags on the same clause. The duplicate tag grants no new
+    // target or command authority; a separate work, stop or restart clause still keeps the start at a button.
+    const onlyStarts = p.clauses.every(c => ['start', 'keep'].includes(c.kind)
+      || c.kind === 'work' && p.clauses.some(other => other.kind === 'start' && other.text === c.text
+        && other.before === c.before && same(other.named, c.named) && same(other.places, c.places)));
     let settled = false;
     // Bind to this model's request before considering placement. Another request's destination is never evidence.
     if (own) {
@@ -6408,7 +6412,10 @@ async function sparkieCheck(name, input, ctx) {
       const reference = new RegExp(String.raw`\b(?:start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|use|install)\s+${subject}${after}|\b(?:bring|get|spin|fire|boot)\s+${subject}\s+(?:back\s+)?(?:up|going|running)\b|\bswitch\s+(?:spark\d+\s+)?(?:over\s+)?to\s+${subject}${after}`, 'i');
       if (!reference.test(own.text)) saidText = own.text;
     }
-    const context = startContext(own ? own.text : request);
+    // A completed then-join between distinct requests is outside this start's numeric setting. A dangling
+    // and, an alternative (or), or two tags for one clause remain ambiguous.
+    const laterRequest = own && p.clauses.slice(p.clauses.indexOf(own) + 1).some(c => c.text !== own.text);
+    const context = startContext(own ? laterRequest ? own.text.replace(/\s+(?:and\s+then|then)\s*$/i, '') : own.text : request);
     // A number in another model's clause, or one invented by the brain, is only a proposal. A unique owner's number
     // replaces even an omitted or mismatched tool argument before the first launch.
     if (own && !context.unclear && context.tokens !== null) out.contextTokens = context.tokens;
@@ -8764,8 +8771,8 @@ async function rollbackCommand(job, spark, action, name, expected = null, fields
   const data = typeof fields === 'function' ? fields({ operation: r.operation, attempt: a.id, command: command.id }) : fields;
   await rollbackTarget(spark, { operation: r.operation, attempt: a.id, command: command.id, mode: 'dispatch', action, name, expected, ...data });
   // Poll by the SAME lock without fencing this still-live attempt. The completed receipt is read in a separate mode.
-  const end = Date.now() + Math.min(120000, Math.max(1, observeMs));
-  while (Date.now() < end) {
+  const end = performance.now() + Math.min(120000, Math.max(1, observeMs));
+  while (performance.now() < end) {
     const out = await rollbackTarget(spark, { operation: r.operation, attempt: a.id, command: command.id, mode: 'receipt' });
     if (out.result) {
       const now = rollbackRead(r.operation), cmd = now.attempts.find(x => x.id === a.id).commands.find(x => x.id === command.id);
@@ -8776,7 +8783,7 @@ async function rollbackCommand(job, spark, action, name, expected = null, fields
       if (out.result.code) throw new Error(`Docker couldn’t ${action} ${name} on ${spark}: ${out.result.failure || 'Docker refused the change'}.`);
       return out.result;
     }
-    await sleep(Date.now() + 119000 < end ? 250 : 1000);
+    await sleep(performance.now() + 119000 < end ? 250 : 1000);
   }
   throw Object.assign(new Error(`${spark} didn’t finish ${action}. Earlier work stays stopped there until that command is known to have ended. It may need a power cycle.`), { rollbackObserverTimeout: true });
 }
@@ -8844,7 +8851,7 @@ async function rollbackFence(record, spark) {
 }
 // A bounded continuation of this put-back under its existing claims. No scheduler, new authority or replayed create.
 // A free fenced producer with only uncertain stops of proven new IDs may dispose of those IDs in a fresh attempt.
-async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
+async function rollbackReconcile(job, spark, until = performance.now() + 90000) {
   let record = rollbackRead(job.rollbackOperation || job.rollbackSource);
   if (!record || record.phase !== 'returning' || !record.targets.includes(spark)) return false;
   if (await rollbackFence(record, spark)) { delete job.rollbackAttempt; return true; }
@@ -8853,10 +8860,10 @@ async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
   do {
     state = await rollbackFenceState(rollbackRead(record.operation), spark);
     if (state.clear) { delete job.rollbackAttempt; return true; }
-    if (state.fenced || !state.active || Date.now() >= until) break;
-    await sleep(Math.min(1000, Math.max(1, until - Date.now())));
-  } while (Date.now() < until);
-  if (!state.fenced || !state.unresolved?.length || Date.now() >= until) return false;
+    if (state.fenced || !state.active || performance.now() >= until) break;
+    await sleep(Math.min(1000, Math.max(1, until - performance.now())));
+  } while (performance.now() < until);
+  if (!state.fenced || !state.unresolved?.length || performance.now() >= until) return false;
   record = rollbackRead(record.operation);
   if (!state.unresolved.every(c => rollbackStopCreated(record, spark, c))) return false;
   const targets = [...new Map(state.unresolved.map(c => [c.expected.id, c])).values()];
@@ -8872,12 +8879,12 @@ async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
     for (const command of targets) {
       const created = current(command), seen = await rollbackLook(spark, created.id);
       if (!rollbackSame(created, seen) || seen.name !== created.name || ['spark.operation', 'spark.attempt', 'spark.command'].some(k => seen.labels?.[k] !== created.labels[k])) return false;
-      if (Date.now() >= until) return false;
+      if (performance.now() >= until) return false;
       // Always obtain a successful stop receipt; a stopped look alone grants no disposal proof.
-      const stopped = await rollbackCommand(job, spark, 'stop', created.name, command.expected, () => { current(command); return {}; }, until - Date.now());
+      const stopped = await rollbackCommand(job, spark, 'stop', created.name, command.expected, () => { current(command); return {}; }, until - performance.now());
       if (!stopped.terminal || stopped.code !== 0 || stopped.notIssued || stopped.changed || stopped.missing || stopped.rebooted || !rollbackSame(created, stopped.seen) || !STOPPED_STATES.includes(stopped.seen.state)) return false;
-      if (Date.now() >= until) return false;
-      const removed = await rollbackCommand(job, spark, 'remove', created.name, command.expected, () => { current(command); return {}; }, until - Date.now());
+      if (performance.now() >= until) return false;
+      const removed = await rollbackCommand(job, spark, 'remove', created.name, command.expected, () => { current(command); return {}; }, until - performance.now());
       if (!removed.terminal || removed.code !== 0 || removed.seen !== null || removed.changed || removed.notIssued || removed.missing) return false;
     }
     return await rollbackFence(rollbackRead(record.operation), spark);
@@ -9069,12 +9076,19 @@ async function rollbackRetireSuperseded(claimedIds) {
 }
 async function rollbackPrepare(job, targets, stops, inv) {
   if (job.rollbackOperation) return;
-  const keys = new Set(stops), all = inv.sparks.flatMap(sp => sp.deployments.map(d => ({ ...d, spark: sp.id })));
+  const keys = new Set(stops), stoppedPairs = new Set(), all = inv.sparks.flatMap(sp => sp.deployments.map(d => ({ ...d, spark: sp.id })));
   for (const key of [...keys]) {
     const d = all.find(x => `${x.spark}/${x.container}` === key);
     if (d?.cluster) {
       const head = d.container.replace(/-part2$/, '');
-      for (const [rank, spark] of d.cluster.split('+').entries()) keys.add(`${spark}/${head}${rank ? '-part2' : ''}`);
+      const pair = d.cluster.split('+').map((spark, rank) => `${spark}/${head}${rank ? '-part2' : ''}`);
+      // A wholly stopped historical pair has no running mate to put back. Preserve only the local copy this
+      // start replaces; claiming its former peer could otherwise pull the hub into a compute-only start.
+      if (pair.every(k => { const old = all.find(x => `${x.spark}/${x.container}` === k); return old && STOPPED_STATES.includes(old.state); })) {
+        stoppedPairs.add(key);
+        continue;
+      }
+      for (const key of pair) keys.add(key);
     }
   }
   const ids = [...new Set([...targets, ...[...keys].map(k => k.split('/')[0])])].sort();
@@ -9092,6 +9106,7 @@ async function rollbackPrepare(job, targets, stops, inv) {
     for (const key of keys) {
       const [spark, container] = key.split('/'), seen = await rollbackLook(spark, container);
       if (!seen?.id || !seen.startedAt) throw new Error(`The earlier ${container} on ${spark} couldn’t be recorded. Nothing was stopped.`);
+      if (stoppedPairs.has(key) && !STOPPED_STATES.includes(seen.state)) throw new Error(`The earlier pair on ${spark} changed after its plan. Nothing was stopped; ask again.`);
       const deployment = all.find(x => x.spark === spark && x.container === container), model = inv.library.find(x => x.name === deployment?.model);
       const listed = before.running.find(x => keyOf(x) === key || x.sparks?.includes(spark) && (x.container === container || `${x.container}-part2` === container)) || null;
       const measured = (gpuByNode.get(spark) || []).filter(([, , , name]) => name === container).reduce((n, [, mb]) => n + Number(mb) * 2 ** 20, 0);
@@ -9211,7 +9226,7 @@ function rollbackResult(job, record) {
   job.stoppedHere = held;
   job.asideHere = asides;
   const runningAsides = asides.filter(a => waiting.some(u => u.members.some(m => m.spark === a.node && m.container === a.name && m.wasRunning)));
-  const owed = still.length ? owedWords(still, held, runningAsides, pairs) : [];
+  const owed = still.length ? owedWords(still, held, runningAsides, pairs) : [], notBack = [];
   // Name a refused restoration only with its latest exact-ID terminal receipt and a stopped post-check.
   // An unanswered command, changed identity or unresolved target keeps the general uncertainty warning instead.
   for (const u of waiting) {
@@ -9223,9 +9238,12 @@ function rollbackResult(job, record) {
     });
     if (!failed) continue;
     const pair = backUnits(u.members.map(rollbackKey)).find(x => x.model);
-    owed.push(pair ? `${pair.model} couldn’t be started again across ${pair.sparks.map(id => sparkName(nodeById(id) || { id })).join(' + ')}; start ${pair.model} across both again`
-      : `${failed.container} couldn’t be started again on ${sparkName(nodeById(failed.spark) || { id: failed.spark })}; start it from Spark Console`);
+    const words = pair ? `${pair.model} couldn’t be started again across ${pair.sparks.map(id => sparkName(nodeById(id) || { id })).join(' + ')}; start ${pair.model} across both again`
+      : `${failed.container} couldn’t be started again on ${sparkName(nodeById(failed.spark) || { id: failed.spark })}; start it from Spark Console`;
+    owed.push(words);
+    notBack.push({ items: u.members.filter(m => m.wasRunning).map(rollbackKey), words });
   }
+  if (notBack.length) job.notBack = notBack; else delete job.notBack;
   const followUp = 'Earlier work still needs putting back. Spark Console will check again when its Spark answers. A Spark that stays silent may need a power cycle.';
   if (waiting.length || record.blocked?.length) job.cleanUp = owed.length ? owed.map(x => `${x}.`).join('\n') : followUp;
   else delete job.cleanUp;

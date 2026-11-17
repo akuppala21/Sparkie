@@ -150,7 +150,7 @@ describe('nobody else gets in', () => {
         assert.equal(m.status, s.status, `${member}: GET ${path} → ${m.status}, a stranger ${s.status}`);
       }
       const w = (await api('/whoami', { headers: { 'tailscale-user-login': member } })).json;
-      assert.deepEqual(w, { login: member, access: 'none', signin: false, recovery: false, session: null, via: 'tailnet' });
+      assert.deepEqual(w, { login: member, access: 'none', signin: false, recovery: false, deviceSignin: false, session: null, via: 'tailnet' });
     }
   });
 
@@ -233,11 +233,12 @@ describe('no answer, notice or page names a view the page no longer has', () => 
     const chat = await newChat();
     try {
       const p = await say(chat, '/pause');
-      assert.match(p.text, /\nTo resume: your account menu → Agents and Telegram, with your passkey\./);
+      assert.match(p.text, /\nTo resume: send \/resume and confirm the change, or use Agents and Telegram in your account menu\./);
       assert.ok(!GONE.test(p.text), p.text);
     } finally { await agentSettings({ halted: false }); }
     const h = await say(chat, '/help');
-    assert.match(h.text, /\/pause: pause agents’ changes \(resume in your account menu → Agents and Telegram, with your passkey\)/);
+    assert.match(h.text, /^\/pause: pause agents’ changes$/m);
+    assert.match(h.text, /^\/resume: ask to resume agents’ changes$/m);
     assert.ok(!GONE.test(h.text), h.text);
   });
 });

@@ -134,6 +134,12 @@ test('a failed restoration withholds the shorter-context question and reports wh
   t.after(async () => {
     rmSync(mock('start-fails'), { force: true });
     rmSync(mock('oom-ctx'), { force: true });
+    // The durable recovery owns this stopped original. Wait for that real recovery to finish before a fresh
+    // page start can reuse the Spark; deleting its note would manufacture successful restoration.
+    await waitFor(() => {
+      const saved = JSON.parse(readFileSync(join(T.fleet.stateDir, 'saved-runs.json'), 'utf8'));
+      return stateOf(BOX) === 'running' && !Object.values(saved.runs || {}).some(r => r.kind === 'start-rollback' && r.phase !== 'committed' && r.targets?.includes('spark4'));
+    }, { timeout: 180000, every: 1000, what: 'the failed restoration to finish after the fixture releases its Docker refusal' });
     // Leave the fixture's model running through the page after removing the failure fixture.
     if (stateOf(BOX) !== 'running') {
       const restored = await pageStart();

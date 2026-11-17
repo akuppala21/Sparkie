@@ -52,3 +52,8 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-49 | Sensitive Telegram proposals lost their page passkey marker | Fixed; original 428 assertions and all 32 Telegram cases pass on policy r7; independent source review agrees | Final qualification; separate long-confirmation defect under investigation |
 
 | A-50 | Ordinary Telegram approval omits full code-built facts | Fixed; independent source review and 115/115 compute checks pass on r8; all five new regressions fail on old source | Final combined-tree release qualification |
+
+| A-51 | Stopped historical pair prevents a new compute pair start | Fixed; independent review; direct and unchanged pair/wake integration checks pass on r20/r21 | Complete release qualification |
+| A-52 | Wall time expires a command observer before its receipt | Fixed; monotonic transport budgets; clock regressions and original context-expiry case pass | Complete release qualification |
+| A-53 | Failed restoration omits structured notBack evidence | Fixed; exact proof-derived metadata, original context/lifecycle assertions pass | Complete release qualification |
+| A-54 | Duplicate setup intent asks before an explicit model start | Fixed; independent review; negative authority controls and unchanged carry-on eval pass | Complete release qualification |

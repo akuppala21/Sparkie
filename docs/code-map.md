@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 108 parts in `service/src/`, joined in name order into `service/server.mjs` (31074 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 108 parts in `service/src/`, joined in name order into `service/server.mjs` (31092 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -341,7 +341,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the page's buttons move onto the same list, with the same checks. Each action says: kind 'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify, put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions. scope which agent keys may use it: 'fleet:read' today; …
 
 - **Area:** core. **Rules:** R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46, R74. **Tests:** change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs, context-intent.test.mjs, intent-isolation.test.mjs, telegram-history-save.test.mjs
-- **Lines:** 1020
+- **Lines:** 1027
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -421,7 +421,7 @@ Only fixed internal model mutations reach this adapter, after strict hub write-a
 The original start's authority, kept before it changes anything. A restart never replays its create commands. Target receipts and the attempt fence settle late commands before an original container can be started again.
 
 - **Area:** core. **Rules:** R1, R2, R7, R13, R15, R16, R18, R20, R21, R22. **Tests:** t45-return.test.mjs, t45-adopt-job.test.mjs, t45-job-folder.test.mjs, t45-recovery-words.test.mjs, t45-owner-wish.test.mjs, t45-cleanup-adoption.test.mjs
-- **Lines:** 549
+- **Lines:** 560
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

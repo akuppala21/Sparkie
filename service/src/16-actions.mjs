@@ -640,7 +640,11 @@ async function sparkieCheck(name, input, ctx) {
     const modelWords = [...tokensOf(String(out.model || ''))], namesIt = c => modelWords.length > 0 && modelWords.every(t => tokensOf(c.text).has(t) || squash(c.text).includes(t.replace(/\./g, '')));
     const startClauses = p.clauses.filter(c => c.kind === 'start' && namesIt(c));
     const own = startClauses.length === 1 ? startClauses[0] : p.clauses.length === 1 && p.clauses[0].kind === 'start' ? p.clauses[0] : null;
-    const onlyStarts = p.clauses.every(c => ['start', 'keep'].includes(c.kind));
+    // Set up and install have both start and work tags on the same clause. The duplicate tag grants no new
+    // target or command authority; a separate work, stop or restart clause still keeps the start at a button.
+    const onlyStarts = p.clauses.every(c => ['start', 'keep'].includes(c.kind)
+      || c.kind === 'work' && p.clauses.some(other => other.kind === 'start' && other.text === c.text
+        && other.before === c.before && same(other.named, c.named) && same(other.places, c.places)));
     let settled = false;
     // Bind to this model's request before considering placement. Another request's destination is never evidence.
     if (own) {
@@ -667,7 +671,10 @@ async function sparkieCheck(name, input, ctx) {
       const reference = new RegExp(String.raw`\b(?:start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|use|install)\s+${subject}${after}|\b(?:bring|get|spin|fire|boot)\s+${subject}\s+(?:back\s+)?(?:up|going|running)\b|\bswitch\s+(?:spark\d+\s+)?(?:over\s+)?to\s+${subject}${after}`, 'i');
       if (!reference.test(own.text)) saidText = own.text;
     }
-    const context = startContext(own ? own.text : request);
+    // A completed then-join between distinct requests is outside this start's numeric setting. A dangling
+    // and, an alternative (or), or two tags for one clause remain ambiguous.
+    const laterRequest = own && p.clauses.slice(p.clauses.indexOf(own) + 1).some(c => c.text !== own.text);
+    const context = startContext(own ? laterRequest ? own.text.replace(/\s+(?:and\s+then|then)\s*$/i, '') : own.text : request);
     // A number in another model's clause, or one invented by the brain, is only a proposal. A unique owner's number
     // replaces even an omitted or mismatched tool argument before the first launch.
     if (own && !context.unclear && context.tokens !== null) out.contextTokens = context.tokens;

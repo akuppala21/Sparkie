@@ -144,7 +144,7 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
       // carries the number its first passkey gave it, and this disk's secrets file has none, so the start held.
       const held = await net(G, '/auth/signin/begin', { method: 'POST', body: {} });
       assert.equal(held.status, 403, held.text);
-      assert.equal(held.json.error, 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.');
+      assert.equal(held.json.error, 'Spark Console’s state was put back from a copy. Review what came back on your tailnet page, or with /review access in your already paired Telegram chat; after you confirm, sign-in from the internet works again.');
       const c = await ask(G, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/auth/putback/keep', body: {} } });
       assert.equal(c.status, 200, c.text);
       const kept = await ask(G, '/auth/putback/keep', { method: 'POST', body: {}, headers: { 'x-spark-passkey': passkeyHeader(KEY.sign(c.json)) } });

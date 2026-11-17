@@ -15,7 +15,7 @@ const cut = (from, to) => { const a = source.indexOf(from), b = source.indexOf(t
 const fnOf = (text, name) => new RegExp(`^(?:async )?function ${name}\\([^\\n]*\\) \\{\\n[\\s\\S]*?\\n\\}$`, 'm').exec(text)?.[0];
 // Use the real intent/clause reader and gate. Model identity is independently covered by intent tests; here its
 // stand-in says that a named model is the intended one so no inventory or real service is needed.
-const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', '// Never run from a channel'),
+const code = [cut('// Sparks are named the way people say them', 'const sparkList'), cut('const normQuotes', 'const PAGE_ONLY'),
   cut('// The kinds of request (CHANGE_WORDS)', '// A typed answer to Sparkie'), cut('// Which of Spark Console\'s models on that Spark', '// A change\'s plan'),
   cut('// What Sparkie may do straight away', '// ctx says who')].join('\n');
 const bindings = {
@@ -30,7 +30,7 @@ const check = (text, args = {}, before = null) => gate.sparkieCheck('start_model
 function actionRunner() {
   const launched = [], proposed = [];
   const env = {
-    EVAL_YES: '__eval', TRIAL_YES: '__trial',
+    OWNER_ADMIN: '__owner_admin', EVAL_YES: '__eval', TRIAL_YES: '__trial',
     ACTIONS: new Map([['start_model', { kind: 'change', run: async input => { launched.push({ ...input }); return { outcome: 'complete' }; } }]]),
     checkInput: (_, args) => ({ ...args }), HttpError: class extends Error {}, agentSettings: () => ({ halted: false }),
     PAGE_ONLY: new Set(), sparkieCheck: gate.sparkieCheck, workflowFor: () => null, brainRail: async () => ({ checked: true }), RAIL_LOOK_WAIT_MS: 0,

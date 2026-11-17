@@ -137,12 +137,19 @@ async function rollbackRetireSuperseded(claimedIds) {
 }
 async function rollbackPrepare(job, targets, stops, inv) {
   if (job.rollbackOperation) return;
-  const keys = new Set(stops), all = inv.sparks.flatMap(sp => sp.deployments.map(d => ({ ...d, spark: sp.id })));
+  const keys = new Set(stops), stoppedPairs = new Set(), all = inv.sparks.flatMap(sp => sp.deployments.map(d => ({ ...d, spark: sp.id })));
   for (const key of [...keys]) {
     const d = all.find(x => `${x.spark}/${x.container}` === key);
     if (d?.cluster) {
       const head = d.container.replace(/-part2$/, '');
-      for (const [rank, spark] of d.cluster.split('+').entries()) keys.add(`${spark}/${head}${rank ? '-part2' : ''}`);
+      const pair = d.cluster.split('+').map((spark, rank) => `${spark}/${head}${rank ? '-part2' : ''}`);
+      // A wholly stopped historical pair has no running mate to put back. Preserve only the local copy this
+      // start replaces; claiming its former peer could otherwise pull the hub into a compute-only start.
+      if (pair.every(k => { const old = all.find(x => `${x.spark}/${x.container}` === k); return old && STOPPED_STATES.includes(old.state); })) {
+        stoppedPairs.add(key);
+        continue;
+      }
+      for (const key of pair) keys.add(key);
     }
   }
   const ids = [...new Set([...targets, ...[...keys].map(k => k.split('/')[0])])].sort();
@@ -160,6 +167,7 @@ async function rollbackPrepare(job, targets, stops, inv) {
     for (const key of keys) {
       const [spark, container] = key.split('/'), seen = await rollbackLook(spark, container);
       if (!seen?.id || !seen.startedAt) throw new Error(`The earlier ${container} on ${spark} couldn’t be recorded. Nothing was stopped.`);
+      if (stoppedPairs.has(key) && !STOPPED_STATES.includes(seen.state)) throw new Error(`The earlier pair on ${spark} changed after its plan. Nothing was stopped; ask again.`);
       const deployment = all.find(x => x.spark === spark && x.container === container), model = inv.library.find(x => x.name === deployment?.model);
       const listed = before.running.find(x => keyOf(x) === key || x.sparks?.includes(spark) && (x.container === container || `${x.container}-part2` === container)) || null;
       const measured = (gpuByNode.get(spark) || []).filter(([, , , name]) => name === container).reduce((n, [, mb]) => n + Number(mb) * 2 ** 20, 0);
@@ -279,7 +287,7 @@ function rollbackResult(job, record) {
   job.stoppedHere = held;
   job.asideHere = asides;
   const runningAsides = asides.filter(a => waiting.some(u => u.members.some(m => m.spark === a.node && m.container === a.name && m.wasRunning)));
-  const owed = still.length ? owedWords(still, held, runningAsides, pairs) : [];
+  const owed = still.length ? owedWords(still, held, runningAsides, pairs) : [], notBack = [];
   // Name a refused restoration only with its latest exact-ID terminal receipt and a stopped post-check.
   // An unanswered command, changed identity or unresolved target keeps the general uncertainty warning instead.
   for (const u of waiting) {
@@ -291,9 +299,12 @@ function rollbackResult(job, record) {
     });
     if (!failed) continue;
     const pair = backUnits(u.members.map(rollbackKey)).find(x => x.model);
-    owed.push(pair ? `${pair.model} couldn’t be started again across ${pair.sparks.map(id => sparkName(nodeById(id) || { id })).join(' + ')}; start ${pair.model} across both again`
-      : `${failed.container} couldn’t be started again on ${sparkName(nodeById(failed.spark) || { id: failed.spark })}; start it from Spark Console`);
+    const words = pair ? `${pair.model} couldn’t be started again across ${pair.sparks.map(id => sparkName(nodeById(id) || { id })).join(' + ')}; start ${pair.model} across both again`
+      : `${failed.container} couldn’t be started again on ${sparkName(nodeById(failed.spark) || { id: failed.spark })}; start it from Spark Console`;
+    owed.push(words);
+    notBack.push({ items: u.members.filter(m => m.wasRunning).map(rollbackKey), words });
   }
+  if (notBack.length) job.notBack = notBack; else delete job.notBack;
   const followUp = 'Earlier work still needs putting back. Spark Console will check again when its Spark answers. A Spark that stays silent may need a power cycle.';
   if (waiting.length || record.blocked?.length) job.cleanUp = owed.length ? owed.map(x => `${x}.`).join('\n') : followUp;
   else delete job.cleanUp;

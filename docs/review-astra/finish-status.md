@@ -1,9 +1,16 @@
 # Sparkie: remaining completion checks
 
 Source audit: 2026-11-17. Completed hosted evidence below is through `7bbed38ff40cd39c4545dd85706b410783520a9d`;
-its 23 selected test files passed. New retirement and download-admission repairs are under focused compute-Spark validation; they have not been released.
+its 23 selected test files passed. The newer complete compute run exposed the additional issues below; the repaired candidate has not been released.
 This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
 new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
+
+Latest repair evidence: the first full candidate run at `b1964091` exposed old Telegram expectations, fixture
+assumptions and four product defects (A-51–A-54). Focused repaired checks passed **39/39** policy tests,
+**249/249** direct/static tests, **8/8** context/page tests and **64/64** deployment/recovery/energy/pair-wake
+tests. Snapshots and scope are in [findings-4.md](findings-4.md). Original access, wrong-change, memory-reserve
+and recovery assertions remain. A complete passing repaired run, final hosted qualification and installation are
+still pending. No partial batch marks the release tested.
 
 Hosted evidence is tied to its snapshot:
 

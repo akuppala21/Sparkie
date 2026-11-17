@@ -24,7 +24,7 @@ function harness(adoptAt = null) {
     return true;
   };
   const env = {
-    randomBytes, Date, Map, Set, JSON, Object, String, Error,
+    randomBytes, Date, performance, Map, Set, JSON, Object, String, Error,
     ENGINE_CHECK_NAME: 'spark-console-engine-check', STOPPED_STATES: ['exited', 'created', 'dead'],
     rollbackRead: () => structuredClone(record), rollbackWrite: next => { record = structuredClone(next); },
     rollbackForget: () => { h.forgotten = true; h.beforeForget = structuredClone(record); record = null; },

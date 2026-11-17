@@ -23,7 +23,9 @@ Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFail
 A timeout is not proof that Docker stopped working on the request. `17-rollback-target.mjs` waits briefly for a
 late receipt and a free fence before restoration. An uncertain stop of a proved new container can be settled only
 by a successful removal of that exact ID; an original container or other unanswered command stays held. The source
-operation keeps its timeout even when compensation succeeds. See `docs/t45-return-recovery.md`.
+operation keeps its timeout even when compensation succeeds. Receipt waits use elapsed time; a changed wall clock
+does not prove a command timed out. A proved refused restoration names its exact unit in `notBack` as well as
+`cleanUp`; a later completed restoration clears both. See `docs/t45-return-recovery.md`.
 
 ## Also update
 

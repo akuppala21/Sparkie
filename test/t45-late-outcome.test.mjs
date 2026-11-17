@@ -19,16 +19,16 @@ function record() {
     ] }] };
 }
 function harness(initial = record(), options = {}) {
-  let state = clone(initial), now = 0, container = seen();
+  let state = clone(initial), now = 0, wallOffset = 0, container = seen();
   const commands = [], looks = [], receipts = new Map(initial.attempts.flatMap(a => a.commands.map(c => [c.id, clone(c.result)])));
   const later = new Map();
   const env = {
-    Date: class extends Date { static now() { return now; } }, randomBytes, Buffer, console,
+    Date: class extends Date { static now() { return now + wallOffset; } }, performance: { now: () => now }, randomBytes, Buffer, console,
     rollbackRead: () => clone(state), rollbackWrite: r => { state = clone(r); },
     rollbackSame: (a, b) => !!a && !!b && a.id === b.id && a.startedAt === b.startedAt,
     STOPPED_STATES: ['created', 'exited', 'dead', 'missing'],
     ENGINE_CHECK_NAME: 'spark-console-engine-check',
-    sleep: async ms => { now += ms; }, jobNotReal: () => new Error('bad job folder'),
+    sleep: async ms => { now += ms; wallOffset = options.wallJump || 0; }, jobNotReal: () => new Error('bad job folder'),
     rollbackAttempt: async job => {
       options.onAttempt?.(state);
       if (job.rollbackAttempt) return state.attempts.find(a => a.id === job.rollbackAttempt);
@@ -55,7 +55,7 @@ function harness(initial = record(), options = {}) {
     if (p.action === 'run' && options.lateCreate) {
       const created = { ...seen(), labels: { 'spark.operation': p.operation, 'spark.attempt': p.attempt, 'spark.command': p.command } };
       container = created;
-      later.set(p.command, { at: now + 150000, result: { terminal: true, code: 1, boot: 'boot', seen: created } });
+      later.set(p.command, { at: now + (options.createAfter ?? 150000), result: { terminal: true, code: options.createCode ?? 1, boot: 'boot', seen: created } });
     } else {
       assert.equal(p.expected.id, NEW, 'every disposal command is addressed to the full new ID');
       assert.equal(p.expected.startedAt, AT);
@@ -186,5 +186,30 @@ for (const [name, change] of [
 ]) test(`cluster cleanup leaves ${name} alone even when it has the earlier labels`, async () => {
   const h = harness(record(), { lookChange: change });
   assert.equal(await h.api.rollbackStopNew(h.job, 'spark3', 'sc-new'), 'unknown');
+  assert.deepEqual(h.commands, []);
+});
+
+test('a forward wall-clock jump does not end receipt observation before its actual elapsed limit', async () => {
+  const r = record(); r.attempts = [];
+  const h = harness(r, { lateCreate: true, createAfter: 2000, createCode: 0, wallJump: 360000 });
+  const out = await h.api.rollbackRun(h.job, 'spark3', 'sc-new', () => 'fixed model script');
+  assert.equal(out.code, 0);
+  assert.ok(h.now() >= 2000 && h.now() < 4000, h.now());
+  assert.equal(h.commands.length, 1);
+});
+
+test('a backward wall-clock jump does not extend the command observer beyond its elapsed limit', async () => {
+  const r = record(); r.attempts = [];
+  const h = harness(r, { lateCreate: true, wallJump: -360000 });
+  const out = await h.api.rollbackRun(h.job, 'spark3', 'sc-new', () => 'fixed model script');
+  assert.equal(out.code, 124);
+  assert.ok(h.now() >= 120000 && h.now() < 122000, h.now());
+  assert.equal(h.commands.length, 1);
+});
+
+for (const wallJump of [-360000, 360000]) test(`reconciliation keeps its elapsed bound through a ${wallJump} ms wall-clock jump`, async () => {
+  const h = harness(record(), { active: true, wallJump });
+  assert.equal(await h.api.rollbackReconcile(h.job, 'spark3'), false);
+  assert.equal(h.now(), 90000);
   assert.deepEqual(h.commands, []);
 });

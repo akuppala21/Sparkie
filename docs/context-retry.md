@@ -9,6 +9,9 @@ maximum is not a request.
 engine flag is applied in memory; the saved model and setup are not rewritten. Recipe choices, stop approvals,
 wake-first and download-first starts must preserve the request. A running copy or an in-flight start cannot satisfy
 an explicit context merely by having the same model name.
+Each start keeps its own model, destination and context when another setup follows it. Duplicate start/work
+labels on the same clause add no authority. A then-join between distinct requests is outside the context value;
+alternatives and unfinished joins still need clarification.
 
 When an automatic repair would shorten protected context, the failed operation first puts back its changes.
 It releases its claims before publishing an owner-only question for a new operation. Unresolved cleanup or an

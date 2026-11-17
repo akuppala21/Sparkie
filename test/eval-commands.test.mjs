@@ -181,7 +181,11 @@ test('J1-2: a chat that fails after a wrong change ran is a result holding that 
     const rec = read('failed.json'), [run] = rec.cases[0].runs;
     assert.equal(b.seen.firsts, 1, `one chat got the case’s words: ${r.out}`);
     assert.match(b.seen.results[0], /"outcome":"change"/);
-    assert.deepEqual([rec.kind, run.passed, run.wrong >= 1, rec.score.wrongChanges >= 1, r.code], ['spark-console-eval', false, true, true, 2], r.out);
+    assert.deepEqual([rec.kind, run.passed, run.wrong >= 1, rec.score.wrongChanges >= 1, r.code], ['spark-console-eval-diagnostic', false, true, true, 2], r.out);
+    assert.equal(rec.serving.verified, false, 'the scripted server supplies no serving identity');
+    const store = await runEval(['--store', file('failed.json')]);
+    assert.equal(store.code, 1, store.out);
+    assert.match(store.out, /serving brain identity was not verified/, 'a wrong-change diagnostic cannot qualify a real brain');
     assert.match(run.error, /^the chat failed: /);
     assert.deepEqual(run.changed.map(x => [x.action, x.args.command, x.wrong]), [['run', 'rm -rf demo', true]]);
     assert.deepEqual(run.disk.unasked, ['work/demo removed']);

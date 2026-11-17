@@ -22,23 +22,43 @@
 // containers Spark Console didn't start, never Spark 2 unless named), deploys that complete on the stand-in fleet,
 // putting back what was stopped when a start fails, and the audit log. Self-healing is in heal.test.mjs, Sparkie's
 // chat in sparkie.test.mjs.
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, closeSync, openSync, truncateSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, closeSync, openSync, truncateSync, mkdtempSync, chmodSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { T, useFleet, CHANGE_TOOLS, CAN_CHANGE, ASK, DOOR_READ, DOOR_ACT, rpc, call, api, createKey, createActKey, deleteKey, agentSettings, KeyPool, MEMBER, auditLines, SLOW } from './lib.mjs';
+import { tmpdir } from 'node:os';
+import { T, useFleet, CHANGE_TOOLS, CAN_CHANGE, ASK, DOOR_READ, DOOR_ACT, rpc, call, api, createKey, createActKey, deleteKey, agentSettings, KeyPool, MEMBER, auditLines, REPO, SLOW } from './lib.mjs';
 
 const pool = new KeyPool('chg', 90, { act: true });
 const keys = {};
+// One measurement can see temporary pressure that ends before restoration. Only memNow's two-field read
+// consumes this fixture; inventory planning still reads the real stand-in meminfo. No timer or retry races it.
+const MEMORY_WRAP = mkdtempSync(join(tmpdir(), 'change-memory-'));
+writeFileSync(join(MEMORY_WRAP, 'awk'), `#!/bin/bash
+if [ "$#" = 2 ] && [ "$2" = "$HOME/.mock/meminfo" ] && [ -s "$HOME/.mock/next-memory-check" ]; then
+  case "$1" in '/MemTotal/ {t=$2*1024} /MemAvailable/'*)
+    read -r short restored < "$HOME/.mock/next-memory-check"
+    measured=$(/usr/bin/awk "$@") || exit 1
+    /usr/bin/awk -v available="$restored" '/^MemAvailable:/ {printf "MemAvailable:   %.0f kB\\n", available / 1024; next} {print}' "$2" > "$2.returning" || exit 1
+    mv "$2.returning" "$2" || exit 1
+    mv "$HOME/.mock/next-memory-check" "$HOME/.mock/memory-check-consumed" || exit 1
+    printf '%s %s\\n' "\${measured%% *}" "$short"
+    exit 0 ;;
+  esac
+fi
+exec /usr/bin/awk "$@"
+`);
+chmodSync(join(MEMORY_WRAP, 'awk'), 0o755);
 // The watcher (and so self-healing) looks only once a minute here, and the status every 20 s: these tests don't need
 // them, and the deploys go faster without.
 // Recipes' look for setups reads test/mock/dig-fixture.json here, not the web (SPARK_CONSOLE_DIG_FIXTURE).
-useFleet({ watchMs: 60000, statusMs: 20000, env: { SPARK_CONSOLE_DIG_FIXTURE: join(dirname(fileURLToPath(import.meta.url)), 'mock', 'dig-fixture.json') } }, async () => {
+useFleet({ watchMs: 60000, statusMs: 20000, env: { PATH: `${MEMORY_WRAP}:${join(REPO, 'test', 'mock', 'bin')}:${process.env.PATH}`, SPARK_CONSOLE_DIG_FIXTURE: join(dirname(fileURLToPath(import.meta.url)), 'mock', 'dig-fixture.json') } }, async () => {
   keys.look = await createKey('look');
   keys.act = await createActKey('act');
   keys.other = await createActKey('other');
 });
+after(() => rmSync(MEMORY_WRAP, { recursive: true, force: true }));
 
 /* ───────── helpers ───────── */
 const mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
@@ -434,13 +454,15 @@ describe('deploys on three Sparks at once', { concurrency: true }, () => {
     assert.equal(stateOf('spark4', 'sc-Qwen3-30B-A3B-Instruct-2507'), 'running');
 
     // Next: gpt-oss-20b (copied to spark4 first) would stop sc-Qwen3-30B; then something else takes the memory before
-    // the deploy measures it.
+    // the deploy measures it; that temporary pressure ends before the older model returns.
     setFree('spark4', 60);
+    writeFileSync(mock('spark4', 'next-memory-check'), `${10 * 2 ** 30} ${88 * 2 ** 30}\n`);
     const y = await ok('start_model', { model: 'gpt-oss-20b', spark: 'spark4' }, k.token);
     assert.equal(y.outcome, 'started', JSON.stringify(y));
     assert.deepEqual(y.stops, ['spark4/sc-Qwen3-30B-A3B-Instruct-2507']);
-    setFree('spark4', 10);
     const v = await finished(y.operation, k.token);
+    assert.equal(readFileSync(mock('spark4', 'memory-check-consumed'), 'utf8'), `${10 * 2 ** 30} ${88 * 2 ** 30}\n`, 'the launch saw 10 GiB once, then 88 GiB returned before restoration');
+    assert.equal(existsSync(mock('spark4', 'next-memory-check')), false);
     setFree('spark4', MEM.spark4);
     assert.equal(v.status, 'failed', JSON.stringify(v));
     assert.match(v.error, /Not enough free memory on spark4.*Nothing was started/s);

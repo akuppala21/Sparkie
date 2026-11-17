@@ -10,7 +10,9 @@ An earlier model across two Sparks returns as a whole pair. Spark Console says w
 all their Sparks. The existing target claims stay held. Its strict `start-rollback` entry in the existing
 `saved-runs.json` runs map records the original container IDs and start times, desired entries and their `since`,
 planned aside names, whether each original was running, its memory need, the source operation and its chat.
-A container that was already stopped is preserved too. Returning it never starts it.
+A container that was already stopped is preserved too. Returning it never starts it. If every part of its historical
+pair is stopped, only the copy being replaced is recorded; its former peer is not claimed. A fresh look that finds
+that copy running instead refuses before any change. Running or unknown pairs still require all their Sparks.
 
 The primary file must pass its full shape check. There is no `.prev` fallback, empty replacement or swallowed save
 failure. The file and its containing directory are synced before any remote mutation is issued. Write failure
@@ -21,7 +23,9 @@ exclude both `saved-runs.json` and its previous copy, so an old copy cannot revi
 
 Every model mutation and the two-Spark engine check gets a command intent on the hub first. The detached target helper in `service/src/17-rollback-target.mjs` then holds an attempt lock while its actual Docker client runs. The command’s issued marker and final receipt
 are written privately, synced and replaced atomically. Ordinary model launches retain `docker run`; their source
-operation, attempt and command labels join the exact container ID and start time in the receipt.
+operation, attempt and command labels join the exact container ID and start time in the receipt. Receipt observation
+and reconciliation use elapsed time, so wall-clock changes cannot shorten or extend their limits. Context approval
+expiry still follows the original wall-clock deadline.
 
 Rollback fences every source attempt before restoring anything on that Spark. A late launcher consults that same
 persistent fence under that same lock and cannot run. An active client, an issued command with no final proof, or a

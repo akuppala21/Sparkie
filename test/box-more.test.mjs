@@ -100,7 +100,7 @@ test('while the box’s image is fetched, the next call is told so at once, not 
 });
 
 test('while the state put back from a copy is held, an agent opens, fills, reads back, runs and writes in no box; the owner’s own call runs', { timeout: 180000 * SLOW }, async () => {
-  const HELD = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
+  const HELD = 'Spark Console’s state was put back from a copy. Agents wait until the owner reviews and confirms what came back on the tailnet page or with /review access in the already paired Telegram chat.';
   const f = T.fleet.secretsFile, read = () => (existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {});
   const hold = on => { const s = read(), auth = { ...(s.auth || {}) }; if (on) auth.hold = { since: new Date().toISOString(), state: 'box-more test', again: [], signedOut: 0, parked: 0 }; else delete auth.hold; mkdirSync(dirname(f), { recursive: true, mode: 0o700 }); writeFileSync(f, JSON.stringify({ ...s, auth }), { mode: 0o600 }); };
   const aBox = folder(boxName(`agent ${K.a.id}`)), cBox = boxName(`agent ${K.c.id}`);

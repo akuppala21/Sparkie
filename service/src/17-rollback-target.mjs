@@ -155,8 +155,8 @@ async function rollbackCommand(job, spark, action, name, expected = null, fields
   const data = typeof fields === 'function' ? fields({ operation: r.operation, attempt: a.id, command: command.id }) : fields;
   await rollbackTarget(spark, { operation: r.operation, attempt: a.id, command: command.id, mode: 'dispatch', action, name, expected, ...data });
   // Poll by the SAME lock without fencing this still-live attempt. The completed receipt is read in a separate mode.
-  const end = Date.now() + Math.min(120000, Math.max(1, observeMs));
-  while (Date.now() < end) {
+  const end = performance.now() + Math.min(120000, Math.max(1, observeMs));
+  while (performance.now() < end) {
     const out = await rollbackTarget(spark, { operation: r.operation, attempt: a.id, command: command.id, mode: 'receipt' });
     if (out.result) {
       const now = rollbackRead(r.operation), cmd = now.attempts.find(x => x.id === a.id).commands.find(x => x.id === command.id);
@@ -167,7 +167,7 @@ async function rollbackCommand(job, spark, action, name, expected = null, fields
       if (out.result.code) throw new Error(`Docker couldn’t ${action} ${name} on ${spark}: ${out.result.failure || 'Docker refused the change'}.`);
       return out.result;
     }
-    await sleep(Date.now() + 119000 < end ? 250 : 1000);
+    await sleep(performance.now() + 119000 < end ? 250 : 1000);
   }
   throw Object.assign(new Error(`${spark} didn’t finish ${action}. Earlier work stays stopped there until that command is known to have ended. It may need a power cycle.`), { rollbackObserverTimeout: true });
 }
@@ -235,7 +235,7 @@ async function rollbackFence(record, spark) {
 }
 // A bounded continuation of this put-back under its existing claims. No scheduler, new authority or replayed create.
 // A free fenced producer with only uncertain stops of proven new IDs may dispose of those IDs in a fresh attempt.
-async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
+async function rollbackReconcile(job, spark, until = performance.now() + 90000) {
   let record = rollbackRead(job.rollbackOperation || job.rollbackSource);
   if (!record || record.phase !== 'returning' || !record.targets.includes(spark)) return false;
   if (await rollbackFence(record, spark)) { delete job.rollbackAttempt; return true; }
@@ -244,10 +244,10 @@ async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
   do {
     state = await rollbackFenceState(rollbackRead(record.operation), spark);
     if (state.clear) { delete job.rollbackAttempt; return true; }
-    if (state.fenced || !state.active || Date.now() >= until) break;
-    await sleep(Math.min(1000, Math.max(1, until - Date.now())));
-  } while (Date.now() < until);
-  if (!state.fenced || !state.unresolved?.length || Date.now() >= until) return false;
+    if (state.fenced || !state.active || performance.now() >= until) break;
+    await sleep(Math.min(1000, Math.max(1, until - performance.now())));
+  } while (performance.now() < until);
+  if (!state.fenced || !state.unresolved?.length || performance.now() >= until) return false;
   record = rollbackRead(record.operation);
   if (!state.unresolved.every(c => rollbackStopCreated(record, spark, c))) return false;
   const targets = [...new Map(state.unresolved.map(c => [c.expected.id, c])).values()];
@@ -263,12 +263,12 @@ async function rollbackReconcile(job, spark, until = Date.now() + 90000) {
     for (const command of targets) {
       const created = current(command), seen = await rollbackLook(spark, created.id);
       if (!rollbackSame(created, seen) || seen.name !== created.name || ['spark.operation', 'spark.attempt', 'spark.command'].some(k => seen.labels?.[k] !== created.labels[k])) return false;
-      if (Date.now() >= until) return false;
+      if (performance.now() >= until) return false;
       // Always obtain a successful stop receipt; a stopped look alone grants no disposal proof.
-      const stopped = await rollbackCommand(job, spark, 'stop', created.name, command.expected, () => { current(command); return {}; }, until - Date.now());
+      const stopped = await rollbackCommand(job, spark, 'stop', created.name, command.expected, () => { current(command); return {}; }, until - performance.now());
       if (!stopped.terminal || stopped.code !== 0 || stopped.notIssued || stopped.changed || stopped.missing || stopped.rebooted || !rollbackSame(created, stopped.seen) || !STOPPED_STATES.includes(stopped.seen.state)) return false;
-      if (Date.now() >= until) return false;
-      const removed = await rollbackCommand(job, spark, 'remove', created.name, command.expected, () => { current(command); return {}; }, until - Date.now());
+      if (performance.now() >= until) return false;
+      const removed = await rollbackCommand(job, spark, 'remove', created.name, command.expected, () => { current(command); return {}; }, until - performance.now());
       if (!removed.terminal || removed.code !== 0 || removed.seen !== null || removed.changed || removed.notIssued || removed.missing) return false;
     }
     return await rollbackFence(rollbackRead(record.operation), spark);

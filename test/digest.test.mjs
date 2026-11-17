@@ -6,15 +6,15 @@
 // shaped like the digest's own (its count line, a line number, its data label) cannot pass for them. Keys stay hidden in
 // the digest and through find and lines (a kept value across the 300-character fold too, also in a record written
 // before it was masked). A caller other than the owner reads back no chat's tool result, and in an agent's chat the
-// digest says so; a command's lines only a caller that may run there. From the phone (Telegram, paired) and an agent's
-// key, find and lines give no more than recall {id} does there. The output a message may read counts the digest
+// digest says so; a command's lines only a caller that may run there. The paired Telegram owner reads the same
+// numbered history as the page; an agent's key still reads no owner's chat words or tool results. The output a message may read counts the digest
 // (a setup of 20,000 tokens: 24,000 characters a message). With the switch digest off the 12,000 cut comes back. On a
 // console of its own, results of megabytes made to be slow to cut (a run of backslashes, one line with no space, a
 // million short lines, escaped backslashes before an n, one failure word repeated) are cut in time and within size.
 // The line that says something failed is kept, in the tools' own shapes (review after landing, fix 2): a JSON field
 // with nothing in it is no failure (recent_operations of 50, the 30th failed), "exitCode":1 is one (workloads of 40,
-// one exited), and a log's last line stays whatever its early lines say. On Telegram and in an agent's chat a result
-// past the message's output says only the owner reads its record. (The brain's setup asks with a budget of 15,000
+// one exited), and a log's last line stays whatever its early lines say. A result past the message's output gives
+// the paired owner its recall pointer; an agent's chat still says only the owner reads its record. (The brain's setup asks with a budget of 15,000
 // tokens, so a digest keeps 2,700 characters of lines and fits the stand-in brain's 4,000-character log of it.)
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -180,7 +180,7 @@ test('a caller other than the owner reads back no chat\'s tool result, and in an
   assert.ok(!('lines' in back.value) && !/quartz/.test(back.text), back.text);
 });
 
-test('from the phone and from an agent\'s key, find and lines give no more than recall {id}: a page chat\'s tool result and words said on the page stay back, and the phone\'s own digest says only the owner reads its record', { timeout: 120000 * SLOW }, async () => {
+test('the paired Telegram owner reads the page’s numbered tool results and chat words; an agent’s key still cannot', { timeout: 120000 * SLOW }, async () => {
   assert.ok(D, 'the first test ran');
   const said = journalRecords().find(x => x.k === 'said' && x.via === 'page' && x.words === 'g5 why did kestrel crash on spark 1');
   assert.ok(said, 'the page words of the first test');
@@ -195,10 +195,20 @@ test('from the phone and from an agent\'s key, find and lines give no more than 
   script([{ match: '^g5 phone asks about the crash', calls: [EVENTS, ...asks.map(a => ({ name: 'recall', arguments: a }))] }]);
   await tgSay(words);
   const [digest, ...rest] = await resultsFor(words), d = JSON.parse(digest);
-  assert.match(d.digest, new RegExp(`All of it is kept in record ${d.record}, which only the owner reads back\\.$`));
-  for (const r of rest) assert.ok(!/quartz-77|step 1 ok|why did kestrel|"lines":\[/.test(r), r.slice(0, 400));
-  assert.match(rest[2], /^\[error\] Words said in a chat/);
-  // The owner's own call reads them.
+  assert.ok(d.digest.endsWith(`All of it is kept in record ${d.record}: recall {"id":"${d.record}","find":"<words>"} gives its lines that hold those words, and recall {"id":"${d.record}","lines":"<from>-<to>"} a stretch of them, numbered as here.`), d.digest);
+  assert.equal(rest.length, asks.length, 'all three owner reads returned');
+  for (let i = 0; i < asks.length; i++) {
+    const phone = JSON.parse(rest[i]), page = await owner(asks[i]);
+    assert.deepEqual(phone.record, page.record, 'the paired owner sees the same original record as the page');
+    assert.deepEqual(phone.lines, page.lines, 'the paired owner sees the same numbered lines as the page');
+    assert.deepEqual(pieces(rest[i]), [], 'owner history still masks secrets');
+  }
+  const found = JSON.parse(rest[0]);
+  assert.equal(found.lines.length, 1);
+  assert.match(found.lines[0][1], /checkpoint quartz-77 saved/);
+  assert.ok(JSON.parse(rest[1]).lines.length > 0, 'the requested numbered range is readable');
+  assert.equal(JSON.parse(rest[2]).record.said, 'g5 why did kestrel crash on spark 1');
+  // The owner's own call still reads the same exact match.
   assert.equal((await owner({ id: D.record, find: 'quartz-77' })).lines.length, 1);
 });
 
@@ -264,18 +274,25 @@ test('a long log whose last line is the outcome: the last line stays, whatever t
   assert.match(last[1], /FATAL: giving up after 300 retries; nothing was started/);
 });
 
-test('on Telegram and in an agent\'s chat, a result past the message\'s output says only the owner reads its record', { timeout: 120000 * SLOW }, async () => {
+test('a result past the output budget gives the paired owner a recall pointer while an agent’s chat stays owner-only', { timeout: 120000 * SLOW }, async () => {
   const MID = { name: 'fleet_events', arguments: { spark: 'spark1', type: 'removed', limit: 1 } };
-  const check = async (words, ask) => {
+  const check = async (words, ask, pairedOwner = false) => {
     script([{ match: `^${words}$`, calls: [MID, MID, MID] }]);
     await ask(words);
     const sent = await resultsFor(words), notice = sent.find(c => c.startsWith('[Spark Console] Not shown:'));
     assert.ok(notice, `${words}: ${sent.map(c => c.slice(0, 80)).join(' | ')}`);
-    assert.match(notice, /It is kept whole in record j_[0-9a-f]{12}, which only the owner reads back\. Answer now with what you have\.$/);
-    assert.ok(!notice.includes('recall {'), notice);
+    if (pairedOwner) {
+      const id = /It is kept whole in record (j_[0-9a-f]{12}):/.exec(notice)?.[1];
+      assert.ok(id, notice);
+      assert.ok(notice.endsWith(`It is kept whole in record ${id}: recall {"id":"${id}"} reads it, in a later message. Answer now with what you have.`), notice);
+      assert.ok(!notice.includes('which only the owner reads back'), notice);
+    } else {
+      assert.match(notice, /It is kept whole in record j_[0-9a-f]{12}, which only the owner reads back\. Answer now with what you have\.$/);
+      assert.ok(!notice.includes('recall {'), notice);
+    }
   };
   await check('g5 agent reads mid three times', async words => assert.equal((await call((await createKey('g5-mid')).token, ASK, { message: words })).isError, false));
-  await check('g5 phone reads mid three times', tgSay);
+  await check('g5 phone reads mid three times', tgSay, true);
 });
 
 test('the switch: SPARK_CONSOLE_MEMORY_OFF=digest gives the 12,000 cut back; on, the digest', { timeout: 120000 * SLOW }, async () => {

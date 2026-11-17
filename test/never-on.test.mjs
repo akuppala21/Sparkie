@@ -24,11 +24,11 @@ async function runInChat(words, on, command) {
 
 test('the pieces on: the prompt, the abilities text and run\'s text say what is true, and the code does it', { timeout: 240000 * SLOW }, async () => {
   const sent = await brainSent(T.fleet), runText = sent.tools.find(t => t.function?.name === 'run')?.function?.description || '';
-  assert.ok(sent.system.includes('You never change Spark Console’s own keys, or who may use Spark Console, and never turn Spark Console off. If asked, say the owner does that by hand.'), sent.system);
+  assert.ok(sent.system.includes('You never change Spark Console’s own keys, or who may use Spark Console, and never turn Spark Console off. For account changes, direct the owner to /admin in their paired Telegram chat or the page’s account controls. These are direct owner commands, never model tools.'), sent.system);
   assert.doesNotMatch(sent.system, /never change[^.]*(?:SSH|Tailscale|firewall|users|sudo)/, 'no false never in the prompt');
   const ab = (await api('/actions/sparkie_setup', { method: 'POST', body: { about: 'abilities' } })).json;
   // (the last line is now the one on run and write_file, 16-reads.mjs; the "asked" line sits just before it)
-  assert.deepEqual([ab.limits[0], ab.limits.at(-2)], ['Sparkie never changes Spark Console’s own keys, or who may use Spark Console, and never turns Spark Console off. The owner does those by hand.', ASKED]);
+  assert.deepEqual([ab.limits[0], ab.limits.at(-2)], ['Sparkie never changes Spark Console’s own keys, or who may use Spark Console, and never turns Spark Console off. For account changes, use your own account controls or /admin.', ASKED]);
   assert.ok(runText.includes(' On Spark 2 every change is asked, and one that could lock the owner out is refused. On a compute Spark anything that could lock the owner out runs only inside the put-back net, after the owner’s press; as root (root: true, never sudo) only where the owner turned root on, always asked and always inside that net.'), runText);
   // (as the owner a lock-out change on a compute Spark can change nothing, so it is done only as root: the answer says so,
   // here with the owner's one command, as root is off on this fleet's Spark 3)

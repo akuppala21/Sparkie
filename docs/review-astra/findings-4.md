@@ -139,6 +139,43 @@ transport checks and five policy files. All five added full-facts regressions fa
 the original 19 transport checks still pass there. Independent review pinned the accepted source to r8.
 Final combined-tree and release qualification remain separate gates.
 
+## A-51: a stopped historical pair can pull the hub into a new start
+
+**Accepted; repaired, independently reviewed and focused checks passed.** The complete candidate run exposed a
+new pair start that expanded an already-stopped historical pair into the old hub. Recovery now treats a historical
+pair as stopped only when every recorded member is known stopped, and rechecks the selected copy before use.
+A live or unknown peer retains the whole-pair refusal. No hub command is added. Added direct regressions and the
+unchanged pair start, page, energy and wake integration checks passed on the r20/r21 snapshots below.
+
+## A-52: a wall-clock jump can end command observation before its receipt arrives
+
+**Accepted; repaired, independently reviewed and focused checks passed.** The unchanged between-rank context
+expiry test moved wall time, causing the Docker observer to report a timeout before its already-running command
+returned. Command observation and reconciliation now use monotonic elapsed time. Owner decision expiry still
+uses wall time. Forward/backward clock regressions and the original between-rank expiry case pass.
+
+## A-53: recovery lost the structured list of originals that could not return
+
+**Accepted; repaired, independently reviewed and focused checks passed.** The failure still reported cleanup debt,
+but omitted `job.notBack`. Recovery now derives that list from the existing exact terminal stop/refusal proof and
+clears it after restoration or when proof is uncertain. The original context-recovery assertion and new negative
+proof checks pass; unresolved debt still blocks another start.
+
+## A-54: a setup clause's duplicate classification can block an explicit model start
+
+**Accepted; repaired, independently reviewed and focused checks passed.** A request to start a named model and
+then set up a folder was unnecessarily turned into a button because `set up` has both start and work tags.
+The same clause's duplicate tag now adds no second restriction or authority. A completed then-join between distinct
+requests is outside the first clause's context value. Different model/target choices, stop/restart clauses,
+alternatives and unfinished joins retain their checks. Added boundary cases and the unchanged carry-on eval test pass.
+
+Frozen r20 tree `817bed2c0868be18fbeedb447d41cb4b85e1bf35` passed **249/249** direct/static checks and
+**8/8** context/page integration checks. Its production bytes also appear in r21 tree
+`99755fe0f5cc5eefb83a9b4214b6f3f5f3e74ed1`, whose **64/64** deployment, lifecycle, energy and pair-wake
+checks passed. The r21 fixtures return simulated memory before restoration and wait for actual recovery before
+the next scenario, preserving every original behavioral assertion. The earlier full run is failed evidence, not
+qualification. The complete suite on the repaired candidate and the hosted release gate remain required.
+
 ## Release limits
 
 These scoped repairs do not establish a finished product. The complete strict hosted suite and browser release gate,
