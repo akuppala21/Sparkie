@@ -106,7 +106,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `putBackAtStart`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
-| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `placeStep`, `run_workflow`; `savedRunDone` is called by `run_workflow` | no | yes |
+| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `receiptsBroughtBack`, `placeStep`, `START_CODE`, `run_workflow`; `savedRunDone` is called by `run_workflow` | no | yes |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |

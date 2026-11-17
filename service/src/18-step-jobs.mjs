@@ -77,16 +77,17 @@ function savedStepAgent(viewer, ctx) {
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere) and every operation it handed over to, in turn (a power-on, a second
 // power-on inside it for a model across two whose files are only on sleeping Sparks, then the start, R56), each once,
-// by its first part. Nothing for a step that answered anything else (already, kept, a stop).
+// by its first part. Nothing for a step that answered anything else (already, kept, a stop). Each names the operations
+// that started it (ops), for the owner's wish while they ran (startedReceipts).
 function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
   const id = v => sparkIdOf(v) || String(v), ops = [];
   if (action === 'start_model') {
     for (let o = jobs.get(out.operation); o && !ops.includes(o) && ops.length < 5; o = o.inner ? jobs.get(o.inner) : null) ops.push(o);
-    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
+    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep, ops: ops.map(o => o.id) }));
   }
-  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
-  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep, ops: [out.operation] }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep, ops: [out.operation] }];
   return [];
 }
 // What a step started, and what makes it the run's (A-22): the container's Docker id when the step's operation ended, and
@@ -94,7 +95,10 @@ function startedBy(action, args, out, keep = false) {
 // but self-healing's moves it, 20-desired.mjs, and so does the owner's ask answered "already"); for a job, which has no
 // entry, its start time (a run again by hand moves it). The clean-up stops it only while these still match
 // (startedStill).
-// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before.
+// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before. One the owner asked for
+// while its step's operation was starting it (alreadyStarting, desiredWish: the operation's ownersWish) is theirs: it is
+// marked wish, and the clean-up leaves it. The mark is read after the since, in the same tick as desiredWish's own
+// writes, so an ask just as the step ends is never lost between the two.
 const RECEIPT_LOOK = name => `printf 'id\t%s\n' "$(docker inspect -f '{{.Id}}' ${q(name)} 2>/dev/null)"; printf 'at\t%s\n' "$(docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.State.ExitCode}}' ${q(name)} 2>/dev/null | head -1)"`;
 async function receiptOf(spark, container) {
   const r = await run(nodeById(spark), RECEIPT_LOOK(container), { timeout: 20000 }).catch(() => null);
@@ -107,9 +111,10 @@ async function startedReceipts(items) {
   for (const x of items) {
     const seen = await receiptOf(x.spark, x.container);
     const entry = x.kind === 'job' ? null : desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    const { ops = [], ...item } = x, wish = ops.some(id => jobs.get(id)?.ownersWish);
     // (a model or an app: its id and its entry's since, so self-healing's restart, which moves neither, is still the run's;
     // a job: its id and its start time)
-    out.push(seen ? { ...x, seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : x);
+    out.push({ ...item, ...(wish ? { wish: true } : {}), ...(seen ? { seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : {}) });
   }
   return out;
 }
@@ -124,6 +129,34 @@ async function startedStill(spark, container, seen) {
     || ('since' in seen && (entry?.since || null) !== seen.since);
   return other ? `${container} on ${at} was started again since, not by this run` : null;
 }
+// The receipts of the saved workflow runs under way (each run's `ran`, by its operation's id; run_workflow keeps it), so
+// that what self-healing or Spark Console's own power cycle brings back on a run's behalf stays the run's: a model across
+// two Sparks comes back in new containers (a new id), and a bring-back after a power-on moves its entry's since.
+const runsRan = new Map();
+// Before such a bring-back of `keys` ("spark/container"): each receipt for them that is still its run's.
+async function receiptsHeld(keys) {
+  const held = [];
+  for (const [id, ran] of runsRan) {
+    for (const x of ran) {
+      if (x.kind === 'job' || !x.seen || x.wish || !keys.includes(`${x.spark}/${x.container}`)) continue;
+      if (await startedStill(x.spark, x.container, x.seen).catch(() => 'unknown') === null) held.push({ id, x });
+    }
+  }
+  return held;
+}
+// After it came back (`op`, its operation when it had one, ended well): those receipts follow it (its Docker id now, and
+// its entry's since), and the run's record on disk with them; one the owner asked for while it came back is theirs
+// (wish, read after the since in the same tick, as startedReceipts does).
+async function receiptsBroughtBack(held, op = null) {
+  for (const { id, x } of held) {
+    const now = await receiptOf(x.spark, x.container);
+    const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    if (op && jobs.get(op.id)?.ownersWish) x.wish = true;
+    else if (now?.id) x.seen = { id: now.id, since: entry?.since || null };
+    const j = jobs.get(id);
+    if (j?.status === 'running' && runsRan.has(id)) savedRunKeep(j, { started: runsRan.get(id) });
+  }
+}
 // What a step started that was on the list of what should be running before that step (`listed`: its entry then):
 // the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
 function startedListed(items, before) {
@@ -133,7 +166,7 @@ function startedListed(items, before) {
 // the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
 // was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [], back = [], left = [];
+  const stopped = [], kept = [], failed = [], back = [], left = [], wished = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -141,6 +174,8 @@ async function stopWhatRan(ran, viewer, ctx, title) {
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
     if (x.keep) { kept.push(name); continue; }
+    // (the owner asked for it while it was being started, by this run's step or by a bring-back: theirs now, A-22)
+    if (x.wish) { wished.push(name); continue; }
     try {
       // (a job that already ended has nothing to stop)
       if (x.kind === 'job') {
@@ -167,6 +202,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
     ...(left.length ? [`Left running: ${left.join(', ')} ${left.length > 1 ? 'were' : 'was'} started again since, not by this run.`] : []),
+    ...(wished.length ? [`Left running: ${wished.join(', ')} ${wished.length > 1 ? 'were' : 'was'} asked for by the owner while being started.`] : []),
     ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
@@ -230,7 +266,9 @@ async function placeStep(j, n, args, viewer, title) {
     note(j, `Step ${n}: ${args.container} goes on ${sparkName(nodeById(spark) || { id: spark })}: ${p.why}`);
   }
   if (consoleOff(spark)) {
-    const at = sparkName(nodeById(spark) || { id: spark }), why = `the saved workflow “${title}”`;
+    // (the reason by kind and this run's operation, never the title: fleet_status, an inside read, shows it, R26, F2 C5;
+    // the operation makes two runs' reasons two, so one's end never lets the other's Spark sleep)
+    const at = sparkName(nodeById(spark) || { id: spark }), why = `a saved workflow’s run, operation ${j.id}`;
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
