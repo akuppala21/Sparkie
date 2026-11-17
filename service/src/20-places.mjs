@@ -47,7 +47,7 @@ const sortPaths = (c0, ctx, r = null) => {
 // A folder a cd may leave the command in; past SORT_CWDS of them a relative path can't be placed.
 function sortCd(p, ctx) {
   ctx.cwds.add(p);
-  if (ctx.cwds.size > SORT_CWDS) unsure(`It changes folder more than ${SORT_CWDS} ways, more than the sorter follows.`);
+  if (ctx.cwds.size > SORT_CWDS) sortBound(`It changes folder more than ${SORT_CWDS} ways, more than the sorter follows.`);
 }
 // A glob as bash matches it, one segment against one segment: * ? [abc] [!a-z], no dot file unless the word says so.
 function sortGlob(g) {
@@ -191,7 +191,7 @@ function sortNames(p, ctx, r, glob = false) {
   for (const b of ctx.brain) if (names(b)) { ctx.kinds.add('brain'); raise(r, 'risky', `It names the brain (its container, model files or setup): ${sortQ(p)}.`); }
 }
 function sortPlace(p, glob0, ctx, r, wide, touched = false) {
-  if (++ctx.steps > SORT_STEPS) unsure('It names more places than the sorter reads.');
+  if (++ctx.steps > SORT_STEPS) sortBound('It names more places than the sorter reads.');
   const glob = glob0 && /[*?[]/.test(p);
   if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
   sortNames(p, ctx, r, glob);
@@ -252,7 +252,7 @@ const sortBefore = (b, p, ctx) => {
   if (b === '/') return true;
   if (!/[*?[]/.test(b)) return p === b || p.startsWith(`${b}/`);
   const up = [p, ...sortUp(p)];
-  if ((ctx.steps += up.length) > SORT_STEPS) unsure('It names more places than the sorter reads against what the task wrote before.');
+  if ((ctx.steps += up.length) > SORT_STEPS) sortBound('It names more places than the sorter reads against what the task wrote before.');
   return up.some(a => sortGlob(b).test(a));
 };
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
@@ -284,9 +284,12 @@ function sortScan(text, ctx, r, progs, touched = false) {
 function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
-    const all = sortBraces(w.text);
-    for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
-    if (all.doubt) unsure(all.doubt);
-    sortScan(w.text, ctx, r, false, 'seen');
+    // (one word's doubt doesn't stop the others: each is still placed, F1)
+    try {
+      const all = sortBraces(w.text);
+      for (const t of all) for (const c of sortCandsOf(w, t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+      if (all.doubt) unsure(all.doubt);
+      sortScan(w.text, ctx, r, false, 'seen');
+    } catch (e) { if (!(e instanceof SortDoubt) || e.bound) throw e; raise(r, 'risky', e.message); if (e.unreadable) r.unreadable ??= e.message; }
   }
 }

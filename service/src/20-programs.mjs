@@ -162,6 +162,7 @@ const SORT_HANDLERS = {
       if (!p || p.unknown) { sortUnshown(r, `the ${name} program a $ or a command makes`); unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`); }
       if (sortAwkRuns(p.text)) { sortUnshown(r, `what the ${name} program starts or writes (system, a pipe, an output file), which the sorter does not read`); sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
+    ctx.srcs.push(...a.slice(files.length || inline.length ? o.end : o.end + 1).filter(w => !w.unknown && !/^[A-Za-z_]\w*=/.test(w.text)).map(w => w.text));
     return files.length || inline.length ? o.end : o.end + 1;
   },
   sed(a, ctx, r) {
@@ -192,6 +193,7 @@ const SORT_HANDLERS = {
       }
       (scripts.length ? files : scripts).push(a[k]);
     }
+    ctx.srcs.push(...files.filter(f => f && !f.unknown).map(f => f.text));
     if (scripts.some(s => !s || s.unknown)) unsure('A sed script comes from a $ or a command, so the sorter can’t read it.');
     if (inPlace) {
       raise(r, 'change', 'sed -i rewrites the files it names.');
@@ -265,6 +267,7 @@ const SORT_HANDLERS = {
     raise(r, 'change', 'dd copies raw bytes.');
     for (const w of a) {
       const m = /^(if|of)=(.*)$/.exec(w.text);
+      if (m?.[1] === 'if' && !w.unknown) ctx.srcs.push(m[2]);
       if (!m || m[1] === 'if') continue;
       if (w.unknown) unsure('dd names a file through a $ or a command.');
       r.deletes = true;
@@ -298,6 +301,7 @@ const SORT_HANDLERS = {
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
     // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
     const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
+    if (packs) ctx.srcs.push(...o.plain.filter(w => !w.unknown).map(w => w.text));
     for (const w of o.plain) sortTouch(w, ctx, r, false, false, packs && !o.has('remove-files'));
     for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, packs, !packs && !o.has('delete') && o.has('x', 'extract', 'get'));
     if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }

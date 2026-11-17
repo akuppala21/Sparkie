@@ -7,6 +7,12 @@
 // end word bash reads differently, a line that runs on with \) throws a SortDoubt, which the sorter answers as risky.
 class SortDoubt extends Error {}
 const unsure = why => { throw new SortDoubt(why); };
+// A doubt that means the sorter could not read on at all (the reader can't split the text, or a bound on its work is
+// passed): the answer's unreadable says so (F1). A bound on its work stops the whole read, as before: reading on past it
+// would undo the bound.
+const sortBound = why => { throw Object.assign(new SortDoubt(why), { unreadable: true, bound: true }); };
+// The reader, with a doubt of its own marked as one it could not read past.
+const sortRead = text => { try { return shellParse(shellLex(text).toks); } catch (e) { if (e instanceof SortDoubt) e.unreadable = true; throw e; } };
 const sortWs = s => new Set(s.split(' ')), SHELL_NEST = 16;
 
 // The shell's words as bash reads them: quotes off, $HOME and a leading ~ as ~, each $( … ), `…` and <( … ) parsed in

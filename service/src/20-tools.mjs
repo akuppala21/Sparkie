@@ -168,6 +168,7 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:clone|fetch|pull|push|ls-remote|remote|submodule)$/.test(v)) for (const w of p) if (!w.unknown) { usesReach(usesHost(w.text), ctx); if (usesHost(w.text)) sortToHub(usesHost(w.text), ctx, r, `git ${v}`); }
     const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
     if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
+    if (/^(?:add|commit)$/.test(v) && p.length) { ctx.srcs.push(...p.filter(w => !w.unknown).map(w => w.text)); ctx.outs.push('the repository, which a push sends'); }
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
     // (what git rm, mv and apply take away or write over in the work tree: copied first, or nothing runs)
     if (/^(?:rm|mv|apply|am)$/.test(v)) r.deletes = true;
@@ -292,6 +293,7 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
     // (what an image, a container, a Dockerfile or a compose file runs is in none of its words)
     if (v.some(t => /^(?:run|create|start|exec|build|buildx|compose|up|restart)$/.test(t))) sortUnshown(r, `the code the image, the container or the file ${name} is given runs`);
+    if (v[0] === 'cp' || (v[0] === 'container' && v[1] === 'cp')) { const p = v.slice(v[0] === 'cp' ? 1 : 2); ctx.srcs.push(...p.slice(0, -1).filter(t => !/^[\w.-]+:/.test(t))); ctx.outs.push('a container'); }
     const all = name === 'docker-compose' ? [{ text: 'compose', subs: [] }, ...a] : a;
     sortDockerHost(all, ctx, r, name);
     sortDockerProtect(all, ctx, r, name);

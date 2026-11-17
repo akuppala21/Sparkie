@@ -58,6 +58,11 @@ Object.assign(SORT_HANDLERS, {
     const o = sortOpts(SORT_OPTS[name], a), t = a.map(w => w.text), urls = [...o.plain, ...o.all('url')].map(w => w.text);
     const last = u => u.replace(/[?#].*$/, '').replace(/^[a-z][\w+.-]*:\/\/[^/]*/i, '').split('/').pop();
     raise(r, 'change', `${sortQ(name)} reaches the network, which a look’s wall has none of.`);
+    // (what it uploads is what it sends: -T, a @file of -d, -F or --json, wget's --post-file and --body-file)
+    for (const [n, v] of o.opts) if (typeof v?.text === 'string' && !v.unknown) {
+      if (/^(?:T|upload-file|post-file|body-file)$/.test(n)) ctx.srcs.push(v.text);
+      else if (/^(?:d|data|data-binary|data-raw|data-ascii|data-urlencode|json|F|form|form-string)$/.test(n)) { const f = /(?:^|=)@?<?@([^;,]+)/.exec(v.text)?.[1] ?? /^@(.+)$/.exec(v.text)?.[1]; if (f) ctx.srcs.push(f); }
+    }
     ctx.piped = ctx.fetchSeen = ctx.fetched = true;
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
     const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
@@ -149,7 +154,9 @@ Object.assign(SORT_HANDLERS, {
     plain.forEach((w, i) => {
       const m = /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(w.text), lastOne = i === plain.length - 1;
       // (a local source is only read, unless it is moved away)
-      // (a local target is written over: what was there goes, unless it is copied first)
+      // (a local target is written over: what was there goes, unless it is copied first; a local source is what it sends)
+      if (!m && !lastOne) ctx.srcs.push(w.text);
+      if (m && lastOne) ctx.farDests.push(sortNorm(/^[~/]/.test(m[2]) ? m[2] : `~/${m[2]}`, null, ctx.home));
       if (!m) { if (lastOne || a.some(v => /^--remove-source/.test(v.text))) r.deletes = true; return sortTouch(w, ctx, r, rec && lastOne, true, !lastOne && !a.some(v => /^--remove-source/.test(v.text))); }
       usesReach(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx);
       sortToHub(/^rsync:\/\//.test(w.text) ? usesHost(w.text) : m[1], ctx, r, name);
