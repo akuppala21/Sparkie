@@ -5845,9 +5845,10 @@ async function sparkieCheck(name, input, ctx) {
   }
   if (name === 'run_workflow') {
     const w = findSaved(String(out.name || ''));
-    if (!w) throw new HttpError(404, `No saved workflow called “${String(out.name || '').slice(0, 80)}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    // (to the brain a saved workflow is its id, and its title and inputs' words are `workflows`': savedNamed, 18-workflows.mjs)
+    if (!w) throw new HttpError(404, savedMissing(out.name || '', null, ctx));
     const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})) && !(k === 'model' && w.best?.model));
-    if (missingInputs.length) throw new HttpError(400, `“${w.title}” needs ${missingInputs.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    if (missingInputs.length) throw new HttpError(400, `${savedNamed(w, null, ctx, true)} needs ${missingInputs.join(', ')}: workflows says what each is.`);
     // (every word counts here, one-letter ones and bare Spark numbers too: "run coding mo" isn't "coding mode", and
     // a value "4" must be said as 4 or Spark 4)
     const plain = t => new Set(sparkNames(normQuotes(String(t))).split(/[^a-z0-9.]+/).flatMap(x => [x, x.replace(/\./g, '')]).filter(Boolean));
@@ -6853,7 +6854,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // v3.1): pressed or picked by its id, never by a typed "yes".
 // whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
 // paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
+// said: the question's words for Sparkie's brain, when they must differ from the page's (a saved workflow by its id, not
+// its title: savedNamed); a choice's `said` is its label there.
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null, said = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -6889,14 +6892,15 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
-    return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),
+    return { outcome: out.outcome, question: said ?? text, buttons: shown.map((c, i) => choices[i]?.said || c.label),
       note: kind === 'proposal' ? 'Not done yet: it’s offered as a choice to take (a button on the page). Say in one short line what it would do, then stop. Don’t call it again.'
         : 'Offered as choices to take (buttons on the page). Ask this in plain words and stop.' };
   }
   return out;
 }
 // What a change does, in plain words, for its button.
-function changeLabel(name, input) {
+// (brain: the words Sparkie's brain gets, a saved workflow by its id; the page's button keeps its title)
+function changeLabel(name, input, brain = false) {
   const sp = id => sparkName(nodeById(id) || { id });
   const where = input.sparks ? ` across ${input.sparks.map(sp).join(' + ')}` : input.spark ? ` on ${sp(input.spark)}` : '';
   const what = input.model || input.container || 'it';
@@ -6908,12 +6912,13 @@ function changeLabel(name, input) {
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
-    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    const f = findSaved(String(input.workflow || '')), w = String((brain ? f?.id : f?.title) || input.workflow || '').slice(0, 80);
     return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
   }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
-    return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
+    const f = findSaved(String(input.name || ''));
+    return `Run the saved workflow “${String((brain ? f?.id : f?.title) || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
   }
   if (name === 'keep_running') {
     const c = String(input.container || 'it').slice(0, 80);
@@ -6954,8 +6959,8 @@ function changeLabel(name, input) {
 // because: which gate asked, in code's own short words, when the caller knows it ('words': the owner's words don't ask
 // for it clearly; 'rail': Sparkie's brain isn't checked, R52), so a reader of the eval's record can tell them apart.
 function propose(viewer, ctx, name, input, because = null) {
-  const label = `${changeLabel(name, input)}${input.__validate ? ' (its first run, which validates it)' : ''}`;
-  const out = question(viewer, ctx, `${label}?`, [{ label, call: { action: name, args: input } }], 'proposal');
+  const first = input.__validate ? ' (its first run, which validates it)' : '', label = `${changeLabel(name, input)}${first}`, said = `${changeLabel(name, input, true)}${first}`;
+  const out = question(viewer, ctx, `${label}?`, [{ label, said, call: { action: name, args: input } }], 'proposal', { said: `${said}?` });
   return because ? { ...out, askedBecause: because } : out;
 }
 function redeemChoice(viewer, ctx, action, id) {
@@ -21934,18 +21939,19 @@ async function powerLook(node) {
   const kept = new Set(desired().running.filter(x => x.app).map(keyOf)), inUse = [], apps = [], boxed = powerBoxesIn(node, r.out), found = [];
   for (const [name, protect, ours, app, job, role] of fields(r.out, 'power')) {
     if (!name) continue;
-    if (role === 'main' || isProtected(name, protect)) inUse.push(`${name} (protected)`);
+    if (role === 'main' || isProtected(name, protect)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (protected)`);
     else if (ours === '1') continue;
     // (Spark Console's own box: said and ended by an asked power-off, 21-power-box.mjs; one it doesn't have open is said)
     else if (boxed.known.has(name)) found.push(boxed.known.get(name));
-    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${name} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
-    else if (app === '1' && job === '1') inUse.push(`${name} (a job that hasn’t ended)`);
+    else if (boxed.opening.has(name) || boxed.other.has(name)) inUse.push(`${nameShown(name, 'workloads') || 'a container'} (${boxed.opening.has(name) ? POWER_BOX_OPENING : POWER_BOX_OTHER})`);
+    else if (app === '1' && job === '1') inUse.push(`${nameShown(name, 'workloads') || 'a container'} (a job that hasn’t ended)`);
     else if (app === '1' && kept.has(`${node.id}/${name}`)) apps.push(name);
-    else inUse.push(`${name} (started outside Spark Console)`);
+    else inUse.push(`${nameShown(name, 'workloads') || 'a container'} (started outside Spark Console)`);
   }
   await powerBoxFiles(node, found);
   return { answers: true, inUse, apps, boxes: found };
 }
+// (each container by its name as shown, nameShown: a long one is said, and workloads has it)
 const inUseWords = (node, list) => `${sparkName(node)} is in use: ${list.join(', ')} ${list.length > 1 ? 'run' : 'runs'} there. Spark Console never stops those, so nothing was changed. Stop ${list.length > 1 ? 'them' : 'it'} first, or turn ${sparkName(node)} off by hand.`;
 // The shutdown needs exactly the two commands deploy/power-setup.sh lets the owner's account run without a password.
 const SUDO_CHECK = `sudo -n -l /usr/bin/systemctl poweroff >/dev/null 2>&1 && sudo -n -l /usr/bin/systemctl stop nvidia-persistenced >/dev/null 2>&1 && printf 'sudo\\tok\\n'`;
@@ -22073,7 +22079,9 @@ action({
     // or stuck, and its power is never cut from here.
     for (const l of looks.filter(x => !x.answers)) {
       const w = await freshWall(l.id).catch(e => ({ answering: false, problem: e.message }));
-      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (${w.problem || 'no reading'}), so nothing was changed.`);
+      // (the plug controller's own words are outside text, and a change's answer is no outside read, R26: why is in
+      // fleet_status's wall for that Spark)
+      if (!w.answering) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, and its plug can’t be read (fleet_status’s wall for it says why), so nothing was changed.`);
       if (w.on === false) { l.plugOff = true; continue; }
       if (!(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) throw new HttpError(409, `${sparkWord(l.id)} isn’t answering, but its plug shows ${w.watts ?? '?'} W: it is powered on but not answering, so its power is not cut from here. Look at it there.`);
     }
@@ -22377,7 +22385,7 @@ action({
     // One that draws power but doesn't answer is on (or starting): said now, and nothing is switched.
     for (const [i, id] of ids.entries()) {
       if (answering[i]) continue;
-      const w = await freshWall(id).catch(e => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (${e.message}), so nothing was switched.`); });
+      const w = await freshWall(id).catch(() => { throw new HttpError(409, `${sparkWord(id)}’s plug can’t be read (fleet_status’s wall for it says why), so nothing was switched.`); });
       if (!w.answering) throw new HttpError(409, `${sparkWord(id)}’s plug isn’t answering the plug controller, so it can’t be turned on from here.`);
       if (w.on === true && !(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) {
         throw new HttpError(409, `${sparkWord(id)}’s plug shows ${w.watts ?? '?'} W, so it is powered on but not answering. Nothing was switched: it may still be starting; if it stays like this, look at it there.`);

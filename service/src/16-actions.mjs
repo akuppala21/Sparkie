@@ -468,9 +468,10 @@ async function sparkieCheck(name, input, ctx) {
   }
   if (name === 'run_workflow') {
     const w = findSaved(String(out.name || ''));
-    if (!w) throw new HttpError(404, `No saved workflow called “${String(out.name || '').slice(0, 80)}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    // (to the brain a saved workflow is its id, and its title and inputs' words are `workflows`': savedNamed, 18-workflows.mjs)
+    if (!w) throw new HttpError(404, savedMissing(out.name || '', null, ctx));
     const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})) && !(k === 'model' && w.best?.model));
-    if (missingInputs.length) throw new HttpError(400, `“${w.title}” needs ${missingInputs.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    if (missingInputs.length) throw new HttpError(400, `${savedNamed(w, null, ctx, true)} needs ${missingInputs.join(', ')}: workflows says what each is.`);
     // (every word counts here, one-letter ones and bare Spark numbers too: "run coding mo" isn't "coding mode", and
     // a value "4" must be said as 4 or Spark 4)
     const plain = t => new Set(sparkNames(normQuotes(String(t))).split(/[^a-z0-9.]+/).flatMap(x => [x, x.replace(/\./g, '')]).filter(Boolean));
