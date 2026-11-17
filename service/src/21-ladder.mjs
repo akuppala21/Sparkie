@@ -45,19 +45,33 @@ function workWrote(ctx, sorted) {
 }
 
 // The names a command gives that a later message's follow-up may have taken from what was read (P-5's "the message
-// before"): the dangerous ask's things (addresses, whole paths, packages: dangerThings) and each word of the command
-// with a / or a . inside (a file, a relative path, a host), never a program run by its bare name nor an option; and the
-// folder it starts in, when it isn't the usual one. Each name with its other spellings: a path without ~/, $HOME/ or the
-// home folder before it, and a file's own name. A bare word (a service's or a process's name) is not looked for.
-function workNames(node, command, dir) {
-  const home = `/home/${node?.user || CONFIG.user}/`, out = new Map();
-  const forms = p => {
-    let rel = p.replace(/^(?:~|\$HOME|\$\{HOME\})\//, '').replace(/^(?:\.\/)+/, '');
-    if (rel.startsWith(home)) rel = rel.slice(home.length);
-    const base = rel.split('/').filter(Boolean).pop() || '';
-    return [...new Set([p, rel, /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(base) ? base : ''])].filter(f => f.length >= 3);
+// before"), each {forms, own, blind}: forms, the spellings looked for in what was read; own, those that make it the
+// owner's when their words hold one. They are the dangerous ask's things (addresses, whole paths, packages:
+// dangerThings); each word of the command with a / or a . inside (a file, a relative path, a host), never a program run
+// by its bare name nor an option; every place the sorter says it writes or removes (placed, overwrites, wide), a bare
+// word too, as the sorter joins it to a cd before it (R-4); the folder it starts in, when it isn't the usual one; and
+// the command's own text and each of its parts between &&, ;, | and a line's end, 12 signs or more with a space. Each
+// path also without ~/, $HOME/ or the home before it, joined to the start folder when it is relative, and by its own
+// name (a file's, or a place's). A pattern (* ? [ {) is looked for by its plain pieces of 3 signs or more; with none it
+// is blind (R-4).
+const WORK_GLOB = /[*?[\]{}]/;
+function workNames(node, command, dir, sorted = null) {
+  const home = `/home/${node?.user || CONFIG.user}/`, start = String(dir || RUNNER_DIR), out = new Map();
+  const strip = p => { let r = p.replace(/^(?:~|\$HOME|\$\{HOME\})\//, '').replace(/^(?:\.\/)+/, ''); if (r.startsWith(home)) r = r.slice(home.length); return r; };
+  const spell = (p, place) => {
+    const rel = strip(p), base = rel.split('/').filter(Boolean).pop() || '';
+    const joined = /^(?:\/|~|\$HOME|\$\{HOME\})/.test(p) ? '' : strip(`${start}/${p.replace(/^(?:\.\/)+/, '')}`);
+    return [...new Set([p, rel, joined, place || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(base) ? base : ''])].filter(f => f.length >= 3);
   };
-  const add = w => { const f = forms(w); if (f.length && !out.has(w)) out.set(w, f); };
+  const add = (w, place = false) => {
+    if (!w || out.has(w)) return;
+    const forms = spell(w, place);
+    if (!WORK_GLOB.test(w)) { if (forms.length) out.set(w, { forms, own: forms }); return; }
+    // (a pattern: its plain pieces, each spelled as a name is; none of 3 signs or more, and it is blind; the owner's
+    // words are read for the pattern as written, however short)
+    const pieces = [...new Set(forms.flatMap(f => f.split(/[*?[\]{}]+/)).filter(x => x.length >= 3 && /[A-Za-z0-9]/.test(x)))];
+    out.set(w, { forms: pieces, own: [...new Set([w, ...forms])], blind: !pieces.length });
+  };
   for (const t of dangerThings(command)) add(t);
   // (the first word of each command, past NAME=value, is its program; the word after < or > is a file)
   let program = true;
@@ -66,31 +80,61 @@ function workNames(node, command, dir) {
     const set = /^[A-Za-z_]\w*=/.test(t.w), first = program && !set;
     if (!set) program = false;
     const w = t.w.replace(/^[A-Za-z_]\w*=/, '').replace(/^--?[\w-]+=/, '');
-    if ((first && !w.includes('/')) || w.startsWith('-') || !/[A-Za-z]/.test(w) || /[\s$`]/.test(w.replace(/^\$(?:HOME|\{HOME\})\//, ''))) continue;
-    if (w.includes('/') || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(w)) add(w);
+    if ((first && !w.includes('/')) || w.startsWith('-') || (!/[A-Za-z]/.test(w) && !WORK_GLOB.test(w)) || /[\s$`]/.test(w.replace(/^\$(?:HOME|\{HOME\})\//, ''))) continue;
+    if (w.includes('/') || /[A-Za-z0-9_-]\.[A-Za-z0-9]/.test(w) || WORK_GLOB.test(w)) add(w);
   }
-  if (dir && dir !== RUNNER_DIR && dir !== '~') add(String(dir));
-  return [...out.values()].slice(0, 32);
+  for (const p of [...(sorted?.placed || []), ...(sorted?.overwrites || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && p) add(p, true);
+  if (dir && dir !== RUNNER_DIR && dir !== '~') add(/^(?:~|\/)/.test(String(dir)) ? String(dir) : `~/${dir}`, true);
+  // (the command's own text, and each part of it: a command quoted from earlier counts as read, contract 8.5)
+  const text = String(command || '').trim(), parts = text.split(/&&|\|\||[;|&\n]/).map(x => x.trim());
+  for (const x of [text, ...parts]) if (x.length >= 12 && /\s/.test(x) && !out.has(x)) out.set(x, { forms: [x], own: [x] });
+  return [...out.values()];
+}
+// What this chat holds that a change may have been taken from, for workEarlier: chatEarlier's reads and Sparkie's
+// answers (14-chats.mjs), with the chat's notices and agents' messages as reads of their own (R-4: a press's notice can
+// quote a command's last line). Loaded once a request, while nothing new was read or said (R-9).
+const workEarlierSeen = new WeakMap();
+function workChatEarlier(conv, ctx) {
+  const key = `${conv.id}|${(conv.reads || []).length}|${(ctx?.reads || []).length}|${(conv.messages || []).length}`, was = ctx && typeof ctx === 'object' ? workEarlierSeen.get(ctx) : null;
+  if (was?.key === key) return was.e;
+  const e = chatEarlier(conv, ctx), seen = new Set([...e.reads, ...e.answers].map(x => String(x.text ?? '')));
+  const more = (conv.messages || []).filter(m => (m.notice || (m.role === 'user' && m.from)) && m.content && !seen.has(String(m.content)))
+    .slice(-40).map(m => ({ label: m.notice ? 'a notice in this chat' : 'an agent’s message in this chat', at: m.createdAt, text: String(m.content) }));
+  const out = { reads: [...more, ...e.reads], answers: e.answers };
+  if (ctx && typeof ctx === 'object') workEarlierSeen.set(ctx, { key, e: out });
+  return out;
+}
+// The owner's words in this chat, as they are and with ~/, $HOME/ and the home taken off every path, so a name typed
+// one way and run another is still theirs (R-10).
+function workOwnWords(conv, node) {
+  const own = (conv.messages || []).filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content || '')).join('\n').toLowerCase();
+  const home = `/home/${node?.user || CONFIG.user}/`.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [own, own.replace(new RegExp(`(?:~|\\$home|\\$\\{home\\}|${home.slice(0, -1)})/`, 'g'), '')];
 }
 // 3 across this chat's messages (contract 8.5, "a command quoted from an earlier answer counts as read"): a change that
-// names what an earlier read or an earlier answer of Sparkie's holds, and no message of the owner's in this chat does, is
-// asked; a name the owner typed in any of their messages here is theirs. Why, or null. (chatEarlier, 14-chats.mjs;
-// cameFrom, 20-came-from.mjs, the dangerous ask's line 4, searched the same way.)
-function workEarlier(node, ctx, command, dir) {
+// names what an earlier read, answer, notice or agent's message holds, and no message of the owner's in this chat does,
+// is asked; a name the owner typed in any of their messages here is theirs. So is one past the first 32 names, or a
+// pattern with no plain piece, when the chat holds anything earlier: they can't all be looked for. Why, or null.
+// (chatEarlier, 14-chats.mjs; cameFrom, 20-came-from.mjs, the dangerous ask's line 4, searched the same way.)
+const WORK_NAMES = 32;
+function workEarlier(node, ctx, command, dir, sorted = null) {
   const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
   if (!conv) return null;
-  const own = (conv.messages || []).filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content || '')).join('\n').toLowerCase();
-  const theirs = workNames(node, command, dir).filter(forms => !forms.some(f => dangerWhole(own, f.toLowerCase())));
+  const owns = workOwnWords(conv, node);
+  const theirs = workNames(node, command, dir, sorted).filter(n => !n.own.some(f => owns.some(o => dangerWhole(o, f.toLowerCase()))));
   if (!theirs.length) return null;
-  const e = chatEarlier(conv, ctx);
+  const e = workChatEarlier(conv, ctx);
   if (!e.reads.length && !e.answers.length) return null;
-  const all = [...new Set(theirs.flat())], from = cameFrom(all, [], e.reads, e.answers);
+  if (theirs.length > WORK_NAMES) return `it names more than ${WORK_NAMES} things, so not all of them could be looked for in what was read earlier in this chat`;
+  const blind = theirs.find(n => n.blind);
+  if (blind) return `it names a pattern (${dangerPlain(blind.own[0], 120)}) with no plain piece to look for in what was read earlier in this chat`;
+  const all = [...new Set(theirs.flatMap(n => n.forms))], from = cameFrom(all, [], e.reads, e.answers);
   const line = from.lines[0];
   if (line) {
     const name = all.filter(f => line.startsWith(`${f}: `)).sort((a, b) => b.length - a.length)[0] || '';
     return `it names ${dangerPlain(name, 120)}, which came from ${line.slice(name.length + 2)}, not from your words`;
   }
-  if (from.cut) return `it names ${dangerPlain(theirs[0][0], 120)}, which isn’t in your words, and what was read earlier in this chat couldn’t all be searched`;
+  if (from.cut) return `it names ${dangerPlain(theirs[0].own[0], 120)}, which isn’t in your words, and what was read earlier in this chat couldn’t all be searched`;
   return null;
 }
 
@@ -132,7 +176,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
     if (ahead) return null;
     if (!tokensOf(ctx.said || ctx.request || '').has(node.id)) return `your words don’t name ${sparkName(node)}`;
     if (ctx.readOutside) return 'Sparkie read text from outside first';
-    const earlier = workEarlier(node, ctx, command, dir);
+    const earlier = workEarlier(node, ctx, command, dir, sorted);
     if (earlier) return earlier;
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
@@ -189,8 +233,11 @@ function workScriptPaths(scripts, dir, command) {
   const first = moves === 1 && toks[0]?.w === 'cd' && typeof toks[1]?.w === 'string' && toks[2]?.op === '&&' ? toks[1].w : null;
   const base = inside || words.some(w => WORK_TOLD.test(w)) ? null : moves === 0 ? dir : first !== null && workPlainName(first) ? (ok(first) ? first : `${dir}/${first}`).replace(/\/+$/, '') : null;
   const paths = [], unpinned = [];
+  // (with that first cd, a script counts as read from its folder only where every operator between them is &&: after
+  // ;, ||, & or a line's end bash may run it from the start folder, as the part before & runs apart, R-7)
+  const chained = s => toks.some(t => t.w === s) && toks.every((t, k) => t.w !== s || toks.slice(2, k).every(x => x.w !== undefined || x.op === '&&'));
   for (const s of scripts) {
-    if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null)) { unpinned.push(s); continue; }
+    if (!workPlainName(s.replace(/^(?:\.\/)+/, '')) || (!ok(s) && base === null) || (!ok(s) && first !== null && moves === 1 && !chained(s))) { unpinned.push(s); continue; }
     const p = ok(s) ? s : `${base}/${s.replace(/^(?:\.\/)+/, '')}`;
     if (!paths.includes(p)) paths.push(p);
   }
@@ -254,25 +301,55 @@ function workWrittenFirst(sorted, path) {
 }
 const workWrittenLine = p => `It runs ${p}, which this same command writes, so what runs may not be there yet as you’re asked: its text can’t be shown or pinned, and a key is refused for it.`;
 const WORK_WRITTEN_KEY = 'Not run: it runs a script this same command writes, so its text can’t be shown or pinned before you say yes, and a key goes only to code you are shown. Write or download the script first, then ask to run it with the key. Nothing was asked or run.';
-// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs:
-// 21-hub.mjs): read again after the Spark's claim is taken, then checked once more by the unit's own first lines
-// (runnerPins, 21-runner.mjs), and run by its path.
-const workPinLines = scripts => (Object.values(scripts?.sums || {}).some(h => typeof h === 'string') ? ['Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'] : []);
+// What the press does with a pinned script (R72), said once on the run's own asks (not Spark 2's, which the net runs by
+// path: 21-hub.mjs): read again after the Spark's claim is taken, then copied by the root helper, hashed and bound over
+// its path for the whole run (--script, runChange), and checked once more by the unit's own first lines (runnerPins,
+// 21-runner.mjs). When the command also runs a script that isn't pinned, the line says which ones run from the copy.
+function workPinLines(scripts) {
+  const sums = Object.values(scripts?.sums || {});
+  if (!sums.some(h => typeof h === 'string')) return [];
+  const others = sums.some(h => h === null) || scripts?.unpinned?.length || scripts?.written?.length;
+  return [others ? 'Each script shown here with its hash runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again. Any other script it runs is read from its path as it runs.'
+    : 'Each script runs from the root helper’s own copy of it, read at your press and bound over its path for the whole run: if that copy hasn’t the hash shown here, nothing runs and you are asked again.'];
+}
+// One line of a script on the button (R-1, R-5), after "│ ": a sign that doesn't show (a control, a zero-width or a
+// right-to-left sign, a terminal's escape) as a marked code, ⟨U+001B⟩; each part between ;, &, | and && masked apart, as
+// every ask is, so the mask never takes what follows a separator (the whole line's mask when a kept key's value crosses
+// one), and marked when the mask hid part of it; cut at 300 signs, saying how many more.
+const WORK_LINE = 300;
+function workScriptLine(l) {
+  const coded = String(l).replace(/(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/gu, c => `⟨U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}⟩`);
+  let masked = coded.split(/(&&|\|\||[;|&])/).map((x, i) => (i % 2 ? x : maskSecrets(x))).join('');
+  // (a kept key's value across a separator: the whole line's mask; a shape the mask reads greedily never spans one)
+  if (hideKeys(masked) !== masked) masked = maskSecrets(coded);
+  const signs = [...masked], cut = Math.max(0, signs.length - WORK_LINE);
+  return `│ ${cut ? signs.slice(0, WORK_LINE).join('') : masked}${cut ? ` ⟨… ${cut} more sign${cut === 1 ? '' : 's'} not shown⟩` : ''}${masked !== coded ? ' ⟨part of this line is hidden⟩' : ''}`;
+}
+// What the page shows of an ask at most (chatAsks keeps its first 8,000 signs, 14-chats.mjs): the script text gives
+// way to the rest, saying how much it left out.
+const WORK_ASK_MOST = 8000;
 // Each pinned script's text on a plain button (P-5): its first WORK_TEXT_LINES lines as the ask's look read them, each
-// after "│ " (as a command's own lines are, workCommandText), then how many more; the whole text as read is one journal
-// record, which the button names (workScriptRecord). Masked as every ask is.
-function workScriptText(scripts) {
-  const out = [], h = scripts?.sums || {};
+// after "│ " (workScriptLine: masked, marked, cut), then how many more; the whole text as read is one journal record,
+// which the button names whenever any of it isn't shown (workScriptRecord). room: the signs it may take (the rest of the
+// ask comes first, R-5); past it, one line says how many lines were left out and where all of it is.
+function workScriptText(scripts, room = Infinity) {
+  const out = [], h = scripts?.sums || {}, rec = scripts?.record, where = rec ? `: all of it as read is record ${rec} (recall {"id":"${rec}"} reads it)` : '';
+  let used = 0, left = 0;
+  const put = (line, keep = 220) => { if (left || used + line.length + 1 > room - keep) return false; out.push(line); used += line.length + 1; return true; };
   for (const [p, t] of Object.entries(scripts?.texts || {})) {
     const lines = t.text.split(/\r\n|[\r\n\v\f\x85\u2028\u2029]/);
     if (lines.at(-1) === '') lines.pop();
-    const more = Math.max(0, (t.whole ? lines.length : t.lines) - WORK_TEXT_LINES), whole = t.whole ? '' : `, read to its first ${WORK_TEXT / 1024} KB`;
-    out.push(`The script ${p} as read for this ask (${t.lines} line${t.lines === 1 ? '' : 's'}${whole}, SHA-256 ${String(h[p]).slice(0, 12)}…), each line after │:`,
-      ...lines.slice(0, WORK_TEXT_LINES).map(l => `│ ${l.slice(0, 300)}`),
-      ...(more ? [`│ … and ${more} more line${more === 1 ? '' : 's'}${scripts.record ? `: all of it as read is record ${scripts.record} (recall {"id":"${scripts.record}"} reads it)` : ''}.`] : []));
+    const shown = lines.slice(0, WORK_TEXT_LINES).map(workScriptLine), more = Math.max(0, (t.whole ? lines.length : t.lines) - WORK_TEXT_LINES);
+    const whole = t.whole ? '' : `, read to its first ${WORK_TEXT / 1024} KB`, cut = more || !t.whole || shown.some(l => l.includes(' more sign') && / ⟨… \d+ more signs? not shown⟩/.test(l));
+    if (!put(`The script ${p} as read for this ask (${t.lines} line${t.lines === 1 ? '' : 's'}${whole}, SHA-256 ${String(h[p]).slice(0, 12)}…), each line after │:`)) { left += shown.length + more; continue; }
+    for (const [i, l] of shown.entries()) if (!put(l)) { left += shown.length - i + more; break; }
+    if (!left && cut) put(`│ … ${more ? `and ${more} more line${more === 1 ? '' : 's'}` : t.whole ? 'part of a line isn’t shown here' : 'and the rest past its first 256 KB'}${where}.`, 0);
   }
+  if (left) out.push(`│ … ${left} more line${left === 1 ? '' : 's'} of the script${Object.keys(scripts?.texts || {}).length === 1 ? '' : 's'} aren’t shown on this button, for room${where}.`);
   return out;
 }
+// What Sparkie is told of the scripts' text in place of it (R-2): the owner was shown it; the brain is not handed it.
+const workScriptBrain = scripts => { const n = Object.keys(scripts?.texts || {}).length; return n ? [`The owner is shown the text of ${n === 1 ? 'the script' : `the ${n} scripts`} it runs on the button; it isn’t sent here: to read a script, read its file.`] : []; };
 // The scripts' texts as the ask read them, kept whole in one journal record (masked as a look's output is), so the
 // button can name it; its id on scripts.record. None when no script's text was read.
 function workScriptRecord(node, ctx, scripts) {
@@ -313,8 +390,10 @@ function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topD
 function workScriptLines(scripts) {
   const { sums = {}, unpinned = [], unread = null, written = [] } = scripts, not = n => `It runs ${n}; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen.`;
   const first = written.slice(0, 4).map(p => workWrittenLine(String(p).slice(0, 120)));
+  // (no file it could read there: a folder run as a script, a file not there yet or one it can't read, R-3)
+  const none = p => `It runs ${p}, which isn’t a file that could be read there as you’re asked (a folder, a file not there yet, or one it can’t read): its text can’t be shown or pinned, and a key is refused for it.`;
   if (unread) return [`The scripts it runs couldn’t be read here (${unread}), so none is hashed: a change to one after this ask isn’t seen.`, ...first];
-  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120))), ...first];
+  return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : none(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120))), ...first];
 }
 
 // The folder a change starts in, as run took it (~ or a folder under it, no . or .. part: 21-work.mjs), on both asks.
@@ -325,7 +404,8 @@ const workStartsIn = dir => `It starts in ${dir}.`;
 // (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script;
 // its path is whole, so no folder line)
 // more: code's own lines after these (a command given keys, 21-run-keys.mjs), kept above a framed command.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '') {
+// brain: the text Sparkie is handed, the scripts' lines left out (R-2).
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '', brain = false) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
   // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
@@ -333,8 +413,11 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts)), ...(spec ? [] : workScriptText(scripts))];
-  return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workUnshownLines(sorted, scripts), ...workUnknownLines(sorted), ...workScriptLines(scripts), ...(spec ? [] : workPinLines(scripts))];
+  if (spec) return `${[...spec.lines(at), ...lines].join('\n')}${more}`;
+  // (the command, code's lines and a key's lines first; the scripts' text last, in the room left, R-5)
+  const base = workCommandText(`Run this on ${at}?`, command, lines, more), text = brain ? workScriptBrain(scripts) : workScriptText(scripts, WORK_ASK_MOST - base.length - 1);
+  return text.length ? `${base}\n${text.join('\n')}` : base;
 }
 // The text of a command's button, built by code: its first line, the command, code's lines (S-4). One function for both
 // Sparks' buttons: Spark 2's (21-hub.mjs, hubCommandLines) reads the same and can call this one. A plain one-line
@@ -351,9 +434,12 @@ function workCommandText(head, command, lines, more = '') {
 // What it runs that the command doesn't show, by the sorter's own words (unshown: a script fed by a redirect or a pipe,
 // -m module, a build tool's or a package's own scripts, start-file variables): one line on either ask, nothing when the
 // sorter says nothing. Never a reason to ask by itself.
-function workUnshownLines(sorted) {
+function workUnshownLines(sorted, scripts = null) {
   const u = sorted?.unshown;
   if (!u) return [];
+  // (nor "the file x.sh" when the button shows that very file's text, R-12)
+  const file = typeof u === 'string' ? /^the file (.+)$/.exec(u)?.[1] : null;
+  if (file && Object.keys(scripts?.texts || {}).some(p => p === file || p.endsWith(`/${file.replace(/^(?:\.\/)+/, '')}`))) return [];
   const w = typeof u === 'string' ? u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '').slice(0, 200) : '';
   return [`What runs is in a file this button doesn’t show${w ? ` (${w})` : ''}.`];
 }
@@ -377,6 +463,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const scripts = spec ? { sums: spec.sums } : workScriptRecord(node, ctx, await workScripts(node, sorted.scripts, dir, command, sorted)), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
   // (a key goes only to a script pinned by its hash, R51: one whose text isn't, or couldn't be read, is refused)
   if (keys.length && scripts.written?.length) throw new HttpError(409, WORK_WRITTEN_KEY);
+  // (nor to one that is no file it could read there: a folder run as a script, a file not there yet, R-3)
+  const none = Object.entries(scripts.sums || {}).find(([, h]) => h === null)?.[0];
+  if (keys.length && none) throw new HttpError(409, `Not run: it runs ${dangerPlain(none, 120)}, which isn’t a file that could be read there (a folder, a file not there yet, or one it can’t read), so its text can’t be shown or pinned, and a key goes only to code you are shown. Run a script file by its name with the key, and ask again. Nothing was asked or run.`);
   if (keys.length && (scripts.unread || scripts.unpinned?.length)) throw new HttpError(409, RUNKEY_SCRIPT_UNPINNED);
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
@@ -397,7 +486,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
-        { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
+        { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}),
+        // (Sparkie is handed the ask without the scripts' lines, R-2: the owner reads them on the button)
+        ...(spec ? {} : { brain: workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted), true) }) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [],
     gone: more.gone?.length ? more.gone.map(x => String(x.path)) : dangerous.includes('delete') ? true : null, at: Date.now() });
@@ -410,13 +501,35 @@ const workPressCovers = (sorted, ctx) => !(sorted?.kinds || []).some(k => ['dele
 // An installer run from an address as it is fetched (curl … | sh, wget -O- … | bash, bash <(curl …), sh -c "$(curl …)"):
 // no ask can show or pin what it runs, so it is answered how to do it instead (P-5): download it to a file, one change;
 // then run the file, asked with its text shown and pinned. Read from the command's words as bash splits them: a fetcher
-// whose pipeline ends in a shell or an interpreter (past sudo, env and their kin), or a shell or an interpreter handed a
-// fetcher's output by <( … ), $( … ) or backticks. A pipe into an interpreter handed its code another way (-c, -m, -e,
-// a file) hands it data (curl … | python3 -m json.tool), and is no installer.
-const WORK_FETCHERS = /^(?:curl|wget|fetch|aria2c)$/, WORK_INTERP = /^(?:(?:ba|da|z|k|a|mk|fi)?sh|python[\d.]*|perl|ruby|node|php|source|\.)$/;
+// whose pipeline ends in a shell or an interpreter (past sudo, env, their kin and a "("), or a shell, an interpreter or
+// eval handed a fetcher's output by <( … ), < <( … ), $( … ) or backticks. What the pipe hands is code unless the
+// interpreter is given its code another way (workReadsPipe, R-6): for a shell only -c does that (-e, -x, -o pipefail
+// are options; -s, - and /dev/stdin read the pipe whatever follows); for python, perl, ruby or node -c, -e or -m does,
+// and so does a file (curl … | python3 -m json.tool reads data).
+const WORK_FETCHERS = /^(?:curl|wget|fetch|aria2c)$/, WORK_INTERP = /^(?:(?:ba|da|z|k|a|mk|fi)?sh|python[\d.]*|perl|ruby|node|php|source|\.)$/, WORK_SHELL = /^(?:ba|da|z|k|a|mk|fi)?sh$/;
 const WORK_FETCHRUN = 'Not run: it runs code it fetches from the network as it runs, so no ask could show you that code or pin it. Download it to a file first (for example: curl -fsSL -o install.sh <address>), then run that file: the download is one change, and the run is asked with the file’s text shown and pinned. Nothing ran.';
+// Whether the interpreter at t[j] reads its code from what comes in on its input.
+function workReadsPipe(t, j) {
+  const shell = WORK_SHELL.test(String(t[j].w).split('/').pop());
+  for (let k = j + 1; t[k] && t[k].w !== undefined; k++) {
+    const w = t[k].w;
+    if (w === '-' || w === '/dev/stdin' || /^\/dev\/fd\/0$|^\/proc\/self\/fd\/0$/.test(w)) return true;
+    if (w === '--') return shell ? !(t[k + 1] && t[k + 1].w !== undefined) : false;
+    if (shell && /^[-+][A-Za-z]+$/.test(w)) {
+      if (w.startsWith('-') && w.includes('c')) return false;
+      if (w.startsWith('-') && w.includes('s')) return true;
+      if (/o/.test(w.slice(1))) k++;
+      continue;
+    }
+    if (!shell && /^-[A-Za-z]*[cemE]/.test(w)) return false;
+    if (w.startsWith('-')) continue;
+    return false;
+  }
+  return true;
+}
 function workFetchRun(command) {
   const t = shellWords(String(command)), base = w => String(w).split('/').pop(), word = j => t[j] && t[j].w !== undefined;
+  const fetches = w => /(?:\$\(|`)\s*(?:\S*\/)?(?:curl|wget|fetch|aria2c)\b/.test(w);
   let fetched = false;
   for (let i = 0; i < t.length; i++) {
     const x = t[i];
@@ -424,17 +537,13 @@ function workFetchRun(command) {
     if (word(i) && WORK_FETCHERS.test(base(x.w))) fetched = true;
     if (x.op === '|' && fetched) {
       let j = i + 1;
-      while (word(j) && (/^(?:sudo|doas|env|nice|nohup|time|command|exec|stdbuf|ionice|timeout)$/.test(base(t[j].w)) || /^-|^[A-Za-z_]\w*=|^\d+[smhd]?$/.test(t[j].w))) j++;
-      // (an interpreter handed code by -c, -m, -e or a file reads what comes in as data, not code; -s or - reads code)
-      if (word(j) && WORK_INTERP.test(base(t[j].w))) {
-        let k = j + 1, data = false;
-        for (; word(k); k++) if (/^-(?:\w*[cme]\w*)$/.test(t[k].w) && !/^-s$/.test(t[k].w) || (!t[k].w.startsWith('-') && t[k].w !== '-')) { data = true; break; }
-        if (!data) return true;
-      }
+      while (t[j]?.op === '(' || (word(j) && (/^(?:sudo|doas|env|nice|nohup|time|command|exec|stdbuf|ionice|timeout)$/.test(base(t[j].w)) || /^-|^[A-Za-z_]\w*=|^\d+[smhd]?$/.test(t[j].w)))) j++;
+      if (word(j) && WORK_INTERP.test(base(t[j].w)) && workReadsPipe(t, j)) return true;
     }
-    if (word(i) && WORK_INTERP.test(base(x.w))) {
+    if (word(i) && (WORK_INTERP.test(base(x.w)) || x.w === 'eval')) {
       if (t[i + 1]?.op === '<' && t[i + 2]?.op === '(' && word(i + 3) && WORK_FETCHERS.test(base(t[i + 3].w))) return true;
-      for (let j = i + 1; word(j); j++) if (/(?:\$\(|`)\s*(?:\S*\/)?(?:curl|wget|fetch|aria2c)\b/.test(t[j].w)) return true;
+      if (t[i + 1]?.op === '<' && t[i + 2]?.op === '<' && t[i + 3]?.op === '(' && word(i + 4) && WORK_FETCHERS.test(base(t[i + 4].w))) return true;
+      for (let j = i + 1; word(j); j++) if (fetches(t[j].w)) return true;
     }
   }
   return false;
@@ -450,6 +559,17 @@ function workKeyCode(sorted) {
   if (!list.length) return;
   const said = list.slice(0, 3).map(u => u.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 120)).join('; ');
   throw new HttpError(409, `Not run: it runs code the command doesn’t show (${said}), and a key goes only to code you are shown before you say yes. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+}
+// Nor to a command the sorter couldn't read all of (its unreadable, R-3: a loop, a test, a function, a shell it reads
+// another way), nor to one that runs a program it doesn't know (its unknownProgram), whose scripts it can't tell. Until
+// the sorter gives unreadable, its own words for such a doubt stand in for it.
+const WORK_DOUBT = /\bthe sorter (?:does not|doesn’t|doesn't|could not|couldn’t) read|\bthe sorter reads only bash/;
+function workKeyDoubt(sorted) {
+  const u = sorted?.unreadable, said = s => String(s).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\.$/, '').slice(0, 160);
+  const doubt = Array.isArray(u) ? u.filter(Boolean).map(said).join('; ') : typeof u === 'string' && u ? said(u) : u === true ? 'part of it'
+    : u === undefined && sorted?.class === 'risky' && WORK_DOUBT.test(String(sorted?.why || '')) ? said(sorted.why) : '';
+  if (doubt) throw new HttpError(409, `Not run: the sorter couldn’t read all of this command (${doubt}), so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Put what it runs in one script, run that script by its name with the key, and ask again. Nothing ran.`);
+  if (typeof sorted?.unknownProgram === 'string' && sorted.unknownProgram) throw new HttpError(409, `Not run: it runs “${said(sorted.unknownProgram)}”, a program the sorter doesn’t know, so what it runs can’t be shown or pinned, and a key goes only to code you are shown. Run a script by its name with the key (bash x.sh, python3 x.py), and ask again. Nothing ran.`);
 }
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
 // refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
@@ -488,7 +608,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
   if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
   // (then code it runs unseen, workKeyCode: after the walls' own refusal, whose words come first)
-  if (keys.length) workKeyCode(sorted);
+  if (keys.length) { workKeyCode(sorted); workKeyDoubt(sorted); }
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
   // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
