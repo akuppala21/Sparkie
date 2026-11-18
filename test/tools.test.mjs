@@ -196,7 +196,11 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
   test('the page and paired Telegram core prompts both stay under 2,500 characters', { timeout: 120000 * SLOW }, async () => {
     const sent = await brainSent(T.fleet);
     for (const [channel, turn] of [['page', sent], ['telegram', sent.catalog.telegram]]) {
-      assert.deepEqual(sorted(turn.tools.map(t => t.function.name)), sorted(CORE_TOOLS), channel);
+      const offered = new Set(turn.tools.map(t => t.function.name));
+      assert.ok(CORE_TOOLS.every(name => offered.has(name)), `${channel}: all core tools are offered`);
+      // The fingerprint greeting can open checks; none of those tools add optional prompt lines.
+      assert.ok(turn.catalog.brain.lines.every(line => !line.tools.every(name => offered.has(name))),
+        `${channel}: only the fixed core prompt is measured`);
       const fixed = turn.system.split('\nWhat the owner asked you to remember')[0];
       assert.ok(fixed.length < 2500, `${channel}: ${fixed.length} characters`);
     }
