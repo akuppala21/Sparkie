@@ -424,4 +424,39 @@ case still covers the other path.
 These are ten added lines across the two fixtures. Every original assertion remains; the waits add
 completion/phase assertions without increasing a timeout or changing production code. Independent
 review confirmed the launch receipt precedes the prompt step and the healing event carries the restart
-operation ID. Focused checks and complete qualification of the corrected tree remain required.
+operation ID. The corrected candidate `6d5f6c359db0e5f20b43d8ca266e118b59a8d17b`, tree
+`466fb96096b5353ee801f05ba284355db7ec4368`, passed **3,489/3,489** strict checks on Spark 3,
+with no skipped or cancelled tests. GitHub then passed 3,488/3,489 plus its browser job; its sole
+failure is the separate application ordering defect A-68 below. The four A-67 cases passed.
+
+
+## A-68: an older status probe can report online after a confirmed shutdown
+
+**Accepted; blocks installation; repair independently reviewed, compute checks in progress.**
+GitHub run `44268435206`, attempt 1, on `6d5f6c359db0e5f20b43d8ca266e118b59a8d17b`
+finished with 3,488/3,489 strict checks passing and no skipped or cancelled tests. The desktop/phone
+browser job passed. Shard 2's sole failure was the original first `asleep.test.mjs` case: after
+`power_off` completed, `fleet_status` returned `state: online` with its wall plug off at zero watts.
+Qualification and release marking were skipped; this candidate was not installed.
+
+`collectStatus` can start or cache an online reading before `waitAndCut` finishes. `statusFor`
+previously combined that old reading with the current power record without ordering their evidence,
+and `fleet_status` consequently hid the intended-off state. The failing original case was unchanged
+by A-67 and remains unchanged in this repair.
+
+The smallest repair records the existing shutdown operation ID in `power.json` only after the cut
+is confirmed. Each node's probe remembers which cut preceded its start. The shared view projects an
+older online probe as unreachable/asleep while allowing a probe started after that cut to show a
+later wake. Removing the off record releases the projection. Failed or legacy cuts keep their
+existing behavior; a failed wake still shows its problem. Controller cache timestamps and the wall
+clock do not order these facts. No new polling, service, timer or state file is introduced. Private
+probe metadata is removed from the returned view, and the raw watcher cache is unchanged.
+
+The added `status-power-order.test.mjs` exercises real source functions with deterministic delayed
+probe replies, slow sibling nodes, repeated cuts, clock changes, controller cache lag, later successful
+connections, removed records, legacy records and failed switching. Explicit affected-test edges
+cover every source part it reads. Both start workflow versions now include the status functions
+they call; an added case varies each dependency and verifies both fingerprints change. Existing
+tests and assertions are retained. Independent
+source review accepted the repair; old-source controls and fixed-source execution remain separate
+evidence, followed by complete exact-tree qualification, installation and live behavior checks.

@@ -3297,7 +3297,7 @@ setTimeout(() => {
   setInterval(() => refreshPlugs().catch(() => {}), PLUGS_EVERY);
 }, 2000);
 /* ───────── Spark status (taking over from the original portal) ───────── */
-// Area: knowledge        Rules: R10, R24, R30, R37        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs
+// Area: knowledge        Rules: R10, R24, R30, R37, R56        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs, status-power-order.test.mjs
 // Owns: energy.json (writers: sampleEnergy)
 // Timers: collectStatus (every 30 s, after a first round 2 s after start)        Wakes: none
 // Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH
@@ -3408,7 +3408,9 @@ function collectStatus() {
   statusPending ||= (async () => {
     await refreshNodes(null);
     const nodes = await Promise.all(NODES.map(async n => {
-      try { return cleanStatus(n, await runWorker(n, { action: 'status' }, 25000)); } catch {
+      // The cut this probe starts after, not when the whole batch happens to finish. An older reply can arrive late.
+      const powerCutSeen = powerCutOperation(n.id);
+      try { return { ...cleanStatus(n, await runWorker(n, { action: 'status' }, 25000)), powerCutSeen }; } catch {
         return { id: n.id, name: sparkName(n), configured: true, reachable: false, state: 'unreachable' };
       }
     }));
@@ -3426,7 +3428,13 @@ async function statusFor(viewer, fresh) {
   // (the wall reading is taken again here, never from the cached copy: a plug plugs.json no longer maps to that Spark,
   // or the hub's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
-    const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
+    const off = powerMark(n.id), cut = powerCutOperation(n.id), w = wallFor(n.id), { wall: _cached, powerCutSeen, ...rest } = n;
+    // A completed cut beats a probe begun before it, even while the controller's cached reading still says on.
+    // A probe begun after that cut can prove it came back; no wall-clock or controller timestamp orders those facts.
+    if (rest.state === 'online' && off?.plugCut && cut && cut !== powerCutSeen) {
+      rest.reachable = false;
+      rest.state = 'unreachable';
+    }
     return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' && !off.problem } : {}) };
   });
   // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)
@@ -10323,7 +10331,7 @@ async function pickSpark(j, n, args, viewer) {
 /* ───────── workflows ───────── */
 // Area: core
 // Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
-// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, telegram-owner-adapters.test.mjs, operation-history.test.mjs
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, telegram-owner-adapters.test.mjs, operation-history.test.mjs, status-power-order.test.mjs
 // Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
 //   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
 //   writes it, noteUpdate reads it)
@@ -10350,6 +10358,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
   powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  // pickVersion reads shared status before a wake: changing its power ordering changes both start versions.
+  statusFor, collectStatus, powerCutOperation, powerState, powerMark, cleanStatus, runWorker, refreshNodes, wallFor,
+  sampleEnergy, noteSparkStates, energyView, tasksNow,
   lessonOf,
   lessonsKept,
   PASS_OVER_FAILURES,
@@ -24500,7 +24511,7 @@ function wakeLiveStatus(inv) {
     memoryFreeGiB: Number.isFinite(s.memAvailable) ? s.memAvailable / 2 ** 30 : null, diskFreeGiB: Number.isFinite(s.diskFree) ? s.diskFree / 2 ** 30 : null })) };
 }
 /* ───────── power-aware Sparks (contract 9.22, R41) ───────── */
-// Area: features        Rules: R19, R22, R23, R32, R41        Tests: power.test.mjs, heal-status.test.mjs
+// Area: features        Rules: R19, R22, R23, R32, R41, R56        Tests: power.test.mjs, heal-status.test.mjs, status-power-order.test.mjs
 // Owns: power.json (writers: savePower)
 // Timers: powerTick (every 60 s, first 5 minutes after start)
 // Wakes: a compute Spark it powered off, or one shut down with a switchable plug, never the hub: power_on, a start or
@@ -24543,7 +24554,7 @@ const IDLE_GPU_PERCENT = 5, IDLE_LOAD = 2;
 const POWER_WHY = { idle: 'idle', asked: 'asked', start: 'a start needed it', outside: 'turned on outside Spark Console' };
 
 // power.json: { idleMinutes, changedAt, changedBy, off: { spark4: { at, why: 'idle'|'asked', by, parked: ['spark4/sc-…'],
-// plugCut, problem, models, memTotal, diskFree } } } (the last three from its look just before it went off, D5). A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
+// plugCut, cutOperation, problem, models, memTotal, diskFree } } } (the last three from its look just before it went off, D5). A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
 // (R20), so a read error writes nothing.
 function powerState(strict = false) {
   let v = null;
@@ -24560,6 +24571,12 @@ function savePower(change) {
   return s;
 }
 const offRecord = (id, rec) => savePower(s => { if (rec) s.off[id] = { ...(s.off[id] || {}), ...rec }; else delete s.off[id]; });
+// The existing operation id is proof of a completed cut. A status probe remembers which cut preceded it, so
+// delayed replies and wall-clock changes cannot turn an old online reading into evidence of a later wake.
+function powerCutOperation(id) {
+  const r = powerState().off[id];
+  return r?.plugCut === true && typeof r.cutOperation === 'string' && r.cutOperation ? r.cutOperation : null;
+}
 // A Spark Spark Console powered off (or is powering off): off on purpose.
 const consoleOff = id => Boolean(powerState().off[id]);
 const poweredOffNow = x => (x.sparks || [x.spark]).some(consoleOff);
@@ -24985,7 +25002,7 @@ async function powerOffJob(j, ids, ctx, why, boxYes = false) {
   // (the model names on its disk go on the record, so a call for one of them knows which Spark to turn on)
   // (a record that can't be written: nothing is shut down, what was parked is put back, and the records written go)
   try {
-    for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, problem: null,
+    for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, cutOperation: null, problem: null,
       ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}),
       ...(inv.sparks.find(x => x.id === id)?.online ? { memTotal: inv.sparks.find(x => x.id === id).memTotal, diskFree: inv.sparks.find(x => x.id === id).diskFree } : {}) });
   } catch (e) {
@@ -25056,7 +25073,7 @@ async function waitAndCut(j, id, wentDown, rec) {
     step(j, `${name} is shut down (${w.watts} W at the wall): switching its plug off`);
     await switchPlug(id, false);
   }
-  const r = offRecord(id, { ...(wentDown ? {} : { ...rec, parked: [] }), plugCut: true, problem: null }).off[id];
+  const r = offRecord(id, { ...(wentDown ? {} : { ...rec, parked: [] }), plugCut: true, cutOperation: j.id, problem: null }).off[id];
   fleetEvent({ type: 'spark-powered-off', spark: id, why: r.why, by: r.by || null, parked: (r.parked || []).map(k => String(k).split('/').pop()) });
   note(j, `${name} is off`);
 }

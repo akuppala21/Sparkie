@@ -1,5 +1,5 @@
 /* ───────── Spark status (taking over from the original portal) ───────── */
-// Area: knowledge        Rules: R10, R24, R30, R37        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs
+// Area: knowledge        Rules: R10, R24, R30, R37, R56        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs, status-power-order.test.mjs
 // Owns: energy.json (writers: sampleEnergy)
 // Timers: collectStatus (every 30 s, after a first round 2 s after start)        Wakes: none
 // Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH
@@ -110,7 +110,9 @@ function collectStatus() {
   statusPending ||= (async () => {
     await refreshNodes(null);
     const nodes = await Promise.all(NODES.map(async n => {
-      try { return cleanStatus(n, await runWorker(n, { action: 'status' }, 25000)); } catch {
+      // The cut this probe starts after, not when the whole batch happens to finish. An older reply can arrive late.
+      const powerCutSeen = powerCutOperation(n.id);
+      try { return { ...cleanStatus(n, await runWorker(n, { action: 'status' }, 25000)), powerCutSeen }; } catch {
         return { id: n.id, name: sparkName(n), configured: true, reachable: false, state: 'unreachable' };
       }
     }));
@@ -128,7 +130,13 @@ async function statusFor(viewer, fresh) {
   // (the wall reading is taken again here, never from the cached copy: a plug plugs.json no longer maps to that Spark,
   // or the hub's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
-    const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
+    const off = powerMark(n.id), cut = powerCutOperation(n.id), w = wallFor(n.id), { wall: _cached, powerCutSeen, ...rest } = n;
+    // A completed cut beats a probe begun before it, even while the controller's cached reading still says on.
+    // A probe begun after that cut can prove it came back; no wall-clock or controller timestamp orders those facts.
+    if (rest.state === 'online' && off?.plugCut && cut && cut !== powerCutSeen) {
+      rest.reachable = false;
+      rest.state = 'unreachable';
+    }
     return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' && !off.problem } : {}) };
   });
   // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)

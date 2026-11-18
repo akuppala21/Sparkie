@@ -78,4 +78,6 @@ agrees with the scoped repairs. Full release qualification and installation rema
 
 | A-66 | Long link metadata rejects a permitted fixture omission | Fixed; independent review; four old-source failures and 171/171 fixed checks | Complete integrated qualification and install |
 
-| A-67 | Recovery fixtures inject the next fault before the prior phase finishes | Owner-approved sequencing corrections; every assertion retained; independent review | Focused checks and complete corrected-tree qualification |
+| A-67 | Recovery fixtures inject the next fault before the prior phase finishes | Owner-approved corrections; every assertion retained; independent review; complete compute 3,489/3,489, all four cases also pass hosted | Final qualification of A-68 candidate |
+
+| A-68 | Older status reports online after a confirmed shutdown | Accepted; minimal causal ordering repair independently reviewed; new regressions in compute checks | Complete qualification and live shutdown/wake check |

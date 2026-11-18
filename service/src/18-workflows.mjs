@@ -1,7 +1,7 @@
 /* ───────── workflows ───────── */
 // Area: core
 // Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
-// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, telegram-owner-adapters.test.mjs, operation-history.test.mjs
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, telegram-owner-adapters.test.mjs, operation-history.test.mjs, status-power-order.test.mjs
 // Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
 //   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
 //   writes it, noteUpdate reads it)
@@ -28,6 +28,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
   powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  // pickVersion reads shared status before a wake: changing its power ordering changes both start versions.
+  statusFor, collectStatus, powerCutOperation, powerState, powerMark, cleanStatus, runWorker, refreshNodes, wallFor,
+  sampleEnergy, noteSparkStates, energyView, tasksNow,
   lessonOf,
   lessonsKept,
   PASS_OVER_FAILURES,

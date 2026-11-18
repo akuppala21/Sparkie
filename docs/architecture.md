@@ -144,6 +144,7 @@ flowchart TD
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
   STATE -->|"desired list, heal tries, the brain's left-down mark; parked or powered off: never healed"| HEAL
+  STATE -->|"confirmed power cut operation; status passes over probes begun before it"| SENSE
   SENSE -->|"wall power, read only"| PLUGS
   JOBS -->|"power jobs only: switchPlug, never the hub’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark after parked state is saved"| SSH
@@ -244,12 +245,11 @@ after their press, inside the net (`netGuarded` in `21-net.mjs`): kept if the wa
 - **The service is replaceable.** The unit has `MemoryMax=512M`, `NoNewPrivileges` and
   `Restart=always`. `undo_update` refuses while jobs run, restores files from the newest whole snapshot without
   `same`, and leaves state. Installs are additive and replace `config.json`; its `ownerLogin` overrides `access.json`.
-- **No single "online", no single container list.** Six views of different ages can disagree. An offline Spark keeps
-  its containers `running` in `knowledge.json`, and healing, the passkey gate and `pickContainer` read that stored
-  flag; only the `workloads` action and fleet notes show those rows as last seen (`sparkOff`). For up to one watcher
-  round after a Spark comes back they read as running again before the watcher has looked; one failed status call
-  pauses crash restarts there for 30 minutes; the intent gate picks a stop or restart target from the watcher’s view,
-  up to a minute old.
+- **No single "online", no single container list.** Six views differ in age. Offline Sparks keep containers
+  `running` in `knowledge.json`; healing, the passkey gate and `pickContainer` read that flag. Only `workloads` and
+  fleet notes mark rows as last seen (`sparkOff`). After return, rows read as running before the next watcher round.
+  One failed status call pauses crash restarts for 30 minutes; the intent gate's stop or restart target comes from
+  the watcher's view, up to a minute old.
 - **Tests skip real paths:** `test/stand-in-fleet.md` lists them (“What no test reaches”).
 - **`fleetNotes` throws on an event with no `at`** (a hand-edited `events.jsonl`): that turn ends with an error and
   the chat is freed. `state.test.mjs` uses this as its setup fault; whoever makes `fleetNotes` safe gives that test

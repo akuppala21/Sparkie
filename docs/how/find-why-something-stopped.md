@@ -27,6 +27,9 @@ power-off job also seeds a missing list before its first stop); `watchSpark` (`1
 
 ## Also update
 
+- A Spark just powered off: shared status compares each probe with the completed cut operation in `power.json`.
+  Keep that order through late replies and slow fleet batches; a probe begun after the cut may prove it came back,
+  even if the plug controller still reports off. `status-power-order.test.mjs` checks both directions without waits.
 - A power-off before the first watcher round: keep the fresh look’s seed before stops and the saved parked-state
   guard before shutdown; cover missing state and failed saves in `power.test.mjs`.
 - A wrong skip or a wrong bring-back: a test in the closest heal test file that fails without the fix.
@@ -45,6 +48,7 @@ power-off job also seeds a missing list before its first stop); `watchSpark` (`1
 
 ## Tests
 
+- `status-power-order.test.mjs`, `asleep.test.mjs`, `power.test.mjs`.
 - `t45-created-receipt.test.mjs`, `t45-job-folder.test.mjs`, `t45-adopt-job.test.mjs`.
 - `t45-return.test.mjs`, `t45-target.test.mjs`, `t45-fleet.test.mjs`.
 - `heal.test.mjs`, `heal-more.test.mjs`, `heal-displaced.test.mjs`, `heal-newer.test.mjs`, `heal-power.test.mjs`,
