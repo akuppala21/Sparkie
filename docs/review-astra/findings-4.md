@@ -493,3 +493,20 @@ The two new regressions ran on Spark 2 with identical final test bytes. Both fai
 expected missing mapping and reused job name; both passed on repair build `587f8d4cb84f`. The
 containers used the ordinary user, no network and no Docker socket. These are focused development
 controls; they do not replace complete qualification or the live container request.
+
+## A-70: Sparkie guesses settings for an existing app
+
+**Accepted. The prompt repair is in the source. A fresh real-brain evaluation is pending.**
+In R8, the real-brain `keep-app` case failed all three runs. A repeat on the same build and
+serving profile failed once more. The owner’s words named Open WebUI on Spark 3. The practice
+fleet already held a stopped container called `open-webui`. Sparkie made one `keep_running`
+call with a guessed image, port and volume. The tool returned `needs-ok` with `askedBecause:
+words` and no operation. Sparkie then said the app was absent, which the tool had never reported.
+
+The diagnostic at `/tmp/sparkie-resume-20261117/r8/keep-app-diagnostic` preserves the partial
+result and masked call, reply and operations evidence. That one-case run is diagnostic evidence.
+
+`systemPrompt` now tells Sparkie to call `keep_running` with just the Spark and container first,
+adding `do` for restart or stop. Its setup guidance applies to a requested new app or job or when
+the tool reports the app missing. The existing `keep-app` case checks the exact call and its result.
+This changes `brainReads`, so the new build needs its own full real-brain evaluation.

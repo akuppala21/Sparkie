@@ -10,10 +10,11 @@ nightly schedule. The installed console passed all **14/14** desktop and phone U
 
 Live checks confirmed that Spark 2 shut down and woke for an app that then answered HTTP 200.
 A-69 remains open. Its repair, build `587f8d4cb84f`, passed independent static review and both focused controls, with both old-source controls failing
-as expected. It awaits exact-build qualification and a live container check. The brain evaluation is
-in progress with 33 completed runs passing. Telegram setup needs the owner to create the bot.
+as expected. It awaits exact-build qualification and a live container check. R8's real-brain evaluation
+exposed A-70: Sparkie guessed setup details for an app that was already there. A prompt repair is in source
+and needs a fresh evaluation. Telegram setup needs the owner to create the bot.
 Across-Spark serving and the remaining contract gaps still need qualification.
-[Live findings A-68 and A-69](findings-4.md#a-68-an-older-status-probe-can-report-online-after-a-confirmed-shutdown)
+[Live findings A-68 through A-70](findings-4.md#a-68-an-older-status-probe-can-report-online-after-a-confirmed-shutdown)
 
 ## Historical snapshots from earlier candidates
 
