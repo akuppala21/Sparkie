@@ -595,3 +595,21 @@ controls and confirmations and brief replies. A new test measures both actual ch
 2,500-character limit; no existing assertion, evaluation case, grade or acceptance bar changes. The prior two
 owner-approved sequencing fixture corrections remain applied. Focused model behavior and exact-tree software
 qualification are still required; this entry records a correction, not a release pass.
+
+
+## R14 software rejection and wording compatibility correction (2026-11-18)
+
+R14 commit `3713341236bf42082c95bd41523fce9bd8ac76a8`, build `ecc2668357d8`, passed all six
+unchanged focused brain grades with no confirmation calls, benchmarks, changes or operations. The independent
+reviewer retained concerns about two optional benchmark offers and a predicted speed range derived from another
+setup. Those concerns remain open. The root proceeded to collect broader evidence without changing grades or
+declaring the concerns resolved.
+
+The normal affected run selected 107 files and passed 2,081 of 2,083 tests. Two existing assertions in
+`test/sparkie.test.mjs` reject the word `record` in the fixed prompt; the phrase `recorded measurements` matched.
+The candidate did not land or reach GitHub. Its concurrent full brain run was interrupted after this software
+rejection, so it cannot qualify a release. Evidence is in `/tmp/sparkie-resume-20261117/r14/affected-terminal.json`.
+
+The next candidate uses `saved measurements` with the same lookup instruction. No test, grader, acceptance bar or
+action gate changes. The failing software file and channel-budget regression must pass before further brain or
+broader software runs. The complete final candidate still requires its own qualification.
