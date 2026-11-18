@@ -184,7 +184,13 @@ function modelStep(turn, sent) {
     // (read as its brain setup says, 13-ask.mjs: thinking, in whichever field or tags it comes, never reaches the answer)
     const read = answerReader(tuned);
     let content = '';
-    const say = pieces => { for (const t of pieces) { content += t; turnDelta(turn, t); } };
+    const say = pieces => {
+      for (const t of pieces) {
+        content += t;
+        turn.answer += t;
+        if (!turn.holdProse) emit({ type: 'delta', text: t });
+      }
+    };
     modelInUse++;
     // Every way the call ends settles it once and gives the model back: the answer's end, an error on the request or
     // the answer, an answer that closes before it ends, the timeout, and the owner's /stop (link.cancel, whatever state
