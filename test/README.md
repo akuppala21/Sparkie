@@ -54,9 +54,9 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
   its commit on `main` (R58). Never on the hub.
 - **GitHub, final release qualification** (`.github/workflows/full-run.yml`): every push to `main`, or a manual
   full-run dispatch on a branch, runs the whole strict suite on three standard `ubuntu-24.04` hosted runners.
-  Each runs two files at once with `SPARK_TEST_SLOW=2`. Sorted file names are divided by position into three disjoint
-  lists; no tests are dropped. Three runners keep six files moving without overloading a two-core runner. This is
-  a starting choice, not a measured speed promise; file times in the logs show the next useful adjustment.
+  Each runs four files at once with `SPARK_TEST_SLOW=2`. Sorted file names are divided by position into three disjoint
+  lists; no tests are dropped. Three runners keep twelve files moving on the public repository's four-core runners.
+  File times in the logs show the actual duration.
   Each passing worker writes a receipt naming its exact files, clean commit, tree, GitHub run and attempt. A separate
   read-only job refuses missing, duplicate, malformed or mixed receipts, verifies complete coverage, then writes the
   usual lock only while the source tree is unchanged. The browser check has its own dependency install and must also
@@ -66,11 +66,11 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
   pushes a branch. Manual branch runs keep their lock artifact but create no release tag. Superseded runs on the same
   branch are canceled. To retry a failed full run, rerun **all jobs**: receipts from an earlier attempt cannot qualify.
 - **GitHub, development checks for now** (`.github/workflows/focused.yml`): manually dispatch with space-separated
-  existing `test/*.test.mjs` names. Three standard runners divide only those files, two at a time, with strict checks.
+  existing `test/*.test.mjs` names. Three standard runners divide only those files, four at a time, with strict checks.
   These results never create a lock or release tag. There is no automatic full suite for each branch edit or PR.
   Use GitHub until the owner says compute Sparks are available; final release qualification stays on GitHub after
-  that. There is no nightly schedule yet. Standard hosted CPU runners use no larger or paid runner capacity, but
-  private-repository included minutes and account limits are unknown; this setup cannot promise zero billing.
+  that. There is no nightly schedule yet. Runner jobs require public repository visibility and use standard hosted CPU runners, whose compute is free.
+  Private repositories skip these jobs. Artifact storage has a separate allowance; retention is seven days.
 - **Whole-suite runner commands**: the existing `node test/lock.mjs` still runs the whole suite locally or on a
   compute Spark. GitHub alone uses `--shard=1/3 --receipts=<outside-folder>` on each worker, then
   `--aggregate=<downloaded-receipts-folder> --shards=3`. Shards require a clean GitHub checkout and current run attempt;

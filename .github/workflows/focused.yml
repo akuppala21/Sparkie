@@ -19,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   tests:
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -55,7 +56,7 @@ jobs:
           const files = [...new Set(explicit.split(/\s+/))].sort();
           if (!files.length || files.some(f => !/^test\/[A-Za-z0-9_-]+\.test\.mjs$/.test(f) || !existsSync(f))) throw new Error('Name existing test/*.test.mjs files.');
           console.log(`Selected ${files.length} files; shard ${process.env.TEST_SHARD}/3; commit ${process.env.GITHUB_SHA}`);
-          const r = spawnSync(process.execPath, ['--test', '--test-concurrency=2', `--test-shard=${process.env.TEST_SHARD}/3`, ...files], { stdio: 'inherit' });
+          const r = spawnSync(process.execPath, ['--test', '--test-concurrency=4', `--test-shard=${process.env.TEST_SHARD}/3`, ...files], { stdio: 'inherit' });
           process.exit(r.status ?? 1);
           JS
       - name: Keep test output even on failure
@@ -68,7 +69,7 @@ jobs:
           retention-days: 7
 
   browser:
-    if: inputs.browser
+    if: inputs.browser && github.event.repository.visibility == 'public'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

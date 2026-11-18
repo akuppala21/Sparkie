@@ -19355,7 +19355,7 @@ action({
   },
 });
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by propose_update, C8c) ───────── */
-// Area: features        Rules: R62, R52, R43, R23, R47        Tests: box-fill.test.mjs, box-more.test.mjs
+// Area: features        Rules: R62, R52, R43, R23, R47        Tests: box-fill.test.mjs, box-more.test.mjs, box-fill-pax.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -19433,6 +19433,7 @@ function tarRead(buf, folder, skip = new Set()) {
     const h = buf.subarray(off, off + 512);
     if (!pax) from = off;
     if (h.every(x => x === 0)) {
+      if (pax) throw fillRefuse('an extended header is damaged', null);
       if (!buf.subarray(off).every(x => x === 0)) throw fillRefuse('there are bytes after the stream’s end', null);
       break;
     }
@@ -19446,8 +19447,9 @@ function tarRead(buf, folder, skip = new Set()) {
     if (start + size > buf.length) throw fillRefuse('the stream ends inside an entry', shown);
     const data = buf.subarray(start, start + size);
     off = start + Math.ceil(size / 512) * 512;
-    // (pax: git writes a path too long for ustar this way, and a global comment for a commit; nothing else is taken)
+    // (pax: git's long path or link target, timestamps and a global commit comment; link targets may only be dropped)
     if (type === 'x' || type === 'g') {
+      if (pax) throw fillRefuse('an extended header is damaged', shown);
       if (size > 65536) throw fillRefuse('an extended header is too long', shown);
       const keys = new Map();
       for (let i = 0; i < data.length;) {
@@ -19459,13 +19461,16 @@ function tarRead(buf, folder, skip = new Set()) {
         i += len;
       }
       for (const k of keys.keys()) {
-        if (k === 'linkpath' && !(type === 'x' && skip.has(relOf(keys.get('path'))))) throw fillRefuse('an entry is a link', keys.get('path') ?? shown);
-        if (!(type === 'x' ? ['path', 'mtime', 'atime', 'ctime'] : ['comment']).includes(k)) throw fillRefuse(`an extended header holds a key the reader doesn’t know (${fillShow(k).slice(0, 40)})`, shown);
+        if (k === 'linkpath' && (type !== 'x' || !skip.size)) throw fillRefuse('an entry is a link', keys.get('path') ?? shown);
+        if (!(type === 'x' ? ['path', 'mtime', 'atime', 'ctime', 'linkpath'] : ['comment']).includes(k)) throw fillRefuse(`an extended header holds a key the reader doesn’t know (${fillShow(k).slice(0, 40)})`, shown);
       }
       if (type === 'x') pax = keys;
       continue;
     }
     let name = pax?.has('path') ? pax.get('path') : utf8(raw, shown);
+    // A long git link target needs linkpath even when its name fits ustar. Resolve that name first; only a
+    // prelisted fixture link may lose this entire header+entry. Read back has no skip list and takes no links.
+    if (pax?.has('linkpath') && !(type === '2' && skip.has(relOf(name)))) throw fillRefuse('an entry is a link', name);
     pax = null;
     if ((type === '2' || type === '0' || type === '\0') && skip.has(relOf(name))) { drop.push([from, off]); continue; }
     if (type !== '0' && type !== '\0' && type !== '5') throw fillRefuse(`an entry is ${TAR_TYPES[type] || 'of a type the reader doesn’t know'}`, name);

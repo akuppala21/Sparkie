@@ -377,3 +377,25 @@ Combined A-64/A-65 source on tree `4cdcb92a1dd56294af8e284e1162539600e8de3f` pas
 workflow, build and document checks on Spark 3, with no skips or cancellations. All 18 combined file hashes and the
 generated service/documents were independently checked. Complete qualification of the new committed candidate,
 final GitHub checks, installation and real-Spark behavior remain required.
+
+
+## A-66: long fixture-link metadata prevents a source box from opening
+
+**Accepted; repaired and independently reviewed; focused checks pass.** GitHub's longer checkout path
+made a copied fixture link target 119 bytes. Git correctly emits a local PAX `linkpath` header without
+a separate `path` when the following name fits ustar. `tarRead` checked the skip list before reading
+that name, and its key list also rejected `linkpath`. The first self-change start failed and 15 later
+assertions consequently failed. The complete Spark run of the preceding candidate had passed 3,479/3,479;
+that shorter-path result did not establish this archive shape. Hosted run 44244832191 was cancelled
+after the owner reported the free Actions allowance was exhausted.
+
+The reader now resolves the following entry's name before allowing an exact prelisted type-2 link
+to be omitted, and removes its entire extended header with it. Readback still accepts no links.
+Unknown keys, chained headers and unfinished metadata are refused. The change adds no service or
+state. All 442 pre-existing test/fixture files remain unchanged. R62's existing limitations are retained.
+
+Identical added tests on old source produced four expected failures and three passes on Spark 3.
+Fixed tree `eff34e354d31bfbcc491e858c499cbdb9c8482db` passed **171/171** across seven files, with no
+skips or cancellations (dispatch `b837e22fc0d3493ba5b9db5e4097b063`). The actual Git archive fixture
+checks extracted files and absence of both omitted symlinks and their metadata. Independent review
+accepted commit `5e5a6a62`. Complete qualification of the integrated candidate and live checks remain.

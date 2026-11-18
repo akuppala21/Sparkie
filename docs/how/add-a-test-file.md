@@ -43,3 +43,5 @@ One file per feature in `test/`, run against the stand-in fleet, never a real Sp
 
 - `test/detail.test.mjs`: a short file on the stand-in fleet, its `Covers:` comment first.
 - `test/build.test.mjs`: a file that starts no fleet.
+- `test/box-fill-pax.test.mjs`: the production archive reader as a direct source fixture, with its
+  `DIRECT_TESTS` edge in `tools/affected.mjs`; a real git archive and additive hostile metadata cases.

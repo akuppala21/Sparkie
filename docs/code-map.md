@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 108 parts in `service/src/`, joined in name order into `service/server.mjs` (31333 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 108 parts in `service/src/`, joined in name order into `service/server.mjs` (31338 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -997,8 +997,8 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on the hub (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
-- **Area:** features. **Rules:** R62, R52, R43, R23, R47. **Tests:** box-fill.test.mjs, box-more.test.mjs
-- **Lines:** 325
+- **Area:** features. **Rules:** R62, R52, R43, R23, R47. **Tests:** box-fill.test.mjs, box-more.test.mjs, box-fill-pax.test.mjs
+- **Lines:** 330
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

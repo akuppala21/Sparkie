@@ -75,3 +75,5 @@ agrees with the scoped repairs. Full release qualification and installation rema
 
 | A-64 | Restored state can revive a self-test's old stop permission | Fixed; independent source/evidence review; seven old-source failures and 27/27 fixed checks, ordinary rollback preserved | Complete qualification of the corrected candidate |
 | A-65 | Stop workflow fingerprint omits the self-test producer | Fixed; one dependency entry; original assertion passes in combined 125/125 checks | Complete qualification of the corrected candidate |
+
+| A-66 | Long link metadata rejects a permitted fixture omission | Fixed; independent review; four old-source failures and 171/171 fixed checks | Complete integrated qualification and install |

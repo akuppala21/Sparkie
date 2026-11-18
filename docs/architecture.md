@@ -61,7 +61,7 @@ flowchart TD
   WORK["run and write_file (21-work, 21-write): the sorter (20-sort), then the ladder (21-ladder): at once, a button, the dangerous ask or refused"]
   HELPER["Root helper on each Spark (deploy/spark-console-root, R42): look wall, run wall, root"]
   NETG["Lock-out net (21-net, R71): a timer on that Spark puts the ways in back unless kept"]
-  BOX["The box (21-box, R62): a throw-away container on a compute Spark"]
+  BOX["The box (21-box, R62): a throw-away container on a compute Spark; source files read as data"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN

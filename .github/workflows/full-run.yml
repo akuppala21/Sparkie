@@ -28,6 +28,7 @@ defaults:
 
 jobs:
   suite:
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -54,7 +55,7 @@ jobs:
       - name: All strict tests, divided across three standard runners
         env:
           SPARK_TEST_SLOW: 2
-          SPARK_TEST_CONCURRENCY: 2
+          SPARK_TEST_CONCURRENCY: 4
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
@@ -116,6 +117,7 @@ jobs:
           retention-days: 7
 
   browser:
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

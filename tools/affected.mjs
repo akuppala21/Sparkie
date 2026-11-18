@@ -51,6 +51,7 @@ export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passke
 export const DOCS_TEST = 'test/docs.test.mjs';
 // Direct-import and source-fixture tests do not execute server.mjs, so its map cannot discover these edges.
 export const DIRECT_TESTS = {
+  '21-box-fill.mjs': ['test/box-fill-pax.test.mjs'],
   '08-cluster.mjs': ['test/t45-engine-boundary.test.mjs'],
   '11-downloads.mjs': ['test/download-stall.test.mjs'],
   '13-ask.mjs': ['test/brain-ask.test.mjs', 'test/rounds.test.mjs'],

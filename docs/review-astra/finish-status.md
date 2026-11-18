@@ -1,5 +1,12 @@
 # Sparkie: remaining completion checks
 
+Latest resumption: the prior candidate `378a9fab` passed 3,479/3,479 complete compute checks.
+Hosted qualification exposed A-66, a path-length-dependent source-archive rejection, then was cancelled
+when the owner reported exhausted free Actions minutes. Both hosted workflows were disabled.
+A-66 is now independently reviewed with 171/171 focused compute checks and four expected old-source
+failures. Final integrated qualification, authorized install on Spark 1 and live acceptance remain.
+The owner resumed work and requested the smallest implementation and fastest completion.
+
 Source audit: 2026-11-17. Completed hosted evidence below is through `7bbed38ff40cd39c4545dd85706b410783520a9d`;
 its 23 selected test files passed. The newer complete compute run exposed the additional issues below; the repaired candidate has not been released.
 This is a candidate-freeze completion checklist, not a tested or deployed release certificate. The final A-60–A-63
