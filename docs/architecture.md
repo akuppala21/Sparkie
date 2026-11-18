@@ -46,7 +46,7 @@ flowchart TD
   JOBS["Jobs and per-Spark claims (07-jobs)"]
   RETURN["Failed-start recovery (17-rollback): live pairs whole; stopped copies stay off"]
   SSH["spawnOn and run (02-ssh): ssh, or local bash on the hub"]
-  FLEET["Sparks: containers, models on port 8000, apps on their own ports, model files, worker.py"]
+  FLEET["Sparks: models on :8000, apps, model files, worker.py"]
   SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, plugs 15 s, inventory on demand and from the heal loops"]
   PLUGS["Plug controller on the hub (deploy/plugs.sh): Tapo plugs over Matter"]
   POWER["Power (21-power): power_off, power_on, power_settings, the idle loop; power.json"]
@@ -129,6 +129,7 @@ flowchart TD
   SENSE -->|"fleet notes; a job's end (keep_running once), once, in the chat that started it (jobEnded, A13)"| CHAT
   JOBS -->|"docker commands; self-test kill/stop: matching id, start time and note; fixed reads"| SSH
   JOBS -->|"test prompt and speed test: HTTP to port 8000, no SSH; an app's link: one GET /"| FLEET
+  FLEET -->|"apps and jobs via tailnet"| LISTEN
   SENSE -->|"read-only probes"| SSH
   SSH -->|"scripts"| FLEET
   SENSE -->|"watcher calls maybeHeal on a crash (the self-test drill's kill is one). healPass reads offline and online events"| HEAL

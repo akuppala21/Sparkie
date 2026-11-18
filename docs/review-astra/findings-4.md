@@ -432,7 +432,7 @@ failure is the separate application ordering defect A-68 below. The four A-67 ca
 
 ## A-68: an older status probe can report online after a confirmed shutdown
 
-**Accepted; blocks installation; repair independently reviewed, compute checks in progress.**
+**Closed. The R8 repair was independently reviewed, qualified, installed and verified on Spark 2.**
 GitHub run `44268435206`, attempt 1, on `6d5f6c359db0e5f20b43d8ca266e118b59a8d17b`
 finished with 3,488/3,489 strict checks passing and no skipped or cancelled tests. The desktop/phone
 browser job passed. Shard 2's sole failure was the original first `asleep.test.mjs` case: after
@@ -457,6 +457,39 @@ probe replies, slow sibling nodes, repeated cuts, clock changes, controller cach
 connections, removed records, legacy records and failed switching. Explicit affected-test edges
 cover every source part it reads. Both start workflow versions now include the status functions
 they call; an added case varies each dependency and verifies both fingerprints change. Existing
-tests and assertions are retained. Independent
-source review accepted the repair; old-source controls and fixed-source execution remain separate
-evidence, followed by complete exact-tree qualification, installation and live behavior checks.
+tests and assertions are retained.
+
+R8 commit `1878ce80194b4a2034ffc6c4ca65b5188169a87f`, build `caeeb1483d78`, passed
+**3,501/3,501** strict tests on Spark 2 and **3,501/3,501** on GitHub. All six hosted jobs passed
+on attempt 1, including browser, qualification and release marking.
+[GitHub run 44281112304](https://github.com/akuppala21/Sparkie/actions/runs/44281112304)
+
+The installed build passed all 14 desktop and phone UI checks. After live power-off operation
+`44758d05e9b2` completed, `fleet_status` reported Spark 2 off, its plug off at 0 W and Spark 1 online.
+Wake-on-app operation `c83baa3b7656` completed. Spark 2 woke at 11:15:07 UTC. Docker became
+ready and the app started at 11:15:25 UTC. At 11:16 UTC the app returned HTTP 200 and exactly one
+matching container, `abd871f6ee87`, was running. Stop operation `7a34ef9fdea2` then completed and verified the app was no longer running; its container and files remain.
+
+
+## A-69: a bridged compute job resolves the model address through public DNS
+
+**Accepted. Independent review and old-source/fixed-source controls passed. Full qualification and live verification are pending.**
+On installed R8, self-test `48dbf73ed223` passed its model, healing, stop, app and GPU job checks.
+The model-list request inside the Spark 2 job failed with HTTP 401. Its bridge used public DNS and had
+no hosts entry for the hub. The same HTTPS hostname returned the Funnel sign-in response on a public
+address and HTTP 200 on the hub’s tailnet address `100.119.233.101`.
+
+Repair build `587f8d4cb84f` gives new app and job containers a hosts entry from the hub’s verified
+Tailscale Self hostname and IPv4 address. It preserves Docker bridge networking, the HTTPS URL and
+access checks. The self-test snapshots that route once for both the job name and the Docker command.
+A changed route gets a new job, preserving the previous container and its output.
+
+Independent review checked the Docker argument handoff and the regressions for a route that changes
+or first becomes known during the self-test. The new cases retain all existing assertions.
+Closure requires the behavioral controls, qualification of the repaired build and a successful
+model-list request from its live self-test container.
+
+The two new regressions ran on Spark 2 with identical final test bytes. Both failed on R8 for the
+expected missing mapping and reused job name; both passed on repair build `587f8d4cb84f`. The
+containers used the ordinary user, no network and no Docker socket. These are focused development
+controls; they do not replace complete qualification or the live container request.

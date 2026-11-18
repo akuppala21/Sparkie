@@ -10444,7 +10444,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, selfTest, selfTestAuthority, selfTestRecord, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, selfTest, selfTestCtx, selfTestName, appRunCommand, selfTestAuthority, selfTestRecord, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -18856,16 +18856,18 @@ async function appRoom(node, gb, container) {
 }
 // A new app's docker run: every word quoted, nothing from the owner but the name, image, port, named volumes, settings,
 // and (A13) the GPU and the words it runs. No host folder or network, not privileged, no entrypoint, no Docker restart
-// policy (Spark Console brings it back itself). With gpu: the GPU, labelled spark.gpu=1. A job (once): spark.job=1, the
-// chat it was asked in, the shared folder read-only at /in and its own folder there at /out (jobDir: fixed text and the
-// checked name, outside the quotes so $HOME is the Spark's), and a port only when one was given.
+// policy (Spark Console brings it back itself). When known, the hub’s name and tailnet address go in the container’s
+// hosts file. With gpu: the GPU, labelled spark.gpu=1. A job (once): spark.job=1, the chat it was asked in, the shared
+// folder read-only at /in and its own folder there at /out (jobDir: fixed text and the checked name, outside the quotes
+// so $HOME is the Spark's), and a port only when one was given.
 const jobDir = name => `"$HOME/.local/share/spark-portal/workspaces/shared/jobs/${name}"`;
-function appRunCommand(a, tsip, chat = null) {
+function appRunCommand(a, tsip, chat = null, tailnetHost = selfTailnetHost) {
   const [host, inside = host] = String(a.port || '').split(':');
   const ports = a.port ? [`127.0.0.1:${host}:${inside}`, ...(tsip && tsip !== '127.0.0.1' ? [`${tsip}:${host}:${inside}`] : [])] : [];
   const shared = '"$HOME/.local/share/spark-portal/workspaces/shared"';
   return [
     ...['docker', 'run', '-d', '--name', a.container, '--label', 'spark.app=1'].map(q),
+    ...(tailnetHost ? [q(`--add-host=${tailnetHost}`)] : []),
     ...(a.gpu ? ['--label', 'spark.gpu=1', '--gpus', 'all', '--shm-size', '2g'].map(q) : []),
     ...(a.once ? [...['--label', 'spark.job=1', ...(/^sc_[0-9a-f]{16}$/.test(String(chat || '')) ? ['--label', `spark.chat=${chat}`] : [])].map(q),
       '-v', `${shared}:/in:ro`, '-v', `${jobDir(a.container)}:/out`, '-w', '/out'] : []),
@@ -19328,7 +19330,7 @@ action({
       await appRoom(node, gb, container);
       step(j, `Starting ${container} on ${at}`);
       // (a job's two mounts checked again in the same command, as for a run again)
-      const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
+      const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null, ctx.selfTestTailnetHost)}`, { timeout: 120000 });
       if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
       // (one Docker didn't answer in time may have started all the same: stopped again, looked at, and said, W-6)
       if (r.code && unanswered(r)) { await appPutBack(j, node, container); throw new Error(`Docker didn’t answer the start of ${container} in time.`); }
@@ -27093,7 +27095,7 @@ action({
 // running before is stopped (noStops; and the Spark is one where nothing runs that a step would stop). When start_model,
 // stop_model or restart_model wait for their validation run, these runs are it (the drill's heal is restart_model's).
 // The web page's and job's containers stay, stopped, and are used again next time (their names carry a hash of what they
-// run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
+// run, including the job’s tailnet route). The model it starts never joins the list of what should be running
 // (desiredAfter; its start, the drill's restart and its stop are marked selfTest; the list's first seed and self-healing
 // ask selfTestModels), and a model that is on that list for
 // the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
@@ -27116,7 +27118,11 @@ const selfTestAddress = () => {
   const base = ALL_LOCAL ? `http://127.0.0.1:${CONFIG.port}` : consoleOrigin();
   return /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(base) ? `${base}${API_MOUNT}/v1/models` : null;
 };
-const selfTestName = (kind, what) => `spark-selftest-${kind}-${createHash('sha256').update(JSON.stringify(what)).digest('hex').slice(0, 8)}`;
+// A job's saved container also keeps the host mapping it was made with. A changed mapping gets a new container.
+const selfTestName = (kind, what, tailnetHost = null) => {
+  const setup = tailnetHost ? [...what, tailnetHost] : what;
+  return `spark-selftest-${kind}-${createHash('sha256').update(JSON.stringify(setup)).digest('hex').slice(0, 8)}`;
+};
 const wordList = list => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0] || '');
 const firstLine = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 
@@ -27332,7 +27338,7 @@ function selfTestStarted(job, receipts) {
 }
 // As Spark Console: the starts and stops carry their validation run when their workflow waits for one (trusted only
 // where a validation mark has to pass); its model's own operations are marked, so they never touch the list.
-const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true });
+const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true, selfTestTailnetHost: selfTailnetHost });
 const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
 const selfTestMine = x => { x.selfTest = true; };
 // The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
@@ -27371,9 +27377,12 @@ async function containerStates(node, names) {
 async function selfTest(j, asked, where, image) {
   const spark = where.spark, node = nodeById(spark), at = sparkName(node), m = where.model, title = m.repo || m.name, me = healOwner();
   const model = containerName(m.name), address = selfTestAddress();
-  const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]), job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY]);
+  // The job's name and Docker options use the same route even if the status changes during the test.
+  const ctx = { ...selfTestCtx(spark), selfTestOperation: j.id, selfTestContainer: model };
+  const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]);
+  const job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY], ctx.selfTestTailnetHost);
   // (the apps' own arguments are checked as any caller's)
-  const ctx = { ...selfTestCtx(spark), selfTestOperation: j.id, selfTestContainer: model }, appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
+  const appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
   // What it starts, kept as it starts (the chat it was asked in is known once runAction has returned).
   await sleep(0);
   const record = { operation: j.id, chat: j.conv || null, spark, since: j.createdAt, model: { container: model, name: m.name }, web: { container: web }, job: { container: job } };
@@ -30444,7 +30453,7 @@ async function sessionRoute(req, res, path, viewer) {
   return false;
 }
 /* ───────── HTTP ───────── */
-// Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
+// Area: ways in        Rules: R5, R7, R10, R30, R38, R40        Tests: apps.test.mjs, faults.test.mjs, fleet.test.mjs, internet.test.mjs
 // Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
 //   (writers: checkRoute)
 // Timers: checkRoute (every 60 s), refreshBlocked (every 60 s)        Wakes: none
@@ -30568,13 +30577,13 @@ const sparkAddresses = () => new Set(NODES.flatMap(n => [n.ip, n.host]).filter(x
 // Every tailnet address (IPv4 and IPv6) of the Sparks and of this machine, from tailscale status. They're all signed in
 // as the owner, so Tailscale would vouch for anything running on them as the owner: requests from them can't act as a
 // person (only /v1, the model address, is open to them). Until the list is known, only the public routes answer.
-let blockedAddresses = null, selfOrigin = null;
+let blockedAddresses = null, selfOrigin = null, selfTailnetHost = null;
 function refreshBlocked() {
   const child = spawn('tailscale', ['status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
   child.on('close', code => noteTailnet(code, out));
-  child.on('close', () => {
+  child.on('close', code => {
     try {
       const st = JSON.parse(out), v4 = sparkAddresses();
       const ips = new Set([...v4, ...LOCAL_IPS]);
@@ -30583,7 +30592,12 @@ function refreshBlocked() {
       }
       blockedAddresses = ips;
       const self = String(st.Self?.DNSName || '').replace(/\.$/, ''), port = CONFIG.origin ? new URL(CONFIG.origin).port : '8443';
-      if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(self)) selfOrigin = `https://${self}${port && port !== '443' ? `:${port}` : ''}`;
+      const named = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(self);
+      if (named) selfOrigin = `https://${self}${port && port !== '443' ? `:${port}` : ''}`;
+      // Docker's bridge may use public DNS. Pair the same HTTPS name with this hub's own tailnet address.
+      const addresses = st.Self?.TailscaleIPs;
+      const ip = code === 0 && Array.isArray(addresses) && addresses.find(ip => isIP(ip) === 4 && onTailnet(ip));
+      selfTailnetHost = named && ip ? `${self}:${ip}` : null;
     } catch { blockedAddresses ||= new Set([...sparkAddresses(), ...LOCAL_IPS]); }
   });
   // Without the tailscale command, the Sparks' IPv4 addresses from the config still count.

@@ -1,5 +1,5 @@
 /* ───────── HTTP ───────── */
-// Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
+// Area: ways in        Rules: R5, R7, R10, R30, R38, R40        Tests: apps.test.mjs, faults.test.mjs, fleet.test.mjs, internet.test.mjs
 // Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
 //   (writers: checkRoute)
 // Timers: checkRoute (every 60 s), refreshBlocked (every 60 s)        Wakes: none
@@ -123,13 +123,13 @@ const sparkAddresses = () => new Set(NODES.flatMap(n => [n.ip, n.host]).filter(x
 // Every tailnet address (IPv4 and IPv6) of the Sparks and of this machine, from tailscale status. They're all signed in
 // as the owner, so Tailscale would vouch for anything running on them as the owner: requests from them can't act as a
 // person (only /v1, the model address, is open to them). Until the list is known, only the public routes answer.
-let blockedAddresses = null, selfOrigin = null;
+let blockedAddresses = null, selfOrigin = null, selfTailnetHost = null;
 function refreshBlocked() {
   const child = spawn('tailscale', ['status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
   child.on('close', code => noteTailnet(code, out));
-  child.on('close', () => {
+  child.on('close', code => {
     try {
       const st = JSON.parse(out), v4 = sparkAddresses();
       const ips = new Set([...v4, ...LOCAL_IPS]);
@@ -138,7 +138,12 @@ function refreshBlocked() {
       }
       blockedAddresses = ips;
       const self = String(st.Self?.DNSName || '').replace(/\.$/, ''), port = CONFIG.origin ? new URL(CONFIG.origin).port : '8443';
-      if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(self)) selfOrigin = `https://${self}${port && port !== '443' ? `:${port}` : ''}`;
+      const named = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(self);
+      if (named) selfOrigin = `https://${self}${port && port !== '443' ? `:${port}` : ''}`;
+      // Docker's bridge may use public DNS. Pair the same HTTPS name with this hub's own tailnet address.
+      const addresses = st.Self?.TailscaleIPs;
+      const ip = code === 0 && Array.isArray(addresses) && addresses.find(ip => isIP(ip) === 4 && onTailnet(ip));
+      selfTailnetHost = named && ip ? `${self}:${ip}` : null;
     } catch { blockedAddresses ||= new Set([...sparkAddresses(), ...LOCAL_IPS]); }
   });
   // Without the tailscale command, the Sparks' IPv4 addresses from the config still count.

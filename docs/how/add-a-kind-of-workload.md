@@ -6,7 +6,8 @@ Something that runs on a Spark and is not a model.
 
 - An app that isn't a model: use `keep_running` (`21-apps.mjs`, R38), which starts, keeps, restarts and stops it; with
   `gpu` it has its Spark's GPU (one GPU thing per Spark), with `command` the words it runs, with `once` a job that
-  runs to its end and writes into the shared folder (A13).
+  runs to its end and writes into the shared folder (A13). A new container resolves Spark Console’s HTTPS name to
+  its tailnet address when the hub reports both through Tailscale.
 - `appStates` (`21-apps.mjs`) reads every container's state on the Sparks where apps are kept (not in `inventory`,
   which runs inside every start); an app without a GPU is never a stop candidate and never stops anything.
 - Anything else: its kind in `learnedFrom` (`19-watcher.mjs`); a job through `claimed`, `newJob`, `runJob`; its own

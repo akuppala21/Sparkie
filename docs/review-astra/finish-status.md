@@ -1,5 +1,24 @@
 # Sparkie: remaining completion checks
 
+## Installed release on 2026-11-18
+
+R8 commit `1878ce80194b4a2034ffc6c4ca65b5188169a87f`, build `caeeb1483d78`, is installed
+on Spark 1. All **3,501/3,501** tests passed on Spark 2 and again on GitHub. All six hosted jobs
+passed on attempt 1. CI uses standard free Ubuntu runners for the public repository and has no
+nightly schedule. The installed console passed all **14/14** desktop and phone UI checks.
+[GitHub run 44281112304](https://github.com/akuppala21/Sparkie/actions/runs/44281112304)
+
+Live checks confirmed that Spark 2 shut down and woke for an app that then answered HTTP 200.
+A-69 remains open. Its repair, build `587f8d4cb84f`, passed independent static review and both focused controls, with both old-source controls failing
+as expected. It awaits exact-build qualification and a live container check. The brain evaluation is
+in progress with 33 completed runs passing. Telegram setup needs the owner to create the bot.
+Across-Spark serving and the remaining contract gaps still need qualification.
+[Live findings A-68 and A-69](findings-4.md#a-68-an-older-status-probe-can-report-online-after-a-confirmed-shutdown)
+
+## Historical snapshots from earlier candidates
+
+The entries below preserve the evidence and pending checks as recorded for each earlier candidate.
+
 Latest resumption: the prior candidate `378a9fab` passed 3,479/3,479 complete compute checks.
 Hosted qualification exposed A-66, a path-length-dependent source-archive rejection, then was cancelled
 when the owner reported exhausted free Actions minutes. Both hosted workflows were disabled.

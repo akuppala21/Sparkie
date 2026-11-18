@@ -80,4 +80,5 @@ agrees with the scoped repairs. Full release qualification and installation rema
 
 | A-67 | Recovery fixtures inject the next fault before the prior phase finishes | Owner-approved corrections; every assertion retained; independent review; complete compute 3,489/3,489, all four cases also pass hosted | Final qualification of A-68 candidate |
 
-| A-68 | Older status reports online after a confirmed shutdown | Accepted; minimal causal ordering repair independently reviewed; new regressions in compute checks | Complete qualification and live shutdown/wake check |
+| A-68 | Older status reports online after a confirmed shutdown | Closed. Installed R8 passed 3,501/3,501 on Spark 2 and GitHub. Live operation `44758d05e9b2` showed Spark 2 off at 0 W and Spark 1 online. Wake-on-app `c83baa3b7656` completed and the app returned HTTP 200. | Complete |
+| A-69 | A bridged compute job reaches the public sign-in page at the model address | Live 401 reproduced. Container-local routing repair `587f8d4cb84f` and its regressions passed independent static review. | Run behavioral controls, qualify the repair and repeat the live self-test |

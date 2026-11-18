@@ -51,7 +51,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/workloads.test.mjs`; `test/workloads-place.test.mjs`; `test/workloads-save.test.mjs`; `test/workloads-images.test.mjs`; `test/telegram.test.mjs`; `test/telegram-history-save.test.mjs`; `test/change.test.mjs` |  |
 | [R36](rules/R36.md) | built | `test/paste.test.mjs` |  |
 | [R37](rules/R37.md) | built | `test/files.test.mjs` |  |
-| [R38](rules/R38.md) | built | `test/t45-job-folder.test.mjs`; `test/t45-adopt-job.test.mjs`; `test/put-back-job.test.mjs`; `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs`; `test/selftest-app-ownership.test.mjs` |  |
+| [R38](rules/R38.md) | built | `test/t45-job-folder.test.mjs`; `test/t45-adopt-job.test.mjs`; `test/put-back-job.test.mjs`; `test/apps.test.mjs`; `test/selftest.test.mjs`; `test/selftest-app-ownership.test.mjs`; `test/selftest-tailnet-route.test.mjs` |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
 | [R41](rules/R41.md) | partly | `test/plugs.test.mjs`; `test/power.test.mjs`; `test/power-wake.test.mjs`; `test/hub-deploy.test.mjs`; `test/hub-move.test.mjs` | falls short today: its file says where |

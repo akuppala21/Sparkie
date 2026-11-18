@@ -128,16 +128,18 @@ async function appRoom(node, gb, container) {
 }
 // A new app's docker run: every word quoted, nothing from the owner but the name, image, port, named volumes, settings,
 // and (A13) the GPU and the words it runs. No host folder or network, not privileged, no entrypoint, no Docker restart
-// policy (Spark Console brings it back itself). With gpu: the GPU, labelled spark.gpu=1. A job (once): spark.job=1, the
-// chat it was asked in, the shared folder read-only at /in and its own folder there at /out (jobDir: fixed text and the
-// checked name, outside the quotes so $HOME is the Spark's), and a port only when one was given.
+// policy (Spark Console brings it back itself). When known, the hub’s name and tailnet address go in the container’s
+// hosts file. With gpu: the GPU, labelled spark.gpu=1. A job (once): spark.job=1, the chat it was asked in, the shared
+// folder read-only at /in and its own folder there at /out (jobDir: fixed text and the checked name, outside the quotes
+// so $HOME is the Spark's), and a port only when one was given.
 const jobDir = name => `"$HOME/.local/share/spark-portal/workspaces/shared/jobs/${name}"`;
-function appRunCommand(a, tsip, chat = null) {
+function appRunCommand(a, tsip, chat = null, tailnetHost = selfTailnetHost) {
   const [host, inside = host] = String(a.port || '').split(':');
   const ports = a.port ? [`127.0.0.1:${host}:${inside}`, ...(tsip && tsip !== '127.0.0.1' ? [`${tsip}:${host}:${inside}`] : [])] : [];
   const shared = '"$HOME/.local/share/spark-portal/workspaces/shared"';
   return [
     ...['docker', 'run', '-d', '--name', a.container, '--label', 'spark.app=1'].map(q),
+    ...(tailnetHost ? [q(`--add-host=${tailnetHost}`)] : []),
     ...(a.gpu ? ['--label', 'spark.gpu=1', '--gpus', 'all', '--shm-size', '2g'].map(q) : []),
     ...(a.once ? [...['--label', 'spark.job=1', ...(/^sc_[0-9a-f]{16}$/.test(String(chat || '')) ? ['--label', `spark.chat=${chat}`] : [])].map(q),
       '-v', `${shared}:/in:ro`, '-v', `${jobDir(a.container)}:/out`, '-w', '/out'] : []),
@@ -600,7 +602,7 @@ action({
       await appRoom(node, gb, container);
       step(j, `Starting ${container} on ${at}`);
       // (a job's two mounts checked again in the same command, as for a run again)
-      const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
+      const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null, ctx.selfTestTailnetHost)}`, { timeout: 120000 });
       if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
       // (one Docker didn't answer in time may have started all the same: stopped again, looked at, and said, W-6)
       if (r.code && unanswered(r)) { await appPutBack(j, node, container); throw new Error(`Docker didn’t answer the start of ${container} in time.`); }

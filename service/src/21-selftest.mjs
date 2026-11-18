@@ -20,7 +20,7 @@
 // running before is stopped (noStops; and the Spark is one where nothing runs that a step would stop). When start_model,
 // stop_model or restart_model wait for their validation run, these runs are it (the drill's heal is restart_model's).
 // The web page's and job's containers stay, stopped, and are used again next time (their names carry a hash of what they
-// run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
+// run, including the job’s tailnet route). The model it starts never joins the list of what should be running
 // (desiredAfter; its start, the drill's restart and its stop are marked selfTest; the list's first seed and self-healing
 // ask selfTestModels), and a model that is on that list for
 // the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
@@ -43,7 +43,11 @@ const selfTestAddress = () => {
   const base = ALL_LOCAL ? `http://127.0.0.1:${CONFIG.port}` : consoleOrigin();
   return /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(base) ? `${base}${API_MOUNT}/v1/models` : null;
 };
-const selfTestName = (kind, what) => `spark-selftest-${kind}-${createHash('sha256').update(JSON.stringify(what)).digest('hex').slice(0, 8)}`;
+// A job's saved container also keeps the host mapping it was made with. A changed mapping gets a new container.
+const selfTestName = (kind, what, tailnetHost = null) => {
+  const setup = tailnetHost ? [...what, tailnetHost] : what;
+  return `spark-selftest-${kind}-${createHash('sha256').update(JSON.stringify(setup)).digest('hex').slice(0, 8)}`;
+};
 const wordList = list => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0] || '');
 const firstLine = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 
@@ -259,7 +263,7 @@ function selfTestStarted(job, receipts) {
 }
 // As Spark Console: the starts and stops carry their validation run when their workflow waits for one (trusted only
 // where a validation mark has to pass); its model's own operations are marked, so they never touch the list.
-const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true });
+const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true, selfTestTailnetHost: selfTailnetHost });
 const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
 const selfTestMine = x => { x.selfTest = true; };
 // The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
@@ -298,9 +302,12 @@ async function containerStates(node, names) {
 async function selfTest(j, asked, where, image) {
   const spark = where.spark, node = nodeById(spark), at = sparkName(node), m = where.model, title = m.repo || m.name, me = healOwner();
   const model = containerName(m.name), address = selfTestAddress();
-  const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]), job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY]);
+  // The job's name and Docker options use the same route even if the status changes during the test.
+  const ctx = { ...selfTestCtx(spark), selfTestOperation: j.id, selfTestContainer: model };
+  const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]);
+  const job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY], ctx.selfTestTailnetHost);
   // (the apps' own arguments are checked as any caller's)
-  const ctx = { ...selfTestCtx(spark), selfTestOperation: j.id, selfTestContainer: model }, appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
+  const appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
   // What it starts, kept as it starts (the chat it was asked in is known once runAction has returned).
   await sleep(0);
   const record = { operation: j.id, chat: j.conv || null, spark, since: j.createdAt, model: { container: model, name: m.name }, web: { container: web }, job: { container: job } };

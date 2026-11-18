@@ -43,6 +43,7 @@ import net from 'node:net';
 import { readFileSync, writeFileSync, appendFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, statSync, symlinkSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
+import { startMock } from './start-mock.mjs';
 
 // An app's page: answers anything, unless it's "down" (then it drops the connection without a reply).
 const down = new Set();
@@ -1121,4 +1122,36 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
       for (const name of ['my stack', 'new image stack']) await api('/actions/forget_workflow', { method: 'POST', body: { name } });
     }
   });
+});
+
+test('new apps and jobs resolve the console’s HTTPS name to its own tailnet address', { timeout: 180000 * SLOW }, async () => {
+  const hostname = 'route-hub.test.ts.net', address = '100.64.9.2';
+  const fleet = await startMock({ prepare: ({ dir }) => writeFileSync(join(dir, 'status.json'), JSON.stringify({
+    BackendState: 'Running',
+    Self: { DNSName: `${hostname}.`, TailscaleIPs: ['fd7a:115c:a1e0::2', '192.168.0.2', address] },
+    Peer: { 'nodekey:peer': { DNSName: 'compute.test.ts.net.', TailscaleIPs: ['100.64.9.3'] } },
+  })) });
+  try {
+    const origin = new URL(fleet.origin);
+    origin.hostname = hostname;
+    await waitFor(async () => (await (await fetch(`${fleet.base}/bootstrap`)).json()).main === origin.origin,
+      { what: 'the hub’s own name from Tailscale' });
+    const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: origin.origin };
+    for (const body of [
+      { spark: 'spark3', container: 'model-client-app', image: 'nginx:1.27', port: `${P3}:80` },
+      { spark: 'spark4', container: 'model-client-job', image: 'python:3.12-slim', once: true },
+    ]) {
+      const r = await fetch(`${fleet.base}/actions/keep_running`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const result = await r.json();
+      assert.equal(result.outcome, 'started', JSON.stringify(result));
+      const file = mock(fleet.root, body.spark, `run-${body.container}`);
+      const args = await waitFor(() => {
+        const words = existsSync(file) && readFileSync(file, 'utf8').trimEnd().split('\n');
+        return words && words.at(-1) === body.image && words;
+      }, { what: `the Docker options for ${body.container}` });
+      assert.deepEqual(args.filter(a => a.startsWith('--add-host')), [`--add-host=${hostname}:${address}`]);
+      assert.ok(args.indexOf(`--add-host=${hostname}:${address}`) < args.indexOf(body.image), 'Docker gets the mapping');
+      assert.ok(!args.some(a => /^--network(?:=|$)/.test(a)), 'the container uses Docker’s default bridge');
+    }
+  } finally { await fleet.stop(); }
 });
