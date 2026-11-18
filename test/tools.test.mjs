@@ -193,6 +193,15 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.doesNotMatch(fixed, /\bread_page\b|\bforget_memory\b|workflows tool/);
   });
 
+  test('the page and paired Telegram core prompts both stay under 2,500 characters', { timeout: 120000 * SLOW }, async () => {
+    const sent = await brainSent(T.fleet);
+    for (const [channel, turn] of [['page', sent], ['telegram', sent.catalog.telegram]]) {
+      assert.deepEqual(sorted(turn.tools.map(t => t.function.name)), sorted(CORE_TOOLS), channel);
+      const fixed = turn.system.split('\nWhat the owner asked you to remember')[0];
+      assert.ok(fixed.length < 2500, `${channel}: ${fixed.length} characters`);
+    }
+  });
+
   test('state opens groups: a web search this turn opens reading for its next round', { timeout: 60000 * SLOW }, async () => {
     const words = 'what is the newest vllm version?', from = requests().length;
     await withScript([{ match: '^what is the newest vllm version', rounds: [[{ name: 'search_web', arguments: { query: 'newest vllm version' } }]] }, QUIET],
