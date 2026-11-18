@@ -399,3 +399,29 @@ Fixed tree `eff34e354d31bfbcc491e858c499cbdb9c8482db` passed **171/171** across 
 skips or cancellations (dispatch `b837e22fc0d3493ba5b9db5e4097b063`). The actual Git archive fixture
 checks extracted files and absence of both omitted symlinks and their metadata. Independent review
 accepted commit `5e5a6a62`. Complete qualification of the integrated candidate and live checks remain.
+
+
+## A-67: recovery fixtures advance before their prerequisite finishes
+
+**Accepted; independently reviewed; owner approved both fixture corrections on 2026-11-18.**
+The exact candidate `06114f61`, tree `e2453867e570d94f9081415d6a636f6e64e2009c`, ran
+3,489 strict tests on Spark 3 at concurrency 32: 3,485 passed, four failed, with no skipped or cancelled
+tests. It produced no qualification lock and did not land. Both affected test files were byte-identical
+to the preceding passing candidate.
+
+Three later asleep cases requested power-off while the earlier crash-restart operation still held its
+claim. The service correctly refused all three with HTTP 409. The earlier case now requires the
+healing event's operation ID, waits for that exact operation and asserts that it completed. The unchanged
+file separately passed 7/7 on the same candidate at concurrency 1; that diagnostic did not qualify the
+failed full run.
+
+The Docker-unresponsive put-back fixture made Docker fail after a container appeared, before its
+launch receipt had necessarily arrived. The service correctly reported an unconfirmed launch and
+withheld the earlier GPU job. The fixture now waits for the operation to reach its test prompt before
+injecting Docker failure, matching its existing scenario and expected error. The separate hanging-launch
+case still covers the other path.
+
+These are ten added lines across the two fixtures. Every original assertion remains; the waits add
+completion/phase assertions without increasing a timeout or changing production code. Independent
+review confirmed the launch receipt precedes the prompt step and the healing event carries the restart
+operation ID. Focused checks and complete qualification of the corrected tree remain required.

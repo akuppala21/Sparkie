@@ -163,6 +163,13 @@ describe('a failed start puts back only beside what is known to have stopped (A-
       // (the new model runs and the job is stopped: from here Docker on Spark 4 answers nothing)
       await waitFor(async () => { if (stateOf('spark4', SC) === 'running' && stateOf('spark4', JOB) === 'exited') return true; const o = (await api(`/jobs/${id}`)).json; assert.equal(o.status, 'running', JSON.stringify(o)); return false; },
         { timeout: 120000 * SLOW, what: 'the new model running, the job stopped', every: 100 });
+      // Docker must answer the launch receipt before this scenario makes it unresponsive during put-back.
+      // A running container alone can precede that receipt; cutting Docker there tests an unfinished launch instead.
+      await waitFor(async () => {
+        const o = (await api(`/jobs/${id}`)).json;
+        assert.equal(o.status, 'running', JSON.stringify(o));
+        return o.step === 'Checking it answers a test prompt';
+      }, { timeout: 120000 * SLOW, what: 'the launched model reaching its test prompt', every: 100 });
       writeFileSync(mock('spark4', 'daemon-down'), '');
       const w = await opLong(id);
       assert.equal(w.status, 'failed', JSON.stringify(w));

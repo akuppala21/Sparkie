@@ -77,3 +77,5 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-65 | Stop workflow fingerprint omits the self-test producer | Fixed; one dependency entry; original assertion passes in combined 125/125 checks | Complete qualification of the corrected candidate |
 
 | A-66 | Long link metadata rejects a permitted fixture omission | Fixed; independent review; four old-source failures and 171/171 fixed checks | Complete integrated qualification and install |
+
+| A-67 | Recovery fixtures inject the next fault before the prior phase finishes | Owner-approved sequencing corrections; every assertion retained; independent review | Focused checks and complete corrected-tree qualification |

@@ -122,6 +122,9 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
     const e = await waitFor(() => eventLines().find(x => x.at > since && x.spark === 'spark4' && x.container === RADIX && ['healing', 'heal-skipped'].includes(x.type)),
       { timeout: 60000, what: 'self-healing to look at it' });
     assert.equal(e.type, 'healing', JSON.stringify(e));
+    assert.ok(e.operation, 'the healing event names its restart operation');
+    const restarted = await ended(e.operation);
+    assert.equal(restarted.status, 'completed', JSON.stringify(restarted));
   });
 
   test('the installer’s reach check says asleep for a Spark Spark Console powered off, and still says NOT reachable for one that isn’t', () => {
