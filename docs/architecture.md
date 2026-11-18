@@ -124,7 +124,7 @@ flowchart TD
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"context retry: restore, release claims, then owner-only question; park the originating task"| CHAT
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
-  KNOW -->|"best setup for a start"| RUN
+  KNOW -->|"start setups, saved speed"| RUN
   KNOW -->|"memory lines, in the system prompt"| CHAT
   SENSE -->|"fleet notes; a job's end (keep_running once), once, in the chat that started it (jobEnded, A13)"| CHAT
   JOBS -->|"docker commands; self-test kill/stop: matching id, start time and note; fixed reads"| SSH

@@ -21,6 +21,8 @@ A look at a Spark that changes nothing: a probe script, its parsed output, share
 ## Never
 
 - Open your own ssh.
+- Run a speed test to answer a question about the speed already recorded for a running model.
+  `running_models {detail}` uses a saved test for those settings and Sparks from the current start period.
 - Change anything on a Spark, or name a bare Tailscale command that drops a route as the fix in a needs-you line.
 
 ## Rules

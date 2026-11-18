@@ -192,4 +192,77 @@ describe('running_models {detail}: one running model’s exact settings', { conc
       assert.match(more.setupWords, /no record of a start with exactly these settings/);
     }
   });
+
+  test('a dated speed appears only for a matching saved test on the current Spark after its Docker start', { timeout: 120000 * SLOW }, async () => {
+    const model = 'RadixArk--Qwen3.8-27B-NVFP4', name = `spark4/${RADIX}`;
+    const command = mock('spark4', `cmd-${RADIX}`), started = mock('spark4', `started-${RADIX}`);
+    const verified = join(T.fleet.stateDir, 'verified.json');
+    const original = [command, started, verified].map(file => [file, existsSync(file) ? readFileSync(file) : null]);
+    const at = '2026-11-10T09:31:00.123Z';
+    const sample = { decodeTokS: 42.5, ttftMs: 200, outputTokens: 256, at, nodes: ['spark4'] };
+    const args = ['--max-model-len', '32768'];
+    const record = { model, engine: 'vllm', image: IMAGE, args, sparks: 1, nodes: ['spark4'], lastAt: at,
+      measured: sample, best: { ...sample, decodeTokS: 99 } };
+    const save = entry => writeFileSync(verified, JSON.stringify({ deployments: [entry] }));
+    try {
+      writeFileSync(command, JSON.stringify(['vllm', 'serve', model, '--host', '0.0.0.0', '--port', '8000', '--served-model-name', model, ...args]));
+      writeFileSync(started, '2026-11-10T09:30:00.000000001Z');
+      save(record);
+      const d = (await detail(name)).detail;
+      assert.deepEqual(d.savedSpeed, { measuredAt: at, tokensPerSecond: 42.5, ttftMs: 200, outputTokens: 256 });
+      assert.match(d.speedWords, /saved test at the time shown/);
+
+      for (const [why, fields] of [
+        ['another Spark even though the deployment record names Spark 4', { measured: { ...sample, nodes: ['spark3'] } }],
+        ['an earlier sample in the same millisecond as startup', { measured: { ...sample, at: '2026-11-10T09:30:00.000Z' } }],
+        ['a different setup', { args: ['--max-model-len', '65536'] }],
+        ['an invalid test date', { measured: { ...sample, at: '2026-11-31T09:31:00.123Z' } }],
+        ['a future test date', { measured: { ...sample, at: new Date(Date.now() + 86400000).toISOString() } }],
+        ['invalid measurements', { measured: { ...sample, decodeTokS: '42.5', ttftMs: -1, outputTokens: 0 } }],
+        ['only the best record is available', { measured: null }],
+      ]) {
+        save({ ...record, ...fields });
+        const unavailable = (await detail(name)).detail;
+        assert.equal(unavailable.savedSpeed, null, why);
+        assert.match(unavailable.speedWords, /no saved speed it can verify/, why);
+      }
+      save(record);
+      writeFileSync(started, '0001-01-01T00:00:00Z');
+      const noStart = (await detail(name)).detail;
+      assert.equal(noStart.startedAt, null, 'Docker’s zero timestamp is treated as absent');
+      assert.equal(noStart.savedSpeed, null, 'no Docker start time');
+
+      const unreadable = '{';
+      writeFileSync(started, '2026-11-10T09:30:00Z');
+      writeFileSync(verified, unreadable);
+      const noFile = (await detail(name)).detail;
+      assert.equal(noFile.savedSpeed, null);
+      assert.match(noFile.speedWords, /no saved speed it can verify/);
+      assert.equal(readFileSync(verified, 'utf8'), unreadable, 'the read leaves damaged state for the existing recovery path');
+    } finally {
+      for (const [file, contents] of original) {
+        if (contents === null) rmSync(file, { force: true });
+        else writeFileSync(file, contents);
+      }
+    }
+  });
+
+  test('Sparkie is directed to finish a current-speed question with its saved read and missing-data answer', { timeout: 120000 * SLOW }, async () => {
+    const script = join(T.fleet.dir, 'model-script.json');
+    const words = 'How fast is RadixArk running on Spark 4?';
+    writeFileSync(script, JSON.stringify([{ match: '^how fast is radixark', calls: [{ name: 'running_models', arguments: { detail: `spark4/${RADIX}` } }] }]));
+    try {
+      const from = requests().length;
+      const r = await say(await newChat(), words);
+      assert.deepEqual(r.message.tools.map(t => [t.name, t.ok, t.change]), [['running_models', true, false]]);
+      assert.ok(!r.message.choices?.length);
+      const sent = requests().slice(from).filter(x => x.words === words);
+      assert.match(sent[0].system, /For current speed, use running_models detail\. Report its saved test or say unavailable, then stop\./);
+      const given = sent.flatMap(x => x.results.map(y => y.content)).join('\n');
+      assert.match(given, /"savedSpeed":null/);
+      assert.match(given, /no saved speed it can verify/);
+    } finally {
+      rmSync(script, { force: true });
+    }
+  });
 });

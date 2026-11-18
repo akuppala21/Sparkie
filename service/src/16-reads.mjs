@@ -65,10 +65,10 @@ action({
 
 action({
   name: 'running_models', title: 'Running models', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
-  description: 'Use for “what models are running and how do I call them?”. Each model server: its Spark, container, and callWith (the OpenAI-compatible base URL and the exact model name to send), including models across two Sparks, Sparkie’s own model, servers started outside Spark Console, other containers, and stopped deploys. With client (“how do I use Sparkie from my app / curl / Open WebUI / Codex?”): a paste card for that app, built by Spark Console; it shows the card under your answer, so don’t repeat its block. With detail (“what is GLM running with?”): only that one running model, with its exact settings read from Docker now: image, engine, its command (secrets hidden), context length, memory share, its Sparks, port, when it started, and the Recipes setup those settings came from, if Spark Console has it on record.',
+  description: 'Use for “what models are running and how do I call them?”. Each model server: its Spark, container, and callWith (the OpenAI-compatible base URL and the exact model name to send), including models across two Sparks, Sparkie’s own model, servers started outside Spark Console, other containers, and stopped deploys. With client (“how do I use Sparkie from my app / curl / Open WebUI / Codex?”): a paste card for that app, built by Spark Console; it shows the card under your answer, so don’t repeat its block. With detail (“what is GLM running with?” or “how fast is it?”): only that one running model, with its exact settings read from Docker now: image, engine, its command (secrets hidden), context length, memory share, its Sparks, port, when it started, and its Recipes setup if recorded. For speed, find the container on the named Spark here, then pass spark/container as detail. Report only its dated savedSpeed or say speed is unavailable, then stop.',
   input: { type: 'object', properties: {
     client: { type: 'string', minLength: 1, maxLength: 60, description: 'The app the owner wants to use Sparkie from, in their words ("any app", "curl", "Open WebUI", "Codex").' },
-    detail: { type: 'string', minLength: 1, maxLength: 200, description: 'One running model, by its container (sc-gpt-oss-20b, or spark3/sc-gpt-oss-20b) or its model name, for its exact settings.' },
+    detail: { type: 'string', minLength: 1, maxLength: 200, description: 'One running model, by its container (sc-gpt-oss-20b, or spark3/sc-gpt-oss-20b) or its model name, for its exact settings and saved speed.' },
   }, additionalProperties: false },
   run: async ({ client, detail } = {}, viewer) => {
     const [inv, main, status] = await Promise.all([recentInventory(), MAIN ? recentMain() : null, statusFor(viewer, false)]);
@@ -108,6 +108,22 @@ action({
 // cleanFlags drops for another reason (a file of the model's, a key) matches nothing: dropped, it would look the same.
 const flagsKey = list => { const c = dig.cleanFlags(list, null); return c.problems.length ? null : JSON.stringify(withoutShare(c.args)); };
 const sameFlags = (a, b) => { const k = flagsKey(a); return k !== null && k === flagsKey(b); };
+// Docker reports start times to nanosecond precision. Compare UTC stamps without rounding a start down.
+function speedStamp(value) {
+  const stamp = typeof value === 'string' && /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?Z$/.exec(value);
+  if (!stamp) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 19) !== stamp[1]) return null;
+  return `${stamp[1]}.${(stamp[2] || '').padEnd(9, '0')}Z`;
+}
+function savedRunningSpeed(sample, sparks, startedAt) {
+  const began = speedStamp(startedAt), at = speedStamp(sample?.at), now = speedStamp(new Date().toISOString());
+  if (!began || !at || at < began || at > now || !Array.isArray(sample.nodes) || sample.nodes.length !== sparks.length
+    || !sample.nodes.every((id, i) => id === sparks[i])) return null;
+  if (!Number.isFinite(sample.decodeTokS) || sample.decodeTokS <= 0 || !Number.isFinite(sample.ttftMs) || sample.ttftMs < 0
+    || !Number.isSafeInteger(sample.outputTokens) || sample.outputTokens < 8) return null;
+  return { measuredAt: sample.at, tokensPerSecond: sample.decodeTokS, ttftMs: sample.ttftMs, outputTokens: sample.outputTokens };
+}
 async function runningDetail(name, inv, running) {
   const want = String(name).trim().toLowerCase(), sq = squash(want), said = String(name).trim().slice(0, 60);
   const names = x => [x.container, `${x.spark}/${x.container}`, x.modelId, x.repo, x.callWith?.model, ...(x.servedModels || [])].filter(Boolean).map(String);
@@ -136,14 +152,20 @@ async function runningDetail(name, inv, running) {
   const share = eng?.memFlag ? shareIn(flags, eng.memFlag) : null;
   // The recorded run with exactly these settings (same model, engine, image, number of Sparks, flags and environment),
   // the one that says the most first, then the newest.
-  const v = !eng || !x.modelId ? null : verifiedList().filter(e => e.model === x.modelId && e.engine === engine && e.image === w.image && e.sparks === sparks.length
-    && (!e.file || flags.some(a => a.includes(e.file))) && envIn(e) && [[], metricsFlags(engine, e.args || [])].some(mf => sameFlags(flags, [...eng.tail('x'), ...mf, ...(e.args || [])])))
-    .sort((a, b) => Object.keys(b.env || {}).length - Object.keys(a.env || {}).length || String(b.lastAt).localeCompare(String(a.lastAt)))[0] || null;
+  // This lookup only reads the saved samples. An unreadable file can be handled by the existing state writer.
+  const recorded = eng && x.modelId ? readJson(VERIFIED_FILE)?.deployments : null;
+  const v = Array.isArray(recorded) ? recorded.filter(e => e?.model === x.modelId && e.engine === engine && e.image === w.image && e.sparks === sparks.length
+    && (!e.file || flags.some(a => a.includes(e.file))) && (e.args == null || Array.isArray(e.args)) && envIn(e)
+    && [[], metricsFlags(engine, e.args || [])].some(mf => sameFlags(flags, [...eng.tail('x'), ...mf, ...(e.args || [])])))
+    .sort((a, b) => Object.keys(b.env || {}).length - Object.keys(a.env || {}).length || String(b.lastAt).localeCompare(String(a.lastAt)))[0] || null : null;
+  const savedSpeed = c.State?.Status === 'running' ? savedRunningSpeed(v?.measured, sparks, w.startedAt) : null;
   return {
     ...x, startedBySparkConsole: Boolean(w.byConsole), sparks, image: w.image, engine, command: w.command,
     contextTokens: ctx ?? own, contextSetBy: ctx != null ? `its ${ctxFlag} flag` : own ? 'the model’s own limit (no flag sets it)' : null,
     memoryShare: share, memoryShareGB: share != null && sp?.memTotal ? gbOf(share * sp.memTotal) : null,
     port: 'port' in x ? x.port : CONFIG.servePort, startedAt: w.startedAt,
+    savedSpeed,
+    speedWords: savedSpeed ? 'This is from a saved test at the time shown.' : 'Spark Console has no saved speed it can verify for these settings on these Sparks.',
     setup: v?.setupId ? { id: v.setupId, recipe: catalogSetup(v.setupId)?.model.id || null, source: v.sourceUrl || null } : null,
     setupWords: v?.setupId ? `Its settings are exactly those of Recipes setup ${v.setupId}, as recorded when it last started that way (${v.lastAt}).`
       : v ? 'Its settings match a start recorded here that used no Recipes setup (the model’s own settings, or the engine’s defaults).'
