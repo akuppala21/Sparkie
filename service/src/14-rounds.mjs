@@ -164,14 +164,27 @@ function roundTools(turn) {
   messages[0].content = systemPrompt(context, true, agent, channel, turn.offered);
   return sent;
 }
-// One call to the model, streamed: text goes out as it comes; tool calls are collected.
+function turnDelta(turn, text) {
+  turn.answer += text;
+  if (!turn.holdProse) turn.emit({ type: 'delta', text });
+}
+// Tell what is still under way from the operation records. Finished operations post their own results.
+function publishTurnProse(turn) {
+  if (!turn.holdProse) return;
+  const pending = [...(turn.appStarts?.values() || [])].filter(({ job }) => job.status === 'running');
+  if (pending.length) turn.answer = maskSecrets(pending.map(({ job, label }) => outcomeText(label, { operation: job.id })).join('\n'));
+  const delta = pending.length ? turn.answer : turn.answer.slice(turn.proseFrom || 0);
+  turn.holdProse = false;
+  if (delta && !turn.link.gone) turn.emit({ type: 'delta', text: delta });
+}
+// One call to the model: tool calls are collected and ordinary prose streams as it comes.
 function modelStep(turn, sent) {
   const { emit, link, target, messages, base, tuned } = turn;
   return new Promise((resolve, reject) => {
     // (read as its brain setup says, 13-ask.mjs: thinking, in whichever field or tags it comes, never reaches the answer)
     const read = answerReader(tuned);
     let content = '';
-    const say = pieces => { for (const t of pieces) { content += t; turn.answer += t; emit({ type: 'delta', text: t }); } };
+    const say = pieces => { for (const t of pieces) { content += t; turnDelta(turn, t); } };
     modelInUse++;
     // Every way the call ends settles it once and gives the model back: the answer's end, an error on the request or
     // the answer, an answer that closes before it ends, the timeout, and the owner's /stop (link.cancel, whatever state
@@ -225,7 +238,7 @@ const toolsAway = turn => `[Spark Console] Your tools are put away for this mess
   : turn.spent === 'tokens' ? ` (one message may use ${Number(askOf(turn.tuned).tokenBudget).toLocaleString('en-US')} of your tokens)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
 // Up to ROUNDS rounds of looking things up (and at most CHANGES changes), then it has to answer.
 async function turnRounds(turn) {
-  const { emit, link, tools, ROUNDS, messages } = turn;
+  const { link, tools, ROUNDS, messages } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
     // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
@@ -243,8 +256,9 @@ async function turnRounds(turn) {
     if (last) { await roundDropped(turn, round, r); break; }
     await roundCalls(turn, round, r);
     // What was written before the lookups stays; a clear break before the rest of the answer.
-    if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
+    if (turn.answer && !turn.answer.endsWith('\n')) turnDelta(turn, '\n\n');
   }
+  publishTurnProse(turn);
   budgetReport(turn);
 }
 // Which calls of a round run together: the lookups (a read that changes nothing, or a call to no tool). Every other one
@@ -349,6 +363,15 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false, p
     value = await Promise.race([going, sleep(50000).then(() => { throw Object.assign(new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`), { going }); })]);
     // (an operation it started, whose Spark a later call of this turn may meet still changing)
     if (typeof value?.operation === 'string') turn.ops.push(value.operation);
+    if (turn.appReply && c.name === 'keep_running' && value?.outcome === 'started' && !value.job) {
+      const job = jobs.get(value.operation);
+      if (job?.app && job.conv === conv.id && (job.type === 'deploy' || job.type === 'restart')) {
+        const label = changeLabel(c.name, { spark: job.node, container: job.container, do: args.do });
+        (turn.appStarts ||= new Map()).set(job.id, { job, label });
+        if (!turn.holdProse) turn.proseFrom = turn.answer.length;
+        turn.holdProse = true;
+      }
+    }
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
     if (value?.paste?.block) {
       pastes.push(value.paste.block);

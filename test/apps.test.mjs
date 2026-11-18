@@ -42,7 +42,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { readFileSync, writeFileSync, appendFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, statSync, symlinkSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, eventLines, newChat, say, sseEvents, chatMessages, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 // An app's page: answers anything, unless it's "down" (then it drops the connection without a reply).
@@ -1154,4 +1154,124 @@ test('new apps and jobs resolve the console’s HTTPS name to its own tailnet ad
       assert.ok(!args.some(a => /^--network(?:=|$)/.test(a)), 'the container uses Docker’s default bridge');
     }
   } finally { await fleet.stop(); }
+});
+
+async function stoppedReplyApp(spark, container, port) {
+  appendFileSync(m(spark, 'containers'), `${container}|exited|Exited (0) 2 hours ago||||||\n`);
+  appendFileSync(m(spark, 'ports'), `${container}|${port}\n`);
+  writeFileSync(m(spark, `image-${container}`), 'nginx:1.27');
+  writeFileSync(m(spark, `memory-${container}`), String(2 ** 30));
+  await waitFor(async () => (await call(keys.look.token, 'workloads', { spark, running: false })).value?.workloads
+    ?.some(w => w.name === container && w.state === 'exited'), { what: `the watcher seeing ${container} stopped` });
+}
+function appReplyOperation(chat, container) {
+  const call = auditLines().findLast(a => a.chat === chat && a.action === 'keep_running' && a.args.container === container);
+  assert.ok(call?.operation && call.outcome === 'started', JSON.stringify(call));
+  return call.operation;
+}
+
+test('pending app starts keep their receipts and choices without streaming or saving unconfirmed claims', { timeout: 120000 * SLOW }, async () => {
+  const first = { spark: 'spark3', container: 'pending-reply-app' };
+  const second = { spark: 'spark4', container: 'pending-reply-side' };
+  const apps = [first, second];
+  await Promise.all(apps.map(({ spark, container }) => stoppedReplyApp(spark, container, P3)));
+  down.add(3);
+  script([{ match: '^keep pending-reply-app', rounds: [
+    [{ name: 'fleet_status', arguments: {} }, ...apps.map(arguments_ => ({ name: 'keep_running', arguments: arguments_ }))],
+    [{ name: 'stop_model', arguments: { spark: 'spark4', container: 'sc-unasked-cleanup' } }],
+  ], answer: 'The apps are now on the keep-running list. Docker is pulling their images.' }]);
+  const chat = await newChat();
+  let ids;
+  try {
+    const reply = await say(chat, 'Keep pending-reply-app on Spark 3 running and keep pending-reply-side on Spark 4 running.');
+    assert.deepEqual(reply.tools.map(t => [t.name, t.ok, t.outcome]), [
+      ['fleet_status', true, undefined],
+      ['keep_running', true, 'started'], ['keep_running', true, 'started'], ['stop_model', true, 'needs-ok'],
+    ]);
+    assert.equal(reply.message.choices.length, 1);
+    ids = apps.map(({ container }) => appReplyOperation(chat, container));
+    for (const [i, { spark, container }] of apps.entries()) {
+      assert.equal((await api(`/jobs/${ids[i]}`)).json.status, 'running');
+      assert.equal(await listed(spark, container), undefined, `${container} is not kept until the start succeeds`);
+    }
+    const expected = [
+      'Keep pending-reply-app running on Spark 3: under way. I’ll post the result here when it’s done.',
+      'Keep pending-reply-side running on Spark 4: under way. I’ll post the result here when it’s done.',
+    ].join('\n');
+    assert.equal(reply.events.filter(e => e.type === 'delta').map(e => e.text).join(''), expected);
+    assert.equal(reply.text, expected);
+    assert.equal((await chatMessages(chat)).at(-1).content, expected);
+  } finally {
+    down.delete(3);
+    noScript();
+  }
+  for (const [i, { spark, container }] of apps.entries()) {
+    assert.equal((await finished(ids[i])).status, 'completed');
+    assert.ok(await listed(spark, container));
+    await waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.operation === ids[i] && m.status === 'completed'),
+      { what: `${container}’s completion notice` });
+  }
+});
+
+test('a brain error after an app starts still reports the pending operation and its later result', { timeout: 120000 * SLOW }, async () => {
+  const args = { spark: 'spark3', container: 'pending-error-app' };
+  await stoppedReplyApp(args.spark, args.container, P4);
+  const fail = join(T.fleet.dir, 'model-fail');
+  writeFileSync(fail, 'after-tools');
+  down.add(4);
+  script([{ match: '^keep pending-error-app', calls: [{ name: 'keep_running', arguments: args }] }]);
+  const chat = await newChat();
+  let id;
+  try {
+    const { status, text } = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: 'Keep pending-error-app on Spark 3 running.' } });
+    assert.equal(status, 200, text);
+    const events = sseEvents(text);
+    const failure = events.find(e => e.type === 'error');
+    assert.match(failure?.message.error, /answered 500/);
+    const expected = 'Keep pending-error-app running on Spark 3: under way. I’ll post the result here when it’s done.';
+    assert.equal(events.filter(e => e.type === 'delta').map(e => e.text).join(''), expected);
+    assert.equal(failure.message.content, expected);
+    assert.equal((await chatMessages(chat)).at(-1).content, expected);
+    id = appReplyOperation(chat, args.container);
+    assert.equal((await api(`/jobs/${id}`)).json.status, 'running');
+    assert.equal(await listed(args.spark, args.container), undefined);
+  } finally {
+    rmSync(fail, { force: true });
+    down.delete(4);
+    noScript();
+  }
+  assert.equal((await finished(id)).status, 'completed');
+  assert.ok(await listed(args.spark, args.container));
+  await waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.operation === id && m.status === 'completed'),
+    { what: 'the app’s completion notice despite the brain error' });
+});
+
+test('an app start with a separately requested fleet lookup keeps the lookup’s answer', { timeout: 120000 * SLOW }, async () => {
+  const args = { spark: 'spark4', container: 'pending-mixed-app' };
+  await stoppedReplyApp(args.spark, args.container, P5);
+  const answer = 'Spark 4 answered the fleet check.';
+  down.add(5);
+  script([{ match: '^keep pending-mixed-app', rounds: [
+    [{ name: 'keep_running', arguments: args }],
+    [{ name: 'fleet_status', arguments: {} }],
+    [{ name: 'stop_model', arguments: { spark: 'spark3', container: 'sc-unasked-mixed' } }],
+  ], answer }]);
+  const chat = await newChat();
+  let id;
+  try {
+    const reply = await say(chat, 'Keep pending-mixed-app on Spark 4 running and tell me which Sparks are online.');
+    assert.deepEqual(reply.tools.map(t => [t.name, t.ok, t.outcome]), [
+      ['keep_running', true, 'started'], ['fleet_status', true, undefined], ['stop_model', true, 'needs-ok'],
+    ]);
+    assert.equal(reply.message.choices.length, 1);
+    id = appReplyOperation(chat, args.container);
+    assert.equal((await api(`/jobs/${id}`)).json.status, 'running');
+    assert.equal(reply.events.filter(e => e.type === 'delta').map(e => e.text).join(''), answer);
+    assert.equal(reply.text, answer);
+    assert.equal((await chatMessages(chat)).at(-1).content, answer);
+  } finally {
+    down.delete(5);
+    noScript();
+  }
+  assert.equal((await finished(id)).status, 'completed');
 });

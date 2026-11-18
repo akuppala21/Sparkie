@@ -467,6 +467,9 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       } finally { finish(); }
     }
     Object.assign(turn, turnRequest(turn));
+    // An app-only turn can use its operations' status as the reply. A task with more steps still needs its full reply.
+    turn.appReply = tools.length > 0 && !turn.task && !multiStep(turn.ctx.request);
+    turn.holdProse = turn.appReply && turn.ctx.intent.asked.includes('keep');
     Object.assign(turn, brainContext(turn));
     Object.assign(turn, howAsked(turn));
     // (the limits of the brain's profile: its own once checked, else the careful ones, turnLimits in 21-brain-rail.mjs)
@@ -708,6 +711,7 @@ function turnFailed(turn, e) {
   // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on; any other error's text
   // can quote the model's own answer, so a key in it is hidden before it is saved, A-5, 2026-11-14)
   const why = link.gone ? TURN_STOPPED : maskSecrets(e.message);
+  publishTurnProse(turn);
   const choices = asked.flatMap(sparkieMessageChoices);
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };

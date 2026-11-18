@@ -19,6 +19,8 @@ A way for the owner to talk to Sparkie from another app, like Telegram.
   gap where a model summary and shortened button hid the facts. Mask every part before activation; retries keep the
   same exact question and call. Owner-only and dangerous asks retain their separate sender.
 
+An app start’s reply uses the same operation wording as a pressed action. Keep that reply from the shared turn.
+
 Completion results use `tellAgain` (20-tell.mjs), including job ends, saved-run and self-test recovery, install
 results and carry-on replies. Keep each caller's return value and page updates; `tellAgain` returns `sent`, `later`
 or `never`, while `tellCarry` returns a boolean. The existing retry checks its first-send pairing before each later
