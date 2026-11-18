@@ -460,7 +460,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
 function launch(viewer, ctx, m, placed, how, prepared = null) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
-    model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
+    model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}),
+    ...(ctx.selfTestOperation ? { selfTest: true, selfTestOperation: ctx.selfTestOperation, selfTestContainer: ctx.selfTestContainer } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
   if (prepared) contextBind(job, prepared);
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
@@ -810,6 +811,9 @@ action({
     if (!spark || !container) throw new HttpError(400, 'Missing argument: spark and container.');
     sparkOf(viewer, spark);
     const dep = (await inventory(null)).sparks.find(sp => sp.id === spark)?.deployments.find(d => d.container === container);
+    // Check before cancelling work or changing a rollback record, then again under the stop's claim below.
+    const left = ctx.onlyIf?.selfTest ? await startedStill(spark, container, ctx.onlyIf) : null;
+    if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
     const pending = rollbackKnown(spark, container);
     if (!dep && pending) { mustUse(viewer); rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running. Its earlier put-back was cancelled.` }; }
     if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}. Only those can be stopped this way; running_models lists them.`);
@@ -817,6 +821,8 @@ action({
     const label = await run(nodeById(spark), `docker inspect -f '{{index .Config.Labels "spark.protect"}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
     if (isProtected(container, label.out.trim())) throw new HttpError(403, `${container} is protected.`);
     mustUse(viewer);
+    const changed = ctx.onlyIf?.selfTest ? await startedStill(spark, container, ctx.onlyIf) : null;
+    if (changed) return { outcome: 'left', left: changed, note: `Left alone: ${changed}.` };
     if (dep.state !== 'running') { rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running.` }; }
     const parts = dep.cluster ? dep.cluster.split('+') : [spark];
     if (!confirmRouted && parts.some(id => routedSparks().has(id))) {
@@ -827,12 +833,12 @@ action({
     const owners = ctx.via === 'page' || ctx.via === 'telegram' || (ctx.via === 'sparkie' && !ctx.agent);
     const holding = [...jobs.values()].filter(j => holdsModelsOn(j, parts) && (owners || (ctx.actor && j.actor === ctx.actor)));
     if (holding.length) await cancelJobsAndWait(holding, ctx.actor || viewer.login);
-    const job = claimed(parts, `stopping ${container}`, () => newJob('stop', { node: spark, container, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
+    const job = claimed(parts, `stopping ${container}`, () => newJob('stop', { node: spark, container, selfTest: Boolean(ctx.selfTest), ...(ctx.onlyIf?.selfTest ? { selfTestOperation: ctx.onlyIf.selfTest } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
     runJob(job, async j => {
       pausedCheck(ctx);
       // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
       const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
-      if (left) { j.left = left; note(j, `Left running: ${left}.`); return; }
+      if (left) { j.left = left; note(j, `${ctx.onlyIf?.selfTest ? 'Left alone' : 'Left running'}: ${left}.`); return; }
       rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null);
       await stopContainer(j, spark, container, viewer);
       await stoppedForSure(j, spark, container);
@@ -892,7 +898,7 @@ async function restartRoom(viewer, spark, container, model, inv = null) {
 const RESTART_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_RESTART_WAIT_MS) || 30 * 60000;
 function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
-  const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
+  const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, ...(ctx.selfTestOperation ? { selfTest: true, selfTestOperation: ctx.selfTestOperation } : {}), by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
   runJob(job, async j => {
     pausedCheck(ctx);
     // (looked at again inside the claim; a refusal here started nothing, so there is nothing to stop again)

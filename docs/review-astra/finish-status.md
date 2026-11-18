@@ -2,8 +2,9 @@
 
 Source audit: 2026-11-17. Completed hosted evidence below is through `7bbed38ff40cd39c4545dd85706b410783520a9d`;
 its 23 selected test files passed. The newer complete compute run exposed the additional issues below; the repaired candidate has not been released.
-This is a completion checklist, not a tested or deployed release certificate. Independent source review found no
-new blocker in the latest scoped repairs. A complete final hosted pass and real-Spark checks are still required.
+This is a candidate-freeze completion checklist, not a tested or deployed release certificate. The final A-60–A-63
+repairs are independently accepted. Their r8 predecessor passed 156/156 focused checks, and the affected-test wiring
+passed 124/124. Complete exact-tree qualification, installation and real-Spark checks remain required.
 
 Latest repair evidence: the first full candidate run at `b1964091` exposed old Telegram expectations, fixture
 assumptions and four product defects (A-51–A-54). Focused repaired checks passed **39/39** policy tests,
@@ -19,6 +20,16 @@ files now pass **233/233**, and CI r23's five files pass **56/56**. Candidate de
 on Spark 3. Combined r24's generated-document and affected-selection checks pass **123/123**. The recovery batch
 for A-55/A-56 has now passed **231/231**, including every original validation and self-test assertion. A complete
 combined strict run, final GitHub qualification, installation and real-Spark checks remain pending. All evidence is scoped in findings-4; no partial batch or interrupted run marks this build tested.
+
+The r3 full run on `cc5ac519` completed **3,430/3,433**, with three failures and no skips or cancellations
+in 42 minutes 7 seconds. All three expose A-61, the same absent self-test stop-receipt dereference in result
+delivery. No lock or coverage map was produced and `main` did not advance. A-60's two additional compute
+reproductions independently proved the newer-owner cleanup defect. A further Spark 3 reproduction proved A-62,
+the same ownership problem for the self-test app, including its name-only cleanup window. These repairs precede
+final qualification. A-63 additionally requires saving the adopted model on the owner’s wanted list before
+clearing its self-test note, including when a crash prevents the initial start from completing.
+
+The final native app-stop correction is independently accepted; its focused compute run is still in progress at this candidate freeze.
 
 Hosted evidence is tied to its snapshot:
 

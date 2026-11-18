@@ -243,3 +243,96 @@ files plus validation, self-test and self-test cleanup, with no skipped or cance
 validation and both self-test cases now pass unchanged. Its generated-document and affected-test-selection batch
 also passed **123/123**. All 45 original failures now have scoped passing evidence; complete release qualification
 still must run on the final combined committed tree.
+
+## A-60: delayed self-test cleanup can stop newer owner work
+
+**Accepted; repaired and independently reviewed; final qualification pending.** After a self-test is interrupted,
+fenced recovery can stop its model and release its claim. A genuine owner `restart_model` then starts that same
+Docker container with a new `StartedAt` and records it as wanted. Delayed `selfTestRecover` compares only the
+container ID, so it stops the owner's newer run. The existing stop action has a conditional incarnation guard,
+but this caller supplies no condition. An already-running adoption also needs durable ownership evidence because
+the self-test's model is deliberately absent from the desired list.
+
+The isolated Spark 2 reproduction used tree `eec2c99cd95325c6c2ddc399d400b9d72498c175`, dispatch
+`898231789aa348288c4815f21a316203`. Before cleanup it recorded a completed owner restart, the same container ID,
+a changed start time, a desired entry and a running model. After cleanup the model was stopped; the preservation
+assertion failed. A second actual owner-adoption reproduction on tree
+`10bb8dd48391954867baf2bff21b072d69c34a90`, dispatch `e315941230454980ac17e2a0a363ad4e`,
+showed startup rollback preserving the adopted running model, then delayed self-test cleanup stopping it. Both are
+failing evidence, not a release qualification. The r3 full run is recorded under A-61. The repair must retire proved-stop authority, preserve newer owner wishes, recheck under the
+existing claim, and report a deliberately preserved model as left running. No new service or state store is needed.
+
+## A-61: an absent self-test stop receipt breaks result delivery
+
+**Accepted; repaired; original result-delivery checks now pass.** With no model or rollback-stop receipt in the self-test
+note, two optional-field equality checks both compare `undefined` to `undefined`. The code then dereferences
+`recovered.container` and throws before posting the result. A matching receipt must actually exist. The original
+minimal result-delivery fixture remains; adding imaginary stop evidence would hide the defect.
+
+The r3 full run on commit `cc5ac519843164d26745bb0384955a7c3b5ed2e6`, tree
+`63f2e083fd9cba530e003ca8425c687117930751`, completed **3,430/3,433** tests with three failures, zero skips
+or cancellations, in 42 minutes 7 seconds. All three are the self-test result delivery/retry/disconnect/re-pair
+scenarios in `tasks-telegram.test.mjs`, with the same missing-receipt error. No passing lock or coverage map was
+written, and nothing landed. A-60 was found separately by additional integration reproductions.
+
+## A-62: self-test app cleanup can stop an app the owner adopted
+
+**Accepted; repaired and independently reviewed; final qualification pending.** The self-test can be interrupted while its web app
+is running but still waiting to answer HTTP, before the app ID has reached its note. After restart, a genuine owner
+`keep_running` adopts that app and its desired entry. Delayed self-test recovery still stops it by name. A name
+alone must not authorize cleanup, and the existing conditional-receipt and owner-wish checks must cover the test's
+apps and jobs as well as its model. No additional service or state store is needed.
+
+The isolated Spark 3 reproduction used tree `72c333caa249d7403dd04b8578b670d3756d13e2`, dispatch
+`165e89d2ec7b4ed9b03de3a47178ffab`. It recorded the missing pre-crash app ID, the accepted normal owner adoption,
+the same live container ID, a desired entry and a running app. Delayed recovery then stopped it; the preservation
+assertion failed. This additional failing integration evidence is separate from r3's three result-report failures.
+
+## A-63: an adopted self-test model can be missing from the wanted list
+
+**Accepted; repaired and independently reviewed; final qualification pending.** Preserving the adopted container is not
+the full handoff. `desiredWish` only updates rows already present; `desiredAfter` skips self-test operations;
+`seedDesired` does not reseed an existing file. If that file has no row for the test model, cleanup can preserve
+the owner's model and clear the last note of that choice while leaving it untracked. A crash before the original
+start completes must also preserve and transfer the owner's intent.
+
+The repair must retain the exact selected model name and owner wish in the existing note until the existing desired
+writer has saved the missing row. It must preserve unrelated entries and refuse or defer on a failed save. A
+synthetic completed operation or guessed model name is not evidence. The adoption regression gains a wanted-row
+assertion; these changes introduce no new service or state store.
+
+The isolated pre-fix control used tree `63fc83c15a262458940f1f45b8434a8bb78555ff`, dispatch
+`31195ab1176f4d29bc32da4edf7964ef`, with every service file byte-identical to r5. It began with an existing empty
+desired list at revision 7. The normal owner restart call returned 200/`already`, then the wanted-row assertion
+failed before any crash or new helper was involved.
+
+The A-60/A-62 reproductions use the full service and its normal action routes with a stand-in Docker fleet, inside
+isolated containers on compute Sparks. They do not establish real-hardware workload or power behavior.
+
+
+## A-60–A-63 repair evidence at candidate freeze
+
+The final r9 source uses the existing self-test note and desired writer, with no new service or state store.
+Cleanup requires the exact Docker ID/start time and current ownership under the existing claim; a prior proved stop
+retires cleanup authority. The primary-only note preserves the owner's adoption, exact selected model name and
+unfinished desired-list handoff across a crash. A newer owner stop or forget revokes that handoff. Native app stops
+also settle it, preventing a failed adoption save from blocking future self-tests. Pending handoffs are rechecked
+after the final awaited look and before retiring the matching note. Missing receipts no longer break result delivery.
+
+Independent source and test-preservation reviews accepted all 24 frozen r9 file hashes. The four original fixture
+files retain all 32/88/72/58 assertion-bearing lines; their only changes wire actual dependencies. The two new
+ownership files contain normal API/crash reproductions and direct boundary checks. No original behavioral assertion
+was weakened. A second pre-fix A-63 crash control, tree `804597f9689cebb6d8069d7d66459e2c7aebb8d8`, preserved a
+running model and cleared its note while leaving the desired row absent, independently confirming that handoff gap.
+
+Frozen r8 tree `8e1c164a022d0710c8e24fb6a2ec896217c7b09b` passed **156/156** checks across nine files on Spark 2,
+with no skipped or cancelled tests. This includes all three original A-61 failures, both model ownership reproductions,
+the app-adoption reproduction, actual early adoption before Docker identity, and the final-await handoff regression.
+
+The final native app-stop correction is independently accepted; its focused compute run is still in progress at this candidate freeze.
+
+The affected-test picker explicitly includes the new direct-source ownership fixtures for all six parts they read.
+Its additive selection regression, build and document checks passed **124/124** on compute tree
+`984793353723f36c3c8f090ecf2e8556912083e9`, with no skips or cancellations. Measured integration coverage and the
+short mandatory checks remain selected. These focused results precede the complete candidate run and final hosted
+qualification; they do not authorize an install by themselves or establish live hardware behavior.

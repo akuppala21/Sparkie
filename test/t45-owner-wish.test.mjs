@@ -15,7 +15,7 @@ function handoff() {
     [SOURCE]: { kind: 'start-rollback', operation: SOURCE, phase: 'active', targets: ['spark3'], wishes: [KEY], units: [], attempts: [{ commands: [{ spark: 'spark3', name: 'sc-loading', action: 'run', result: { terminal: true, code: 0, seen: { id: ID, startedAt: WHEN } } }] }] },
     [PARENT]: { operation: PARENT, starting: SOURCE, pending: [], awaiting: [] },
   } };
-  const names = ['savedRunsNow', 'writePrivate', 'SAVED_RUNS_FILE', 'note', 'savedRunWords', 'jobs', 'rollbackRead', 'rollbackWrite', 'rollbackForget', 'rollbackSame', 'receiptOf', 'desired', 'keyOf', 'rollbackKey', 'rollbackSave', 'backUnits', 'readKept', 'DESIRED_FILE', 'ENGINE_CHECK_NAME'];
+  const names = ['savedRunsNow', 'writePrivate', 'SAVED_RUNS_FILE', 'note', 'savedRunWords', 'jobs', 'rollbackRead', 'rollbackWrite', 'rollbackForget', 'rollbackSame', 'receiptOf', 'desired', 'keyOf', 'rollbackKey', 'rollbackSave', 'backUnits', 'readKept', 'DESIRED_FILE', 'ENGINE_CHECK_NAME', 'selfTestWish', 'selfTestRevoke'];
   const values = [
     () => { if (h.failRead) throw new Error('unreadable receipts'); return structuredClone(state); },
     (_, next) => { if (h.failWrite) throw new Error('receipt disk full'); state = structuredClone(next); h.events.push('receipt'); },
@@ -25,7 +25,7 @@ function handoff() {
     (a, b) => Boolean(a && b && a.id === b.id && a.startedAt === b.startedAt),
     async () => { h.captureCount = (h.captureCount || 0) + 1; if (h.afterReceipt) h.afterReceipt(state); return structuredClone(h.seen); },
     () => ({ running: [{ spark: 'spark3', container: 'sc-loading', since: WHEN }] }), x => `${x.spark}/${x.container}`, x => `${x.spark}/${x.container}`,
-    next => { if (h.failIntent) throw new Error('intent disk full'); state = structuredClone(next); h.events.push('intent'); }, () => [], () => null, '/fake/desired.json', 'spark-console-engine-check',
+    next => { if (h.failIntent) throw new Error('intent disk full'); state = structuredClone(next); h.events.push('intent'); }, () => [], () => null, '/fake/desired.json', 'spark-console-engine-check', () => {}, () => {},
   ];
   h.api = new Function(...names, `${take(records, 'savedRunKeep')}\n${take(records, 'savedRunReceipts')}\n${take(steps, 'captureStartedReceipts')}\n${take(desiredSource, 'desiredWish')}\n${take(rollback, 'rollbackSupersede')}\n${take(rollback, 'rollbackAdoptStart')}\n${take(rollback, 'rollbackCommit')}\nreturn { rollbackCommit, rollbackSupersede, rollbackAdoptStart, desiredWish };`)(...values);
   h.commit = h.api.rollbackCommit; h.supersede = h.api.rollbackSupersede; h.adopt = h.api.rollbackAdoptStart;

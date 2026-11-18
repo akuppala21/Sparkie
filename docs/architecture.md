@@ -118,7 +118,7 @@ flowchart TD
   CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
   JOBS -->|"failed model start"| RETURN
   RETURN -->|"fence late commands; prove exact new-ID disposal; restart exact originals"| SSH
-  RETURN -->|"owner adoption; exact self-test stop evidence; all claims held"| STATE
+  RETURN -->|"owner intent/stop proof; claims held"| STATE
   JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
   SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
@@ -127,7 +127,7 @@ flowchart TD
   KNOW -->|"best setup for a start"| RUN
   KNOW -->|"memory lines, in the system prompt"| CHAT
   SENSE -->|"fleet notes; a job's end (keep_running once), once, in the chat that started it (jobEnded, A13)"| CHAT
-  JOBS -->|"docker commands; the self-test's kill of its own container, by id, and fixed reads"| SSH
+  JOBS -->|"docker commands; self-test kill/stop: matching id, start time and note; fixed reads"| SSH
   JOBS -->|"test prompt and speed test: HTTP to port 8000, no SSH; an app's link: one GET /"| FLEET
   SENSE -->|"read-only probes"| SSH
   SSH -->|"scripts"| FLEET

@@ -6,7 +6,12 @@ A line of the self-test (`self_test`): one more thing it proves on a compute Spa
 
 - A line of `self_test` in `21-selftest.mjs` (`selfTest`): a step through `stepRun` with the self-test's ctx
   (`selfTestCtx`), a line built by `say` from code, and what it leaves stopped in "Left behind".
-- What the step starts goes into `self-test.json` as it starts (`keep`), so `selfTestRecover` stops it after a restart.
+- What the step starts goes into `self-test.json` as it starts (`keep`), so `selfTestRecover` can stop it after a restart.
+Each part needs its id and Docker start time, plus its own desired entry date for an app; every stop checks them and the
+current primary note before cancelling work and again under its claim. Its own start/restart receipt is kept under its
+claim, including while healing loads. An owner’s adoption and a proved rollback stop retire that note’s stop authority.
+Unreadable authority keeps the note for another try. Record a model’s exact library name up front. An owner’s explicit
+adoption hands it to the desired list (`desiredSelfTestWish`); `wishSaved` follows a durable save, and a newer owner stop/forget (`wishStopped`) cancels pending handoff, including a native app stop or an admitted offline forget. Recheck pending handoffs after the final awaited look, immediately before retiring the matching operation’s note.
 
 ## Also update
 
@@ -34,7 +39,7 @@ A line of the self-test (`self_test`): one more thing it proves on a compute Spa
 
 ## Tests
 
-- `selftest.test.mjs`, `selftest-cleanup.test.mjs`.
+- `selftest.test.mjs`, `selftest-cleanup.test.mjs`, `selftest-ownership.test.mjs`, `selftest-app-ownership.test.mjs`.
 
 ## Copy from
 

@@ -116,7 +116,10 @@ async function captureStartedReceipts(job, save = true) {
     const entry = desired().running.find(x => keyOf(x) === key);
     receipts[key] = seen ? { ...seen, since: entry?.since || null } : null;
   }
-  if (save) { job.startedReceipts = receipts; savedRunReceipts(job); }
+  if (save) {
+    if (job.selfTest || job.selfTestOperation) selfTestStarted(job, receipts);
+    job.startedReceipts = receipts; savedRunReceipts(job);
+  }
   return receipts;
 }
 async function startedReceipts(items) {
@@ -131,10 +134,16 @@ async function startedReceipts(items) {
 // null when it is, else the words for why it is left running.
 async function startedStill(spark, container, seen) {
   const at = sparkName(nodeById(spark) || { id: spark });
+  if (seen?.selfTest) {
+    const held = selfTestAuthority(spark, container, seen);
+    if (held) return held;
+  }
   if (!seen?.id || (!seen.startedAt && !seen.since)) throw new Error(`The record of what this run started is missing for ${container} on ${at}, so it wasn’t stopped.`);
   const now = await receiptOf(spark, container);
   if (!now?.id || (seen.startedAt && !now.startedAt)) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
-  const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const entry = (seen.selfTest ? desired(true) : desired()).running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const held = seen.selfTest ? selfTestAuthority(spark, container, seen) : null;
+  if (held) return held;
   const other = (seen.id && now.id && now.id !== seen.id) || (seen.startedAt && now.startedAt && now.startedAt !== seen.startedAt)
     || ('since' in seen && (entry?.since || null) !== seen.since);
   return other ? `${container} on ${at} was started again since, not by this run` : null;

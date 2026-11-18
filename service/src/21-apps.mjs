@@ -1,5 +1,5 @@
 /* ───────── apps kept running (R38) ───────── */
-// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs, t45-adopt-job.test.mjs, t45-owner-wish.test.mjs
+// Area: features        Rules: R1, R2, R7, R20, R22, R23, R32, R38, R40        Tests: apps.test.mjs, selftest-ownership.test.mjs, selftest-app-ownership.test.mjs, tasks-telegram.test.mjs, t45-adopt-job.test.mjs, t45-owner-wish.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
@@ -375,14 +375,19 @@ action({
     // only takes it off the list (below: its Spark is off).
     if (verb !== 'stop' && !ctx.poweredOn) { const first = powerThenKeep(viewer, ctx, input); if (first) return first; }
     const inv = await inventory(null), sp = inv.sparks.find(s => s.id === spark);
+    if (verb === 'stop' && ctx.onlyIf?.selfTest) {
+      const left = await startedStill(spark, container, ctx.onlyIf);
+      if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
+    }
     const entry = desired().running.find(x => x.app && keyOf(x) === key), next = id => `wait_operation {"id":"${id}"}`;
     if (!sp?.online) {
       // A stop while its Spark has been off a while takes it off the list (nothing runs there to stop), so it isn't
       // started again when the Spark comes back on. (One missed look keeps the refusal.)
       const s = knowledge.sparks[spark];
-      if (verb === 'stop' && entry && s?.online === false && Date.now() - (Date.parse(s.lastSeenAt) || 0) >= HEAL_OFFLINE_MS
-        && forgetApp({ spark, container }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null)) {
-        return { outcome: 'forgotten', spark, container, note: `${at} isn’t reachable, so nothing was stopped there. ${container} is off the list of what should be running, so it isn’t started again when ${at} comes back on.` };
+      if (verb === 'stop' && entry && s?.online === false && Date.now() - (Date.parse(s.lastSeenAt) || 0) >= HEAL_OFFLINE_MS) {
+        if (!ctx.onlyIf && ownersAsk(viewer, ctx)) selfTestRevoke([key]);
+        if (forgetApp({ spark, container }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null))
+          return { outcome: 'forgotten', spark, container, note: `${at} isn’t reachable, so nothing was stopped there. ${container} is off the list of what should be running, so it isn’t started again when ${at} comes back on.` };
       }
       throw new HttpError(409, `${at} isn’t reachable right now.`);
     }
@@ -390,6 +395,10 @@ action({
       throw new HttpError(409, `${container} is one of Spark Console’s models. Models are started, stopped and restarted with start_model, stop_model and restart_model, and are already kept running.`);
     }
     const look = await appLook(node, container, sp.tsip), state = look.state, known = knowledge.workloads[key];
+    if (verb === 'stop' && ctx.onlyIf?.selfTest) {
+      const left = await startedStill(spark, container, ctx.onlyIf);
+      if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
+    }
     if (isProtected(container, look.protect)) throw new HttpError(403, `${container} is protected.`);
     // A model server, by what it is, not by whether it answers /v1/models right now: Spark Console's model label, a model
     // engine's image, or the watcher's record of it as one. One Spark Console started as an app (spark.app=1) stays an
@@ -399,7 +408,7 @@ action({
       throw new HttpError(409, `${container} serves models, so it isn’t kept running as an app: memory for a model is checked by start_model.`);
     }
     // (a job is never on the list: one Spark Console started stops all the same, A13)
-    if (verb !== 'keep' && !entry && !(verb === 'stop' && look.app && look.job)) throw new HttpError(409, `${container} on ${at} isn’t an app Spark Console keeps running, so there’s nothing to ${verb} here.`);
+    if (verb !== 'keep' && !entry && !(verb === 'stop' && look.app && (look.job || ctx.onlyIf?.selfTest))) throw new HttpError(409, `${container} on ${at} isn’t an app Spark Console keeps running, so there’s nothing to ${verb} here.`);
     // Self-healing brings back only what's still on the list, read again after the look (the owner may have pressed
     // Forget since its pass began).
     if (ctx.via === 'watcher' && !desired().running.some(x => x.app && keyOf(x) === key)) return { outcome: 'already', spark, container, note: `${container} is no longer on the list of what should be running, so it wasn’t started.` };
@@ -424,7 +433,7 @@ action({
     // The 8 GB rule's figure: a new app's cap (memoryGB, else 4); one that's there, its own cap, else the owner's figure.
     const gb = state === 'missing' ? input.memoryGB || APP_MEMORY_GB : look.capGB || input.memoryGB || entry?.memoryGB || null;
     const link = sp.tsip && hostPort ? `http://${sp.tsip}:${hostPort}` : null;
-    const meta = { node: spark, container, app: true, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? maskSecrets(String(ctx.request).slice(0, 500)).slice(0, 300) : null };
+    const meta = { node: spark, container, app: true, ...(ctx.selfTestOperation ? { selfTestOperation: ctx.selfTestOperation } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? maskSecrets(String(ctx.request).slice(0, 500)).slice(0, 300) : null };
     // (a recorded port follows what Docker reports)
     const changed = !entry || hostPort !== (entry.port || null) || (input.memoryGB !== undefined && input.memoryGB !== entry.memoryGB);
     const keepIt = () => keepApp({ spark, container, port: hostPort, memoryGB: input.memoryGB || entry?.memoryGB }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null);
@@ -435,7 +444,8 @@ action({
         pausedCheck(ctx);
         // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
         const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
-        if (left) { j.left = left; j.stoppedHere = []; note(j, `Left running: ${left}.`); return; }
+        if (left) { j.left = left; j.stoppedHere = []; note(j, `${ctx.onlyIf?.selfTest ? 'Left alone' : 'Left running'}: ${left}.`); return; }
+        if (!ctx.onlyIf && ownersAsk(viewer, ctx)) selfTestRevoke([key]);
         // (one whose container is gone only comes off the list: a name Docker doesn't have is never handed to docker stop)
         if (state !== 'missing') {
           await stopContainer(j, spark, container, viewer);
@@ -465,14 +475,15 @@ action({
     if (state === 'running' && look.job) {
       if (ownersAsk(viewer, ctx)) {
         const release = claimSparks([spark], `noting the owner's ask for ${container}`);
-        try { desiredWish([key]); await rollbackRetireSuperseded([spark]); } finally { release(); }
+        try { desiredWish([key]); await rollbackRetireSuperseded([spark]); selfTestWishSaved([key]); } finally { release(); }
       }
       return { outcome: 'already', spark, container, job: true, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
     }
     if (state === 'running') {
-      if (changed) keepIt();
-      // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
+      // Owner intent is checked and kept before keepApp can rewrite the list. A known refusal changes neither.
       if (ownersAsk(viewer, ctx) && (entry || changed)) desiredWish([key]);
+      if (changed) keepIt();
+      if (ownersAsk(viewer, ctx)) selfTestWishSaved([key]);
       const answers = link ? await appAnswers(sp.tsip, hostPort) : null;
       const said = !entry ? `${container} on ${at} is now on the list of what should be running: Spark Console starts it again if it stops by itself or ${at} is powered off and on.`
         : changed ? `${container} on ${at} was already kept running; its port and memory figure on the list are updated.`

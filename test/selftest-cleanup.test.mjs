@@ -121,7 +121,7 @@ test('fenced recovery records only a matching self-test model stop and preserves
   const body = /^function selfTestRollbackStopped\(spark, seen\) \{[\s\S]*?^\}/m.exec(source)?.[0];
   assert.ok(body);
   let saved = { operation: 'test-operation', spark: 'spark3', model: { id: 'a'.repeat(64), container: 'sc-test' }, chat: 'kept-chat' }, writes = 0;
-  const fn = new Function('SELF_TEST_FILE', 'readKept', 'writePrivate', `${body}\nreturn selfTestRollbackStopped;`)('self-test.json', () => structuredClone(saved), (file, value) => { assert.equal(file, 'self-test.json'); writes++; saved = value; });
+  const fn = new Function('SELF_TEST_FILE', 'selfTestRecord', 'writePrivate', `${body}\nreturn selfTestRollbackStopped;`)('self-test.json', () => structuredClone(saved), (file, value) => { assert.equal(file, 'self-test.json'); writes++; saved = value; });
   for (const [spark, id, name] of [['spark4', 'a'.repeat(64), 'sc-test'], ['spark3', 'b'.repeat(64), 'sc-test'], ['spark3', 'a'.repeat(64), 'sc-other']]) fn(spark, { id, name });
   assert.equal(writes, 0);
   fn('spark3', { id: 'a'.repeat(64), name: 'sc-test' });
@@ -133,7 +133,7 @@ test('an unrelated unreadable self-test note cannot block fenced model restorati
   const source = readFileSync(join(REPO, 'service/src/21-selftest.mjs'), 'utf8');
   const body = /^function selfTestRollbackStopped\(spark, seen\) \{[\s\S]*?^\}/m.exec(source)?.[0]; assert.ok(body);
   let writes = 0, warnings = 0;
-  const fn = new Function('SELF_TEST_FILE', 'readKept', 'writePrivate', 'console', `${body}\nreturn selfTestRollbackStopped;`)(
+  const fn = new Function('SELF_TEST_FILE', 'selfTestRecord', 'writePrivate', 'console', `${body}\nreturn selfTestRollbackStopped;`)(
     'self-test.json', () => { throw new Error('unreadable unrelated note'); }, () => { writes++; }, { error: () => { warnings++; } });
   assert.doesNotThrow(() => fn('spark3', { id: 'a'.repeat(64), name: 'sc-other' }));
   assert.equal(writes, 0); assert.equal(warnings, 1);

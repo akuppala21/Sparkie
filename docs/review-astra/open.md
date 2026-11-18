@@ -63,3 +63,11 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-57 | New retry and owner gates lack protected-path classification | Fixed; unchanged security assertions pass in r23's 56/56 | Complete release qualification |
 | A-58 | Long cleanup hides earlier retry decisions | Fixed; bounded masked history; original workflows and added cases pass in r23 | Complete release qualification |
 | A-59 | Core prompt exceeds its existing size limit | Fixed; shorter instructions preserve safeguards; original assertion passes in r22's 233/233 | Complete qualification and real brain evaluation |
+
+| A-60 | Delayed self-test cleanup stops a newer same-ID owner restart | Fixed; r9 independently accepted; actual ownership reproductions pass in r8’s 156/156 | Complete exact-tree qualification and live checks |
+
+| A-61 | Missing self-test stop receipt crashes result delivery | Fixed; original minimal fixtures retained and all three result cases pass in r8 | Complete exact-tree qualification |
+
+| A-62 | Name-based self-test cleanup stops an owner-adopted app | Fixed; exact ownership checks; actual app-adoption/crash regression passes | Complete qualification and native-stop follow-up evidence |
+
+| A-63 | Preserved owner-adopted self-test model can remain untracked | Fixed; durable desired handoff and newer-stop revocation independently accepted; real model adoption checks pass | Complete qualification; scoped native app-stop status in findings-4 |

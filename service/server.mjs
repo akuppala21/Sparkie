@@ -7858,7 +7858,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
 function launch(viewer, ctx, m, placed, how, prepared = null) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
-    model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
+    model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}),
+    ...(ctx.selfTestOperation ? { selfTest: true, selfTestOperation: ctx.selfTestOperation, selfTestContainer: ctx.selfTestContainer } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
     request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
   if (prepared) contextBind(job, prepared);
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
@@ -8208,6 +8209,9 @@ action({
     if (!spark || !container) throw new HttpError(400, 'Missing argument: spark and container.');
     sparkOf(viewer, spark);
     const dep = (await inventory(null)).sparks.find(sp => sp.id === spark)?.deployments.find(d => d.container === container);
+    // Check before cancelling work or changing a rollback record, then again under the stop's claim below.
+    const left = ctx.onlyIf?.selfTest ? await startedStill(spark, container, ctx.onlyIf) : null;
+    if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
     const pending = rollbackKnown(spark, container);
     if (!dep && pending) { mustUse(viewer); rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running. Its earlier put-back was cancelled.` }; }
     if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}. Only those can be stopped this way; running_models lists them.`);
@@ -8215,6 +8219,8 @@ action({
     const label = await run(nodeById(spark), `docker inspect -f '{{index .Config.Labels "spark.protect"}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
     if (isProtected(container, label.out.trim())) throw new HttpError(403, `${container} is protected.`);
     mustUse(viewer);
+    const changed = ctx.onlyIf?.selfTest ? await startedStill(spark, container, ctx.onlyIf) : null;
+    if (changed) return { outcome: 'left', left: changed, note: `Left alone: ${changed}.` };
     if (dep.state !== 'running') { rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null); return { outcome: 'already', note: `${container} isn’t running.` }; }
     const parts = dep.cluster ? dep.cluster.split('+') : [spark];
     if (!confirmRouted && parts.some(id => routedSparks().has(id))) {
@@ -8225,12 +8231,12 @@ action({
     const owners = ctx.via === 'page' || ctx.via === 'telegram' || (ctx.via === 'sparkie' && !ctx.agent);
     const holding = [...jobs.values()].filter(j => holdsModelsOn(j, parts) && (owners || (ctx.actor && j.actor === ctx.actor)));
     if (holding.length) await cancelJobsAndWait(holding, ctx.actor || viewer.login);
-    const job = claimed(parts, `stopping ${container}`, () => newJob('stop', { node: spark, container, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
+    const job = claimed(parts, `stopping ${container}`, () => newJob('stop', { node: spark, container, selfTest: Boolean(ctx.selfTest), ...(ctx.onlyIf?.selfTest ? { selfTestOperation: ctx.onlyIf.selfTest } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
     runJob(job, async j => {
       pausedCheck(ctx);
       // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
       const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
-      if (left) { j.left = left; note(j, `Left running: ${left}.`); return; }
+      if (left) { j.left = left; note(j, `${ctx.onlyIf?.selfTest ? 'Left alone' : 'Left running'}: ${left}.`); return; }
       rollbackSupersede([`${spark}/${container}`], 'it was stopped on purpose', ctx.onlyIf || null);
       await stopContainer(j, spark, container, viewer);
       await stoppedForSure(j, spark, container);
@@ -8290,7 +8296,7 @@ async function restartRoom(viewer, spark, container, model, inv = null) {
 const RESTART_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_RESTART_WAIT_MS) || 30 * 60000;
 function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
-  const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
+  const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, ...(ctx.selfTestOperation ? { selfTest: true, selfTestOperation: ctx.selfTestOperation } : {}), by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
   runJob(job, async j => {
     pausedCheck(ctx);
     // (looked at again inside the claim; a refusal here started nothing, so there is nothing to stop again)
@@ -9042,7 +9048,10 @@ function rollbackSupersede(keys, reason = 'the owner changed what should run', o
       changed = true;
     }
   }
+  // All eligibility checks above are pure. A known refusal or failed rollback save grants no new note/desired intent.
+  if (!onlyIf) { if (stopReturn) selfTestRevoke(keys, true); else selfTestWish(keys, true); }
   if (changed) rollbackSave(f);
+  if (!onlyIf) { if (stopReturn) selfTestRevoke(keys); else selfTestWish(keys); }
 }
 function rollbackBeforeRerun(keys) {
   // Under the new start's claim, before Docker: an older command can still finish on this Spark.
@@ -9056,6 +9065,12 @@ function rollbackAdoptStart(job) {
   const r = job.rollbackOperation ? rollbackRead(job.rollbackOperation) : null;
   if (r?.phase === 'returning') throw new Error('That start failed and is putting earlier work back. Wait for it to finish, then ask again.');
   const keys = [...new Set([...(job.ranHere || []), ...(r?.attempts || []).flatMap(a => a.commands.filter(c => c.action === 'run' && c.name !== ENGINE_CHECK_NAME).map(c => `${c.spark}/${c.name}`))])].filter(key => key.split('/')[1] !== ENGINE_CHECK_NAME);
+  if (!keys.length && job.selfTestOperation && job.selfTestContainer) {
+    const rec = selfTestRecord();
+    if (!rec || rec.operation !== job.selfTestOperation || rec.spark !== job.node || rec.model.container !== job.selfTestContainer)
+      throw new Error('The self-test’s target changed, so the owner’s request could not be saved.');
+    keys.push(`${rec.spark}/${rec.model.container}`);
+  }
   if (keys.length) desiredWish(keys); // exact current source intents are durable before the owner gets an answer
   savedRunReceipts({ ...job, ownersWish: true }, true);
   // Before the first create, a crash has nothing to stop. Its first command transfers this flag into the same
@@ -10080,7 +10095,10 @@ async function captureStartedReceipts(job, save = true) {
     const entry = desired().running.find(x => keyOf(x) === key);
     receipts[key] = seen ? { ...seen, since: entry?.since || null } : null;
   }
-  if (save) { job.startedReceipts = receipts; savedRunReceipts(job); }
+  if (save) {
+    if (job.selfTest || job.selfTestOperation) selfTestStarted(job, receipts);
+    job.startedReceipts = receipts; savedRunReceipts(job);
+  }
   return receipts;
 }
 async function startedReceipts(items) {
@@ -10095,10 +10113,16 @@ async function startedReceipts(items) {
 // null when it is, else the words for why it is left running.
 async function startedStill(spark, container, seen) {
   const at = sparkName(nodeById(spark) || { id: spark });
+  if (seen?.selfTest) {
+    const held = selfTestAuthority(spark, container, seen);
+    if (held) return held;
+  }
   if (!seen?.id || (!seen.startedAt && !seen.since)) throw new Error(`The record of what this run started is missing for ${container} on ${at}, so it wasn’t stopped.`);
   const now = await receiptOf(spark, container);
   if (!now?.id || (seen.startedAt && !now.startedAt)) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
-  const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const entry = (seen.selfTest ? desired(true) : desired()).running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const held = seen.selfTest ? selfTestAuthority(spark, container, seen) : null;
+  if (held) return held;
   const other = (seen.id && now.id && now.id !== seen.id) || (seen.startedAt && now.startedAt && now.startedAt !== seen.startedAt)
     || ('since' in seen && (entry?.since || null) !== seen.since);
   return other ? `${container} on ${at} was started again since, not by this run` : null;
@@ -10320,7 +10344,7 @@ const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('
 const CONTEXT_CODE = () => [CONTEXT_FLAGS, contextNumber, contextValue, contextOverride, contextPolicy, contextChange, contextAttempt, contextFreeze,
   contextFingerprint, contextPrune, contextCarry, contextConsume, contextPrepare, contextBind, contextPark, contextPublish, contextCheck, contextDecisionFor, contextApprove, contextChoiceResult,
   contextAlready, contextReplayHow, contextPageStart, withHow, engineOf, imageOf, question, sparkieMessageChoices, taskPark, taskAnswered, endTask, taskEnded, runChoice, pressLate, pressSaid, pressPost, keepTask, wakeWork, startContext, sparkieCheck];
-const ROLLBACK_CODE = () => [ROLLBACK_TARGET_PY, rollbackSave, rollbackShape, rollbackRecords, rollbackRead, rollbackWrite, rollbackForget, rollbackHeld, rollbackSupersede, rollbackBeforeRerun, rollbackAdoptStart, rollbackRetireSuperseded, rollbackTarget, rollbackLook, rollbackPrepare, rollbackAttempt, rollbackCommand, rollbackRun, rollbackOriginal, rollbackStopOriginal, rollbackAside, rollbackRemove, rollbackStopCreated, rollbackStopDisposed, rollbackFenceState, rollbackFence, rollbackReconcile, rollbackOwned, rollbackDesiredChanged, rollbackTransfer, rollbackResult, rollbackReturn, selfTestRollbackStopped, rollbackCommit, rollbackBeforeRetry, rollbackPass, rollbackContinue, rollbackStopCancelled, rollbackStopNew, rollbackKnown, rollbackRoom, rollbackKey, rollbackSame];
+const ROLLBACK_CODE = () => [keyOf, accessList, writePrivate, selfTestWish, selfTestWishSaved, selfTestRevoke, selfTestRecord, selfTestStarted, desiredSelfTestWish, ROLLBACK_TARGET_PY, rollbackSave, rollbackShape, rollbackRecords, rollbackRead, rollbackWrite, rollbackForget, rollbackHeld, rollbackSupersede, rollbackBeforeRerun, rollbackAdoptStart, rollbackRetireSuperseded, rollbackTarget, rollbackLook, rollbackPrepare, rollbackAttempt, rollbackCommand, rollbackRun, rollbackOriginal, rollbackStopOriginal, rollbackAside, rollbackRemove, rollbackStopCreated, rollbackStopDisposed, rollbackFenceState, rollbackFence, rollbackReconcile, rollbackOwned, rollbackDesiredChanged, rollbackTransfer, rollbackResult, rollbackReturn, selfTestRollbackStopped, rollbackCommit, rollbackBeforeRetry, rollbackPass, rollbackContinue, rollbackStopCancelled, rollbackStopNew, rollbackKnown, rollbackRoom, rollbackKey, rollbackSame];
 const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, downloadAdmission, nodeById, sparkName, HF_HUB, HF_IMAGES, HF_PULL_PY, HF_WATCH_PY, downloadTiming, downloadRemote, downloadLease, downloadResume, run, spawnOn, knownOffline, noteReach, offlineNow, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
@@ -10358,6 +10382,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  selfTestWish,
+  selfTestRecord,
+  selfTestAuthority,
   alreadyStarting,
   receiptsHeld,
   receiptsBroughtBack,
@@ -10406,7 +10433,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, selfTestAuthority, selfTestRecord, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -10879,7 +10906,8 @@ async function maybeHeal(node, w) {
   let test = false;
   try { test = selfTestModels().has(key); } catch {}
   try {
-    const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
+    const testOperation = (healDrills.has(`${node.id}/${w.id}`) || test) ? selfTestRecord()?.operation : null;
+    const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})`, ...(testOperation ? { selfTestOperation: testOperation } : {}) };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
     // (the self-test's drill, or its model all the same: never the owner's wish, so its restart doesn't put it on the list)
@@ -10899,11 +10927,13 @@ async function maybeHeal(node, w) {
 async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000, started = null) {
   const title = workflowById(id || name)?.title || name;
   const out = await runAction(name, viewer, id ? { ...args, __validate: id } : args, ctx);
+  if (out?.left) return out;
   if (!out?.operation) throw new Error(`${name}: ${out?.note || out?.question || out?.outcome || 'didn’t start'}`);
   if (started && jobs.has(out.operation)) started(jobs.get(out.operation));
   note(job, `${title}: running (operation ${out.operation})`);
   const done = await waitJob(out.operation, limit);
   if (done?.status !== 'completed') throw new Error(`${title} failed${id ? ' its check' : ''}: ${String(done?.error || done?.status).split('\n')[0]}`);
+  if (done.left) return { ...out, left: done.left };
   note(job, `${title}: ${id ? 'validated' : 'done'}`);
   return out;
 }
@@ -12088,7 +12118,7 @@ function dangerForTest(viewer, ctx, choices) {
 }
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38, R41, R57        Tests: power.test.mjs, desired.test.mjs, desired-look.test.mjs, workloads.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-owner-wish.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish, desiredSelfTestWish)
 // Timers: watchHeld (every 60 s; seeds desired.json if missing)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -12168,6 +12198,28 @@ function desiredWish(keys, { afterStart = null } = {}) {
     for (const x of hit) x.since = at;
     if (hit.length) writePrivate(DESIRED_FILE, d);
   } catch (e) { console.error(`Couldn’t note the owner’s wish on what should be running: ${e.message}`); }
+}
+// Explicit owner adoption of the self-test's exact model. This adds intent, not a completed operation: an absent
+// row gets the ordinary revision/before record, while an existing row keeps its revision and other settings. The
+// note remains pending until this strict save and its directory sync finish; a newer stop permanently cancels retry.
+function desiredSelfTestWish(operation) {
+  const rec = selfTestRecord();
+  if (!rec || rec.operation !== operation || !rec.model.wish || rec.model.wishSaved || rec.model.wishStopped) return;
+  if (typeof rec.model.name !== 'string' || !rec.model.name) throw new Error('The self-test’s exact model name is missing. Its owner request was kept for another try.');
+  const key = `${rec.spark}/${rec.model.container}`, d = desired(true), at = new Date().toISOString();
+  if (!d.running.some(x => keyOf(x) === key)) {
+    const before = d.running.map(x => ({ ...x }));
+    d.running.push({ spark: rec.spark, container: rec.model.container, model: rec.model.name, since: at, by: accessList().owner });
+    d.revision += 1;
+    d.revisions.push({ revision: d.revision, at, operation: null, chat: rec.chat || null, by: accessList().owner, added: [key], removed: [], before });
+    if (d.revisions.length > 50) d.revisions.splice(0, d.revisions.length - 50);
+    try {
+      writePrivate(DESIRED_FILE, d);
+      const fd = openSync(STATE_DIR, 'r');
+      try { fsyncSync(fd); } finally { closeSync(fd); }
+    } catch { throw new Error('Your model request could not be fully saved. Its self-test note was kept. Try again.'); }
+  }
+  selfTestWishSaved([key], operation);
 }
 // An app already on a Spark joins the list (keep_running, 21-apps.mjs): read with readKept itself, so a file that can't
 // be read is never saved over. A new entry is a revision of its own (undo leaves apps alone).
@@ -18664,7 +18716,7 @@ function aheadShown(conv) {
   return l.entries.map(e => ({ words: aheadWords(e, sparkName(nodeById(e.spark) || { id: e.spark })), since: e.since, by: e.by }));
 }
 /* ───────── apps kept running (R38) ───────── */
-// Area: features        Rules: R1, R2, R7, R23, R32, R38, R40        Tests: apps.test.mjs, tasks-telegram.test.mjs, t45-adopt-job.test.mjs, t45-owner-wish.test.mjs
+// Area: features        Rules: R1, R2, R7, R20, R22, R23, R32, R38, R40        Tests: apps.test.mjs, selftest-ownership.test.mjs, selftest-app-ownership.test.mjs, tasks-telegram.test.mjs, t45-adopt-job.test.mjs, t45-owner-wish.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
@@ -19040,14 +19092,19 @@ action({
     // only takes it off the list (below: its Spark is off).
     if (verb !== 'stop' && !ctx.poweredOn) { const first = powerThenKeep(viewer, ctx, input); if (first) return first; }
     const inv = await inventory(null), sp = inv.sparks.find(s => s.id === spark);
+    if (verb === 'stop' && ctx.onlyIf?.selfTest) {
+      const left = await startedStill(spark, container, ctx.onlyIf);
+      if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
+    }
     const entry = desired().running.find(x => x.app && keyOf(x) === key), next = id => `wait_operation {"id":"${id}"}`;
     if (!sp?.online) {
       // A stop while its Spark has been off a while takes it off the list (nothing runs there to stop), so it isn't
       // started again when the Spark comes back on. (One missed look keeps the refusal.)
       const s = knowledge.sparks[spark];
-      if (verb === 'stop' && entry && s?.online === false && Date.now() - (Date.parse(s.lastSeenAt) || 0) >= HEAL_OFFLINE_MS
-        && forgetApp({ spark, container }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null)) {
-        return { outcome: 'forgotten', spark, container, note: `${at} isn’t reachable, so nothing was stopped there. ${container} is off the list of what should be running, so it isn’t started again when ${at} comes back on.` };
+      if (verb === 'stop' && entry && s?.online === false && Date.now() - (Date.parse(s.lastSeenAt) || 0) >= HEAL_OFFLINE_MS) {
+        if (!ctx.onlyIf && ownersAsk(viewer, ctx)) selfTestRevoke([key]);
+        if (forgetApp({ spark, container }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null))
+          return { outcome: 'forgotten', spark, container, note: `${at} isn’t reachable, so nothing was stopped there. ${container} is off the list of what should be running, so it isn’t started again when ${at} comes back on.` };
       }
       throw new HttpError(409, `${at} isn’t reachable right now.`);
     }
@@ -19055,6 +19112,10 @@ action({
       throw new HttpError(409, `${container} is one of Spark Console’s models. Models are started, stopped and restarted with start_model, stop_model and restart_model, and are already kept running.`);
     }
     const look = await appLook(node, container, sp.tsip), state = look.state, known = knowledge.workloads[key];
+    if (verb === 'stop' && ctx.onlyIf?.selfTest) {
+      const left = await startedStill(spark, container, ctx.onlyIf);
+      if (left) return { outcome: 'left', left, note: `Left alone: ${left}.` };
+    }
     if (isProtected(container, look.protect)) throw new HttpError(403, `${container} is protected.`);
     // A model server, by what it is, not by whether it answers /v1/models right now: Spark Console's model label, a model
     // engine's image, or the watcher's record of it as one. One Spark Console started as an app (spark.app=1) stays an
@@ -19064,7 +19125,7 @@ action({
       throw new HttpError(409, `${container} serves models, so it isn’t kept running as an app: memory for a model is checked by start_model.`);
     }
     // (a job is never on the list: one Spark Console started stops all the same, A13)
-    if (verb !== 'keep' && !entry && !(verb === 'stop' && look.app && look.job)) throw new HttpError(409, `${container} on ${at} isn’t an app Spark Console keeps running, so there’s nothing to ${verb} here.`);
+    if (verb !== 'keep' && !entry && !(verb === 'stop' && look.app && (look.job || ctx.onlyIf?.selfTest))) throw new HttpError(409, `${container} on ${at} isn’t an app Spark Console keeps running, so there’s nothing to ${verb} here.`);
     // Self-healing brings back only what's still on the list, read again after the look (the owner may have pressed
     // Forget since its pass began).
     if (ctx.via === 'watcher' && !desired().running.some(x => x.app && keyOf(x) === key)) return { outcome: 'already', spark, container, note: `${container} is no longer on the list of what should be running, so it wasn’t started.` };
@@ -19089,7 +19150,7 @@ action({
     // The 8 GB rule's figure: a new app's cap (memoryGB, else 4); one that's there, its own cap, else the owner's figure.
     const gb = state === 'missing' ? input.memoryGB || APP_MEMORY_GB : look.capGB || input.memoryGB || entry?.memoryGB || null;
     const link = sp.tsip && hostPort ? `http://${sp.tsip}:${hostPort}` : null;
-    const meta = { node: spark, container, app: true, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? maskSecrets(String(ctx.request).slice(0, 500)).slice(0, 300) : null };
+    const meta = { node: spark, container, app: true, ...(ctx.selfTestOperation ? { selfTestOperation: ctx.selfTestOperation } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? maskSecrets(String(ctx.request).slice(0, 500)).slice(0, 300) : null };
     // (a recorded port follows what Docker reports)
     const changed = !entry || hostPort !== (entry.port || null) || (input.memoryGB !== undefined && input.memoryGB !== entry.memoryGB);
     const keepIt = () => keepApp({ spark, container, port: hostPort, memoryGB: input.memoryGB || entry?.memoryGB }, ctx.actor || viewer.login, ctx.conv || ctx.chat || null);
@@ -19100,7 +19161,8 @@ action({
         pausedCheck(ctx);
         // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
         const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
-        if (left) { j.left = left; j.stoppedHere = []; note(j, `Left running: ${left}.`); return; }
+        if (left) { j.left = left; j.stoppedHere = []; note(j, `${ctx.onlyIf?.selfTest ? 'Left alone' : 'Left running'}: ${left}.`); return; }
+        if (!ctx.onlyIf && ownersAsk(viewer, ctx)) selfTestRevoke([key]);
         // (one whose container is gone only comes off the list: a name Docker doesn't have is never handed to docker stop)
         if (state !== 'missing') {
           await stopContainer(j, spark, container, viewer);
@@ -19130,14 +19192,15 @@ action({
     if (state === 'running' && look.job) {
       if (ownersAsk(viewer, ctx)) {
         const release = claimSparks([spark], `noting the owner's ask for ${container}`);
-        try { desiredWish([key]); await rollbackRetireSuperseded([spark]); } finally { release(); }
+        try { desiredWish([key]); await rollbackRetireSuperseded([spark]); selfTestWishSaved([key]); } finally { release(); }
       }
       return { outcome: 'already', spark, container, job: true, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
     }
     if (state === 'running') {
-      if (changed) keepIt();
-      // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
+      // Owner intent is checked and kept before keepApp can rewrite the list. A known refusal changes neither.
       if (ownersAsk(viewer, ctx) && (entry || changed)) desiredWish([key]);
+      if (changed) keepIt();
+      if (ownersAsk(viewer, ctx)) selfTestWishSaved([key]);
       const answers = link ? await appAnswers(sp.tsip, hostPort) : null;
       const said = !entry ? `${container} on ${at} is now on the list of what should be running: Spark Console starts it again if it stops by itself or ${at} is powered off and on.`
         : changed ? `${container} on ${at} was already kept running; its port and memory figure on the list are updated.`
@@ -26989,8 +27052,8 @@ action({
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
 // Rules: R1, R11, R13, R19, R20, R22, R30, R32, R38, R42
-// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs, tasks-telegram.test.mjs
-// Owns: self-test.json (writers: keep, selfTest, selfTestRecover, selfTestRollbackStopped; removed when a run ends)
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, selftest-ownership.test.mjs, selftest-app-ownership.test.mjs, work.test.mjs, tasks-telegram.test.mjs
+// Owns: self-test.json (writers: keep, selfTest, selfTestRecover, selfTestRollbackStopped, selfTestWish, selfTestWishSaved, selfTestRevoke, selfTestStarted; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
 // "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in
@@ -27074,7 +27137,7 @@ async function selfTestPlace(spark) {
 // The drill: the container this run started is killed by its id (a full id names that one container only), and
 // self-healing has to start it again and see it answer. Returns the restart's operation; throws why not. A model left
 // down is marked stopped on purpose, so no late restart brings it back after the test.
-async function healDrill(j, node, container, id) {
+async function healDrill(j, node, container, id, seen) {
   const spark = node.id, key = `${spark}/${container}`;
   if (!/^[0-9a-f]{64}$/.test(String(id || ''))) throw new Error('Its container’s id couldn’t be read, so nothing was stopped.');
   // The watcher has to have seen it running, or it couldn't tell that it stopped.
@@ -27084,12 +27147,19 @@ async function healDrill(j, node, container, id) {
   }
   const mark = `${spark}/${id}`, since = new Date().toISOString();
   healDrills.add(mark);
+  let killed = false;
   try {
     step(j, `The healing drill: stopping ${container} hard, on purpose`);
     const release = claimSparks([spark], 'the self-test’s healing drill');
     let k;
-    try { k = await run(node, `docker kill --signal KILL ${q(id)}`, { timeout: 30000 }); } finally { release(); }
+    j.selfTestStopping = container;
+    try {
+      const left = await startedStill(spark, container, seen);
+      if (left) throw Object.assign(new Error(`Left alone: ${left}.`), { left });
+      k = await run(node, `docker kill --signal KILL ${q(id)}`, { timeout: 30000 });
+    } finally { delete j.selfTestStopping; release(); }
     if (k.code !== 0) throw new Error(`Docker couldn’t stop it: ${firstLine(k.err || k.out)}`);
+    killed = true;
     note(j, `Stopped ${container} (${id.slice(0, 12)}) hard; waiting for self-healing`);
     let e = null;
     for (const until = Date.now() + SELF_TEST_HEAL_MS; ; await sleep(1000)) {
@@ -27105,7 +27175,7 @@ async function healDrill(j, node, container, id) {
     if (done?.status !== 'completed') throw new Error(`Self-healing’s restart didn’t work: ${firstLine(done?.error || done?.status || 'unknown')}`);
     return e.operation;
   } catch (err) {
-    consoleStopped.set(key, Date.now());
+    if (killed) consoleStopped.set(key, Date.now());
     throw err;
   } finally { healDrills.delete(mark); }
 }
@@ -27133,8 +27203,111 @@ async function selfTestJobParts(node, name) {
   for (const [, part, code, secs] of String(r.out).matchAll(/^selftest (gpu|address) (\d{1,3}) (\d{1,7})$/gm)) out[part] = { code: Number(code), seconds: Number(secs) };
   return out;
 }
-// What the run under way started, for a restart in the middle (R20: writePrivate and readKept; no secret in it).
+// What the run under way started, for a restart in the middle (R20: primary-only record, writePrivate; no secret in it).
 const SELF_TEST_FILE = `${STATE_DIR}/self-test.json`;
+// This note grants permission to stop a model. Never restore an older copy of that permission: an owner's later
+// wish may be the line that copy lacks. A bad primary stays in place until it can be read or repaired.
+function selfTestRecord() {
+  let text;
+  try { text = readFileSync(SELF_TEST_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw new Error('The self-test’s note can’t be read just now. Nothing from it was stopped.'); }
+  let rec;
+  try { rec = JSON.parse(text); } catch { throw new Error('The self-test’s note can’t be read just now. Nothing from it was stopped.'); }
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec) || typeof rec.operation !== 'string' || typeof rec.spark !== 'string'
+    || !rec.model || typeof rec.model.container !== 'string') throw new Error('The self-test’s note is incomplete. Nothing from it was stopped.');
+  if (rec.rollbackStoppedModel && (!/^[0-9a-f]{64}$/.test(rec.rollbackStoppedModel.id || '')
+    || rec.rollbackStoppedModel.id !== rec.model.id || rec.rollbackStoppedModel.container !== rec.model.container))
+    throw new Error('The self-test’s stop note is incomplete or changed. Nothing from it was stopped.');
+  for (const part of ['model', 'web', 'job']) {
+    const x = rec[part];
+    if (x !== undefined && (!x || typeof x !== 'object' || typeof x.container !== 'string'
+      || ['wish', 'wishSaved', 'wishStopped'].some(k => x[k] !== undefined && typeof x[k] !== 'boolean')))
+      throw new Error('The self-test’s owner note is incomplete. Nothing from it was stopped.');
+  }
+  return rec;
+}
+// A synchronous check, after the awaited Docker look and again under the stop's claim. A proved earlier rollback
+// stop retires this note's authority even if the owner has since restarted that same Docker id.
+function selfTestAuthority(spark, container, seen) {
+  const rec = selfTestRecord();
+  const part = rec && ['model', 'web', 'job'].find(k => rec[k]?.container === container), x = part && rec[part];
+  if (!x || rec.spark !== spark || rec.operation !== seen.selfTest)
+    return `${container} is no longer held by this self-test`;
+  if (x.wish) return `${container} was kept by the owner`;
+  if (part === 'model' && rec.rollbackStoppedModel) return `${container} was already stopped by the earlier clean-up`;
+  if (!x.id || !x.startedAt || x.id !== seen.id || x.startedAt !== seen.startedAt)
+    throw new Error(`The self-test’s record of ${container} is incomplete or changed, so it wasn’t stopped.`);
+  return null;
+}
+// The owner's adoption needs no Spark claim. Keep it with the existing note before answering, or refuse while this
+// exact model's cleanup/drill holds its claim: an issued stop cannot be taken back by an "already running" answer.
+function selfTestWish(keys, checkOnly = false) {
+  const rec = selfTestRecord();
+  if (!rec) return;
+  const parts = ['model', 'web', 'job'].filter(k => rec[k] && keys.includes(`${rec.spark}/${rec[k].container}`));
+  if (!parts.length) return;
+  if ([...jobs.values()].some(j => j.status === 'running' && j.node === rec.spark && parts.some(k =>
+    (j.type === 'stop' && j.selfTestOperation === rec.operation && j.container === rec[k].container) || j.selfTestStopping === rec[k].container)))
+    throw new HttpError(409, 'The self-test is stopping that workload now. Wait for it to finish, then ask to start it again.');
+  if (parts.includes('model') && (typeof rec.model.name !== 'string' || !rec.model.name))
+    throw new Error('The self-test’s exact model name is missing, so your request could not be saved. Its note was kept.');
+  if (checkOnly) return;
+  for (const k of parts) { rec[k] = { ...rec[k], wish: true, wishSaved: false }; delete rec[k].wishStopped; }
+  writePrivate(SELF_TEST_FILE, rec);
+  const fd = openSync(STATE_DIR, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+  if (parts.includes('model')) desiredSelfTestWish(rec.operation);
+}
+// A completed handoff or a newer owner stop stays with this note. Own receipt/keep writes preserve both flags.
+function selfTestWishSaved(keys, operation = null) {
+  const rec = selfTestRecord();
+  if (!rec || (operation && rec.operation !== operation)) return;
+  let changed = false;
+  for (const k of ['model', 'web', 'job']) if (rec[k]?.wish && !rec[k].wishSaved && keys.includes(`${rec.spark}/${rec[k].container}`)) { rec[k].wishSaved = true; changed = true; }
+  if (!changed) return;
+  writePrivate(SELF_TEST_FILE, rec);
+  const fd = openSync(STATE_DIR, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+function selfTestRevoke(keys, checkOnly = false) {
+  const rec = selfTestRecord();
+  if (!rec) return;
+  const parts = ['model', 'web', 'job'].filter(k => rec[k]?.wish && keys.includes(`${rec.spark}/${rec[k].container}`));
+  if (!parts.length || checkOnly) return;
+  for (const k of parts) rec[k] = { ...rec[k], wishStopped: true, wishSaved: true };
+  writePrivate(SELF_TEST_FILE, rec);
+  const fd = openSync(STATE_DIR, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+// Before retiring the note, finish only an unrevoked handoff. An app uses keep_running's own desired writer; a
+// running once-only job has no desired entry. Missing app intent waits for an explicit retry instead of inventing one.
+function selfTestSettleWishes(operation) {
+  const rec = selfTestRecord();
+  if (!rec || rec.operation !== operation) return;
+  for (const k of ['model', 'web', 'job']) {
+    const x = rec[k], key = x && `${rec.spark}/${x.container}`;
+    if (!x?.wish || x.wishSaved || x.wishStopped) continue;
+    if (k === 'model') desiredSelfTestWish(operation);
+    else {
+      if (k === 'web' && !desired(true).running.some(y => keyOf(y) === key)) throw new Error('The owner’s app request could not be fully saved. Its self-test note was kept. Try keeping it again.');
+      selfTestWishSaved([key], operation);
+    }
+  }
+}
+// Its own captured start/restart receipt, before that operation releases its claim. In particular the drill can
+// crash while its healed model is still loading: recovery already has that restart's exact start time.
+function selfTestStarted(job, receipts) {
+  if (job.type === 'stop') return;
+  const rec = selfTestRecord();
+  if (!rec || job.selfTestOperation !== rec.operation || job.node !== rec.spark) return;
+  const part = ['model', 'web', 'job'].find(k => rec[k] && receipts[`${rec.spark}/${rec[k].container}`]);
+  if (!part || (part === 'model' && rec.rollbackStoppedModel)) return;
+  const seen = receipts[`${rec.spark}/${rec[part].container}`];
+  if (!seen?.id || !seen.startedAt) return;
+  if (part === 'model' && job.type === 'restart' && rec.model.id !== seen.id) throw new Error('The self-test’s restarted container changed, so its note was left alone.');
+  writePrivate(SELF_TEST_FILE, { ...rec, [part]: { ...rec[part], id: seen.id, startedAt: seen.startedAt, since: seen.since || null, ...(job.ownersWish ? { wish: true } : {}) } });
+  if (part === 'model' && job.ownersWish && !rec.model.wishStopped) desiredSelfTestWish(rec.operation);
+}
 // As Spark Console: the starts and stops carry their validation run when their workflow waits for one (trusted only
 // where a validation mark has to pass); its model's own operations are marked, so they never touch the list.
 const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true });
@@ -27143,30 +27316,26 @@ const selfTestMine = x => { x.selfTest = true; };
 // The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
 // (made before anything starts; one that ended after `since` too, for a look at the Sparks from before its end), and one
 // a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither seedDesired's first
-// seed (watcher or power-off) nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
+// seed (watcher or power-off) nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (selfTestRecord).
 function selfTestModels(since = Date.now()) {
-  const rec = readKept(SELF_TEST_FILE);
-  const runs = [...jobs.values()].filter(x => x.type === 'self-test' && x.container && (x.status === 'running' || (Date.parse(x.finishedAt) || 0) >= since));
-  return new Set([...runs.map(x => `${x.node}/${x.container}`), ...(rec?.spark && rec.model?.container ? [`${rec.spark}/${rec.model.container}`] : [])]);
+  const rec = selfTestRecord();
+  const runs = [...jobs.values()].filter(x => x.type === 'self-test' && !x.ownersWish && x.container && (x.status === 'running' || (Date.parse(x.finishedAt) || 0) >= since));
+  return new Set([...runs.map(x => `${x.node}/${x.container}`), ...(rec?.spark && rec.model?.container && !rec.model.wish && !rec.rollbackStoppedModel ? [`${rec.spark}/${rec.model.container}`] : [])]);
 }
 // Its model's stop (the Stop step, the clean-up, and after a restart). stop_model asked as the page first cancels every
 // operation that changes models on that Spark; asked as a workflow's step it cancels only operations of the same actor,
 // its own (17-changes.mjs). So when anything of anyone else's is under way there (an owner's download-then-start, say),
 // that is how it asks. Always with stop_model's validation pass when that waits for its first run.
-function selfTestStopModel(j, spark, container) {
+function selfTestStopModel(j, spark, container, seen) {
   const others = [...jobs.values()].some(x => x.status === 'running' && x.actor !== 'Self-test' && holdsModelsOn(x, [spark]));
-  const ctx = selfTestCtx(spark);
+  const ctx = { ...selfTestCtx(spark), onlyIf: seen };
   return stepRun(j, healOwner(), others ? { ...ctx, via: 'workflow' } : ctx, 'stop_model', { spark, container }, selfTestNeed('stop_model'), undefined, selfTestMine);
 }
-// Its web page's or job's stop, through keep_running. One cut off before it joined the list (a restart while it was
-// being started) is kept first, so that its stop takes it off again.
-async function selfTestStopApp(j, spark, container) {
-  const me = healOwner(), ctx = { ...selfTestCtx(spark), trusted: false };
-  try { return await stepRun(j, me, ctx, 'keep_running', { spark, container, do: 'stop' }); } catch (e) {
-    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
-    await runAction('keep_running', me, { spark, container }, ctx);
-    return stepRun(j, me, ctx, 'keep_running', { spark, container, do: 'stop' });
-  }
+// Its web page's or job's stop, through keep_running, only with this run's exact captured receipt. A missing list
+// entry does not need adoption: this conditional stop can stop its own app without keeping someone else's first.
+async function selfTestStopApp(j, spark, container, seen) {
+  const ctx = { ...selfTestCtx(spark), trusted: false, onlyIf: seen, selfTestOperation: seen.selfTest };
+  return stepRun(j, healOwner(), ctx, 'keep_running', { spark, container, do: 'stop' });
 }
 
 // Each container's state and full id on a Spark (state "gone" when Docker has none by that name), from one fixed look
@@ -27182,24 +27351,33 @@ async function selfTest(j, asked, where, image) {
   const model = containerName(m.name), address = selfTestAddress();
   const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]), job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY]);
   // (the apps' own arguments are checked as any caller's)
-  const ctx = selfTestCtx(spark), appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
+  const ctx = { ...selfTestCtx(spark), selfTestOperation: j.id, selfTestContainer: model }, appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
   // What it starts, kept as it starts (the chat it was asked in is known once runAction has returned).
   await sleep(0);
-  const record = { operation: j.id, chat: j.conv || null, spark, since: j.createdAt, model: { container: model }, web: { container: web }, job: { container: job } };
+  const record = { operation: j.id, chat: j.conv || null, spark, since: j.createdAt, model: { container: model, name: m.name }, web: { container: web }, job: { container: job } };
+  let kept = false;
   const keep = (what, id) => {
-    if (what) record[what].id = id || null;
-    try { writePrivate(SELF_TEST_FILE, record); } catch (e) { note(j, `Couldn’t keep a note of what the self-test starts (${firstLine(e)}); a restart of Spark Console now would leave it running.`); }
+    try {
+      const current = selfTestRecord();
+      if (kept && !current) throw new Error('The self-test’s note has already ended.');
+      if (current && current.operation !== record.operation) throw new Error('Another self-test’s note is in use.');
+      if (current) Object.assign(record, current);
+      if (what) record[what] = { ...record[what], ...(typeof id === 'object' && id ? id : { id: id || null }) };
+      writePrivate(SELF_TEST_FILE, record);
+      kept = true;
+    } catch (e) { note(j, `Couldn’t keep a note of what the self-test starts (${firstLine(e)}); its clean-up will wait for a readable note.`); }
   };
   keep();
-  const idOf = async name => (await containerStates(node, [name]).catch(() => null))?.[name]?.id || null;
   // (the model's id as soon as its container exists, while it loads: a restart then still knows it)
   const watchStart = x => {
     mine(x);
+    x.selfTestOperation = j.id;
+    x.selfTestContainer = model;
     (async () => {
       for (; x.status === 'running'; await sleep(2000)) {
         if (!(x.ranHere || []).includes(`${spark}/${model}`)) continue;
-        const id = await idOf(model);
-        if (id && id !== record.model.id) keep('model', id);
+        const seen = await receiptOf(spark, model);
+        if (x.status === 'running' && seen && (seen.id !== record.model.id || seen.startedAt !== record.model.startedAt)) keep('model', { ...seen, ...(x.ownersWish ? { wish: true } : {}) });
       }
     })().catch(() => {});
   };
@@ -27212,8 +27390,10 @@ async function selfTest(j, asked, where, image) {
     note(j, lineWords(l));
   };
   const lineWords = l => `${l.what}: ${l.result}${l.seconds == null ? '' : ` in ${l.seconds} s`}. ${l.words}`;
-  const stopApp = name => selfTestStopApp(j, spark, name);
-  const stopModel = () => selfTestStopModel(j, spark, model);
+  const partSeen = what => ({ id: record[what].id, startedAt: record[what].startedAt, since: what === 'model' ? null : record[what].since || null, selfTest: record.operation });
+  const stopApp = name => selfTestStopApp(j, spark, name, partSeen(name === web ? 'web' : 'job'));
+  const modelSeen = () => partSeen('model');
+  const stopModel = () => selfTestStopModel(j, spark, model, modelSeen());
   let modelStarted = false, modelId = null;
   try {
     // Model: started there, stopping nothing, and it answers its test prompt.
@@ -27221,11 +27401,12 @@ async function selfTest(j, asked, where, image) {
     let t = Date.now();
     step(j, `Starting ${title} on ${at}, stopping nothing`);
     try {
-      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, watchStart);
+      const out = await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, watchStart);
       modelStarted = true;
       // (the container this run started: only that one is ever killed or stopped by it, never another under that name)
-      modelId = await idOf(model);
-      keep('model', modelId);
+      const seen = jobs.get(out.operation)?.startedReceipts?.[`${spark}/${model}`];
+      modelId = seen?.id || null;
+      keep('model', { ...(seen || { id: null, startedAt: null }), ...(jobs.get(out.operation)?.ownersWish ? { wish: true } : {}) });
       say('Model', 'worked', t, `${title} started on ${at} and answered its test prompt.`);
     } catch (e) { say('Model', 'failed', t, firstLine(e)); }
 
@@ -27237,9 +27418,11 @@ async function selfTest(j, asked, where, image) {
     else if (held) say('Healing', 'not tried', null, held);
     else {
       try {
-        await healDrill(j, node, model, modelId);
+        const op = await healDrill(j, node, model, modelId, modelSeen());
+        const seen = jobs.get(op)?.startedReceipts?.[`${spark}/${model}`];
+        if (seen) { keep('model', seen); modelId = seen.id; }
         say('Healing', 'worked', t, `${model} was stopped hard on purpose (only the container this test started), and self-healing started it again; it answers again.`);
-      } catch (e) { if (e?.cancelled) throw e; say('Healing', 'failed', t, firstLine(e)); }
+      } catch (e) { if (e?.cancelled) throw e; say('Healing', e.left ? 'not tried' : 'failed', e.left ? null : t, firstLine(e)); }
     }
 
     // Stop.
@@ -27254,8 +27437,9 @@ async function selfTest(j, asked, where, image) {
         else if (!modelId || now.id !== modelId) say('Stop', 'not tried', null, `${model} on ${at} is another container now (not the one this test started), so it was left alone.`);
         else {
           step(j, `Stopping ${model}`);
-          await stopModel();
-          say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
+          const out = await stopModel(), left = out.left || jobs.get(out.operation)?.left;
+          if (left) say('Stop', 'not tried', null, `Left alone: ${left}.`);
+          else say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
         }
       } catch (e) { say('Stop', 'failed', t, firstLine(e)); }
     }
@@ -27266,12 +27450,12 @@ async function selfTest(j, asked, where, image) {
     step(j, `A small web page on ${at}`);
     try {
       const out = await stepRun(j, me, appCtx, 'keep_running', { spark, container: web, image, port: `${SELF_TEST_WEB_PORT}:8080`, command: SELF_TEST_WEB, memoryGB: 1 });
-      keep('web', await idOf(web));
+      keep('web', jobs.get(out.operation)?.startedReceipts?.[`${spark}/${web}`] || { id: null, startedAt: null });
       const link = jobs.get(out.operation)?.endpoint || null;
       const up = Math.round((Date.now() - t) / 1000);
-      await stopApp(web);
-      if (!link) throw new Error(`It ran, but its page didn’t answer at port ${SELF_TEST_WEB_PORT}, so there was no link. It was stopped.`);
-      say('App', 'worked', t, `A small web page answered at its link after ${up} s, then stopped.`);
+      const stop = await stopApp(web), left = stop.left || jobs.get(stop.operation)?.left;
+      if (!link) throw new Error(`It ran, but its page didn’t answer at port ${SELF_TEST_WEB_PORT}, so there was no link. ${left ? 'It was left alone.' : 'It was stopped.'}`);
+      say('App', 'worked', t, `A small web page answered at its link after ${up} s, ${left ? `then was left alone: ${left}` : 'then stopped'}.`);
     } catch (e) { if (e?.cancelled) throw e; say('App', 'failed', t, firstLine(e)); }
 
     // Job: once, with the GPU; and the model address from inside its container.
@@ -27280,8 +27464,8 @@ async function selfTest(j, asked, where, image) {
     step(j, `A job with the GPU on ${at}`);
     let parts = null;
     try {
-      await stepRun(j, me, appCtx, 'keep_running', { spark, container: job, image, once: true, gpu: true, memoryGB: 2, command: selfTestJobCommand(address || '-') });
-      keep('job', await idOf(job));
+      const out = await stepRun(j, me, appCtx, 'keep_running', { spark, container: job, image, once: true, gpu: true, memoryGB: 2, command: selfTestJobCommand(address || '-') });
+      keep('job', jobs.get(out.operation)?.startedReceipts?.[`${spark}/${job}`] || { id: null, startedAt: null });
       let end;
       try { end = await waitJobEnd(node, job, { limitMs: SELF_TEST_JOB_MS, job: j }); } catch (e) {
         if (e?.stillRunning) await stopApp(job).catch(() => {});
@@ -27315,18 +27499,33 @@ async function selfTest(j, asked, where, image) {
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);
     // (the model's name counts only while it is still the container this run started)
-    const ours = n => n !== model || (modelId && left?.[n]?.id === modelId);
+    let pendingModel = !left;
+    const owned = new Set();
+    for (const [what, name] of [['model', model], ['web', web], ['job', job]]) {
+      if (left?.[name]?.state === 'running') {
+        try { if (!await startedStill(spark, name, partSeen(what))) owned.add(name); } catch { pendingModel = true; }
+      } else if (record[what].id && left?.[name]?.id === record[what].id) owned.add(name);
+    }
+    try { selfTestSettleWishes(record.operation); } catch (e) { pendingModel = true; note(j, firstLine(e)); }
+    const ours = n => owned.has(n);
     const running = left ? [model, web, job].filter(n => left[n]?.state === 'running' && ours(n)) : null;
     const stopped = left ? [web, job].filter(n => left[n] && !['running', 'gone'].includes(left[n].state)) : [];
+    const leftAlone = left ? [['model', model], ['web', web], ['job', job]]
+      .filter(([what, name]) => left[name]?.state === 'running' && !ours(name) && (record[what].wish || (record[what].id && record[what].id === left[name].id)))
+      .map(([, name]) => name) : [];
     const modelLeft = left && ours(model) && left[model] && !['running', 'gone'].includes(left[model].state);
     const leftWords = !left ? `Left behind: unknown, ${at} didn’t answer the last look.`
+      : pendingModel ? `Left behind: unknown whether its workloads still belong to the test. Its note was kept for another try.`
       : running.length ? `Left behind: ${wordList(running)} still running on ${at}. Stop ${running.length > 1 ? 'them' : 'it'} there.`
-        : `Left behind: nothing running.${modelLeft ? ` ${model} is stopped on ${at}, as after any stop.` : ''}${stopped.length ? ` ${wordList(stopped)} ${stopped.length > 1 ? 'are' : 'is'} stopped there and used again next time.` : ''}`;
+        : `${leftAlone.length ? 'Nothing the test still owns is running.' : 'Left behind: nothing running.'}${modelLeft ? ` ${model} is stopped on ${at}, as after any stop.` : ''}${stopped.length ? ` ${wordList(stopped)} ${stopped.length > 1 ? 'are' : 'is'} stopped there and used again next time.` : ''}${leftAlone.length ? ` Left alone: ${wordList(leftAlone)} still running; the test no longer owns ${leftAlone.length > 1 ? 'them' : 'it'}.` : ''}`;
     j.report = [...lines.map(lineWords), leftWords];
     note(j, leftWords);
     // (the run is over: nothing for a restart to stop)
-    try { unlinkSync(SELF_TEST_FILE); } catch {}
-    if (!left || running?.length) lines.push({ result: 'failed', what: 'Left behind' });
+    if (left && !running?.length && !pendingModel) {
+      try { if (selfTestRecord()?.operation === record.operation) unlinkSync(SELF_TEST_FILE); } catch {}
+    }
+    else setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.();
+    if (!left || running?.length || pendingModel) lines.push({ result: 'failed', what: 'Left behind' });
   }
   const bad = lines.filter(l => l.result === 'failed').map(l => l.what.toLowerCase());
   if (bad.length) throw new Error(`The self-test found ${bad.length === 1 ? 'a problem' : `${bad.length} problems`}: ${wordList(bad)}.`);
@@ -27351,7 +27550,7 @@ action({
     if ([...jobs.values()].some(j => j.type === 'self-test' && j.status === 'running')) throw new HttpError(409, 'A self-test is running already. Its report is posted when it ends.');
     if (existsSync(SELF_TEST_FILE)) {
       let at = 'its Spark';
-      try { at = sparkName(nodeById(readKept(SELF_TEST_FILE)?.spark) || { id: 'its Spark' }); } catch {}
+      try { at = sparkName(nodeById(selfTestRecord()?.spark) || { id: 'its Spark' }); } catch {}
       throw new HttpError(409, `The last self-test was cut off by a restart of Spark Console, and what it started on ${at} is stopped first (once ${at} answers). Ask again in a minute.`);
     }
     // The image is the owner's, in config.json, checked as keep_running checks any image.
@@ -27367,19 +27566,20 @@ action({
 });
 
 // After a restart: what a self-test cut off in the middle had started, stopped if it still runs (its model only while it
-// is the very container it started, by id; its web page and job by their own names, by id when known). Then one notice,
+// matches this run’s exact id and start time, and its current note still holds cleanup authority). Then one notice,
 // also in the chat that asked. A Spark that doesn't answer is tried again a minute later; the file stays until then.
 function selfTestRollbackStopped(spark, seen) {
   let rec;
-  try { rec = readKept(SELF_TEST_FILE); } catch { console.error('The self-test recovery note could not be read.'); return; }
-  if (rec?.spark !== spark || rec.model?.id !== seen.id || rec.model?.container !== seen.name) return;
+  try { rec = selfTestRecord(); } catch { console.error('The self-test recovery note could not be read.'); return; }
+  if (rec?.spark !== spark || rec.model?.id !== seen.id || rec.model?.container !== seen.name
+    || (rec.model.startedAt && seen.startedAt && rec.model.startedAt !== seen.startedAt)) return;
   // Startup's fenced recovery can stop this exact model before the self-test's own recovery runs.
   // Keep that proved action with its existing note so the eventual notice does not say nothing ran.
   writePrivate(SELF_TEST_FILE, { ...rec, rollbackStoppedModel: { id: seen.id, container: seen.name } });
 }
 async function selfTestRecover() {
   let rec;
-  try { rec = readKept(SELF_TEST_FILE); } catch (e) { console.error(`The self-test's note of what it started can't be read: ${e.message}`); return; }
+  try { rec = selfTestRecord(); } catch (e) { console.error('The self-test’s note can’t be read just now; its clean-up will try again.'); setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
   if (!rec || typeof rec !== 'object' || !rec.spark) return;
   if ([...jobs.values()].some(x => x.type === 'self-test' && x.status === 'running')) return;
   const node = nodeById(rec.spark);
@@ -27388,19 +27588,32 @@ async function selfTestRecover() {
   const now = await containerStates(node, parts.map(([, x]) => x.container)).catch(() => null);
   if (!now) { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
   const recovered = rec.rollbackStoppedModel;
-  const at = sparkName(node), quiet = { log: [] }, stopped = recovered?.id === rec.model?.id && recovered?.container === rec.model?.container ? [recovered.container] : [], problems = [];
+  const at = sparkName(node), quiet = { log: [] }, stopped = recovered?.id && recovered.id === rec.model?.id && recovered.container === rec.model?.container ? [recovered.container] : [], problems = [];
+  let deferred = false;
+
   for (const [what, x] of parts) {
     const c = now[x.container];
     if (c?.state !== 'running') continue;
-    if (x.id ? c.id !== x.id : what === 'model') {
-      if (!x.id) problems.push(`${x.container} runs there, and whether it is the one the test started isn’t known, so it was left alone: if it is, stop it`);
-      continue;
-    }
-    try { await (what === 'model' ? selfTestStopModel(quiet, rec.spark, x.container) : selfTestStopApp(quiet, rec.spark, x.container)); if (!stopped.includes(x.container)) stopped.push(x.container); }
-    catch (e) { problems.push(`${x.container} couldn’t be stopped (${firstLine(e)}): stop it there`); }
+    if (x.wish || (what === 'model' && rec.rollbackStoppedModel)) continue;
+    if (!x.id || !x.startedAt) { deferred = true; continue; }
+    if (c.id !== x.id) continue;
+    try {
+      const out = await (what === 'model' ? selfTestStopModel(quiet, rec.spark, x.container, { id: x.id, startedAt: x.startedAt, since: null, selfTest: rec.operation }) : selfTestStopApp(quiet, rec.spark, x.container, { id: x.id, startedAt: x.startedAt, since: x.since || null, selfTest: rec.operation }));
+      if (!(out.left || jobs.get(out.operation)?.left) && !stopped.includes(x.container)) stopped.push(x.container);
+    } catch (e) { deferred = true; problems.push(`${x.container} couldn’t be stopped (${firstLine(e)}): its note was kept for another try`); }
   }
+  if (deferred) { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
+  const final = await containerStates(node, parts.map(([, x]) => x.container)).catch(() => null);
+  if (!final) { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
+  let fresh;
+  try { fresh = selfTestRecord(); } catch { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
+  if (fresh?.operation !== rec.operation) return;
+  try { selfTestSettleWishes(rec.operation); } catch { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
+  const proof = fresh.rollbackStoppedModel;
+  if (proof?.id && proof.id === fresh.model?.id && proof.container === fresh.model.container && !stopped.includes(proof.container)) stopped.push(proof.container);
+  const leftAlone = parts.filter(([, x]) => final[x.container]?.state === 'running').map(([, x]) => x.container);
   try { unlinkSync(SELF_TEST_FILE); } catch {}
-  const text = `Spark Console restarted while the self-test ran on ${at}. ${stopped.length ? `It stopped what the test had started there: ${wordList(stopped)}.` : 'Nothing the test had started was still running there.'}${problems.length ? ` ${problems.join('; ')}.` : ''} Nothing else was touched. Ask again to run the self-test.`;
+  const text = `Spark Console restarted while the self-test ran on ${at}. ${stopped.length ? `It stopped what the test had started there: ${wordList(stopped)}.` : leftAlone.length ? 'Nothing was stopped.' : 'Nothing the test had started was still running there.'}${leftAlone.length ? ` Left running: ${wordList(leftAlone)}; the test no longer owns it.` : ''}${problems.length ? ` ${problems.join('; ')}.` : ''} Nothing else was touched. Ask again to run the self-test.`;
   fleetEvent({ type: 'notice', spark: rec.spark, text });
   const conv = /^sc_[0-9a-f]{16}$/.test(String(rec.chat || '')) ? chatData().conversations.find(c => c.id === rec.chat && c.login === accessList().owner) : null;
   if (!conv) return;
@@ -27416,7 +27629,7 @@ setTimeout(() => selfTestRecover().catch(e => console.error(`Stopping what a cut
 function selfTestCutOff(e) {
   if (e.operation === 'self-test' || e.actor === 'Self-test') return true;
   let rec = null;
-  try { rec = readKept(SELF_TEST_FILE); } catch {}
+  try { rec = selfTestRecord(); } catch {}
   return Boolean(rec?.spark && (e.spark === rec.spark || (e.sparks || []).includes(rec.spark)) && String(e.at) >= String(rec.since || '~'));
 }
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */

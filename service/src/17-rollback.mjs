@@ -96,7 +96,10 @@ function rollbackSupersede(keys, reason = 'the owner changed what should run', o
       changed = true;
     }
   }
+  // All eligibility checks above are pure. A known refusal or failed rollback save grants no new note/desired intent.
+  if (!onlyIf) { if (stopReturn) selfTestRevoke(keys, true); else selfTestWish(keys, true); }
   if (changed) rollbackSave(f);
+  if (!onlyIf) { if (stopReturn) selfTestRevoke(keys); else selfTestWish(keys); }
 }
 function rollbackBeforeRerun(keys) {
   // Under the new start's claim, before Docker: an older command can still finish on this Spark.
@@ -110,6 +113,12 @@ function rollbackAdoptStart(job) {
   const r = job.rollbackOperation ? rollbackRead(job.rollbackOperation) : null;
   if (r?.phase === 'returning') throw new Error('That start failed and is putting earlier work back. Wait for it to finish, then ask again.');
   const keys = [...new Set([...(job.ranHere || []), ...(r?.attempts || []).flatMap(a => a.commands.filter(c => c.action === 'run' && c.name !== ENGINE_CHECK_NAME).map(c => `${c.spark}/${c.name}`))])].filter(key => key.split('/')[1] !== ENGINE_CHECK_NAME);
+  if (!keys.length && job.selfTestOperation && job.selfTestContainer) {
+    const rec = selfTestRecord();
+    if (!rec || rec.operation !== job.selfTestOperation || rec.spark !== job.node || rec.model.container !== job.selfTestContainer)
+      throw new Error('The self-test’s target changed, so the owner’s request could not be saved.');
+    keys.push(`${rec.spark}/${rec.model.container}`);
+  }
   if (keys.length) desiredWish(keys); // exact current source intents are durable before the owner gets an answer
   savedRunReceipts({ ...job, ownersWish: true }, true);
   // Before the first create, a crash has nothing to stop. Its first command transfers this flag into the same

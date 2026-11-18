@@ -22,7 +22,7 @@ const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('
 const CONTEXT_CODE = () => [CONTEXT_FLAGS, contextNumber, contextValue, contextOverride, contextPolicy, contextChange, contextAttempt, contextFreeze,
   contextFingerprint, contextPrune, contextCarry, contextConsume, contextPrepare, contextBind, contextPark, contextPublish, contextCheck, contextDecisionFor, contextApprove, contextChoiceResult,
   contextAlready, contextReplayHow, contextPageStart, withHow, engineOf, imageOf, question, sparkieMessageChoices, taskPark, taskAnswered, endTask, taskEnded, runChoice, pressLate, pressSaid, pressPost, keepTask, wakeWork, startContext, sparkieCheck];
-const ROLLBACK_CODE = () => [ROLLBACK_TARGET_PY, rollbackSave, rollbackShape, rollbackRecords, rollbackRead, rollbackWrite, rollbackForget, rollbackHeld, rollbackSupersede, rollbackBeforeRerun, rollbackAdoptStart, rollbackRetireSuperseded, rollbackTarget, rollbackLook, rollbackPrepare, rollbackAttempt, rollbackCommand, rollbackRun, rollbackOriginal, rollbackStopOriginal, rollbackAside, rollbackRemove, rollbackStopCreated, rollbackStopDisposed, rollbackFenceState, rollbackFence, rollbackReconcile, rollbackOwned, rollbackDesiredChanged, rollbackTransfer, rollbackResult, rollbackReturn, selfTestRollbackStopped, rollbackCommit, rollbackBeforeRetry, rollbackPass, rollbackContinue, rollbackStopCancelled, rollbackStopNew, rollbackKnown, rollbackRoom, rollbackKey, rollbackSame];
+const ROLLBACK_CODE = () => [keyOf, accessList, writePrivate, selfTestWish, selfTestWishSaved, selfTestRevoke, selfTestRecord, selfTestStarted, desiredSelfTestWish, ROLLBACK_TARGET_PY, rollbackSave, rollbackShape, rollbackRecords, rollbackRead, rollbackWrite, rollbackForget, rollbackHeld, rollbackSupersede, rollbackBeforeRerun, rollbackAdoptStart, rollbackRetireSuperseded, rollbackTarget, rollbackLook, rollbackPrepare, rollbackAttempt, rollbackCommand, rollbackRun, rollbackOriginal, rollbackStopOriginal, rollbackAside, rollbackRemove, rollbackStopCreated, rollbackStopDisposed, rollbackFenceState, rollbackFence, rollbackReconcile, rollbackOwned, rollbackDesiredChanged, rollbackTransfer, rollbackResult, rollbackReturn, selfTestRollbackStopped, rollbackCommit, rollbackBeforeRetry, rollbackPass, rollbackContinue, rollbackStopCancelled, rollbackStopNew, rollbackKnown, rollbackRoom, rollbackKey, rollbackSame];
 const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, downloadAdmission, nodeById, sparkName, HF_HUB, HF_IMAGES, HF_PULL_PY, HF_WATCH_PY, downloadTiming, downloadRemote, downloadLease, downloadResume, run, spawnOn, knownOffline, noteReach, offlineNow, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
@@ -60,6 +60,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   SHARED_AT,
   ownersAsk,
   desiredWish,
+  selfTestWish,
+  selfTestRecord,
+  selfTestAuthority,
   alreadyStarting,
   receiptsHeld,
   receiptsBroughtBack,
@@ -108,7 +111,7 @@ const WORKFLOWS = [
     changes: 'Stops the container (it stays on disk and can be restarted) and checks it isn’t running. Never Sparkie’s own model or protected containers.',
     takes: 'Under a minute.',
     failures: [{ id: 'still-running', title: 'it was still running after the stop', advice: 'Stop it on that Spark with docker stop, and say so here.' }],
-    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, receiptOf, RECEIPT_LOOK, fields, desired] },
+    code: () => [...ROLLBACK_CODE(), contextPublish, runJob, desiredAfter, captureStartedReceipts, savedRunReceipts, savedRunsNow, savedRunsShape, savedRunWords, savedRunKeep, stopContainer, stoppedForSure, isProtected, routedSparks, cancelJobsAndWait, holdsModelsOn, CHANGES_MODELS, startedStill, selfTestAuthority, selfTestRecord, receiptOf, RECEIPT_LOOK, fields, desired] },
   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
@@ -581,7 +584,8 @@ async function maybeHeal(node, w) {
   let test = false;
   try { test = selfTestModels().has(key); } catch {}
   try {
-    const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
+    const testOperation = (healDrills.has(`${node.id}/${w.id}`) || test) ? selfTestRecord()?.operation : null;
+    const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})`, ...(testOperation ? { selfTestOperation: testOperation } : {}) };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
     // (the self-test's drill, or its model all the same: never the owner's wish, so its restart doesn't put it on the list)
@@ -601,11 +605,13 @@ async function maybeHeal(node, w) {
 async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000, started = null) {
   const title = workflowById(id || name)?.title || name;
   const out = await runAction(name, viewer, id ? { ...args, __validate: id } : args, ctx);
+  if (out?.left) return out;
   if (!out?.operation) throw new Error(`${name}: ${out?.note || out?.question || out?.outcome || 'didn’t start'}`);
   if (started && jobs.has(out.operation)) started(jobs.get(out.operation));
   note(job, `${title}: running (operation ${out.operation})`);
   const done = await waitJob(out.operation, limit);
   if (done?.status !== 'completed') throw new Error(`${title} failed${id ? ' its check' : ''}: ${String(done?.error || done?.status).split('\n')[0]}`);
+  if (done.left) return { ...out, left: done.left };
   note(job, `${title}: ${id ? 'validated' : 'done'}`);
   return out;
 }

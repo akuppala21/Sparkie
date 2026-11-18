@@ -1,6 +1,6 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38, R41, R57        Tests: power.test.mjs, desired.test.mjs, desired-look.test.mjs, workloads.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, t45-owner-wish.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish)
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, seedDesired, markUndone, handler, parkDesired, desiredPutBack, desiredWish, desiredSelfTestWish)
 // Timers: watchHeld (every 60 s; seeds desired.json if missing)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -80,6 +80,28 @@ function desiredWish(keys, { afterStart = null } = {}) {
     for (const x of hit) x.since = at;
     if (hit.length) writePrivate(DESIRED_FILE, d);
   } catch (e) { console.error(`Couldn’t note the owner’s wish on what should be running: ${e.message}`); }
+}
+// Explicit owner adoption of the self-test's exact model. This adds intent, not a completed operation: an absent
+// row gets the ordinary revision/before record, while an existing row keeps its revision and other settings. The
+// note remains pending until this strict save and its directory sync finish; a newer stop permanently cancels retry.
+function desiredSelfTestWish(operation) {
+  const rec = selfTestRecord();
+  if (!rec || rec.operation !== operation || !rec.model.wish || rec.model.wishSaved || rec.model.wishStopped) return;
+  if (typeof rec.model.name !== 'string' || !rec.model.name) throw new Error('The self-test’s exact model name is missing. Its owner request was kept for another try.');
+  const key = `${rec.spark}/${rec.model.container}`, d = desired(true), at = new Date().toISOString();
+  if (!d.running.some(x => keyOf(x) === key)) {
+    const before = d.running.map(x => ({ ...x }));
+    d.running.push({ spark: rec.spark, container: rec.model.container, model: rec.model.name, since: at, by: accessList().owner });
+    d.revision += 1;
+    d.revisions.push({ revision: d.revision, at, operation: null, chat: rec.chat || null, by: accessList().owner, added: [key], removed: [], before });
+    if (d.revisions.length > 50) d.revisions.splice(0, d.revisions.length - 50);
+    try {
+      writePrivate(DESIRED_FILE, d);
+      const fd = openSync(STATE_DIR, 'r');
+      try { fsyncSync(fd); } finally { closeSync(fd); }
+    } catch { throw new Error('Your model request could not be fully saved. Its self-test note was kept. Try again.'); }
+  }
+  selfTestWishSaved([key], operation);
 }
 // An app already on a Spark joins the list (keep_running, 21-apps.mjs): read with readKept itself, so a file that can't
 // be read is never saved over. A new entry is a revision of its own (undo leaves apps alone).

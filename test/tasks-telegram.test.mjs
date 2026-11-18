@@ -397,6 +397,7 @@ function resultEntry(entry, tellAgain) {
     savedRunsNow: () => ({ runs: { op: { operation: 'op', title: 'Test run', chat: conv.id } } }), savedRunWords: String,
     SAVED_RUNS_FILE: 'saved-runs.json', SELF_TEST_FILE: 'self-test.json',
     unlinkSync: () => { state.removed++; }, writePrivate: () => {},
+    selfTestRecord: () => ({ spark: 'spark3', chat: conv.id }), selfTestSettleWishes: () => {},
     readKept: () => ({ spark: 'spark3', chat: conv.id }), containerStates: async () => ({}),
     tellHeld: held, tellReplyText: msg => msg.content, tellButtons: () => [{ id: 'choice', label: 'Go' }]
   };

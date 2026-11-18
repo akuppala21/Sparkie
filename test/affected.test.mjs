@@ -344,3 +344,21 @@ test('saved-run record edits select the content-free error regression', () => {
   assert.ok(r.files.includes('test/workloads-record.test.mjs'), 'measured service coverage is retained');
   for (const required of SHORT_CHECK) assert.ok(r.files.includes(required), required);
 });
+
+
+// Ownership fixtures call source functions directly; service coverage cannot account for those boundary cases.
+test('self-test ownership fixtures stay selected without a measured edge to their source', () => {
+  for (const part of ['17-changes.mjs', '17-rollback.mjs', '18-step-jobs.mjs', '20-desired.mjs', '21-apps.mjs', '21-selftest.mjs']) {
+    const r = choose({ landing: true,
+      map: { tests: ['test/selftest.test.mjs'], fns: { [`${part}:sample@1-3`]: [0] } },
+      changes: [{ path: `service/src/${part}`, status: 'M', hunks: [{ s: 2, n: 1, t: 2, add: ['  return 2;'] }] }],
+      oldText: () => 'function sample() {\n  return 1;\n}',
+      newText: () => 'function sample() {\n  return 2;\n}',
+    });
+    assert.equal(r.all, false, r.why);
+    assert.ok(r.files.includes('test/selftest-ownership.test.mjs'), `${part} selects the ownership boundary cases`);
+    assert.ok(r.files.includes('test/selftest.test.mjs'), 'measured integration coverage stays selected');
+    for (const required of SHORT_CHECK) assert.ok(r.files.includes(required), required);
+  }
+  assert.ok(existsSync(new URL('./selftest-ownership.test.mjs', import.meta.url)), 'the selected fixture exists');
+});
