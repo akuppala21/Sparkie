@@ -29,7 +29,15 @@ the same ownership problem for the self-test app, including its name-only cleanu
 final qualification. A-63 additionally requires saving the adopted model on the owner’s wanted list before
 clearing its self-test note, including when a crash prevents the initial start from completing.
 
-The final native app-stop correction is independently accepted; its focused compute run is still in progress at this candidate freeze.
+The native app-stop correction passed **76/76** focused checks on compute tree `584a509376d1bb7028d5d72c9360e7c287d92cf6`, with no skipped or cancelled tests. Production and shipped test bytes matched the independently accepted r9 source; only a temporary direct-probe wrapper was additional.
+
+The r4 complete run finished **3,470/3,471**, with one workflow fingerprint failure and no skipped or cancelled
+tests. It produced no passing lock or map and did not land. That dependency is repaired without changing its test.
+Independent restore-path review also found A-64, stale self-test authority returning from a state copy. Its seven
+old-source failures and **27/27** repaired checks now establish the copy/restore correction. The combined source
+passed **125/125** workflow/build/document checks. Every existing test and fixture file remains unchanged. Details
+and source identities are in findings-4. The corrected committed candidate still needs complete compute and hosted
+qualification, installation and live checks; no earlier partial or failed result qualifies it.
 
 Hosted evidence is tied to its snapshot:
 

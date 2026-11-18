@@ -148,7 +148,7 @@ flowchart TD
   JOBS -->|"power jobs only: switchPlug, never the hub’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark after parked state is saved"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
-  STATE -->|"omit saved-runs.json and its .prev; tar, verify (gzip -t), then replace the old copy only after tar succeeds; keep the newest 14; send when a Spark comes online, before power-off and hourly, only for changed state; backup.json keeps the last try and last good copy"| BACKUP
+  STATE -->|"omit saved-runs.json/self-test.json and .prev; tar, verify (gzip -t), replace only after tar succeeds; keep newest 14; send when a Spark comes online, before power-off and hourly, only for changed state; backup.json keeps the last try and last good copy"| BACKUP
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems

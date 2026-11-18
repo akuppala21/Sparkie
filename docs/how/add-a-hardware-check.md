@@ -13,6 +13,9 @@ claim, including while healing loads. An owner’s adoption and a proved rollbac
 Unreadable authority keeps the note for another try. Record a model’s exact library name up front. An owner’s explicit
 adoption hands it to the desired list (`desiredSelfTestWish`); `wishSaved` follows a durable save, and a newer owner stop/forget (`wishStopped`) cancels pending handoff, including a native app stop or an admitted offline forget. Recheck pending handoffs after the final awaited look, immediately before retiring the matching operation’s note.
 
+Its cleanup note and `.prev` never travel in daily copies or return from restored state. A code-only rollback keeps
+the current note; ordinary startup recovery still uses it. See `selftest-copy.test.mjs`.
+
 ## Also update
 
 - The stand-in in `test/mock/bin`, with an opt-in switch a test turns on (as `jobs-run`, `stamp-starts`, `gpu-broken`).

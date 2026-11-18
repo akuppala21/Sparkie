@@ -1,6 +1,6 @@
 Spark Console: bringing the hub back after its disk is lost
 
-Use a Mac, a compute Spark and a new hub disk (deploy/hub.env names it). These steps are on GitHub; installs save
+Use a Mac, compute Spark and new hub disk (deploy/hub.env). Copy:
 ~/.local/share/spark-console/REBUILD.txt
 
 1. On the hub: DGX OS, the same user name, Docker, Node.js 22+ from NodeSource, and Tailscale under the same machine
@@ -8,27 +8,29 @@ Use a Mac, a compute Spark and a new hub disk (deploy/hub.env names it). These s
      sudo loginctl enable-linger $USER
    Set up ssh-keygen and ssh-copy-id from the hub to each compute Spark, and ssh-copy-id from the Mac to the hub.
 
-2. Find the newest state copy. Turn compute Sparks on (buttons or Tapo), then on each:
+2. Turn compute Sparks on (buttons/Tapo). Find the newest copy:
      ls -lt ~/.local/share/spark-console/backups/state-*.tgz | head -3
    Take the newest (up to 7 days old, copied while a compute Spark is on).
 
-3. Before the console first starts, on the hub (<spark> holds the copy; <day> is its date):
+3. On the hub before first start (<spark> holds the copy; <day> is its date):
      scp <spark>:.local/share/spark-console/backups/state-<day>.tgz ~/
      mkdir -p ~/.local/state/spark-console && chmod 700 ~/.local/state/spark-console
      tar -xzf ~/state-<day>.tgz -C ~/.local/state/spark-console --exclude=./sessions.json \
-       --exclude=./saved-runs.json --exclude=./saved-runs.json.prev
-     rm -f ~/.local/state/spark-console/saved-runs.json{,.prev}
-   Keep exclusions: old copies can hold sign-ins and authority to stop workloads.
+       --exclude=./saved-runs.json --exclude=./saved-runs.json.prev \
+       --exclude=./self-test.json --exclude=./self-test.json.prev
+     rm -f ~/.local/state/spark-console/saved-runs.json{,.prev} ~/.local/state/spark-console/self-test.json{,.prev}
+   Keep exclusions and cleanup: old copies can hold sign-ins and permission to stop work.
+   Old snapshots need the same exclusions and live-file cleanup before state returns.
 
 4. Install from the Mac: bash spark-console/deploy/host-on-portal.sh
    Then run deploy/cutover.sh, deploy/lock-api.sh and deploy/open-to-internet.sh once.
-   Without the Mac, clone the repository on the hub with git and a GitHub read token, then:
+   No Mac: clone on the hub with git and a GitHub read token, then:
      bash deploy/pull.sh setup <owner>/<repository>; bash deploy/pull.sh check; bash deploy/pull.sh install <tree>
    Add the routes:
      sudo tailscale serve --bg --https=8443 --set-path=/console ~/spark-console
      sudo tailscale serve --bg --https=8443 --set-path=/console/api unix:$HOME/.local/state/spark-console/api.sock
 
-5. Sign in. On the tailnet you are the owner. If that login changed, update access.json first (see RECOVERY.txt).
+5. Sign in. On the tailnet you are the owner; a changed login needs access.json updated first (RECOVERY.txt).
    Other devices sign in again. Press "Keep these" if shown to allow internet sign-in. Make new recovery codes
    under Your passkey; it came back.
 
@@ -37,7 +39,7 @@ Use a Mac, a compute Spark and a new hub disk (deploy/hub.env names it). These s
    - heartbeat address: paste it in chat; Telegram: Agents and Telegram, then pair
    - smart plugs, from the Mac: bash spark-console/deploy/plugs.sh pair <n> (the hub's is read-only)
    - root helper: bash spark-console/deploy/root-for-sparkie.sh --hub <n>
-   Fetch the brain and draft again, or copy from a compute Spark (names in service/config.json).
+   Fetch the brain and draft, or copy from a compute Spark (service/config.json).
    On the hub, check cache parents belong to you; copy through links:
      ls -ld ~/.cache ~/.cache/huggingface ~/.cache/huggingface/hub
      mkdir -p ~/.cache/huggingface/hub
@@ -45,16 +47,16 @@ Use a Mac, a compute Spark and a new hub disk (deploy/hub.env names it). These s
      rsync -rLt <spark>:.cache/huggingface/hub/models--<draft> ~/.cache/huggingface/hub/
      find -L ~/.cache/huggingface/hub -type l -print
      find ~/.cache/huggingface/hub ! -user "$USER" -print
-   Stop on any copy error. Both find checks must print nothing. For unreadable files or root-owned cache parents,
-   ask an admin to fix only those paths. Never chmod the whole cache.
+   Stop on any copy error. Both find checks must print nothing. Ask an admin to fix only unreadable/root-owned
+   cache paths. Never chmod the whole cache.
    Type /restart sparkie.
 
-State returns as copied: owner, Sparks, passkeys, agent keys, memory, lessons, chats, saved workflows, working setups,
-what should run, and brain choice. Sign-ins, step 6 keys and journal do not return. Recall starts empty; memory sources
-can point at lost journal records. Changes since the copy are lost.
+Copied state: owner, Sparks, passkeys, agent keys, memory, lessons, chats, workflows, working setups,
+wanted work and brain choice. Sign-ins, step 6 keys, journal and cleanup notes stay out. Recall starts empty;
+memory can point at lost journal records. Changes since the copy are lost.
 
-7. Check /status, one chat turn, and the heartbeat at Healthchecks.io. Workflows need their first real validation.
+7. Check /status, chat and Healthchecks.io. Workflows need their first real validation.
 
-8. Once a new copy exists, delete old copies holding sign-ins; remove the lost disk's SSH key on each Spark:
+8. After a new copy, delete old sign-in copies; remove the lost disk's SSH key on each Spark:
      for f in ~/.local/share/spark-console/backups/state-*.tgz; do tar -tzf "$f" | grep -q sessions.json && rm "$f"; done
    Remove again any passkey or agent key you had removed since the recovered copy.

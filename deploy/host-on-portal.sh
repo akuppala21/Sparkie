@@ -446,7 +446,7 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 # copied back too (state files made since then stay), and sessions.json goes: every device signs in again, and none
 # signed out since is let back in. So does the state's number (auth-serial.json): the next start holds sign-in from the
 # internet and agents' changes until the owner, on the tailnet, has looked at what came back (contract 6.25). And so
-# do saved-runs.json and saved-runs.json.prev: either can restore old authority to stop current workloads (R57).
+# do saved-runs.json and self-test.json, and their .prev files: old cleanup permission never returns (R22, R57).
 # Exit 0: back and answering; 1: back, not answering; 3: not put back whole (make room, then run it again).
 #   bash restore.sh [--with-state] [--in-place-if-no-room]
 # --in-place-if-no-room, or a mark of that name beside it (the installer's own put-back, when the install failed,
@@ -523,12 +523,13 @@ if [ -n "$WITH_STATE" ] && [ -d "$S/state" ]; then
   mkdir -p "$HOME/.local/state/spark-console"
   for f in "$S/state"/* "$S/state"/.[!.]* "$S/state"/..?*; do
     [ -e "$f" ] || continue
-    case "${f##*/}" in sessions.json|saved-runs.json|saved-runs.json.prev) continue ;; esac
+    case "${f##*/}" in sessions.json|saved-runs.json|saved-runs.json.prev|self-test.json|self-test.json.prev) continue ;; esac
     cp -a "$f" "$HOME/.local/state/spark-console/"
   done
   rm -f "$HOME/.local/state/spark-console/sessions.json"
   rm -f "$HOME/.local/state/spark-console/auth-serial.json"
   rm -f "$HOME/.local/state/spark-console/saved-runs.json" "$HOME/.local/state/spark-console/saved-runs.json.prev"
+  rm -f "$HOME/.local/state/spark-console/self-test.json" "$HOME/.local/state/spark-console/self-test.json.prev"
 fi
 # The files are back: this snapshot is what's installed now, answering or not, so the next go-back passes over it
 # (one that only marked itself once it answered would be put back again and again if its build is dead).

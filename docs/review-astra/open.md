@@ -71,3 +71,7 @@ agrees with the scoped repairs. Full release qualification and installation rema
 | A-62 | Name-based self-test cleanup stops an owner-adopted app | Fixed; exact ownership checks; actual app-adoption/crash regression passes | Complete qualification and native-stop follow-up evidence |
 
 | A-63 | Preserved owner-adopted self-test model can remain untracked | Fixed; durable desired handoff and newer-stop revocation independently accepted; real model adoption checks pass | Complete qualification; scoped native app-stop status in findings-4 |
+
+
+| A-64 | Restored state can revive a self-test's old stop permission | Fixed; independent source/evidence review; seven old-source failures and 27/27 fixed checks, ordinary rollback preserved | Complete qualification of the corrected candidate |
+| A-65 | Stop workflow fingerprint omits the self-test producer | Fixed; one dependency entry; original assertion passes in combined 125/125 checks | Complete qualification of the corrected candidate |

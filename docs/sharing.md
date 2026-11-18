@@ -84,9 +84,13 @@ That takes effect at once: these changes work without a passkey again, and you s
 copy of the state folder under `~/.local/share/spark-console/releases/<time>/state/`, and Spark 3 (or 4) keeps copies
 taken while it was on under `~/.local/share/spark-console/backups/` (one a day, the last 14). To put one back: stop the
 service, then run `tar -xzf <copy> -C ~/.local/state/spark-console --exclude=./sessions.json
---exclude=./saved-runs.json --exclude=./saved-runs.json.prev` (one line). Before starting the service again, run
-`rm -f ~/.local/state/spark-console/saved-runs.json{,.prev}`. Older copies can hold sign-ins and old authority to stop
+--exclude=./saved-runs.json --exclude=./saved-runs.json.prev --exclude=./self-test.json --exclude=./self-test.json.prev` (one line). Before starting the service again, run
+`rm -f ~/.local/state/spark-console/saved-runs.json{,.prev} ~/.local/state/spark-console/self-test.json{,.prev}`. Older copies can hold sign-ins and old authority to stop
 current workloads; an old authority file already in the destination must go too. Every device signs in again. A new Spark 2 after a lost disk: `deploy/REBUILD.txt`, step by step.
+
+For an older install snapshot, stop the service first. Before using its `restore.sh --with-state`, remove
+`saved-runs.json{,.prev}` and `self-test.json{,.prev}` from both its `state/` folder and the live state folder.
+Those are old permission to stop work. A program-only rollback uses no `--with-state` and keeps the current notes.
 
 **If the API lock gets in the way**, `bash spark-console/deploy/lock-api.sh --undo` points Tailscale back at the local
 port, removes the lock and restarts the service.

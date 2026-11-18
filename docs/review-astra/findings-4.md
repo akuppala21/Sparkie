@@ -329,10 +329,51 @@ Frozen r8 tree `8e1c164a022d0710c8e24fb6a2ec896217c7b09b` passed **156/156** che
 with no skipped or cancelled tests. This includes all three original A-61 failures, both model ownership reproductions,
 the app-adoption reproduction, actual early adoption before Docker identity, and the final-await handoff regression.
 
-The final native app-stop correction is independently accepted; its focused compute run is still in progress at this candidate freeze.
+The native app-stop correction passed **76/76** focused checks on compute tree `584a509376d1bb7028d5d72c9360e7c287d92cf6`, with no skipped or cancelled tests. Production and shipped test bytes matched the independently accepted r9 source; only a temporary direct-probe wrapper was additional.
 
 The affected-test picker explicitly includes the new direct-source ownership fixtures for all six parts they read.
 Its additive selection regression, build and document checks passed **124/124** on compute tree
 `984793353723f36c3c8f090ecf2e8556912083e9`, with no skips or cancellations. Measured integration coverage and the
 short mandatory checks remain selected. These focused results precede the complete candidate run and final hosted
 qualification; they do not authorize an install by themselves or establish live hardware behavior.
+
+
+## A-64: restoring an old state copy can revive self-test cleanup authority
+
+**Accepted; repaired and independently reviewed; focused checks pass.** A daily copy can capture a running self-test
+app before owner adoption. Restoring that copy overwrites the later wish and desired date while the same Docker
+incarnation remains running. Startup cleanup then accepts that restored authority. The supported archive commands
+and generated `restore.sh --with-state` both allowed it. The access-review hold does not block the self-test's owner
+page context. Ordinary program-only rollback does not restore state and is not this failure.
+
+The repair follows the existing saved-run policy: daily copies omit `self-test.json` and its `.prev`; explicit state
+restore skips both and removes destination residue. `sharing.md`, `REBUILD.txt` and the shipped `RECOVERY.txt` cover
+older archives and snapshots. Ordinary restart and rollback without state keep the current note. No new service,
+state store or recovery mechanism was added. The generated registry now reports the actual backup exclusion.
+
+The final new tests are byte-identical in both controls. Old source `b977cf30`, on compute tree
+`5b9beaf26a64b6e172c3def987268d3099981df3`, produced seven expected failures and one passing ordinary-rollback
+control. The repaired tree `c73e706c6d2043c8d2eba9c2c8c7f795270a5268` passed **27/27**, with no skips or
+cancellations. The tests execute actual tar and generated restore commands, including old copies and destination
+residue. A preceding 75/76 batch passed every original copy and installer assertion; its sole new-test failure was
+an incorrectly preserved newline in a Markdown command described as one line. That fixture was corrected, then
+both final controls were rerun; the earlier failure is preserved and is not counted as a complete passing batch.
+
+Independent review verified all 17 repair hashes, identical final control tests, unchanged ordinary recovery, and
+the actual failure/pass logs. Every one of the 441 existing test and fixture files remains unchanged.
+
+## A-65: the stop workflow's version omits the self-test producer
+
+**Accepted; repaired; the original workflow-version check now passes.** The complete r4 run on `b977cf30`, tree
+`891bd98f46a79930d30221e7c17f8c8e0d4fcba8`, completed **3,470/3,471**, with one failure, zero skips or
+cancellations, in 35 minutes 9 seconds. The failure was the existing dependency check in `workflows.test.mjs`:
+`startedStill reads selfTest, which isn't on stop_model's list`. No lock or coverage map was produced; nothing landed.
+
+That check conservatively counts the `seen.selfTest` field name as the globally named producer. Adding `selfTest`
+to the literal `stop_model` dependency list preserves the existing check and fingerprints that producer as well.
+This adds no runtime call and changes no stop guard. Independent review accepted the one-entry change.
+
+Combined A-64/A-65 source on tree `4cdcb92a1dd56294af8e284e1162539600e8de3f` passed **125/125** original
+workflow, build and document checks on Spark 3, with no skips or cancellations. All 18 combined file hashes and the
+generated service/documents were independently checked. Complete qualification of the new committed candidate,
+final GitHub checks, installation and real-Spark behavior remain required.
