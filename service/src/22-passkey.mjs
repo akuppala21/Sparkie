@@ -1,5 +1,5 @@
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
-// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
+// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs, page-power-actions.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)
 // Timers: none        Wakes: none
 // Tailscale, or a device the owner signed in, says the owner is asking, and for the few changes to who may act (agent
@@ -75,6 +75,10 @@ function describeChange(method, path, body = {}) {
     const c = pendingChoices.get(String(body.choice || ''));
     return c ? `${c.label}${c.args?.__validate ? ' (its first run, which validates it for Sparkie and agents)' : ''}` : 'Press a button in a chat';
   }
+  if (method === 'POST' && path === '/actions/power_off') {
+    const c = pendingChoices.get(String(body.choice || ''));
+    return c?.action === 'power_off' ? c.label : 'Power off a Spark';
+  }
   const how = body.setup ? ` with recipe setup ${clean(body.setup, 40)}` : body.verified ? ' the way it ran before' : '';
   const stops = Array.isArray(body.stop) && body.stop.length ? `, stopping ${body.stop.map(x => clean(x, 160)).join(', ')}` : '';
   if (method === 'POST' && path === '/deploy') return `Deploy ${clean(body.model, 200)} on ${sparkName(nodeById(body.node) || { id: clean(body.node, 40) })}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
@@ -90,6 +94,7 @@ function takeChallenge(id, viewer, purpose) {
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
 // The routes whose request may need the passkey: one a line, in name order.
 const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
+  || path === '/actions/power_off'
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
@@ -101,6 +106,7 @@ const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
 // Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
 // first that fits gives the limit.)
 const bodyLimit = path => (path.startsWith('/agents') ? 4000
+  : path === '/actions/power_off' ? 200000
   : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
   : path.startsWith('/auth') ? 50000
   : 1e5);
@@ -113,6 +119,12 @@ function stopsOutside(stop) {
 // Which requests need the owner's passkey. Taking a right away (removing an agent, pausing agents) never does.
 function needsPasskey(method, path, body, haveKeys) {
   if (method === 'GET') return false;
+  // The power card's owner-only question uses the same confirmation as a chat button. Gate the stored choice,
+  // regardless of the page marker, so omitting that header cannot remove the passkey requirement.
+  if (method === 'POST' && path === '/actions/power_off') {
+    const c = pendingChoices.get(String(body?.choice || ''));
+    return c?.action === 'power_off' && c.ownerOnly === true;
+  }
   // A model that runs its own code could take over the Spark it runs on.
   if (method === 'POST' && (path === '/deploy' || path === '/deploy/cluster')) return body?.allowRemoteCode === true || stopsOutside(body?.stop);
   if (method === 'POST' && path === '/agents') return true;

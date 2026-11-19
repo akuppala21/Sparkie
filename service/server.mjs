@@ -3303,7 +3303,8 @@ setTimeout(() => {
   setInterval(() => refreshPlugs().catch(() => {}), PLUGS_EVERY);
 }, 2000);
 /* ───────── Spark status (taking over from the original portal) ───────── */
-// Area: knowledge        Rules: R10, R24, R30, R37, R56        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs, status-power-order.test.mjs
+// Area: knowledge        Rules: R10, R20, R24, R30, R37, R41, R56
+// Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs, status-power-order.test.mjs, wall-monthly.test.mjs
 // Owns: energy.json (writers: sampleEnergy)
 // Timers: collectStatus (every 30 s, after a first round 2 s after start)        Wakes: none
 // Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH
@@ -3377,7 +3378,125 @@ function cleanStatus(node, raw) {
 // averaged between readings (trapezoids); gaps over two minutes (no reading, the service restarting) aren't counted.
 // Kept in an owner-only file next to the chats.
 const ENERGY_FILE = `${STATE_DIR}/energy.json`;
-let energy = null;
+const WALL_ENERGY_ZONE = 'America/Los_Angeles';
+let energy = null, energyProblem = null;
+function wallMonthFormatter() {
+  return new Intl.DateTimeFormat('en-US', { timeZone: WALL_ENERGY_ZONE, year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+}
+const WALL_ENERGY_FORMAT = wallMonthFormatter();
+function wallMonthParts(t) {
+  return Object.fromEntries(WALL_ENERGY_FORMAT.formatToParts(new Date(t))
+    .filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]));
+}
+function wallMonthAt(t) {
+  const p = wallMonthParts(t);
+  return `${p.year}-${String(p.month).padStart(2, '0')}`;
+}
+function wallMonthStart(month, next = false) {
+  const [year, m] = month.split('-').map(Number), target = Date.UTC(year, m - 1 + Number(next), 1);
+  let t = target;
+  // Local midnight is unambiguous here; find its UTC offset instead of assuming every month is PST.
+  for (let i = 0; i < 3; i++) {
+    const p = wallMonthParts(t);
+    t += target - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  }
+  return t;
+}
+function wallMonthBucket(monthly, month, ids) {
+  const bucket = (monthly.months[month] ||= { expected: [], nodes: {} });
+  bucket.expected = [...new Set([...bucket.expected, ...ids])];
+  return bucket;
+}
+function wallMonthState(now) {
+  if (Object.hasOwn(energy, 'wallMonthly')) {
+    const m = energy.wallMonthly;
+    if (!m || m.version !== 1 || m.timeZone !== WALL_ENERGY_ZONE || !m.months || typeof m.months !== 'object' || Array.isArray(m.months)
+      || !m.last || typeof m.last !== 'object' || Array.isArray(m.last)) {
+      throw new HttpError(503, 'The saved electricity months could not be read. Their file was left alone.');
+    }
+    const number = n => Number.isFinite(n) && n >= 0, object = x => x && typeof x === 'object' && !Array.isArray(x);
+    for (const [month, bucket] of Object.entries(m.months)) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !object(bucket) || !Array.isArray(bucket.expected)
+        || bucket.expected.some(id => typeof id !== 'string') || !object(bucket.nodes)
+        || Object.values(bucket.nodes).some(e => !object(e) || !number(e.kWh) || !number(e.coverageSeconds)
+          || !number(e.since) || !number(e.until) || e.until < e.since || e.since < wallMonthStart(month)
+          || e.until > wallMonthStart(month, true) || e.coverageSeconds > (e.until - e.since) / 1000 + 1)) {
+        throw new HttpError(503, 'The saved electricity month could not be read. Its file was left alone.');
+      }
+    }
+    if (Object.values(m.last).some(p => !object(p) || !number(p.t) || (p.w !== null && (!number(p.w) || p.w > 3000))
+      || (p.plug !== null && !Number.isInteger(p.plug)))) throw new HttpError(503, 'The last electricity reading could not be read. Its file was left alone.');
+    return m;
+  }
+  const monthly = { version: 1, timeZone: WALL_ENERGY_ZONE, months: {}, last: {} };
+  // A lifetime counter is assignable only when both ends prove it belongs to one month. Never split an old total.
+  for (const [id, e] of Object.entries(energy.nodes)) {
+    const since = Date.parse(e.wallSince), until = e.wallLast?.t;
+    if (!Number.isFinite(since) || !Number.isFinite(until) || until < since || until > now || wallMonthAt(since) !== wallMonthAt(until)
+      || !Number.isFinite(e.wallKWh) || e.wallKWh < 0 || !Number.isFinite(e.wallCoverageSeconds) || e.wallCoverageSeconds < 0
+      || e.wallCoverageSeconds > (until - since) / 1000 + 1 || (e.wallKWh > 0 && !e.wallCoverageSeconds)) continue;
+    if (e.wallCoverageSeconds > 0) {
+      const bucket = wallMonthBucket(monthly, wallMonthAt(since), Object.keys(energy.nodes));
+      bucket.legacy = true;
+      bucket.nodes[id] = { kWh: e.wallKWh, coverageSeconds: e.wallCoverageSeconds, since, until };
+    }
+    // The old file did not keep a plug identity. The first new observation starts a new pair of readings.
+    monthly.last[id] = { t: until, w: null, plug: null };
+  }
+  energy.wallMonthly = monthly;
+  return monthly;
+}
+function addWallMonthInterval(monthly, id, previous, current, ids) {
+  const span = current.t - previous.t;
+  for (let start = previous.t; start < current.t;) {
+    const month = wallMonthAt(start), end = Math.min(current.t, wallMonthStart(month, true));
+    const a = previous.w + (current.w - previous.w) * (start - previous.t) / span;
+    const b = previous.w + (current.w - previous.w) * (end - previous.t) / span;
+    const bucket = wallMonthBucket(monthly, month, ids);
+    const e = (bucket.nodes[id] ||= { kWh: 0, coverageSeconds: 0, since: start, until: end });
+    e.kWh += ((a + b) / 2) * (end - start) / 3.6e9;
+    e.coverageSeconds += (end - start) / 1000;
+    e.since = Math.min(e.since, start); e.until = Math.max(e.until, end);
+    start = end;
+  }
+}
+function sampleWallMonths(nodes, now) {
+  const monthly = wallMonthState(now), ids = nodes.map(n => n.id);
+  for (const n of nodes) {
+    const wall = n.wall, t = Date.parse(wall?.at), previous = monthly.last[n.id];
+    const valid = wall?.answering && Number.isFinite(wall.watts) && wall.watts >= 0 && wall.watts <= 3000
+      && Number.isFinite(t) && t <= now && now - t <= 120000 && Number.isInteger(wall.plug);
+    if (!valid) { if (previous) previous.w = null; continue; }
+    // A controller reply reused by several status reads contributes once. A clock going back never recounts it.
+    if (previous && t <= previous.t) continue;
+    const current = { t, w: wall.watts, plug: wall.plug };
+    if (previous && previous.w !== null && previous.plug === current.plug && t - previous.t <= 120000) {
+      addWallMonthInterval(monthly, n.id, previous, current, ids);
+    }
+    monthly.last[n.id] = current;
+  }
+}
+function wallMonthlyView(now = Date.now()) {
+  const currentMonth = wallMonthAt(now), monthly = energy?.wallMonthly;
+  const months = [...new Set([currentMonth, ...Object.keys(monthly?.months || {})])].sort().reverse().map(month => {
+    const bucket = monthly?.months[month], start = wallMonthStart(month), end = Math.min(now, wallMonthStart(month, true));
+    const nodes = Object.entries(bucket?.nodes || {}), expected = [...new Set([...(bucket?.expected || []), ...(month === currentMonth ? NODES.map(n => n.id) : [])])];
+    const seconds = nodes.reduce((sum, [, e]) => sum + e.coverageSeconds, 0);
+    const partial = Boolean(bucket?.legacy) || !expected.length || expected.some(id => {
+      const e = bucket?.nodes[id];
+      return !e || e.since > start + 1 || (e.until - start) / 1000 - e.coverageSeconds > 1
+        || end - e.until > (month === currentMonth ? 120000 : 1);
+    });
+    return { month, kWh: seconds > 0 ? Math.round(nodes.reduce((sum, [, e]) => sum + e.kWh, 0) * 1e6) / 1e6 : null, partial,
+      recordedSince: nodes.length ? new Date(Math.min(...nodes.map(([, e]) => e.since))).toISOString() : null,
+      recordedUntil: nodes.length ? new Date(Math.max(...nodes.map(([, e]) => e.until))).toISOString() : null,
+      coverageSeconds: Math.round(seconds),
+      bySpark: Object.fromEntries(nodes.map(([id, e]) => [id, { kWh: e.kWh, coverageSeconds: Math.round(e.coverageSeconds),
+        since: new Date(e.since).toISOString(), until: new Date(e.until).toISOString() }])) };
+  });
+  return { timeZone: WALL_ENERGY_ZONE, currentMonth, method: 'wall-power-readings', months, ...(energyProblem ? { problem: energyProblem } : {}) };
+}
 function addEnergy(e, w, now, [kWh, seconds, last]) {
   if (w !== null && e[last] && now - e[last].t <= 120000 && now > e[last].t) {
     const dt = (now - e[last].t) / 1000;
@@ -3387,8 +3506,13 @@ function addEnergy(e, w, now, [kWh, seconds, last]) {
   e[last] = w === null ? null : { t: now, w };
 }
 function sampleEnergy(nodes) {
-  energy ||= readJson(ENERGY_FILE) || { since: null, nodes: {} };
+  energy ||= readKept(ENERGY_FILE) || { since: null, nodes: {} };
+  if (!energy || typeof energy !== 'object' || !energy.nodes || typeof energy.nodes !== 'object' || Array.isArray(energy.nodes)
+    || Object.values(energy.nodes).some(e => !e || typeof e !== 'object' || Array.isArray(e))) {
+    throw new HttpError(503, 'The saved electricity readings could not be read. Their file was left alone.');
+  }
   const now = Date.now();
+  sampleWallMonths(nodes, now);
   for (const n of nodes) {
     const e = (energy.nodes[n.id] ||= { kWh: 0, coverageSeconds: 0, last: null });
     addEnergy(e, n.reachable && typeof n.gpuPowerWatts === 'number' ? n.gpuPowerWatts : null, now, ['kWh', 'coverageSeconds', 'last']);
@@ -3397,15 +3521,13 @@ function sampleEnergy(nodes) {
     addEnergy(e, wall, now, ['wallKWh', 'wallCoverageSeconds', 'wallLast']);
   }
   energy.since ||= new Date(now).toISOString();
-  try {
-    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(`${ENERGY_FILE}.tmp`, JSON.stringify(energy), { mode: 0o600 });
-    renameSync(`${ENERGY_FILE}.tmp`, ENERGY_FILE);
-  } catch {}
+  try { writePrivate(ENERGY_FILE, energy); energyProblem = null; }
+  catch { energyProblem = 'Electricity totals could not be saved. They will be tried again with the next reading.'; }
 }
-const energyView = () => (energy ? {
-  since: energy.since,
-  nodes: Object.fromEntries(Object.entries(energy.nodes).map(([id, e]) => [id, { kWh: e.kWh, coverageSeconds: Math.round(e.coverageSeconds),
+const energyView = () => (energy || energyProblem ? {
+  since: energy?.since || null,
+  wallMonthly: wallMonthlyView(),
+  nodes: Object.fromEntries(Object.entries(energy?.nodes || {}).map(([id, e]) => [id, { kWh: e.kWh, coverageSeconds: Math.round(e.coverageSeconds),
     ...(e.wallSince ? { wallKWh: e.wallKWh || 0, wallCoverageSeconds: Math.round(e.wallCoverageSeconds || 0), wallSince: e.wallSince } : {}) }])),
 } : null);
 
@@ -3421,7 +3543,8 @@ function collectStatus() {
       }
     }));
     for (const n of nodes) { const w = wallFor(n.id); if (w) n.wall = w; }
-    sampleEnergy(nodes);
+    try { sampleEnergy(nodes); }
+    catch { energy = null; energyProblem = 'Electricity history could not be read. Its saved totals were left alone.'; }
     noteSparkStates(nodes);
     statusCache = { at: Date.now(), value: { nodes, updatedAt: new Date().toISOString() } };
     return statusCache.value;
@@ -3446,7 +3569,7 @@ async function statusFor(viewer, fresh) {
   // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)
   let tasks = [];
   if (viewer.role === 'owner') try { tasks = tasksNow().map(({ request: _r, ...x }) => x); } catch {}
-  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView(), tasks } : {}), source: 'console' };
+  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView(), power: powerView(), tasks } : {}), source: 'console' };
 }
 setTimeout(() => {
   collectStatus().catch(() => {});
@@ -10421,7 +10544,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
   // pickVersion reads shared status before a wake: changing its power ordering changes both start versions.
   statusFor, collectStatus, powerCutOperation, powerState, powerMark, cleanStatus, runWorker, refreshNodes, wallFor,
-  sampleEnergy, noteSparkStates, energyView, tasksNow,
+  sampleEnergy, addEnergy, WALL_ENERGY_ZONE, wallMonthFormatter, wallMonthParts, wallMonthAt, wallMonthStart, wallMonthBucket, wallMonthState,
+  addWallMonthInterval, sampleWallMonths, wallMonthlyView, readKept, writePrivate, plugMap, switchablePlug, powerView,
+  noteSparkStates, energyView, tasksNow,
   lessonOf,
   lessonsKept,
   PASS_OVER_FAILURES,
@@ -29614,7 +29739,7 @@ action({
   run: (input, viewer, ctx) => writeFile(input, viewer, ctx),
 });
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
-// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
+// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs, page-power-actions.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)
 // Timers: none        Wakes: none
 // Tailscale, or a device the owner signed in, says the owner is asking, and for the few changes to who may act (agent
@@ -29690,6 +29815,10 @@ function describeChange(method, path, body = {}) {
     const c = pendingChoices.get(String(body.choice || ''));
     return c ? `${c.label}${c.args?.__validate ? ' (its first run, which validates it for Sparkie and agents)' : ''}` : 'Press a button in a chat';
   }
+  if (method === 'POST' && path === '/actions/power_off') {
+    const c = pendingChoices.get(String(body.choice || ''));
+    return c?.action === 'power_off' ? c.label : 'Power off a Spark';
+  }
   const how = body.setup ? ` with recipe setup ${clean(body.setup, 40)}` : body.verified ? ' the way it ran before' : '';
   const stops = Array.isArray(body.stop) && body.stop.length ? `, stopping ${body.stop.map(x => clean(x, 160)).join(', ')}` : '';
   if (method === 'POST' && path === '/deploy') return `Deploy ${clean(body.model, 200)} on ${sparkName(nodeById(body.node) || { id: clean(body.node, 40) })}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
@@ -29705,6 +29834,7 @@ function takeChallenge(id, viewer, purpose) {
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
 // The routes whose request may need the passkey: one a line, in name order.
 const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
+  || path === '/actions/power_off'
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
@@ -29716,6 +29846,7 @@ const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
 // Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
 // first that fits gives the limit.)
 const bodyLimit = path => (path.startsWith('/agents') ? 4000
+  : path === '/actions/power_off' ? 200000
   : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
   : path.startsWith('/auth') ? 50000
   : 1e5);
@@ -29728,6 +29859,12 @@ function stopsOutside(stop) {
 // Which requests need the owner's passkey. Taking a right away (removing an agent, pausing agents) never does.
 function needsPasskey(method, path, body, haveKeys) {
   if (method === 'GET') return false;
+  // The power card's owner-only question uses the same confirmation as a chat button. Gate the stored choice,
+  // regardless of the page marker, so omitting that header cannot remove the passkey requirement.
+  if (method === 'POST' && path === '/actions/power_off') {
+    const c = pendingChoices.get(String(body?.choice || ''));
+    return c?.action === 'power_off' && c.ownerOnly === true;
+  }
   // A model that runs its own code could take over the Spark it runs on.
   if (method === 'POST' && (path === '/deploy' || path === '/deploy/cluster')) return body?.allowRemoteCode === true || stopsOutside(body?.stop);
   if (method === 'POST' && path === '/agents') return true;
@@ -30669,7 +30806,7 @@ setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, ROUTE_MS);
 /* ───────── the public page ───────── */
 // Area: ways in
 // Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
-// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, page-power-actions.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
@@ -30874,7 +31011,10 @@ const handler = async (req, res) => {
     if (req.method === 'POST' && actionCall) {
       ownerOnly();
       const args = await readBody(req, 200000);
-      return send(res, 200, await runAction(actionCall[1], viewer, args ?? {}, { via: 'api', actor: 'owner', request: `${actionCall[1]} ${maskSecrets(JSON.stringify(args ?? {}).slice(0, 400)).slice(0, 200)}`, canChange: true }));
+      // The page's power cards can show the owner's question in place. This marker grants no identity or right;
+      // the normal owner/origin checks above and the choice's passkey gate still apply, even without the marker.
+      const powerCard = req.headers['x-spark-power-card'] === '1' && ['power_on', 'power_off'].includes(actionCall[1]);
+      return send(res, 200, await runAction(actionCall[1], viewer, args ?? {}, { via: powerCard ? 'page' : 'api', actor: 'owner', request: `${actionCall[1]} ${maskSecrets(JSON.stringify(args ?? {}).slice(0, 400)).slice(0, 200)}`, canChange: true }));
     }
     // Agent keys: one per agent, shown once when it's made; only its hash is kept.
     if (path === '/agents' || path.startsWith('/agents/')) {

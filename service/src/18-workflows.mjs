@@ -30,7 +30,9 @@ const START_CODE = () => [...CONTEXT_CODE(), ...ROLLBACK_CODE(), startModel, not
   powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
   // pickVersion reads shared status before a wake: changing its power ordering changes both start versions.
   statusFor, collectStatus, powerCutOperation, powerState, powerMark, cleanStatus, runWorker, refreshNodes, wallFor,
-  sampleEnergy, noteSparkStates, energyView, tasksNow,
+  sampleEnergy, addEnergy, WALL_ENERGY_ZONE, wallMonthFormatter, wallMonthParts, wallMonthAt, wallMonthStart, wallMonthBucket, wallMonthState,
+  addWallMonthInterval, sampleWallMonths, wallMonthlyView, readKept, writePrivate, plugMap, switchablePlug, powerView,
+  noteSparkStates, energyView, tasksNow,
   lessonOf,
   lessonsKept,
   PASS_OVER_FAILURES,

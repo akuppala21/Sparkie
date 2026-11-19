@@ -69,6 +69,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | open something through the app door | `docs/how/change-the-app-door.md` |
 | add a page route | `docs/how/add-a-page-route.md` |
 | add a state file | `docs/how/add-a-state-file.md` |
+| track monthly wall electricity | `docs/how/track-wall-electricity.md` |
 | add an event type or a job type | `docs/how/add-an-event-or-job-type.md` |
 | add a worker.py action | `docs/how/add-a-worker-action.md` |
 | fetch something from outside the Sparks | `docs/how/add-an-outbound-connection.md` |

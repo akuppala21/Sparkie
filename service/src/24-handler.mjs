@@ -1,7 +1,7 @@
 /* ───────── the public page ───────── */
 // Area: ways in
 // Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
-// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs, context-start.test.mjs, download-admission.test.mjs, t45-return.test.mjs, t45-fleet.test.mjs, page-power-actions.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
@@ -206,7 +206,10 @@ const handler = async (req, res) => {
     if (req.method === 'POST' && actionCall) {
       ownerOnly();
       const args = await readBody(req, 200000);
-      return send(res, 200, await runAction(actionCall[1], viewer, args ?? {}, { via: 'api', actor: 'owner', request: `${actionCall[1]} ${maskSecrets(JSON.stringify(args ?? {}).slice(0, 400)).slice(0, 200)}`, canChange: true }));
+      // The page's power cards can show the owner's question in place. This marker grants no identity or right;
+      // the normal owner/origin checks above and the choice's passkey gate still apply, even without the marker.
+      const powerCard = req.headers['x-spark-power-card'] === '1' && ['power_on', 'power_off'].includes(actionCall[1]);
+      return send(res, 200, await runAction(actionCall[1], viewer, args ?? {}, { via: powerCard ? 'page' : 'api', actor: 'owner', request: `${actionCall[1]} ${maskSecrets(JSON.stringify(args ?? {}).slice(0, 400)).slice(0, 200)}`, canChange: true }));
     }
     // Agent keys: one per agent, shown once when it's made; only its hash is kept.
     if (path === '/agents' || path.startsWith('/agents/')) {

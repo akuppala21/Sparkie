@@ -9,6 +9,7 @@ const ASSISTANT = 'Sparkie';
 const POLL_MS = 15000;
 const BOOT_POLL_MS = 60000;
 const STALE_MS = 90000;
+const FABRIC_REFRESH_MS = 5 * 60000;
 const HISTORY_POINTS = 90;
 const LIVE_POINTS = 300;
 const HISTORY_MAX_AGE_MS = 45 * 60 * 1000;
@@ -238,6 +239,7 @@ const state = {
   recentJobs: null,
   jobs: new Map(),
   following: new Map(),
+  powerRequests: new Set(),
   machine: new Map(),
   chat: { conv: null, spark: null, model: null, sending: false, waiting: false, search: '', pendingPrompt: null, draft: '' },
   live: new Map(),
@@ -290,8 +292,12 @@ function containerTitle(name) {
   if (ext?.models?.length) return ext.models.map(id => (libFor(id) ? modelTitle(libFor(id)) : String(id).split('/').pop())).join(', ');
   return /^sc-/.test(c) ? c.replace(/^sc-/, '').replace(/-part2$/, '').replace('--', '/') : c;
 }
+// The plug controller supports the environment; it is not work the owner launched.
+function environmentContainer(name) {
+  return name === 'spark-console-plugs';
+}
 // Container names for one Spark's card. The fleet counter counts the actual Docker entries separately.
-const workloads = n => [...new Set((n?.runningContainers || []).map(containerTitle))];
+const workloads = n => [...new Set((n?.runningContainers || []).filter(name => !environmentContainer(name)).map(containerTitle))];
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 function condition(n) {
@@ -1266,11 +1272,50 @@ function pairRow(p) {
 }
 
 /* ───────── home ───────── */
+function electricityStat() {
+  const value = h('span'), unit = h('small'), note = h('div', { class: 'stat-foot' });
+  const readings = () => state.status?.energy?.wallMonthly;
+  let selected = null, optionsKey = null;
+  const select = h('select', { class: 'select sm electricity-month', 'aria-label': 'Electricity month (Pacific time)',
+    onchange: () => { selected = select.value === readings()?.currentMonth ? null : select.value; update(); } });
+  const dateFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' });
+  const numberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+  const validMonth = month => typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+  function update() {
+    const data = readings(), current = validMonth(data?.currentMonth) ? data.currentMonth : null;
+    const records = new Map((data?.months || []).filter(row => validMonth(row.month)).map(row => [row.month, row]));
+    const months = [...records.keys()].filter(month => month === current || num(records.get(month).kWh));
+    if (current && !records.has(current)) months.push(current);
+    months.sort().reverse();
+    if (!months.includes(selected)) selected = null;
+    const month = selected || current || months[0];
+    const key = months.join(' ');
+    if (key !== optionsKey) {
+      optionsKey = key;
+      set(select, months.length ? months.map(m => h('option', { value: m }, dateFormat.format(new Date(`${m}-01T00:00:00Z`))))
+        : h('option', { value: '' }, 'Month'));
+      select.disabled = !months.length;
+    }
+    if (select.value !== (month || '')) select.value = month || '';
+    const row = records.get(month), kWh = row?.kWh, recorded = num(kWh) && kWh >= 0;
+    const total = kWh > 0 && kWh < 0.01 ? '<0.01' : recorded ? numberFormat.format(kWh) : '—';
+    value.textContent = total;
+    unit.textContent = recorded ? 'kWh' : '';
+    note.textContent = data?.problem || (!recorded ? 'No plug readings' : row.partial ? 'Partial coverage' : 'Measured at the plugs');
+    note.title = data?.problem || '';
+  }
+  live(update);
+  return h('div', { class: 'stat electricity-stat' },
+    h('div', { class: 'stat-label' }, icon('zap'), 'Electricity'),
+    h('div', { class: 'electricity-total' }, h('div', { class: 'stat-value' }, value, unit), select), note);
+}
+
 PAGES.fleet = function fleetPage(view) {
   const headline = h('h1', {}, 'Home');
   const sub = h('div', { class: 'page-sub' });
   const alerts = h('div');
-  const stats = h('div', { class: 'card stats' });
+  const showElectricity = owner();
+  const stats = h('div', { class: `card stats${showElectricity ? ' has-electricity' : ''}` });
   const grid = h('div', { class: 'fleet' });
   const activity = h('div', { class: 'rows' });
   const clustersBox = h('div');
@@ -1303,7 +1348,7 @@ PAGES.fleet = function fleetPage(view) {
     redraw(clustersBox, panel('Linked Sparks', h('div', { class: 'cluster-strip' }, linkMap(), h('div', { class: 'rows' }, pairs.map(p => pairRow(p)))),
       { tight: true, sub: 'Tested links between compute Sparks can serve one model together', cls: 'cluster-panel' }));
   });
-  if (!state.fabric.loading && (!state.fabric.sparks || Date.now() - (state.fabric.at || 0) > 300000)) loadFabric();
+  live(refreshFabricReading);
   // What each Spark runs is named after its model, which comes from the library.
   if (!state.lib.loading && (!state.lib.data || Date.now() - state.lib.at > 60000)) loadLibrary();
 
@@ -1316,8 +1361,9 @@ PAGES.fleet = function fleetPage(view) {
   };
   const sOnline = stat('Sparks online', 'server'), sWork = stat('Containers running', 'box'), sMem = stat('Memory', 'layers');
   const sPower = stat('GPU power', 'zap');
+  if (showElectricity) put(stats, electricityStat());
   fast(() => {
-    const list = nodes(), up = list.filter(isUp), asleep = list.filter(n => condition(n) === 'asleep'), busySparks = up.filter(n => workloads(n).length);
+    const list = nodes(), up = list.filter(isUp), asleep = list.filter(n => condition(n) === 'asleep'), busySparks = up.filter(n => n.runningContainers?.length);
     const running = busySparks.reduce((t, n) => t + (n.runningContainers || []).length, 0);
     const total = sum(up, 'memoryTotalGiB'), used = total - sum(up, 'memoryFreeGiB');
     sOnline.value.textContent = state.status ? up.length : '—';
@@ -1367,6 +1413,65 @@ function attentionBanners() {
 }
 const issueText = n => (n.issues?.length ? n.issues.join(' · ') : 'Something on this Spark needs attention.');
 
+function sparkPowerControl(n) {
+  if (!n) return null;
+  if (portalHostId() === n.id) return { label: 'Always on' };
+  const power = state.status?.power;
+  if (!owner() || !state.boot?.computeIds?.includes(n.id) || !power?.switchable?.includes(n.id)) return null;
+  const pending = activityJobs().find(j => underWay(j) && ['power-on', 'power-off'].includes(j.type) && (j.nodes || [j.node]).includes(n.id));
+  const current = power.bySpark?.[n.id]?.state;
+  if (pending?.type === 'power-off') return { label: 'Powering off…', disabled: true };
+  if (pending?.type === 'power-on' || current === 'waking') return { label: 'Powering on…', disabled: true };
+  if (isStale() || state.statusError || !n.wall?.answering || !['on', 'off'].includes(current)) return { label: 'Power unavailable', disabled: true };
+  const on = current === 'on';
+  return { action: on ? 'power_off' : 'power_on', label: on ? 'Power off' : 'Power on', disabled: state.powerRequests.has(n.id) };
+}
+
+function sparkPowerButton(n, control) {
+  if (!control) return null;
+  if (!control.action && !control.disabled) return h('span', { class: 'sc-always-on', title: 'This Spark runs Spark Console' }, control.label);
+  return h('button', { class: 'btn sm sc-power', type: 'button', disabled: control.disabled,
+    'aria-label': `${control.label} ${n.name}`, onclick: () => changeSparkPower(n.id, control.action) }, control.label);
+}
+
+async function changeSparkPower(id, action) {
+  const n = node(id), control = sparkPowerControl(n);
+  if (!action || !control || control.disabled || control.action !== action) return;
+  state.powerRequests.add(id);
+  runLive();
+  const off = action === 'power_off', title = `${control.label} ${n.name}?`;
+  const ask = body => capi(`actions/${action}`, 'POST', body, { 'X-Spark-Power-Card': '1' });
+  let sent = false;
+  try {
+    if (off && !await dialog({ title, confirm: 'Power off', danger: true,
+      description: 'Spark Console saves the models and kept apps it stops so they can come back next time.' })) return;
+    if (sparkPowerControl(node(id))?.action !== action) throw new Error('The power status changed. Check the card and try again.');
+    sent = true;
+    let result = await ask({ spark: id });
+    while (result.outcome === 'question' || result.outcome === 'needs-ok') {
+      const yes = result.choices?.find(c => c.choice && c.call?.action === action);
+      if (!yes) {
+        if (await dialog({ title, description: result.question, confirm: `Open ${ASSISTANT}` })) go(`sparkie/new?spark=${encodeURIComponent(id)}`);
+        return;
+      }
+      const cancel = result.choices.find(c => !c.choice)?.label || 'Cancel';
+      if (!await dialog({ title, description: result.question, confirm: yes.label, cancel, danger: off })) return;
+      result = await ask({ choice: yes.choice });
+    }
+    if (result.operation) {
+      await followServiceJob({ id: result.operation, type: off ? 'power-off' : 'power-on', status: 'running',
+        node: id, nodes: result.sparks || [id], step: result.step || 'Waiting for Spark Console…' });
+    } else if (result.note) toast(result.note);
+  } catch (e) {
+    failToast(e);
+    if (sent) await loadJobs();
+  } finally {
+    if (sent) await loadStatus(true);
+    state.powerRequests.delete(id);
+    runLive();
+  }
+}
+
 function sparkCard(id) {
   const card = h('article', { class: 'spark-card' });
   const body = h('a', { class: 'sc-link', href: `#/spark/${id}` });
@@ -1383,6 +1488,7 @@ function sparkCard(id) {
     const n = node(id);
     if (!n) return;
     const cond = condition(n), up = isUp(n), work = workloads(n), portalHost = portalHostId() === n.id;
+    body.href = `#/spark/${id}${owner() && up && work.length ? '/workloads' : ''}`;
     const key = [up, up ? cond === 'degraded' : cond, work.join('\n'), portalHost, cond === 'degraded' ? issueText(n) : ''].join('|');
     if (key !== bodyKey) {
       bodyKey = key;
@@ -1398,7 +1504,7 @@ function sparkCard(id) {
         set(body, head, h('div', { class: 'sc-offline' },
           icon(cond === 'asleep' ? 'moon' : cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
           ['offline', 'asleep'].includes(cond) ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
-          h('span', {}, cond === 'asleep' ? 'Powered off on purpose. Ask Sparkie when you need it.' : cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
+          h('span', {}, cond === 'asleep' ? 'Powered off on purpose.' : cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
         refs = { pill: pillEl };
       } else {
         const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric('Power', 'W'), [temp, tempBox] = metric('Temp', '°F');
@@ -1419,7 +1525,8 @@ function sparkCard(id) {
         refs = { pill: pillEl, gpu, power, temp, memUsed, memTotal, barFill, graph, span };
       }
     }
-    const fkey = `${cond === 'offline'}|${up}|${n.model?.running}|${owner()}|${Boolean(conn(id))}|${canSparkChat(n)}`;
+    const power = sparkPowerControl(n);
+    const fkey = [cond === 'offline', up, n.model?.running, owner(), Boolean(conn(id)), canSparkChat(n), power?.label, power?.disabled].join('|');
     if (fkey === footKey) return;
     footKey = fkey;
     const ssh = owner() && cond === 'offline' ? sshDirect(id) : null;
@@ -1430,6 +1537,7 @@ function sparkCard(id) {
         : null,
       ssh ? h('button', { class: 'btn sm', type: 'button', title: ssh, 'aria-label': `Copy SSH command for ${n.name}`, onclick: () => copy(ssh, `Copied: ${ssh}`) }, icon('terminal'), 'Copy SSH') : null,
       canSparkChat(n) ? h('a', { class: 'btn sm', href: sparkChatHref(id), title: `Ask ${ASSISTANT} about ${n.name}`, 'aria-label': `Chat about ${n.name}` }, icon('chat'), 'Chat') : null,
+      sparkPowerButton(n, power),
       h('span', { class: 'grow' }),
       owner() ? menuButton(() => sparkActions(node(id)), { label: `More actions for ${n.name}` }) : h('a', { class: 'btn ghost sm', href: `#/spark/${id}`, 'aria-label': `Details for ${n.name}` }, 'Details'));
   });
@@ -1683,15 +1791,26 @@ PAGES.spark = function sparkPage(view, r) {
 
   const TABS = { overview: overviewTab, workloads: workloadsTab, logs: logsTab, diagnostics: diagnosticsTab };
   TABS[tab](content, n0, r);
+  live(refreshFabricReading);
 };
 
 function factChips(n) {
-  const net = n.network || {};
-  const chip = (ic, text, kind = '') => h('span', { class: `chip ${kind}` }, icon(ic), text);
-  return [
-    n.dockerAccessible ? null : chip('alert', 'Can’t run models: Docker isn’t answering', 'warn'),
-    num(net.highSpeedLinksConfigured) && net.highSpeedLinksUp < net.highSpeedLinksConfigured ? chip('link', `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} direct cables up`, 'warn') : null,
-  ];
+  return n.dockerAccessible ? [] : [h('span', { class: 'chip warn' }, icon('alert'), 'Can’t run models: Docker isn’t answering')];
+}
+
+function directLinkSummary(n) {
+  const f = state.fabric;
+  if (f.error || (state.status && !isUp(n))) return { text: 'Unavailable' };
+  if (!state.status || !f.at || Date.now() - f.at > FABRIC_REFRESH_MS) return { text: 'Not checked yet' };
+  const spark = f.sparks?.find(s => s.id === n.id);
+  if (!spark?.online || !Array.isArray(spark.links) || spark.links.some(link => typeof link.up !== 'boolean')) return { text: 'Unavailable' };
+  const up = spark.links.filter(link => link.up).length;
+  return { text: up ? `${plural(up, 'direct network interface')} up` : 'No active direct links', observed: true };
+}
+
+function sparkPowerMethod(n) {
+  if (portalHostId() === n.id) return 'Always on';
+  return state.status?.power?.switchable?.includes(n.id) ? 'Smart plug' : null;
 }
 
 function overviewTab(box, n0) {
@@ -1746,16 +1865,18 @@ function overviewTab(box, n0) {
     redraw(services, 
       row('box', 'Running here', n.dockerAccessible ? null : pill('Docker isn’t answering', 'warn'),
         workloads(n).length ? workloads(n).join(', ') : 'Nothing running.',
-        owner() ? h('a', { class: 'btn ghost sm', href: `#/spark/${id}/workloads` }, 'Details') : null));
+        owner() ? h('a', { class: 'btn ghost sm', href: `#/spark/${id}/workloads` }, 'Details') : null),
+      n.runningContainers?.some(environmentContainer)
+        ? row('zap', 'Power and electricity', pill('Running', 'ok'), 'Background service for your smart plugs.') : null);
 
-    const net = n.network || {}, pw = n.power || {};
+    const net = n.network || {}, method = sparkPowerMethod(n);
     const kv = (k, v) => h('div', {}, h('dt', {}, k), h('dd', {}, v));
     redraw(system, 
       kv('CPU load (1 min)', up ? `${fmt.load(n.load1Minute ?? n.load)} across ${n.cpuLogicalCount ?? '—'} cores` : '—'),
       kv('Disk free', up ? fmt.disk(n.diskFreeGiB) : '—'),
       kv('Control network', net.controlNetwork || '—'),
-      kv('Direct cables', num(net.highSpeedLinksConfigured) ? `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} up` : '—'),
-      pw.sleepModes ? kv('Wake over the network', pw.remoteWakeVerified ? 'Works' : 'Not checked yet') : null);
+      kv('Direct links', directLinkSummary(n).text),
+      method ? kv('Power', method) : null);
   });
 
   put(box, h('div', { class: 'grid-2' },
@@ -1819,7 +1940,8 @@ function workloadsTab(box, n0) {
     if (!d.workloads) { set(content, h('div', { class: 'empty' }, h('span', { class: 'spinner' }), 'Inspecting containers and processes…')); return; }
     const w = d.workloads;
     stamp.textContent = `As of ${fmt.time(w.checkedAt)}`;
-    const containers = [...(w.containers || [])].sort((a, b) => (a.State === 'running' ? 0 : 1) - (b.State === 'running' ? 0 : 1));
+    const environment = (w.containers || []).filter(c => environmentContainer(c.Names));
+    const containers = (w.containers || []).filter(c => !environmentContainer(c.Names)).sort((a, b) => (a.State === 'running' ? 0 : 1) - (b.State === 'running' ? 0 : 1));
     const running = containers.filter(c => c.State === 'running'), stopped = containers.filter(c => c.State !== 'running');
     const shownContainers = d.showStopped ? containers : running;
     // Ports as the numbers you'd connect to ("30100"), not Docker's "127.0.0.1:30100->8000/tcp".
@@ -1843,6 +1965,9 @@ function workloadsTab(box, n0) {
         : empty('chip', 'Nothing is using the GPU', null), { tight: true }),
       h('details', { class: 'card fold' }, h('summary', {}, 'System details: services and processes'),
         h('div', { class: 'fold-body' },
+          environment.length ? h('div', {}, h('h3', {}, 'Power and electricity'),
+            h('p', { class: 'muted' }, 'Background service for your smart plugs.'),
+            table(['Service', 'Status'], environment.map(c => ({ cells: [c.Names, c.Status] })))) : null,
           h('h3', {}, 'Your services'), w.services?.length
             ? h('div', { class: 'members' }, w.services.map(s => h('span', { class: 'chip' }, s)))
             : h('p', { class: 'muted' }, 'None.'),
@@ -2011,7 +2136,7 @@ function troubleshootPanel(id) {
 }
 
 /* ───────── Spark Console's service ───────── */
-async function capi(path, method = 'GET', body) {
+async function capi(path, method = 'GET', body, headers = {}) {
   // The body becomes text once, so what a passkey confirms is exactly what's sent.
   const text = body === undefined ? undefined : JSON.stringify(body);
   const send = async extra => {
@@ -2019,7 +2144,7 @@ async function capi(path, method = 'GET', body) {
     try {
       res = await fetch(`${CONSOLE_API}${path}`, {
         method,
-        headers: { Accept: 'application/json', ...(method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Spark-Console': '1' }), ...extra },
+        headers: { Accept: 'application/json', ...(method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Spark-Console': '1' }), ...headers, ...extra },
         body: text,
       });
     } catch {
@@ -2651,7 +2776,7 @@ function splitSnapshot(content) {
 function nodeLine(n, host = portalHostId()) {
   const about = [hardware(n), host === n.id ? 'runs Spark Console' : null, conn(n.id)?.alias ? `ssh ${conn(n.id).alias}` : null].filter(Boolean).join('; ');
   if (!isUp(n)) return `- ${n.name} (${about}): ${condition(n) === 'asleep' ? 'powered off on purpose' : condition(n) === 'stale' ? 'status out of date' : 'offline, not reachable over Tailscale'}`;
-  const m = n.model || {}, net = n.network || {};
+  const links = directLinkSummary(n);
   const used = num(n.memoryTotalGiB) && num(n.memoryFreeGiB) ? n.memoryTotalGiB - n.memoryFreeGiB : null;
   const facts = [
     `GPU ${fmt.pct(n.gpuUtilization)}`,
@@ -2661,7 +2786,7 @@ function nodeLine(n, host = portalHostId()) {
     wallState(n).has ? `${fmt.watts(n.wall.watts)} at the wall` : null,
     `disk ${fmt.disk(n.diskFreeGiB)} free`,
     n.runningContainers?.length ? `containers: ${n.runningContainers.join(', ')}` : 'no containers running',
-    num(net.highSpeedLinksConfigured) ? `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} direct cables up` : null,
+    links.observed ? links.text : null,
     n.issues?.length ? `issues: ${n.issues.join('; ')}` : null,
   ].filter(Boolean);
   return `- ${n.name} (${about}): online; ${facts.join('; ')}`;
@@ -3241,12 +3366,18 @@ function testedAgo() {
   return at ? `tested ${fmt.ago(Date.parse(at))}` : 'not tested yet';
 }
 
+function refreshFabricReading() {
+  const f = state.fabric;
+  if (!f.loading && (!f.requestedAt || Date.now() - f.requestedAt >= FABRIC_REFRESH_MS)) return loadFabric();
+}
+
 // Serving one model across Sparks runs over the direct QSFP cables between them. The service only reads link state
 // and pings across the cables; it changes nothing on a Spark.
 async function loadFabric(check = false) {
   const f = state.fabric;
   if (f.loading) return;
   f.loading = true;
+  f.requestedAt = Date.now();
   f.checking = check;
   runLive();
   try {

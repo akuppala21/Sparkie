@@ -9,6 +9,9 @@ A route under `/console/api` that the page calls.
 ## Also update
 
 - When gated by the passkey: `mayNeedPasskey`, `needsPasskey`, `describeChange`, `bodyLimit` (`22-passkey.mjs`).
+- Power cards reuse `/actions/power_on` and `/actions/power_off` with `X-Spark-Power-Card: 1` for page choices;
+  other action calls stay direct API calls. Confirm with the server's choice id alone. Owner-only power-off choices
+  need the normal passkey even if the marker is absent.
 - The tests R4 lists: the route as nobody, cross-site, through Funnel, from a Spark's address; and the route in
   `owner-only.test.mjs`'s list, which fails until it is there.
 

@@ -47,14 +47,14 @@ export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worke
   /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//];
 // Everything starts and answers, sign-in works, the installer can still read the service.
 export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'internet', 'sparkie', 'install', 'go-back'].map(n => `test/${n}.test.mjs`);
-export const UI_CHECK = ['build', 'page', 'page-preview', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
+export const UI_CHECK = ['build', 'page', 'page-preview', 'page-power-energy', 'page-direct-links', 'api', 'door', 'passkey', 'internet', 'sparkie'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
 // Direct-import and source-fixture tests do not execute server.mjs, so its map cannot discover these edges.
 export const DIRECT_TESTS = {
   '21-box-fill.mjs': ['test/box-fill-pax.test.mjs'],
   '08-cluster.mjs': ['test/t45-engine-boundary.test.mjs'],
   '11-downloads.mjs': ['test/download-stall.test.mjs', 'test/download-stop-race.test.mjs'],
-  '12-status.mjs': ['test/status-power-order.test.mjs'],
+  '12-status.mjs': ['test/status-power-order.test.mjs', 'test/wall-monthly.test.mjs'],
   '16-reads.mjs': ['test/status-power-order.test.mjs'],
   '21-power.mjs': ['test/status-power-order.test.mjs'],
   '13-ask.mjs': ['test/brain-ask.test.mjs', 'test/rounds.test.mjs'],
@@ -73,7 +73,7 @@ export const DIRECT_TESTS = {
   '20-mcp.mjs': ['test/context-intent.test.mjs', 'test/operation-history.test.mjs'],
   '17-context-retry.mjs': ['test/telegram-owner-adapters.test.mjs'],
   '18-saved-yes.mjs': ['test/telegram-owner-adapters.test.mjs'],
-  '18-workflows.mjs': ['test/telegram-owner-adapters.test.mjs', 'test/operation-history.test.mjs', 'test/status-power-order.test.mjs'],
+  '18-workflows.mjs': ['test/telegram-owner-adapters.test.mjs', 'test/operation-history.test.mjs', 'test/status-power-order.test.mjs', 'test/wall-monthly.test.mjs'],
   '20-keys.mjs': ['test/telegram-parity-transport.test.mjs'],
   '20-memory.mjs': ['test/telegram-owner-adapters.test.mjs'],
   '20-journal.mjs': ['test/telegram-owner-adapters.test.mjs'],
