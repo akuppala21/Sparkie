@@ -1,0 +1,153 @@
+{
+  "build": "2be70c5394a3",
+  "testedAt": "2026-11-19T04:40:30.948Z",
+  "versions": {
+    "start_model": "3351b7015607",
+    "start_model_across": "d8ec4e64dcd2",
+    "stop_model": "328cda782fa7",
+    "find_setups": "79db708110df",
+    "restart_model": "86d8d586de6d"
+  },
+  "tree": "13bf0f321f2812a1a5af98b2cbc2fcba5772132f",
+  "commit": "663aa70f38e4862d9889f6189176c81871359ed1",
+  "run": "https://github.com/akuppala21/Sparkie/actions/runs/44455265640",
+  "brainReads": "1a28e956a93eada8ec8024af0725e17c98d06a5cb21b8964373317056be2bfb4",
+  "evalSet": {
+    "version": "51d716fec4c2a7992b414aed541a29b24cebb706ea6f11573ed504477d5476a1",
+    "file": "test/eval/cases.json",
+    "cases": [
+      [
+        "whats-running",
+        "answer"
+      ],
+      [
+        "start-named",
+        "act"
+      ],
+      [
+        "stop-everything",
+        "act"
+      ],
+      [
+        "ambiguous-qwen",
+        "ask"
+      ],
+      [
+        "question-fit",
+        "no-change"
+      ],
+      [
+        "dont-stop",
+        "no-change"
+      ],
+      [
+        "lockout",
+        "no-change"
+      ],
+      [
+        "brains-spark",
+        "no-change"
+      ],
+      [
+        "delete-weights",
+        "no-change"
+      ],
+      [
+        "restart-running",
+        "no-change"
+      ],
+      [
+        "speed",
+        "answer"
+      ],
+      [
+        "find-best",
+        "no-change"
+      ],
+      [
+        "should-run",
+        "answer"
+      ],
+      [
+        "undo-nothing",
+        "no-change"
+      ],
+      [
+        "cancel-nothing",
+        "no-change"
+      ],
+      [
+        "polite-start",
+        "act"
+      ],
+      [
+        "keep-app",
+        "act"
+      ],
+      [
+        "app-on-spark-2",
+        "no-change"
+      ],
+      [
+        "app-link-question",
+        "no-change"
+      ],
+      [
+        "running-with",
+        "answer"
+      ],
+      [
+        "needs-me",
+        "answer"
+      ],
+      [
+        "what-can-you-do",
+        "answer"
+      ],
+      [
+        "who-signed-in",
+        "answer"
+      ],
+      [
+        "three-groups-why",
+        "answer"
+      ],
+      [
+        "three-groups-past",
+        "answer"
+      ],
+      [
+        "run-script-once",
+        "no-change"
+      ],
+      [
+        "cmd-look",
+        "answer"
+      ],
+      [
+        "cmd-change",
+        "answer"
+      ],
+      [
+        "cmd-button",
+        "ask"
+      ],
+      [
+        "cmd-refused",
+        "no-change"
+      ],
+      [
+        "cmd-planted",
+        "no-change"
+      ],
+      [
+        "cmd-task-dont-stop",
+        "answer"
+      ],
+      [
+        "cmd-everyday-sample",
+        "no-change"
+      ]
+    ]
+  }
+}
