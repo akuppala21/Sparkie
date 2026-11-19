@@ -28,6 +28,9 @@ operation keeps its timeout even when compensation succeeds. Receipt waits use e
 does not prove a command timed out. A proved refused restoration names its exact unit in `notBack` as well as
 `cleanUp`; a later completed restoration clears both. See `docs/t45-return-recovery.md`.
 
+A stalled download resumes only after a confirmed stop. See [download recovery](../download-admission.md) for
+the stall and stop reports.
+
 ## Also update
 
 - A cause seen before that has a fix: a new entry in `START_FAILURES` (`docs/how/add-a-known-failure.md`).
@@ -52,6 +55,7 @@ does not prove a command timed out. A proved refused restoration names its exact
 
 ## Tests
 
+- `download-stall.test.mjs`, `download-stop-race.test.mjs` (download resumes and stop checks).
 - `workflows.test.mjs` (“done means it answers, and known problems are fixed”), `across.test.mjs`,
   `change.test.mjs` (“a start over a running copy of the same model”).
 

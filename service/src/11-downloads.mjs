@@ -1,5 +1,6 @@
 /* ───────── Hugging Face model downloads and bounded stall recovery ───────── */
-// Area: knowledge        Rules: R1, R2, R10, R16, R22, R27        Tests: download-admission.test.mjs, download-stall.test.mjs
+// Area: knowledge        Rules: R1, R2, R10, R15, R16, R22, R27
+// Tests: download-admission.test.mjs, download-stall.test.mjs, download-stop-race.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The transfer itself renews its lease every 5 seconds; no background interval is registered.
@@ -87,7 +88,9 @@ def proc_stat(pid):
     try:
         words = Path('/proc/'+str(pid)+'/stat').read_text().rsplit(')', 1)[1].split()
         return words[0], int(words[2]), words[19]
-    except FileNotFoundError: return None
+    except (FileNotFoundError, ProcessLookupError):
+        # A process can be reaped after its stat file is opened.
+        return None
 
 def group_live():
     # Reap the known leader, and distinguish lingering descendants from an already-dead zombie.
@@ -106,7 +109,10 @@ def stop_group():
         if current and leader and current[2] != leader[2]: return False
         for sig, seconds in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
             if not group_live(): return True
-            os.killpg(child.pid, sig)
+            try: os.killpg(child.pid, sig)
+            except ProcessLookupError:
+                # The group can exit between the check and the signal. Check again.
+                return not group_live()
             until = time.monotonic()+seconds
             while time.monotonic() < until:
                 if not group_live(): return True

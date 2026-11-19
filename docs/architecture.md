@@ -189,7 +189,7 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
    disk, a `start-model` job is created with no claim, downloads first, and claims the Spark only then (`startModel`
    in `17-changes.mjs`). A repo from outside Recipes joins them (`addModel`) once its download worked; the job then
    waits for the look (`refreshSetups`) and `bestHow` picks, as for any recipe (A9).
-   Downloads check fresh space and lease the target; at most three resumes need confirmed stops
+   Downloads lease the Spark. Up to three resumes need fresh disk space and confirmed stops
    (`11-downloads.mjs`; [details](download-admission.md)).
 8. **Deploy.** `startWithFixes` runs `deploy` (`07-jobs.mjs`): plan again, stop, set a running copy of the same model
    aside (`docker rename` to `<name>-before-<job id>`; `asideBack` in `08-cluster.mjs` gives it its name back and

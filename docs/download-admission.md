@@ -25,11 +25,13 @@ three resumes, with a fresh disk check before each. Hugging Face partial model f
 30-minute repair clock begins after its download, so time spent downloading does not consume that window.
 
 A short lease stops the transfer if contact with the console is lost. Cancellation stops the same process group and,
-for the image fallback, the exact labelled container. Unknown process or Docker state holds the download; it never
-starts a second copy on a guess. Status and locks are private to the request under the cache's
+for the image fallback, the exact labelled container. The scan skips a process once Linux reports that its record
+is gone. If the group disappears before the signal arrives, the supervisor checks again. A live group or an
+uncertain process or Docker check holds the download. Status and locks are private to the request under the cache's
 `.spark-console-downloads/<request>` folder. Xet scratch survives its retries and is removed only after every attempt
 is known safe; model files are never removed by this cleanup. This is not a durable download queue across restarts.
 
 Saved-file growth measures progress only. It cannot enforce the separate 200 GB network budget or continuous disk
-floor. The actual supervisor and fallback command are covered by `download-stall.test.mjs`; the service admission
-boundaries are covered by `download-admission.test.mjs`.
+floor. `download-stall.test.mjs` covers the supervisor and fallback command. `download-stop-race.test.mjs` covers
+processes disappearing during stop checks and refusals when state is uncertain. `download-admission.test.mjs` covers
+the service admission boundaries.

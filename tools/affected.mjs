@@ -53,7 +53,7 @@ export const DOCS_TEST = 'test/docs.test.mjs';
 export const DIRECT_TESTS = {
   '21-box-fill.mjs': ['test/box-fill-pax.test.mjs'],
   '08-cluster.mjs': ['test/t45-engine-boundary.test.mjs'],
-  '11-downloads.mjs': ['test/download-stall.test.mjs'],
+  '11-downloads.mjs': ['test/download-stall.test.mjs', 'test/download-stop-race.test.mjs'],
   '12-status.mjs': ['test/status-power-order.test.mjs'],
   '16-reads.mjs': ['test/status-power-order.test.mjs'],
   '21-power.mjs': ['test/status-power-order.test.mjs'],
