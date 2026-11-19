@@ -7,9 +7,8 @@ the net's `guardCall` in `21-guard.mjs` (`run --net`, `root --net`, `keep`, `put
 
 ## Touch
 
-- `helperScript` (`21-work.mjs`) builds the one script a call runs, as the owner over ssh (local bash on the hub): the
-  helper's SHA-256 against `HELPER_SHA256` first (an unknown helper is never called), then any check that must run on
-  the Spark, then `sudo -n` of the helper with a fresh id. The brain's command is one word made with `q()`.
+- `helperScript` (`21-work.mjs`) checks `HELPER_SHA256`, then checks the Spark and calls the helper with `sudo -n`
+  and a fresh id. It runs as the owner over SSH, or locally on the hub, and quotes the command with `q()`.
 - `helperCall` runs it and gives back `{ id, code, out, cut, timedOut }`; it never rejects. It ends the call at its
   seconds and `LOOK_SLACK` more, or past `J_MAX` of output.
 - `helperAnswer` reads the answer from the lines that begin with the id (a command can learn it); a look's or run's
@@ -18,6 +17,7 @@ the net's `guardCall` in `21-guard.mjs` (`run --net`, `root --net`, `keep`, `put
 - A change (`runChange`, R61): `--dir`, `--protect` (`helperProtect`), `--memory`, `--stdin` (a write's bytes, keys);
   after a yes only `--open`, `--home`, `--fleet`, `--gpu`, `--asked`. `state --id` (`runnerRunState`): what became of
   a call; `stop --id` (`longStop`) ends it.
+- `wall_props` uses a checked socket to hide regular files and numeric network prefixes for transient units.
 - With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:
   the owner's command (`ownerCommand`; the hub's: `--hub`) once per Spark and reason while the console runs, then
   one line. While a proof holds its lock: "being proven right now".

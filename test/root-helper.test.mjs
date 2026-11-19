@@ -29,6 +29,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import './file-limit.mjs';
+import { systemdMaskSocket } from './rehearsal.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MOCKBIN = join(REPO, 'test', 'mock', 'bin');
@@ -71,6 +72,7 @@ function spark({ installed = true, systemd, knobs = {} } = {}) {
   put('swap.img');
   put('sys/fs/cgroup/cgroup.controllers', 'cpu io memory pids\n');
   for (const d of ['run/systemd/resolve', 'root', 'var/lib/docker', 'var/lib/tailscale']) dir(d);
+  systemdMaskSocket(R);
   const h = 'home/owner';
   put(`${h}/.ssh/id_ed25519`, 'private');
   put(`${h}/.ssh/id_ed25519.pub`, 'public');
@@ -136,13 +138,15 @@ const START = ['/home/owner/.profile', '/home/owner/.bashrc', '/home/owner/.bash
   '/home/owner/.bash_aliases', '/home/owner/.pam_environment'];
 const UNIT_DIRS = ['/home/owner/.config/systemd', '/home/owner/.config/environment.d', '/home/owner/.config/autostart',
   '/home/owner/.config/user-tmpfiles.d', '/home/owner/.local/share/systemd', '/home/owner/.local/share/user-tmpfiles.d'];
-const HIDDEN = (extra = []) => [
+const LOOK_MASK = '/run/systemd/inaccessible/sock';
+const hiddenFile = (wall, path) => wall === 'look' ? `BindReadOnlyPaths=${LOOK_MASK}:${path}` : `InaccessiblePaths=${path}`;
+const HIDDEN = (extra = [], wall = 'run') => [
   ...['/home/owner/.ssh', ...UNIT_DIRS, '/home/owner/.config/spark-console', ...extra.filter(p => p.startsWith('/home/owner/')),
     '/home/owner/.docker', '/home/owner/.local/state/spark-console',
     '/home/other/.ssh', '/run', '/root', '/var/lib/tailscale', '/var/lib/docker', ...extra.filter(p => p.startsWith('/var/'))]
     .flatMap(p => ['-p', `TemporaryFileSystem=${p}:ro`]),
   ...[...START, '/home/owner/.cache/huggingface/token', '/home/other/.bash_history', '/etc/shadow', '/etc/gshadow',
-    '/etc/ssh/ssh_host_ed25519_key', '/swap.img'].flatMap(p => ['-p', `InaccessiblePaths=${p}`]),
+    '/etc/ssh/ssh_host_ed25519_key', '/swap.img'].flatMap(p => ['-p', hiddenFile(wall, p)]),
   ...['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/known_hosts', '/home/owner/.ssh/id_ed25519.pub',
     '/home/owner/.local/state/spark-console/desired.json'].flatMap(p => ['-p', `BindReadOnlyPaths=-${p}`]),
 ];
@@ -157,6 +161,7 @@ const SHARED_PINS = ['/home/owner/.local/share/spark-portal', '/home/owner/.loca
 const PINS = ['/home/owner/.cache/huggingface'];
 const HOME_RW = ['/home/owner/models', '/home/owner/.cache'];
 const LAN = '10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10 224.0.0.0/4 255.255.255.255 ff00::/8';
+const LOOPBACK = '127.0.0.0/8 ::1/128';
 // Every look: the same settings, whatever the command says.
 const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_READ_SEARCH',
   '-p', 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH', '-p', 'NoNewPrivileges=yes', '-p', 'SystemCallFilter=~open_by_handle_at',
@@ -166,13 +171,13 @@ const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_R
   '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'ReadOnlyPaths=/'];
 function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console']) {
   return ['systemd-run', `--unit=sw-look-${id}`, `--description=Spark Console look ${id} sha256 ${hash}`, '--wait', '--pipe',
-    '--collect', '--quiet', ...LOOK_WALL, ...HIDDEN(hiddenExtra), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
+    '--collect', '--quiet', ...LOOK_WALL, ...HIDDEN(hiddenExtra, 'look'), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
     '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', 'MemoryMax=2G', '-p', 'TasksMax=512',
     '--', which(s, 'bash'), '--noprofile', '--norc', `/run/spark-console/${id}/start`];
 }
 function runCall(s, id, hash, secs, { protect = [], pins = PINS, rw = HOME_RW, hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'], memory = '8G' } = {}) {
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
-    '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', `IPAddressDeny=localhost ${LAN}`,
+    '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', `IPAddressDeny=${LOOPBACK} ${LAN}`,
     '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm:mode=1777,nosuid',
     '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'ProtectControlGroups=yes', '-p', 'PrivateDevices=yes',
     ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
@@ -474,7 +479,7 @@ describe('what the run wall holds in the home', () => {
       assert.equal(r.status, 0, r.stdout + r.stderr);
       assert.ok(!r.stdout.includes('LINKEDSECRET'), `${wall}: ${r.stdout}`);
       const c = unitCall(s, `sw-${wall}-${r.id}`);
-      assert.ok(c.includes('InaccessiblePaths=/home/owner/dotfiles/netrc') && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
+      assert.ok(c.includes(hiddenFile(wall, '/home/owner/dotfiles/netrc')) && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
       assert.ok(!c.some(a => /\/home\/owner\/(\.netrc|\.aws|\.bash_history)|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
     }
     // (each target in the rehearsal its link is made in)
@@ -2342,6 +2347,45 @@ describe('the held lists, after the analyst', () => {
 
 // What bounds a plain change (R63; the wall analyst's "what a sorter miss can cost"): each with its try in the proof.
 describe('what bounds a plain change (R63)', () => {
+  test('look and its proof use only the trusted inactive socket to mask hidden regular files', () => {
+    const s = proven();
+    const p = join(s.R, LOOK_MASK), hidden = '/home/owner/.bashrc';
+    s.put(`home/owner/.bashrc`, 'export PRIVATE_VALUE=must-not-be-read');
+    const l = look(s, 'cat "$WALL_VIEW/home/owner/.bashrc" 2>/dev/null');
+    assert.notEqual(l.status, 0);
+    assert.ok(!l.stdout.includes('must-not-be-read'), l.stdout);
+    const lookUnit = unitCall(s, `sw-look-${l.id}`);
+    assert.ok(lookUnit.includes(hiddenFile('look', hidden)) && !lookUnit.includes(hiddenFile('run', hidden)));
+    assert.ok(calls(s).some(c => c.some(a => a.startsWith('--unit=sw-prove-look-')) && c.includes(hiddenFile('look', hidden))));
+
+    const before = started(s).length;
+    chmodSync(dirname(p), 0o777);
+    refused(look(s, 'true'), 'the look wall cannot trust /run/systemd/inaccessible');
+    chmodSync(dirname(p), 0o755);
+    rmSync(p);
+    refused(look(s, 'true'), `the look wall cannot trust ${LOOK_MASK}`);
+    s.put(LOOK_MASK.slice(1), 'not a socket');
+    refused(look(s, 'true'), `the look wall cannot trust ${LOOK_MASK}`);
+    rmSync(p);
+    symlinkSync('other', p);
+    refused(look(s, 'true'), `the look wall cannot trust ${LOOK_MASK}`);
+    const proof = prove(s);
+    refused(proof, `the look wall cannot trust ${LOOK_MASK}`);
+    assert.equal(unitCall(s, `sw-prove-look-${proof.id}`), undefined);
+    assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')), 'a failed reproof clears the old mark');
+    assert.equal(started(s).length, before);
+  });
+
+  test('run and home proofs start with a transient parser that rejects mixed localhost aliases and numeric prefixes', () => {
+    const s = spark({ knobs: { 'reject-mixed-ip-prefixes': '' } });
+    const p = prove(s);
+    assert.equal(p.status, 0, p.stdout + p.stderr);
+    for (const wall of ['run', 'home']) {
+      const c = unitCall(s, `sw-prove-${wall}-${p.id}`);
+      assert.ok(c.includes(`IPAddressDeny=${LOOPBACK} ${LAN}`) && c.includes('IPAddressAllow=127.0.0.53'), wall);
+    }
+  });
+
   test("the home's own mode is put back right after a change, and said (its owner too: only as root, on a Spark)", () => {
     const s = proven(), home = join(s.R, 'home/owner'), was = statSync(home).mode & 0o7777;
     const r = change(s, 'chmod 777 "$SPARK_CONSOLE_REHEARSAL/home/owner"');
@@ -2356,9 +2400,10 @@ describe('what bounds a plain change (R63)', () => {
     for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
     s.put('home/owner/.claude.json', '{}');
     const r = change(s, 'true'), l = look(s, 'true');
-    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+    for (const [wall, id] of [['run', r.id], ['look', l.id]]) {
+      const c = unitCall(s, `sw-${wall}-${id}`);
       for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
-      assert.ok(c.includes('InaccessiblePaths=/home/owner/.claude.json'));
+      assert.ok(c.includes(hiddenFile(wall, '/home/owner/.claude.json')));
     }
   });
 
@@ -2379,7 +2424,7 @@ describe('what bounds a plain change (R63)', () => {
     const s = proven();
     const r = change(s, 'true', { extra: ['--fleet', '--gpu'] });
     const c = unitCall(s, `sw-run-${r.id}`);
-    assert.ok(c.includes('IPAddressDeny=localhost') && !c.some(a => a.startsWith('IPAddressDeny=localhost ')));
+    assert.deepEqual(c.filter(a => a.startsWith('IPAddressDeny=')), [`IPAddressDeny=${LOOPBACK}`]);
     assert.ok(!c.includes('PrivateDevices=yes') && c.includes('TemporaryFileSystem=/dev/shm:mode=1777,nosuid') && c.includes('PrivateIPC=yes'));
     refused(look(s, 'true', { extra: ['--fleet'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
     refused(look(s, 'true', { extra: ['--gpu'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
@@ -2406,7 +2451,7 @@ describe('what bounds a plain change (R63)', () => {
     const r = change(s, 'true'), f = change(s, 'true', { extra: ['--fleet'] });
     const deny = c => c.find(a => a.startsWith('IPAddressDeny=')).split(/[= ]/).slice(1);
     for (const range of ['224.0.0.0/4', '255.255.255.255', 'ff00::/8', '192.168.0.0/16']) assert.ok(deny(unitCall(s, `sw-run-${r.id}`)).includes(range), range);
-    assert.deepEqual(deny(unitCall(s, `sw-run-${f.id}`)), ['localhost']);
+    assert.deepEqual(deny(unitCall(s, `sw-run-${f.id}`)), LOOPBACK.split(' '));
   });
 
   // The final read's "cgroup": the owner's service manager makes its groups as the owner, so without this a change could
@@ -2651,9 +2696,10 @@ describe('what bounds a plain change (R63)', () => {
     for (const d of ['.local/share/jupyter/runtime', '.jupyter', '.mozilla', '.config/sops', '.ollama/models', '.m2', '.gradle']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
     for (const f of ['.ollama/id_ed25519', '.ollama/history', '.env', '.cargo/credentials.toml']) s.put(`home/owner/${f}`, 'k');
     const r = change(s, 'true'), l = look(s, 'true');
-    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+    for (const [wall, id] of [['run', r.id], ['look', l.id]]) {
+      const c = unitCall(s, `sw-${wall}-${id}`);
       for (const d of ['.local/share/jupyter', '.jupyter', '.mozilla', '.config/sops']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
-      for (const f of ['.env', '.cargo/credentials.toml']) assert.ok(c.includes(`InaccessiblePaths=/home/owner/${f}`), f);
+      for (const f of ['.env', '.cargo/credentials.toml']) assert.ok(c.includes(hiddenFile(wall, `/home/owner/${f}`)), f);
       // (its key and what the owner typed to models stay hidden with the folder; the models are in view, read-only)
       assert.ok(c.includes('TemporaryFileSystem=/home/owner/.ollama:ro') && c.includes('BindReadOnlyPaths=-/home/owner/.ollama/models'), "Ollama's folder");
       assert.ok(!c.some(a => /\.ollama\/(id_ed25519|history)/.test(a)), 'neither its key nor its history is put back');
@@ -2671,9 +2717,10 @@ describe('what bounds a plain change (R63)', () => {
     for (const f of files) s.put(f.slice(1), 'secret');
     s.put('etc/docker/daemon.json', '{"data-root": "/data/docker/", "log-driver": "json-file"}');
     const r = change(s, 'true'), l = look(s, 'true');
-    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+    for (const [wall, id] of [['run', r.id], ['look', l.id]]) {
+      const c = unitCall(s, `sw-${wall}-${id}`);
       for (const d of dirs) assert.ok(c.includes(`TemporaryFileSystem=${d}:ro`), d);
-      for (const f of files) assert.ok(c.includes(`InaccessiblePaths=${f}`), f);
+      for (const f of files) assert.ok(c.includes(hiddenFile(wall, f)), f);
     }
     // (Docker's own place is hidden once; settings that cannot be read move nothing and stop nothing)
     for (const bad of ['{"data-root": "/var/lib/docker"}', 'not json', '[1, 2]', '{"data-root": "relative/docker"}']) {

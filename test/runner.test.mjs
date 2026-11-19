@@ -272,7 +272,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   assert.equal(pressed.status, 200, pressed.text);
   assert.equal(text('dots.txt'), 'z\n');
   const [topStart] = pair(top), topUnit = units().find(c => c.includes(`--unit=${topStart.unit}`));
-  assert.ok(topUnit && !topUnit.includes(`ReadOnlyPaths=/spark3`) && topUnit.some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')), `the top of the home writable, the rest of the plain wall kept: ${JSON.stringify(topUnit)}`);
+  assert.ok(topUnit && !topUnit.includes(`ReadOnlyPaths=/spark3`) && topUnit.some(a => a.startsWith('IPAddressDeny=127.0.0.0/8 ::1/128 10.0.0.0/8')), `the top of the home writable, the rest of the plain wall kept: ${JSON.stringify(topUnit)}`);
   assert.deepEqual([topStart.outside, topStart.wall], [['it writes ~/dots.txt at the top of the home, which the plain wall keeps read-only'], 'home']);
   const topBack = await inChat(chat, 'undo the top dots', 'undo_last_change');
   assert.equal(topBack.value?.outcome, 'restored', topBack.error || JSON.stringify(topBack.value));

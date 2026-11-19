@@ -21,6 +21,16 @@ export const MOCKBIN = join(REPO, 'test', 'mock', 'bin');
 export const HELPER_SRC = join(REPO, 'deploy', 'spark-console-root');
 export const rehearsalEnv = (home, R) => ({ PATH: `${MOCKBIN}:/usr/bin:/bin`, HOME: home, SPARK_CONSOLE_REHEARSAL: R, SUDO_UID: '1000', SUDO_USER: 'owner', SUDO_GID: '1000' });
 
+// The inactive, root-owned socket inode systemd creates at boot. Close the socket without listening.
+export function systemdMaskSocket(R) {
+  const dir = join(R, 'run/systemd/inaccessible');
+  if (existsSync(join(dir, 'sock'))) return;
+  mkdirSync(dir, { recursive: true });
+  const made = spawnSync('python3', ['-I', '-S', '-c', 'import socket\nwith socket.socket(socket.AF_UNIX) as s:\n    s.bind("sock")'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  chmodSync(join(dir, 'sock'), 0o000);
+}
+
 // The names the run wall holds in the owner's home (the helper's MUST_BE_THERE), made where missing as
 // deploy/root-for-sparkie.sh makes them: .ssh 0700, .bash_profile reading .profile, the other start files empty, folders.
 function makeMissing(home) {
@@ -41,6 +51,7 @@ export function rehearse(root, spark, { prove = true, knobs = {}, run = false, h
   const put = (p, text = '', mode) => { mkdirSync(dirname(join(R, p)), { recursive: true }); writeFileSync(join(R, p), text); if (mode) chmodSync(join(R, p), mode); };
   mkdirSync(join(R, 'usr/local/sbin'), { recursive: true });
   for (const d of ['', 'usr', 'usr/local', 'usr/local/sbin']) chmodSync(join(R, d), 0o755);
+  systemdMaskSocket(R);
   if (run) { symlinkSync('..', join(home, '.rehearsal')); makeMissing(home); }
   put('usr/local/sbin/spark-console-root', readFileSync(HELPER_SRC), 0o755);
   put('etc/passwd', `root:x:0:0:root:/root:/bin/bash\nowner:x:1000:1000::${run ? `/${spark}` : realpathSync(home)}:/bin/bash\n`);

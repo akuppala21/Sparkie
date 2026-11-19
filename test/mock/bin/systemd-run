@@ -71,6 +71,9 @@ if refuse is not None and unit.startswith(refuse.strip()):
 fails = (knob('start-fails') or '').split()
 if len(fails) == 2 and unit.startswith(fails[0]):
     sys.exit(int(fails[1]))
+if knob('reject-mixed-ip-prefixes') is not None and any(a.startswith('IPAddressDeny=localhost ') for a in args):
+    sys.stderr.write('Failed to parse IP address prefix: localhost\n')
+    sys.exit(1)
 
 LEFT = {(5, 'look'), (12, 'look'), (12, 'run'), (23, 'run'), (24, 'run')}
 through = set()
@@ -163,7 +166,12 @@ def wall_view():
                 os.unlink(view + path)
     for kind, path in (p.split('=', 1) for p in props if '=' in p):
         path = path.removeprefix('-')   # ("-": left out when it is not there)
-        if kind == 'BindReadOnlyPaths' and ':' not in path and path.startswith('/home/') and os.path.isfile(R + path):
+        source, sep, target = path.partition(':')
+        if kind == 'BindReadOnlyPaths' and source == '/run/systemd/inaccessible/sock' and target.startswith('/home/'):
+            # The real bind's socket inode cannot be opened as a file. In this copy, omit the masked file.
+            if os.path.lexists(view + target):
+                os.unlink(view + target)
+        elif kind == 'BindReadOnlyPaths' and not sep and path.startswith('/home/') and os.path.isfile(R + path):
             os.makedirs(os.path.dirname(view + path), exist_ok=True)
             if os.path.lexists(view + path):
                 os.unlink(view + path)

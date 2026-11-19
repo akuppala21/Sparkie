@@ -485,7 +485,7 @@ test('an asked change may reach the other Sparks (--fleet) or the GPU (--gpu), e
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
   const fleet = propsOf(cmd);
-  assert.ok(fleet.includes('IPAddressDeny=localhost') && fleet.includes('PrivateDevices=yes'), JSON.stringify(fleet));
+  assert.ok(fleet.includes('IPAddressDeny=127.0.0.0/8 ::1/128') && fleet.includes('PrivateDevices=yes'), JSON.stringify(fleet));
   // (the owner's own call: refused, in the runner's words)
   const api = await run(cmd);
   assert.equal(api.status, 409, api.text);
@@ -497,7 +497,7 @@ test('an asked change may reach the other Sparks (--fleet) or the GPU (--gpu), e
   const gp = await choose(c2, gr.choices.find(c => c.label === 'Run it').id);
   assert.equal(gp.status, 200, gp.text);
   const gpu = propsOf(g);
-  assert.ok(!gpu.includes('PrivateDevices=yes') && gpu.some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')), JSON.stringify(gpu));
+  assert.ok(!gpu.includes('PrivateDevices=yes') && gpu.some(a => a.startsWith('IPAddressDeny=127.0.0.0/8 ::1/128 10.0.0.0/8')), JSON.stringify(gpu));
   // (a look takes neither)
   const look = await api_('ls', { gpu: true });
   assert.equal(look.status, 400, look.text);
@@ -516,7 +516,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   assert.equal(text('top.txt'), 'top\n');
   // (the plain wall with the top of the home writable: still no network ranges, no devices)
   const homeWall = propsOf(cmd);
-  assert.ok(!homeWall.includes('ReadOnlyPaths=/spark3') && homeWall.some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')) && homeWall.includes('PrivateDevices=yes'), JSON.stringify(homeWall));
+  assert.ok(!homeWall.includes('ReadOnlyPaths=/spark3') && homeWall.some(a => a.startsWith('IPAddressDeny=127.0.0.0/8 ::1/128 10.0.0.0/8')) && homeWall.includes('PrivateDevices=yes'), JSON.stringify(homeWall));
   assert.deepEqual([startOf(cmd).outside, startOf(cmd).wall], [['it writes ~/top.txt at the top of the home, which the plain wall keeps read-only'], 'home']);
   // Another dot folder at the top: outside the plain wall (--open), with its stark words.
   const dot = 'echo c > .myapp/c.txt', c3 = await newChat();
@@ -780,7 +780,7 @@ test('where a change reaches is said on its button (the sorter\'s reach): the ho
   assert.ok((asked?.question || '').includes('\nIt reaches your home network, which a change can’t reach, even after your yes: there it will fail.\n'), JSON.stringify(asked));
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
-  assert.ok(propsOf(cmd).some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')), JSON.stringify(propsOf(cmd)));
+  assert.ok(propsOf(cmd).some(a => a.startsWith('IPAddressDeny=127.0.0.0/8 ::1/128 10.0.0.0/8')), JSON.stringify(propsOf(cmd)));
   await turn(await newChat(), 'fix the page fetch', [[RUN('curl -s https://example.com/x -o notes/page.html')]]);
   const [named] = sentBack('fix the page fetch');
   assert.ok((named?.question || '').includes('\nIt reaches the internet.\n'), JSON.stringify(named));

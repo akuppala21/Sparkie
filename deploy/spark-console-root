@@ -46,6 +46,7 @@ LINE=/etc/sudoers.d/spark-console-root
 HOLD=/run/spark-console
 PINS=/var/lib/spark-console/pins   # (--script's copies: root's, outside /run, which is often mounted noexec)
 MARK=/var/lib/spark-console/proved
+LOOK_MASK=/run/systemd/inaccessible/sock
 NEED_SYSTEMD=248
 LOOK_MAX=60        # seconds a look may take
 RUN_MAX=7200       # seconds a change may take (120 minutes)
@@ -69,6 +70,8 @@ RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000 DISK_HARD=5000000000 DISK_SLACK=1000
 # program on this Spark that listens on every address answers there too. A global IPv6 address is in no range. R63
 # says both.)
 LAN_RANGES='10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10 224.0.0.0/4 255.255.255.255 ff00::/8'
+# The transient unit parser does not accept the localhost alias mixed with numeric prefixes.
+LOOPBACK_RANGES='127.0.0.0/8 ::1/128'
 # The top of the owner's home is read-only for a plain change: nothing made, removed or renamed directly in it, every
 # dot name read-only but these download caches, ~/bin read-only; the other folders there stay writable. (Bun's, Yarn's
 # and pnpm's own folders hold a folder their installers put first on the PATH: only the cache inside each is named.)
@@ -550,7 +553,20 @@ places() {   # the held places that are there (held_problem refuses a change whe
   for n in $PLACES; do [ -d "$R$OWNER_HOME/$n" ] && real_here "$OWNER_HOME/$n" && printf '%s\n' "$OWNER_HOME/$n"; done
   return 0
 }
-look_problem() {   # why a look cannot hide what it must in the owner's home, or nothing
+look_mask_problem() {   # systemd's inactive socket stands in for each hidden regular file in a look
+  local p type stat_line uid mode actual
+  for p in /run /run/systemd /run/systemd/inaccessible "$LOOK_MASK"; do
+    type=directory
+    [ "$p" != "$LOOK_MASK" ] || type=socket
+    stat_line=$(LC_ALL=C stat -c '%u %a %F' -- "$R$p" 2>/dev/null) || stat_line='- 0 missing'
+    read -r uid mode actual <<<"$stat_line"
+    if [ "$actual" != "$type" ] || [ "$uid" != "$SUPER" ] || (( (8#$mode & 8#022) != 0 )); then
+      printf 'the look wall cannot trust %s to hide its files' "$p"
+      return
+    fi
+  done
+}
+look_problem() {   # why a look cannot hide what it must, or nothing
   local n
   for n in $LOOK_REAL; do
     if { [ -e "$R$OWNER_HOME/$n" ] || [ -L "$R$OWNER_HOME/$n" ]; } && ! real_here "$OWNER_HOME/$n"; then
@@ -558,7 +574,9 @@ look_problem() {   # why a look cannot hide what it must in the owner's home, or
       return
     fi
   done
-  under_problem look
+  local problem
+  problem=$(under_problem look)
+  if [ -n "$problem" ]; then printf '%s' "$problem"; else look_mask_problem; fi
 }
 under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or one that is a link
   # whose end it cannot hide, or nothing (the lists first)
@@ -609,7 +627,7 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
       # no device unless --gpu; its own /dev/shm, mode 1777, and IPC; no terminal of the Spark, --gpu or not:
       # PrivateDevices keeps the Spark's own /dev/pts, so an empty one goes over it, in the look too; the control groups
       # read-only, as in a look: the owner's service manager's are the owner's to write, its services' freeze and kill)
-      if [ "$FLEET" = 1 ]; then PROPS+=(-p IPAddressDeny=localhost); else PROPS+=(-p "IPAddressDeny=localhost $LAN_RANGES"); fi
+      if [ "$FLEET" = 1 ]; then PROPS+=(-p "IPAddressDeny=$LOOPBACK_RANGES"); else PROPS+=(-p "IPAddressDeny=$LOOPBACK_RANGES $LAN_RANGES"); fi
       PROPS+=(-p IPAddressAllow=127.0.0.53 -p PrivateIPC=yes -p TemporaryFileSystem=/dev/shm:mode=1777,nosuid -p TemporaryFileSystem=/dev/pts:ro
               -p ProtectControlGroups=yes)
       [ "$GPU" = 1 ] || PROPS+=(-p PrivateDevices=yes)
@@ -617,7 +635,12 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
   fi
   if [ "$wall" = look ] || [ "$OPEN" = 0 ]; then
     for p in "${TMPFS[@]}"; do PROPS+=(-p "TemporaryFileSystem=$p:ro"); done
-    for p in "${GONE[@]}"; do PROPS+=(-p "InaccessiblePaths=$p"); done
+    for p in "${GONE[@]}"; do
+      # With CAP_DAC_READ_SEARCH, a look can open systemd's empty regular-file mask. The inactive socket
+      # makes the open itself fail. Use a single mount at each path so InaccessiblePaths cannot take priority.
+      if [ "$wall" = look ] && [ -f "$R$p" ]; then PROPS+=(-p "BindReadOnlyPaths=$LOOK_MASK:$p")
+      else PROPS+=(-p "InaccessiblePaths=$p"); fi
+    done
     # (a put-back whose file is gone by the time the unit starts is left out, never a unit that fails to start: "-")
     for p in "${BACK[@]}"; do PROPS+=(-p "BindReadOnlyPaths=-$p"); done
     if [ "$wall" = run ] && [ -d "$R/run/systemd/resolve" ]; then PROPS+=(-p BindReadOnlyPaths=/run/systemd/resolve); fi
@@ -2341,9 +2364,11 @@ do_prove() {
   # A look's check takes this lock shared for a moment (21-work.mjs, flock -n -s): wait a few seconds rather than refuse,
   # so the one-time command's proof is never refused by a look; another proof holds it for minutes and still refuses.
   flock -w 5 9 || refuse "another proof is running on this Spark"
+  rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
+  p=$(look_mask_problem)
+  [ -z "$p" ] || refuse "$p"
   hold_folder
   trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; proof_guards down; rm -rf -- "$H"; exit 129' HUP INT TERM
-  rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
   proof_py > "$H/proof.py"
   printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
   printf '0' > "$H/target"

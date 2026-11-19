@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import http from 'node:http';
 import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sleep, agentSettings, MEMBER, REPO, SLOW } from './lib.mjs';
+import { systemdMaskSocket } from './rehearsal.mjs';
 
 const MOCKBIN = join(REPO, 'test', 'mock', 'bin');
 const HELPER_SRC = join(REPO, 'deploy', 'spark-console-root');
@@ -71,6 +72,7 @@ function rehearse(root, spark, { prove = true, knobs = {} } = {}) {
   const put = (p, text = '', mode) => { mkdirSync(dirname(join(R, p)), { recursive: true }); writeFileSync(join(R, p), text); if (mode) chmodSync(join(R, p), mode); };
   mkdirSync(join(R, 'usr/local/sbin'), { recursive: true });
   for (const d of ['', 'usr', 'usr/local', 'usr/local/sbin']) chmodSync(join(R, d), 0o755);
+  systemdMaskSocket(R);
   put('usr/local/sbin/spark-console-root', readFileSync(HELPER_SRC), 0o755);
   put('etc/passwd', `root:x:0:0:root:/root:/bin/bash\nowner:x:1000:1000::${realpathSync(home)}:/bin/bash\n`);
   put('etc/group', 'root:x:0:\nowner:x:1000:\ndocker:x:999:owner\n');
