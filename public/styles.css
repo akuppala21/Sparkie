@@ -1034,6 +1034,7 @@ fieldset.field > legend { padding: 0; margin-bottom: 6px; }
 .spark-card[data-cond="offline"]::before { background: var(--bad); opacity: 0.85; }
 .spark-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
 .sc-link { display: block; padding: 16px 16px 12px; flex: 1; color: inherit; }
+.spark-card .sc-head { flex-wrap: wrap; row-gap: 6px; }
 .spark-card[data-cond="running"] .sc-chip, .spark-card[data-cond="busy"] .sc-chip { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .sc-work { margin: 14px 0 12px; }
 .sc-issue {
