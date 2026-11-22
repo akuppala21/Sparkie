@@ -1,0 +1,1 @@
+I’m using p-queue 8.1.0 and set a timeout on the queue. I left every other timeout option at its default. When a job times out, what does awaiting add() do, and does time spent waiting for a slot count?

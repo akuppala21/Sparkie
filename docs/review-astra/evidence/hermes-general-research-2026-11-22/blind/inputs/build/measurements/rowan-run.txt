@@ -1,0 +1,2 @@
+BUILD MANAGER — RUN RECORD R-817
+Build Rowan; release 5.4; date 2026-10-11. Runner R64, 8 cores; cold dependency cache, empty output. Full rebuild, 15,210 input objects. Median elapsed across seven completed runs: 420 seconds. No daily export was run.

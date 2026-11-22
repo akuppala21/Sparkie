@@ -1,0 +1,13 @@
+# Can Sparkie use what it learns in a later task?
+
+The tests use ordinary Hermes sessions and the selected single-Spark Huihui model. Each exercise checks the answer the owner receives, the evidence the assistant actually read, and any persistent result a different session can recover. The held-out cases use the same prompts, local serving settings and inputs for both versions of the research skill.
+
+| Check | Observed behavior |
+| --- | --- |
+| Find an exact version | Sparkie fetched the publisher's p-limit v6.2.0 README, opened it, and correctly answered all three questions about that version. The turn took 24.877 seconds and used two tools. |
+| Use research to fix code | Sparkie reproduced an HTTP retry bug, checked the upstream p-retry v7.1.1 documentation, changed the retry-budget option and reran the tests. An independent clean install reproduced the fix. The owner turn took 149.765 seconds. |
+| Recall a blocked comparison | A fresh session opened the saved Larkspur project record and reported that there were no new measurements and no winner. It identified the missing service endpoints. It completed in 31.602 seconds. The preceding session saved the record but timed out before returning a final answer. |
+| Verify a newly measured result before saving it | Sparkie collected six timed CPU completions, calculated the two medians and saved a discoverable measurement note. The request called for a warmup for each cache setting. Seven recorded completions included just one warmup. Sparkie described the protocol as complete, so this first attempt failed. The raw timings remain historical observations. |
+| Check what a citation proves | The native quote checker rejected an invented quote and an unknown citation. It accepted a draft whose conclusion contradicted its real quotation. This is why each research answer is graded against what its sources actually establish. |
+
+The [held-out prompts](blind/inputs), [frozen rubric](blind/rubric.md) and [reproduction procedure](blind/reproduce.md) cover a versioned dependency, mismatched benchmarks, a withdrawn measurement and a simple calculation. The calculation measures the effect on ordinary chat. Each score belongs to its sampled turn, and a failed first attempt remains in the record.

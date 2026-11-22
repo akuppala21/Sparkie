@@ -1,0 +1,7 @@
+{
+  "question_sha256": "fc7d26c76d271047aa5799910b2a4dbed7f591c54397e4b15f529c0eaf3a9e39",
+  "files": {
+    "measurements/quartz-run.txt": "b127d731f3d1bb7cd312b61fe5494c7d9b8e83c43e347395998fc29f44f74218",
+    "measurements/rowan-run.txt": "0760e38e66238ec50d88369d0f58c8a846bf4c3de90cfca87deaf10a6a64df78"
+  }
+}

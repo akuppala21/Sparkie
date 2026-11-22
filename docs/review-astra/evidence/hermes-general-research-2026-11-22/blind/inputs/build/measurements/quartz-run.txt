@@ -1,0 +1,2 @@
+EXPORT MANAGER — RUN RECORD Q-546
+Build Quartz; release 5.5; date 2026-10-14. Runner Q32, 4 cores; dependencies and source indexes already cached. Incremental daily export, 2,115 changed objects. Five-run median elapsed before patch: 180 seconds. Five-run median elapsed after patch: 126 seconds. The full rebuild job was disabled in this lane.

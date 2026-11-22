@@ -1,0 +1,1 @@
+Our release brief needs two numbers. How much shorter is a cold full rebuild on Quartz than Rowan, and what percentage of Quartz’s own export time did its change remove?
