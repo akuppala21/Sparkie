@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "upstream": "../upstream.lock.json",
+  "working_directory": "Pinned Hermes source, with its locked environment",
+  "required_environment": "Disposable HOME, HERMES_HOME and pytest basetemp on a compute Spark. No real bot credentials.",
+  "pytest_paths": [
+    "tests/gateway/test_session_authority.py",
+    "tests/gateway/test_shared_session_controls.py",
+    "tests/gateway/test_session_authority_cancel_settlement.py"
+  ],
+  "covers": [
+    "Messaging and authenticated native WebSocket share one live session and cached agent",
+    "Native queue and unknown execution survive owner death without duplicate dispatch",
+    "Shared controls survive viewer disconnect and reject foreign or retired identities",
+    "Queued and pre-agent cancellation settles observers once and preserves successor authorization"
+  ],
+  "not_covered": [
+    "Real Telegram vendor connection and owner bot enrollment",
+    "Final reverse proxy, sign-in and browser wiring",
+    "Selected local model answer quality and concurrent performance"
+  ]
+}

@@ -1,0 +1,3 @@
+name: sparkie-sparks
+version: 0.1.0
+description: "Timestamped DGX Spark fleet observations. Reads do not wake machines."

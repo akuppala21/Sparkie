@@ -1,5 +1,7 @@
 # Working on Spark Console
 
+For the Hermes application under `sparkie/`, follow its [product contract](sparkie/docs/contract.md), [testing guide](sparkie/docs/testing.md), and [build procedure](sparkie/deploy/README.md). Develop and test on compute Sparks. Obtain the owner's approval for the exact candidate before each live update. The instructions below cover the earlier Spark Console.
+
 Spark Console is one Node service on the hub (the Spark `service/config.json` marks local: Spark 1 since 2026-11-16)
 that runs the owner's NVIDIA DGX Sparks: models, apps and jobs on the other Sparks, and Sparkie, the local brain the
 owner talks to. This page is the front door for whoever changes it (Sparkie, an agent or a person): read it, then

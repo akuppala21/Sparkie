@@ -1,0 +1,158 @@
+{
+  "selection": "owner-selected",
+  "primary_constraints": [
+    "Only abliterated target checkpoints; no Nemotron",
+    "One Spark for the main model",
+    "Local inference",
+    "Same Hermes tools, owner permissions and behavior checks"
+  ],
+  "candidates": [
+    {
+      "manifest": "main-model.json"
+    },
+    {
+      "manifest": "dealign-flash-next.json",
+      "status": "retained previous candidate; not selected"
+    },
+    {
+      "repository": "dealignai/Qwen3.8-27B-UNCENSORED-GGUF",
+      "revision": "e0aea3dfa0765daa8b53ce2bbae79193060d3c38",
+      "variants": [
+        {
+          "file": "Qwen3.8-27B-CRACK-Q8_0.gguf",
+          "bytes": 29047084416,
+          "sha256": "ae552cddb6084d02e6adf8080a8abd4c58caec752081a5c4b5b694e6760c9616",
+          "qualification": "DFlash2 draft8: 6/8 compact Hermes checks; paired math 8/8 and retrieval 3/3 with speculation on/off. Not release-qualified.",
+          "evidence_candidate": "27b-q8",
+          "previous_non_speculative_qualification": "1 pass; memory correction timed out at 300 seconds; 6 remaining checks not completed. Not release-qualified.",
+          "speculative_evidence_candidate": "q8",
+          "speculative_measurements": {
+            "off": {
+              "receipt": "q8/results/q8-mtp0/timing/summary.json",
+              "serial_decode_tps": 8.405120119324733,
+              "serial_ttft_seconds": 0.163383195999927,
+              "serial_elapsed_seconds": 26.219404882999925,
+              "serial_completion_tokens": [
+                219,
+                219,
+                219
+              ],
+              "concurrent_decode_tps": [
+                8.514784567480552,
+                8.5652458144081
+              ],
+              "concurrent_ttft_seconds": [
+                0.3248814930000208,
+                0.5916647870000133
+              ]
+            },
+            "speculative_confirmation": {
+              "receipt": "q8/results/q8-best-spec/timing/summary.json",
+              "serial_decode_tps": 19.942343954864263,
+              "serial_ttft_seconds": 0.16791755500003092,
+              "serial_elapsed_seconds": 11.248773766000113,
+              "serial_completion_tokens": [
+                222,
+                222,
+                222
+              ],
+              "concurrent_decode_tps": [
+                16.960133415156783,
+                17.302442977426033
+              ],
+              "concurrent_ttft_seconds": [
+                0.33745367599999554,
+                0.6294625119999182
+              ]
+            },
+            "confirmation_speedup": 2.3726423503470917
+          }
+        },
+        {
+          "file": "Qwen3.8-27B-CRACK-Q4_K_M.gguf",
+          "bytes": 17010517600,
+          "sha256": "0584d4a178d2a7d321aa24730c4646dbfa40e4c6562a9e09275ebc001f8f0cbe",
+          "qualification": "DFlash2 draft8: 6/8 compact Hermes checks; paired math 8/8 and retrieval 3/3 with speculation on/off. Not release-qualified.",
+          "evidence_candidate": "27b-q4",
+          "previous_non_speculative_qualification": "6 of 8 compact checks passed; unknown-memory check hit step limit and research timed out at 300 seconds. Not release-qualified.",
+          "speculative_evidence_candidate": "q4",
+          "speculative_measurements": {
+            "off": {
+              "receipt": "q4/results/q4-mtp0/timing/summary.json",
+              "serial_decode_tps": 13.476933593379275,
+              "serial_ttft_seconds": 0.1155518260000008,
+              "serial_elapsed_seconds": 16.737208733999978,
+              "serial_completion_tokens": [
+                224,
+                224,
+                224
+              ],
+              "concurrent_decode_tps": [
+                13.682393399153948,
+                13.564875347779262
+              ],
+              "concurrent_ttft_seconds": [
+                0.40326517299996567,
+                0.22465498899998693
+              ]
+            },
+            "speculative_confirmation": {
+              "receipt": "q4/results/q4-best-spec/timing/summary.json",
+              "serial_decode_tps": 31.156723228165344,
+              "serial_ttft_seconds": 0.1225900570000249,
+              "serial_elapsed_seconds": 7.288449050000054,
+              "serial_completion_tokens": [
+                224,
+                224,
+                224
+              ],
+              "concurrent_decode_tps": [
+                24.788369929399863,
+                24.82437452683122
+              ],
+              "concurrent_ttft_seconds": [
+                0.24181675500005895,
+                0.4440290029999687
+              ]
+            },
+            "confirmation_speedup": 2.311855513146663
+          }
+        }
+      ],
+      "vision_projector": {
+        "file": "mmproj-Qwen3.8-27B-f16.gguf",
+        "bytes": 931145952,
+        "sha256": "e43a597863a21bfa48b0fbd4553a771ae4117e25bb172e66f1dbc3fc6d037131"
+      },
+      "qualification": "Q4 tested on Spark 2 and Q8 on Spark 3 with native MTP and DFlash2 sweeps. DFlash2 draft8 fastest among tested settings; behavior issues remain for both.",
+      "engine": "llama.cpp",
+      "candidate_image": "ghcr.io/ggml-org/llama.cpp@sha256:d8d71f3b200080bfa67d65339cca8af7f3a506ede922323cc0dd35389a2a3534",
+      "build": "12464 (d3c3e242c)",
+      "context_per_slot": 65536,
+      "parallel_slots": 2,
+      "speculative_profile": {
+        "status": "experimental; no live promotion",
+        "type": "draft-dflash2",
+        "draft_n_max": 8,
+        "draft_ngl": 999,
+        "draft_repository": "incoai/Qwen3.8-27B-DFlash2-GGUF",
+        "draft_revision": "144eb06583b4fb0b6e54bc814b16a206a240f4d2",
+        "draft_file": "Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "draft_sha256": "d169ad335929adc0d77e10e2523f968f3e75f547637ad739b0a137ccde111b5f",
+        "evidence": "../../docs/review-astra/evidence/speculative-comparison-2026-11-19/summary.json"
+      }
+    }
+  ],
+  "comparison": "comparison.md",
+  "comparison_evidence": "../../docs/review-astra/evidence/model-comparison-2026-11-19/summary.json",
+  "speculative_comparison": "speculative-comparison.md",
+  "speculative_comparison_evidence": "../../docs/review-astra/evidence/speculative-comparison-2026-11-19/summary.json",
+  "additional_finalists_evidence": "../../docs/review-astra/evidence/abliterated-finalists-2026-11-19/summary.json",
+  "additional_finalists_comparison": "abliterated-finalists.md",
+  "additional_recipes_research_only": "abliterated-one-spark-research.json",
+  "selected_manifest": "main-model.json",
+  "selection_record": "../../docs/history/hermes-transition-2026-11-19/huihui-selection.md",
+  "release_qualified": false,
+  "additional_qwen_comparison": "qwen-next-comparison.md",
+  "additional_qwen_evidence": "../../docs/review-astra/evidence/qwen-next-2026-11-19/summary.json"
+}

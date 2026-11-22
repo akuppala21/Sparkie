@@ -1,0 +1,61 @@
+--- a/hermes_cli/web_routers/ops.py
++++ b/hermes_cli/web_routers/ops.py
+@@ -641,11 +641,21 @@
+     )
+ 
+ 
++def _require_staged_recovery() -> None:
++    """Sparkie sealed distribution: direct full import cannot preserve its current authority."""
++    raise HTTPException(
++        status_code=409,
++        detail="Restore requires a prepared recovery candidate so current sign-in and permissions are kept. "
++               "Ask for a staged recovery from this backup. Native backup and export remain available.",
++    )
++
++
+ def _spawn_import(archive: str, force: bool, profile: Optional[str] = None, *, keep_host: bool = False,
+                   messaging_off: bool = False) -> dict:
+     """``hermes import``; ``keep_host`` (the Hermes Cloud transfer and its undo) also forces it, and
+     ``messaging_off`` (the transfer only) brings the bots over switched off. The undo point the import
+     takes is reported by ``/api/actions/import/status`` once it exists."""
++    _require_staged_recovery()
+     args = ["import", archive]
+     if force or keep_host:
+         args.append("--force")
+@@ -659,6 +669,7 @@
+ 
+ @router.post("/api/ops/import")
+ async def run_import(body: ImportRequest, profile: Optional[str] = None):
++    _require_staged_recovery()
+     profile = destructive_profile(profile, "POST /api/ops/import")
+     archive = (body.archive or "").strip()
+     if not archive:
+@@ -682,6 +693,7 @@
+     force: bool = Form(False),
+     profile: Optional[str] = None,
+ ):
++    _require_staged_recovery()
+     profile = destructive_profile(profile, "POST /api/ops/import-upload")
+     staging_dir = _dashboard_backup_dir(profile)
+     try:
+--- a/hermes_cli/web_routers/transfer.py
++++ b/hermes_cli/web_routers/transfer.py
+@@ -126,6 +126,8 @@
+ @router.post("/api/ops/transfer/chunk")
+ async def append_transfer_chunk(request: Request, profile: Optional[str] = None):
+     """Append one base64 chunk to a transfer upload; ``upload_id`` empty at offset 0 starts one."""
++    from hermes_cli.web_routers.ops import _require_staged_recovery
++    _require_staged_recovery()
+     profile = destructive_profile(profile, "POST /api/ops/transfer/chunk")
+     body = await _bounded_json(request)
+     offset, upload_id = body.get("offset"), str(body.get("upload_id") or "")
+@@ -155,7 +157,8 @@
+ async def restore_transfer(request: Request, profile: Optional[str] = None):
+     """Restore a finished transfer upload with ``hermes import --keep-host --messaging-off``: the
+     agent's bots arrive switched off, so the computer it came from keeps answering."""
+-    from hermes_cli.web_routers.ops import _spawn_import
++    from hermes_cli.web_routers.ops import _spawn_import, _require_staged_recovery
++    _require_staged_recovery()
+     profile = destructive_profile(profile, "POST /api/ops/transfer/restore")
+     body = await _bounded_json(request)
+     path, size = _upload_path(profile, str(body.get("upload_id") or "")), body.get("size")

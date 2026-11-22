@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "owner_binding": "/var/lib/sparkie/private/owner.json",
+  "operations": "/var/lib/sparkie/private/operations.sqlite",
+  "inventory": "/var/lib/sparkie/private/inventory.json",
+  "socket": "/var/lib/sparkie/private/fleet.sock",
+  "gateway_uid": 1000,
+  "fleet_snapshot": "/var/lib/sparkie/observations/fleet.json",
+  "compute_config": "/var/lib/sparkie/private/compute.json",
+  "power": {
+    "nodes": ["spark2", "spark3", "spark4"],
+    "mapping": "/var/lib/sparkie/private/plugs.json",
+    "hub_machine_id": "REPLACE_WITH_VERIFIED_SPARK1_MACHINE_ID"
+  },
+  "idle_policy": {
+    "revision": "owner-policy-v1",
+    "idle_seconds": 1800,
+    "enabled": false
+  }
+}

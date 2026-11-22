@@ -1,0 +1,16 @@
+{
+  "A": {
+    "title": "Qwen3.8-27B-NVFP4 on a single DGX Spark — up to 1M context, vLLM+MTP measurements",
+    "url": "https://forums.developer.nvidia.com/t/qwen3-8-27b-nvfp4-on-a-single-dgx-spark-up-to-1m-context-vllm-mtp-measurements/380244",
+    "text": "Project-authored summary of the linked report. A single DGX Spark serves unsloth/Qwen3.8-27B-NVFP4 with vLLM and tensor parallel size one. Its launch sets the context limit to 262144 tokens. The MTP head proposes five tokens and needs no separate draft checkpoint. The configuration alone does not measure effective retrieval at that length.",
+    "expected": "One DGX Spark, unmodified vLLM, integrated MTP with five speculative tokens and no separately downloaded draft. The displayed launch command configures 262144 context.",
+    "sha256": "253e911f178990579f844e574f6744750047390d2171a3e47d894eba8bb9132a"
+  },
+  "B": {
+    "title": "Qwen3.8-27B on dual Sparks — SGLang + DFlash2, fully OpenAI-compatible (post 14)",
+    "url": "https://forums.developer.nvidia.com/t/qwen3-8-27b-on-dual-sparks/380350/14",
+    "text": "Project-authored summary of the linked post. SGLang serves the NVFP4 target with a separate z-lab/Qwen3.8-27B-DFlash2 draft and an eight-token draft budget. The reported single-stream code speeds are 52–61 tokens per second on one Spark and 87 on two with tensor parallel size two over RoCE. Prose rates are 26 and 41 respectively. Both use a 262144-token context setting. The author reports YaRN incompatible with this DFlash2 build.",
+    "expected": "SGLang uses a separate DFlash2 draft. One Spark or two with TP=2 over RoCE. The author reports single-stream code 52–61 tok/s solo and 87 dual. This build keeps native 262144 context and disables YaRN.",
+    "sha256": "cd8de881af4b122313a865a1f605e701a5c3dbb8ee9da8943c34454aed0d33c9"
+  }
+}

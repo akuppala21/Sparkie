@@ -1,0 +1,10 @@
+{
+  "account": "exampleuser",
+  "dashboard_host": "hub.example.invalid",
+  "nodes": {
+    "spark1": {"hostname": "hub-host.invalid", "machine_id": "UNENROLLED_HUB_MACHINE_ID"},
+    "spark2": {"hostname": "compute2-host.invalid", "machine_id": "UNENROLLED_COMPUTE2_MACHINE_ID", "address": "compute2-endpoint.invalid"},
+    "spark3": {"hostname": "compute3-host.invalid", "machine_id": "UNENROLLED_COMPUTE3_MACHINE_ID", "address": "compute3-endpoint.invalid"},
+    "spark4": {"hostname": "compute4-host.invalid", "machine_id": "UNENROLLED_COMPUTE4_MACHINE_ID", "address": "compute4-endpoint.invalid"}
+  }
+}

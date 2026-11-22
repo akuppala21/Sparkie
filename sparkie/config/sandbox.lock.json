@@ -1,0 +1,9 @@
+{
+  "repository": "docker.io/nousresearch/hermes-sandbox",
+  "upstream_tag_observed": "desktop",
+  "index_digest": "sha256:a561d383d4cf554cd98ca528a450574f86e0b3dcd9496d5b9b0fbd09482c6dd3",
+  "linux_arm64_manifest": "sha256:e147ae789421be1ed9ee6dd48a1638ef09d6ac46b6c8059a647983befc601ad5",
+  "linux_amd64_manifest": "sha256:5b9a7fd233816252c4453448ea3f23fe4b3a0d3f2cb641ff24d2a10daa33d937",
+  "inspected_on": "2026-11-19",
+  "scope": "Native Hermes terminal image. This pin does not itself qualify isolation, remote compute routing or the complete application."
+}

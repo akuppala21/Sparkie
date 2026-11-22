@@ -1,0 +1,136 @@
+# Preparation template, not an installed configuration. Use a fresh Hermes home.
+# Endpoint and model alias match models/main-model.json. No hosted AI fallback.
+model:
+  default: sparkie-hermes-main
+  provider: custom:sparkie-local
+  base_url: http://127.0.0.1:32202/v1
+  api_mode: chat_completions
+  context_length: 65536
+fallback_providers: []
+
+# Supported named-provider settings follow native web, Telegram and delegated
+# turns. Match the selected-model trial's sampling and low-thinking template.
+providers:
+  sparkie-local:
+    api: http://127.0.0.1:32202/v1
+    transport: chat_completions
+    default_model: sparkie-hermes-main
+    context_length: 65536
+    discover_models: false
+    extra_body:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      reasoning_effort: low
+      chat_template_kwargs:
+        enable_thinking: true
+        thinking: true
+        reasoning_effort: low
+
+toolsets: [hermes-cli, sparks]
+# The native gateway resolves platform_toolsets, not the top-level CLI hint.
+# The web chat uses the CLI selection; Telegram and scheduled runs get parity.
+platform_toolsets:
+  cli: [hermes-cli, sparks, no_mcp]
+  telegram: [hermes-telegram, sparks, no_mcp]
+  cron: [hermes-cron, sparks, no_mcp]
+agent:
+  reasoning_effort: low
+  # browser_exec runs Python on the gateway host even with a Docker terminal.
+  # Keep native CDP/dialog tools; qualify browser automation in the sandbox
+  # before restoring the Python browser helper. Media tools need a separately
+  # qualified local specialist; installing credentials must not enable cloud AI.
+  disabled_toolsets: [browser-use, sparkie-unavailable-extraction, vision, image_gen, video_gen, tts, x_search, connections, catalog]
+plugins:
+  enabled: [sparkie-sparks]
+  auto_apply: false
+  # Owner authorization wraps the native Nous provider. Stock registrations
+  # must not introduce a second sign-in or a listener swap without that check.
+  # Drain is token-only maintenance, not sign-in; keep it unprovisioned until a
+  # separately scoped maintenance credential is qualified.
+  disabled: [dashboard_auth/nous, dashboard_auth/basic, dashboard_auth/self_hosted, dashboard_auth/session_token, dashboard_auth/drain]
+
+# Native auxiliary tasks inherit the explicitly selected local provider. With
+# no configured fallback, v0.23.2 refuses discovery of another logged-in provider.
+auxiliary:
+  free_only: true
+  # Vision has a separate discovery ladder in v0.23.2. Pin it locally even
+  # though image understanding is unavailable until a specialist is qualified.
+  vision:
+    provider: custom
+    model: sparkie-hermes-main
+    base_url: http://127.0.0.1:32202/v1
+    fallback_chain: []
+  title_generation:
+    model_upgrade_enabled: false
+  background_review:
+    enabled: false
+  compression:
+    timeout: 300
+
+delegation:
+  fallback_providers: []
+  max_concurrent_children: 1
+  max_spawn_depth: 1
+  subagent_auto_approve: false
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  provider: ""
+
+skills:
+  inline_shell: false
+  auto_load: [local-recipe-review]
+
+browser:
+  cloud_provider: local
+  use_real_profile: false
+bot_desktop:
+  placement: terminal
+  auto_start: false
+
+# Voice may use a local engine when provisioned, never credential autodetection.
+stt:
+  provider: local
+
+# Search is the maintained keyless provider. Do not discover Perplexity or a
+# paid gateway from credentials inherited by the operator process. Extraction
+# and browser availability are qualified separately, not claimed by this pin.
+web:
+  search_backend: ddgs
+  # Fail closed as search-only even if extension loading fails or code calls
+  # extraction directly. The extension hides this unavailable native tool.
+  extract_backend: ddgs
+  keyless_fallback: false
+  keyless_rescue: false
+
+# v0.23.2 has no local web_extract provider. Read original pages with the
+# isolated native browser or download public source files in the terminal.
+# Native document extraction must never discover hosted OCR credentials.
+file_tools:
+  hosted_ocr: false
+
+# Native tools use the checked compute workspace on Sparks 2–4. The private
+# allocator supplies its pinned image; fleet credentials and controller sockets
+# are never mounted in the workspace. No local-host fallback is configured.
+terminal:
+  backend: spark_compute
+  docker_image: nousresearch/hermes-sandbox@sha256:a561d383d4cf554cd98ca528a450574f86e0b3dcd9496d5b9b0fbd09482c6dd3
+  docker_mount_cwd_to_workspace: false
+  docker_volumes: []
+  docker_forward_env: []
+  credential_files: []
+  env_passthrough: []
+  container_cpu: 1
+  container_memory: 4096
+  docker_snap_compat: false
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+
+# Sign-in, Telegram credentials, power policy and public binding are configured
+# through protected setup after their concrete cutover is reviewed. No bot polls
+# or network listener is enabled by this file.

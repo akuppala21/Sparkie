@@ -1,0 +1,78 @@
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -376,7 +376,7 @@
+   const { t } = useI18n();
+   const { pathname } = useLocation();
+   const { profile } = useProfileScope();
+-  const { manifests, loading: pluginsLoading } = usePlugins(profile);
++  const { manifests, loading: pluginsLoading, discoveryPending } = usePlugins(profile);
+   const { theme } = useTheme();
+   const [mobileOpen, setMobileOpen] = useState(false);
+   const closeMobile = useCallback(() => setMobileOpen(false), []);
+@@ -760,8 +760,13 @@
+                 <ProfileKeyedRoutes>
+                   <Suspense fallback={<RouteFallback />}>
+                     <Routes>
++                      {/* Root redirects, so resolve the current profile's manifests first. */}
+                       {routes.map(({ key, path, element }) => (
+-                        <Route key={key} path={path} element={element} />
++                        <Route
++                          key={key}
++                          path={path}
++                          element={path === "/" && discoveryPending ? <RouteFallback /> : element}
++                        />
+                       ))}
+                       <Route
+                         path="*"
+diff --git a/web/src/plugins/usePlugins.ts b/web/src/plugins/usePlugins.ts
+--- a/web/src/plugins/usePlugins.ts
++++ b/web/src/plugins/usePlugins.ts
+@@ -91,6 +91,7 @@
+   profile: string;
+   manifests: PluginManifest[];
+   loading: boolean;
++  discoveryPending: boolean;
+ }
+ 
+ // Seeding from the profile's own cache registers plugin routes synchronously
+@@ -99,7 +100,12 @@
+ // /chat override keeps loading=true (see canSeedLoadedFromCache).
+ function seedManifests(profile: string): ProfileManifests {
+   const cached = getCachedManifests(profile);
+-  return { profile, manifests: cached ?? [], loading: !canSeedLoadedFromCache(cached) };
++  return {
++    profile,
++    manifests: cached ?? [],
++    loading: !canSeedLoadedFromCache(cached),
++    discoveryPending: true,
++  };
+ }
+ 
+ /** State update ending the loading phase of ``owner``'s plugins (no-op for another profile). */
+@@ -147,12 +153,15 @@
+         cacheManifests(profile, list);
+         setState((s) =>
+           s.profile === profile
+-            ? { profile, manifests: list, loading: s.loading && list.length > 0 }
++            ? { profile, manifests: list, loading: s.loading && list.length > 0, discoveryPending: false }
+             : s,
+         );
+       })
+       .catch(() => {
+-        if (current) setState(settled(profile));
++        if (!current) return;
++        setState((s) =>
++          s.profile === profile ? { ...s, loading: false, discoveryPending: false } : s,
++        );
+       });
+     return () => {
+       current = false;
+@@ -263,5 +272,5 @@
+     return unsub;
+   }, [owner, manifests]);
+ 
+-  return { plugins, manifests, loading: state.loading };
+-}
++  return { plugins, manifests, loading: state.loading, discoveryPending: state.discoveryPending };
++}

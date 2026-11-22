@@ -1,0 +1,102 @@
+{
+  "requested_id": "dealignai/qwen3.8-flash-next-abliterated-nvfp4",
+  "repository": "dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4",
+  "revision": "be794b990578ef3031eccf9f28e675a289a09ee9",
+  "role": "main LLM for Hermes",
+  "target_sparks": 1,
+  "engine": "sglang",
+  "candidate_image": "lmsysorg/sglang:v0.5.23",
+  "weight_index_total_bytes": 135195303851,
+  "ple": {
+    "backend": "file",
+    "flags": [
+      "--ple-offload-embedding",
+      "--ple-offload-backend",
+      "file",
+      "--ple-offload-dir",
+      "/ple"
+    ],
+    "why": "The file-backed embedding table pages required rows from NVMe on unified-memory hardware. Pinned CPU offload uses the same physical memory pool."
+  },
+  "qualification": "Compact speculative comparison complete: 7/8 Hermes checks; paired math 8/8 and retrieval 3/3 with speculation on and off. MTP runtime has a reproduced ring-address collision; not release-qualified.",
+  "sources": [
+    "https://huggingface.co/dealignai/Qwen3.8-Flash-Next-ABLITERATED-NVFP4/tree/be794b990578ef3031eccf9f28e675a289a09ee9",
+    "https://github.com/sgl-project/sglang/blob/v0.5.23/python/sglang/srt/models/qwen4_exp_ple_table.py"
+  ],
+  "selection_status": "Owner reopened selection: compare this one-Spark candidate with dealignai/Qwen3.8-27B-UNCENSORED-GGUF Q8_0 and Q4_K_M before live promotion.",
+  "candidate_image_digest": "sha256:f832b5c39559c9caa900b22ad37c76fcce66470676855c42052102c537812f1f",
+  "evidence": "../../docs/review-astra/evidence/model-comparison-2026-11-19/summary.json",
+  "limits": [
+    "Native MTP on the pinned SGLang image has a reproduced QSA ring-address collision under the modeled write order; this is not an end-to-end GPU wrong-answer reproduction, but blocks live recommendation.",
+    "The .85/ten-slot matched control measured 17.50 tok/s versus 25.60 with MTP. Greedy texts differed; eight math questions and three retrievals do not prove accuracy equivalence.",
+    "Research failed whole-response JSON. Original scoring also has a narrow MTP wording check; the independent JSON failure remains.",
+    "Fresh-cache readiness took about 12.5 minutes for tuned MTP and 9.8 minutes for the control. Existing-cache reload and recovery remain unqualified; prior reload timeout retained.",
+    "Three retrieval probes at 20945 prompt tokens passed, but configured 262144-token context and headroom alongside the whole application remain unqualified.",
+    "One sampled behavior run with fixtures; no real Telegram approval, live fleet operation or self-update qualification."
+  ],
+  "recommendation": "Retain no-MTP Flash as a further-integration candidate based on the prior behavior trial. Do not promote this tested MTP runtime until its cache-address defect is resolved and affected checks pass. Compare Q4+DFlash2 as the faster alternative. Owner selection remains open; nothing installed on Spark 1.",
+  "previous_non_speculative_qualification": "compact comparison complete: 7 of 8 checks passed; not release-qualified",
+  "speculative_profile": {
+    "status": "experimental; not approved for live use",
+    "algorithm": "NEXTN",
+    "num_steps": 3,
+    "eagle_topk": 1,
+    "num_draft_tokens": 4,
+    "mem_fraction_static": 0.85,
+    "max_mamba_cache_size": 10,
+    "max_running_requests": 2,
+    "evidence": "../../docs/review-astra/evidence/speculative-comparison-2026-11-19/summary.json",
+    "measurements": {
+      "off": {
+        "receipt": "flash/results/flash-control-tuned/timing/summary.json",
+        "serial_decode_tps": 17.50385733754245,
+        "serial_ttft_seconds": 0.21445119199961482,
+        "serial_elapsed_seconds": 8.677261318998717,
+        "serial_completion_tokens": [
+          148,
+          141,
+          148
+        ],
+        "concurrent_decode_tps": [
+          18.48554988703811,
+          18.539215286004502
+        ],
+        "concurrent_ttft_seconds": [
+          0.24917249000100128,
+          0.24871893700037617
+        ]
+      },
+      "speculative_confirmation": {
+        "receipt": "flash/results/flash-mtp3-tuned/timing/summary.json",
+        "serial_decode_tps": 25.600545387839606,
+        "serial_ttft_seconds": 0.264462133998677,
+        "serial_elapsed_seconds": 5.963424190998921,
+        "serial_completion_tokens": [
+          154,
+          149,
+          147
+        ],
+        "concurrent_decode_tps": [
+          22.180310028123195,
+          23.341856832239777
+        ],
+        "concurrent_ttft_seconds": [
+          1.0513238140010799,
+          1.0515561009997327
+        ]
+      },
+      "confirmation_speedup": 1.4625659301353708
+    },
+    "known_issue": "https://github.com/sgl-project/sglang/issues/51009",
+    "reproduction": "../../docs/review-astra/evidence/speculative-comparison-2026-11-19/flash/evidence/qsa-ring-review.json"
+  },
+  "speculative_comparison": "speculative-comparison.md",
+  "previous_non_speculative_limits": [
+    "Research reply failed whole-response JSON and full source-URL requirements; an overstated latency comparison was also found.",
+    "Existing PLE cache reload did not become ready in over 20 minutes; fresh-cache startup took about 10 minutes. Repeatable startup and recovery need qualification.",
+    "Configured 262144-token context is not verified end to end; initial KV capacity was 230016 tokens.",
+    "At readiness the host had 22.99 GiB MemAvailable. This is not measured model residency and does not qualify headroom with the full application.",
+    "One sampled run per behavior with fixtures; no real Telegram approval, live fleet operation, long-context or live self-update qualification.",
+    "17.17 tokens/sec is a short, greedy, non-thinking stream estimate without speculation; not optimized throughput or a universal model ranking."
+  ]
+}

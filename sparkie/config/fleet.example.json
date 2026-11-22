@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "nodes": [
+    {
+      "id": "spark1",
+      "hostname": "your-verified-spark1-hostname",
+      "address": "spark1.example",
+      "user": "owner",
+      "infrastructure": ["sparkie-main"]
+    },
+    {
+      "id": "spark2",
+      "hostname": "your-verified-spark2-hostname",
+      "address": "spark2.example",
+      "user": "owner",
+      "infrastructure": []
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "engine": "llama.cpp",
+  "candidate_image": "ghcr.io/ggml-org/llama.cpp@sha256:d8d71f3b200080bfa67d65339cca8af7f3a506ede922323cc0dd35389a2a3534",
+  "repository": "dealignai/Qwen3.8-27B-UNCENSORED-GGUF",
+  "revision": "e0aea3dfa0765daa8b53ce2bbae79193060d3c38",
+  "served_model_name": "sparkie-hermes-main",
+  "configured_context_tokens": 65536,
+  "target": {
+    "file": "Qwen3.8-27B-CRACK-Q4_K_M.gguf",
+    "sha256": "0584d4a178d2a7d321aa24730c4646dbfa40e4c6562a9e09275ebc001f8f0cbe"
+  },
+  "draft": {
+    "file": "Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+    "sha256": "d169ad335929adc0d77e10e2523f968f3e75f547637ad739b0a137ccde111b5f",
+    "repository": "incoai/Qwen3.8-27B-DFlash2-GGUF",
+    "revision": "144eb06583b4fb0b6e54bc814b16a206a240f4d2"
+  }
+}

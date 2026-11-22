@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Focused native Hermes dashboard checks; use an existing browser on a compute Spark.",
+  "dependencies": { "playwright-core": "1.58.2" }
+}

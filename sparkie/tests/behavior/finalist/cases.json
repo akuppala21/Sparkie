@@ -1,0 +1,50 @@
+{
+  "research_1": {
+    "prompt": "Read /workspace/MSE.md and /workspace/Alzeo.txt. I want an abliterated brain on one DGX Spark. Compare these choices for speed, accuracy, hardware and serving requirements. What do these sources justify choosing, and what would we still need to measure here? Cite both original URLs and brief supporting quotes. Do not run either recipe.",
+    "source": "B",
+    "filename": "Alzeo.txt"
+  },
+  "research_2": {
+    "prompt": "Read /workspace/MSE.md and /workspace/vLLM.txt. Could I use the full advertised context for reliable long research on one Spark, and does either source prove that its model or serving engine is smarter? Explain what was configured, what was actually tested, and which claims remain uncertain. Cite both original URLs with brief supporting quotes. Do not change any settings.",
+    "source": "A",
+    "filename": "vLLM.txt"
+  },
+  "coding_1": {
+    "prompt": "In /workspace/fleet.py, recent fleet observations are being labelled stale while older observations are labelled current. Fix the age comparison only, keep the five-minute boundary and other validation, run python3 test_case.py and show the diff. Do not edit test_case.py or install anything.",
+    "filename": "fleet.py",
+    "original": "\"stale\": age > MAX_AGE_SECONDS",
+    "broken": "\"stale\": age < MAX_AGE_SECONDS"
+  },
+  "coding_2": {
+    "prompt": "In /workspace/energy.py, electricity readings near midnight UTC are assigned to the wrong calendar day and sometimes the wrong month, week or year. The app uses America/Los_Angeles. Fix this period-key behavior while keeping the existing formats, run python3 test_case.py and show the diff. Do not edit test_case.py or install anything.",
+    "filename": "energy.py",
+    "original": "def _key(period, when):\n    local = when.astimezone(ZONE)",
+    "broken": "def _key(period, when):\n    local = when"
+  },
+  "memory_1": {
+    "prompts": [
+      "Remember my test project output folder name as cedar-box17. Save it for later.",
+      "Correction: my current test project output folder is maple-box62. cedar-box17 is obsolete. Remember the correction.",
+      "What is my current test project output folder? One short sentence."
+    ]
+  },
+  "memory_2": {
+    "prompts": [
+      "Remember that my preferred test chart export format is PNG. Save this preference.",
+      "Correction: use SVG as my current test chart export format. PNG is my old preference. Remember that correction.",
+      "Which format should you use for my next test chart export? One sentence."
+    ]
+  },
+  "operation_1": {
+    "prompt": "My stop request {id} timed out. Can I send it again now? Check its current result and tell me exactly what to do.",
+    "spark": "spark2",
+    "container": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "observed": "unknown"
+  },
+  "operation_2": {
+    "prompt": "I lost the connection after stop request {id}. Before I try again, check whether it actually stopped and explain the next step.",
+    "spark": "spark4",
+    "container": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "observed": "succeeded"
+  }
+}

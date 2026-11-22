@@ -1,0 +1,20 @@
+from datetime import datetime
+import unittest
+from energy import _key
+
+class CalendarKeys(unittest.TestCase):
+    def test_pacific_calendar(self):
+        cases = [
+            ('2027-01-01T07:30:00+00:00', ('2026-12-31', '2026-W53', '2026-12', '2026')),
+            ('2026-11-23T07:30:00+00:00', ('2026-11-22', '2026-W47', '2026-11', '2026')),
+            ('2026-11-23T09:30:00+00:00', ('2026-11-23', '2026-W48', '2026-11', '2026')),
+            ('2026-06-15T19:00:00+00:00', ('2026-06-15', '2026-W25', '2026-06', '2026')),
+        ]
+        for stamp, expected in cases:
+            when = datetime.fromisoformat(stamp)
+            for period, value in zip(('day', 'week', 'month', 'year'), expected):
+                with self.subTest(stamp=stamp, period=period):
+                    self.assertEqual(_key(period, when), value)
+
+if __name__ == '__main__':
+    unittest.main()

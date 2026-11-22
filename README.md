@@ -1,5 +1,9 @@
 # Spark Console
 
+The Hermes application lives under [sparkie/](sparkie/README.md). It includes the fleet dashboard, local model setup, research skills, and the reviewed install and rollback tools. The public source uses an example fleet enrollment.
+
+## Earlier Spark Console
+
 One place to run and watch the DGX Sparks. It's a static UI plus a small service on the hub (Spark 1) that does everything
 itself: sign-in, status, live metrics, the model library and deploys, Sparkie's model and chats, files in each Spark's
 shared folder, and logs. It replaced the original Spark Portal (see `docs/retire-portal.md`).

@@ -1,0 +1,14 @@
+{
+  "reason": "Refuse incompatible direct native full-home restore in the sealed Sparkie distribution; retain native backup/export.",
+  "patch_sha256": "608e5b2d1fb94409f5785f21500099b750db21f7ca5e565951cbd6de08ae5a88",
+  "files": {
+    "hermes_cli/web_routers/ops.py": {
+      "before_sha256": "dd3a0bb0fdd6c0ddca5446dac6559981226b32ab4b98daef7b4f9be68ebcbe45",
+      "after_sha256": "ed23180cf1a530c0ac3a2303ffa10240e032badf9c2d10cee563b30e259b0f50"
+    },
+    "hermes_cli/web_routers/transfer.py": {
+      "before_sha256": "62f06fb49042a39b7c4dc310385de1c878b38c697f6cb9cc2ecf258ddc439d09",
+      "after_sha256": "ca395adf94e70d5f879cc724b87c35020f08e6840a58ca374c1290dabc81c0bd"
+    }
+  }
+}

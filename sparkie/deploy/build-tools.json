@@ -1,0 +1,10 @@
+{
+  "uv": {
+    "version": "0.13.9",
+    "platform": "aarch64-unknown-linux-gnu",
+    "sha256": "6109e47a75f2380d1cc90b00a6ee82b7b5792ddf66588625ec168545ae17512e",
+    "path": "tools/uv",
+    "license": "extension/deploy/licenses/uv-LICENSE-MIT",
+    "source": "https://github.com/astral-sh/uv/releases/tag/0.13.9"
+  }
+}

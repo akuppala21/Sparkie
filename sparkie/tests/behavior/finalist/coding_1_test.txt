@@ -1,0 +1,27 @@
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import tempfile
+import unittest
+from fleet import read_status
+
+class ObservationAge(unittest.TestCase):
+    def observed(self, age):
+        now = datetime(2026, 11, 21, 12, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'snapshot.json'
+            path.write_text(json.dumps({'schema': 1, 'sparks': [{'id': 'spark2', 'state': 'online', 'observed_at': (now - timedelta(seconds=age)).isoformat()}]}))
+            return read_status(path=path, now=now)
+
+    def test_recent_and_old_boundary(self):
+        for age, stale in [(0, False), (299, False), (300, False), (301, True), (900, True), (-30, False)]:
+            with self.subTest(age=age):
+                result = self.observed(age)
+                self.assertTrue(result['available'])
+                self.assertEqual(result['sparks'][0]['stale'], stale)
+
+    def test_future_stays_unavailable(self):
+        self.assertFalse(self.observed(-31)['available'])
+
+if __name__ == '__main__':
+    unittest.main()

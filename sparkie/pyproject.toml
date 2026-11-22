@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77,<85"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sparkie-sparks"
+version = "0.1.0"
+description = "DGX fleet tools and dashboard extension for Hermes"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+markers = ["integration: checks the pinned Hermes plugin and dashboard interfaces"]

@@ -1,0 +1,10 @@
+{
+  "name": "sparkie-sparks",
+  "label": "Home",
+  "description": "Spark fleet observations, controls and electricity.",
+  "icon": "Activity",
+  "version": "0.1.0",
+  "tab": {"path": "/sparks", "position": "after:chat"},
+  "entry": "index.js",
+  "api": "plugin_api.py"
+}
