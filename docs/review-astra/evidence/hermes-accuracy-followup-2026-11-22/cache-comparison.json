@@ -1,0 +1,112 @@
+{
+  "case": "Cedar Glass, synthetic CPU control",
+  "checkpoint": "ggml-org/models, stories260K.gguf",
+  "checkpoint_sha256": "270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d",
+  "server_build": "b12464-d3c3e242c",
+  "cpu_inference_threads": 1,
+  "gpu_layers": 0,
+  "slots": 1,
+  "context_tokens": 512,
+  "prompt": "Once upon a time a little fox",
+  "temperature": 0,
+  "output_cap": 8,
+  "observed_output": " was very hungry.",
+  "generated_tokens": 8,
+  "metric": "Elapsed wall-clock time from sending one llama.cpp completion request through reading its complete response. Excludes writing the receipt.",
+  "sample_sequence": [
+    {
+      "request": 1,
+      "setting": "off",
+      "phase": "warmup",
+      "elapsed_ns": 3791908,
+      "input_tokens": {
+        "reused": 0,
+        "processed": 10,
+        "total": 10
+      }
+    },
+    {
+      "request": 2,
+      "setting": "off",
+      "phase": "timed",
+      "elapsed_ns": 2933043,
+      "input_tokens": {
+        "reused": 0,
+        "processed": 10,
+        "total": 10
+      }
+    },
+    {
+      "request": 3,
+      "setting": "off",
+      "phase": "timed",
+      "elapsed_ns": 2904372,
+      "input_tokens": {
+        "reused": 0,
+        "processed": 10,
+        "total": 10
+      }
+    },
+    {
+      "request": 4,
+      "setting": "off",
+      "phase": "timed",
+      "elapsed_ns": 2843107,
+      "input_tokens": {
+        "reused": 0,
+        "processed": 10,
+        "total": 10
+      }
+    },
+    {
+      "request": 5,
+      "setting": "on",
+      "phase": "warmup",
+      "elapsed_ns": 2019298,
+      "input_tokens": {
+        "reused": 9,
+        "processed": 1,
+        "total": 10
+      }
+    },
+    {
+      "request": 6,
+      "setting": "on",
+      "phase": "timed",
+      "elapsed_ns": 1984371,
+      "input_tokens": {
+        "reused": 9,
+        "processed": 1,
+        "total": 10
+      }
+    },
+    {
+      "request": 7,
+      "setting": "on",
+      "phase": "timed",
+      "elapsed_ns": 2763843,
+      "input_tokens": {
+        "reused": 9,
+        "processed": 1,
+        "total": 10
+      }
+    },
+    {
+      "request": 8,
+      "setting": "on",
+      "phase": "timed",
+      "elapsed_ns": 2083554,
+      "input_tokens": {
+        "reused": 9,
+        "processed": 1,
+        "total": 10
+      }
+    }
+  ],
+  "median_wall_ms": {
+    "false": 2.904372,
+    "true": 2.083554
+  },
+  "server_generation_jobs": 8,
+  "raw_result_sha256": "08e32f7b3042773bc4e69c9845f6b4b9a4a2fb7926de86ea2506fdb72f6d57f2"
+}

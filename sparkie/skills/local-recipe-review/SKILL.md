@@ -1,7 +1,7 @@
 ---
 name: local-recipe-review
 description: Compare source claims with citations and exact output.
-version: 1.6.2
+version: 1.6.3
 metadata:
   hermes:
     tags: [research, recipes, sources]
@@ -16,6 +16,10 @@ Use when reading, comparing or recommending technical recipes, models, serving
 engines or hardware setups from source material.
 
 ## Procedure
+
+When the owner asks to measure a model server, open the native
+`one-spark-serving-results` skill before sending a completion request. It covers
+allocated CPU servers and prompt-cache comparisons as well as GPU serving.
 
 1. Read the relevant original source body with the available native tools. Search
    snippets and titles help locate material; they do not establish its results.

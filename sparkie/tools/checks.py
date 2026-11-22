@@ -56,8 +56,14 @@ def selection(paths):
                       'skills/local-recipe-review/SKILL.md',
                       'skills/one-spark-serving-results/SKILL.md'):
             tests.update({'test_forum_reader.py', 'test_github_readme.py', 'test_research_claims.py', 'test_native_config.py'})
+            if path == 'skills/one-spark-serving-results/SKILL.md':
+                tests.add('test_cache_measurement.py')
             research = behavior = True
             reasons.append(original + ': original-source readers, fleet measurements and native research skill discovery')
+        elif path == 'skills/one-spark-serving-results/scripts/measure_cache.py':
+            tests.update({'test_cache_measurement.py', 'test_native_config.py'})
+            research = behavior = True
+            reasons.append(original + ': matched cache measurements, saved receipts and native skill use')
         elif path == 'tools/check_research_evidence.py':
             tests.add('test_research_claims.py')
             reasons.append(original + ': developer-only quote and arithmetic utility; not loaded in agent conversations')

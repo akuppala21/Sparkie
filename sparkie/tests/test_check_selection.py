@@ -87,6 +87,14 @@ def test_research_changes_select_versioned_readme_and_skill_consumers():
         assert not plan['compute_power_validation'] and not plan['broad_qualification']
 
 
+def test_cache_measurement_changes_select_the_benchmark_and_ordinary_agent():
+    for file in ('SKILL.md', 'scripts/measure_cache.py'):
+        plan = select(['sparkie/skills/one-spark-serving-results/' + file])
+        assert 'tests/test_cache_measurement.py' in plan['python_tests']
+        assert plan['native_research'] and plan['compact_local_behavior']
+        assert not plan['compute_power_validation'] and not plan['broad_qualification']
+
+
 def test_memory_feedback_and_cleanup_changes_include_native_consumers():
     memory = select(['src/sparkie_sparks/memory_controls.py'])
     assert 'tests/test_memory_correction_feedback.py' in memory['python_tests']

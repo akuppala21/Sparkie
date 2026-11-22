@@ -1,12 +1,47 @@
 ---
 name: one-spark-serving-results
-description: Use this fleet’s one-Spark measurements when recommending Qwen models, serving engines or recipes.
+description: Use local serving results for Qwen recommendations and run requested llama.cpp prompt-cache measurements in an allocated workspace.
 metadata:
   hermes:
     tags: [benchmarks, dgx-spark, qwen]
 ---
 
-# Local Qwen serving results
+# Local serving measurements
+
+## Compare prompt caching on an allocated llama.cpp server
+
+Read the project's allocation for the loopback origin and model. When the owner
+requests a greedy comparison with one warmup and three timings per setting,
+invoke this reviewed client directly as the first and only completion client.
+Substitute the allocated origin, existing project, exact prompt and output cap.
+
+```sh
+python3 ~/.hermes/skills/one-spark-serving-results/scripts/measure_cache.py --url "$origin" --project "$project" --prompt "$prompt" --tokens "$cap"
+```
+
+It checks readiness and the response schema using the requested warmup. A
+separate completion probe adds an extra request. The client rereads all eight
+raw receipts, compares the completions and calculates both medians. Read its
+returned `receipt` once to confirm the result. Report both `median_wall_ms`
+values and the receipt path. For cache reuse, state the engine's counts from
+`timed_input_tokens`: how many input tokens were reused, processed and total.
+If a count is absent, report only the available fields. If an attempt fails or
+already exists, inspect its receipts before any new measurement.
+
+When the owner asks for fresh-chat recall, keep the numbers in the project
+receipt. Use the native `memory` tool to save one sentence with the project
+name and receipt path. Supply the arguments in this shape:
+
+```json
+{"target":"memory","operations":[{"action":"add","content":"PROJECT measurement: read RECEIPT for the recorded result."}]}
+```
+
+Check the tool's reply for an applied write. Finish the owner answer now. If the
+write failed, give the verified project path and say that the recall pointer
+could not be saved. In a later chat, open the project receipt and check for
+corrections before quoting it.
+
+## Local Qwen serving results
 
 For serving recommendations on this fleet, consult matching local results first. These records are from November 22, 2026. Give the measurements for the checkpoint asked about. Each observation is a median of three serial direct API requests after one warmup. All used the same short prompts, temperature zero, thinking off and a 384-token output cap. All scored responses passed their own task checks. Each code response passed seven executable checks.
 
@@ -54,8 +89,7 @@ for the actual task. Record the median wall time, first text and decode rate whe
 available, along with failures and the exact settings that differed. If only one
 arm worked, report its results and leave the cross-engine question open.
 
-Keep the raw outputs and checks in the owner's persistent project artifacts. After
-reading them back, use native Hermes skill management to save a separate discoverable
-measurement note with the checkpoint, date, conditions, result and durable receipt
-location. Keep earlier observations when a new result differs. Confirm the note is
-readable before reporting it saved. Release the test reservation and verify cleanup.
+Keep raw outputs and checks in the owner's persistent project. Preserve earlier
+observations when a new result differs. For requested recall, save the brief
+native memory pointer described above. Release any test reservation you started
+and verify cleanup.
