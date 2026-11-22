@@ -27,3 +27,7 @@ records distinguish direct serving latency from time spent by Hermes on a whole 
 The [versioned lookup receipt](review-astra/evidence/hermes-research-update-2026-11-22/repo-lookup/result.json)
 records the ordinary agent turn. To repeat the repair case, use the
 [disposable project](../sparkie/tests/behavior/retry_handoff/README.md).
+
+The [research and memory comparison](review-astra/evidence/hermes-general-research-2026-11-22/README.md)
+records which results survived a fresh chat, how Hermes handled a withdrawn measurement,
+and where it still drew a conclusion its sources could not support.

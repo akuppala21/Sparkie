@@ -1,0 +1,42 @@
+{
+  "false": {
+    "warmup_count": 0,
+    "timed_count": 3,
+    "wall_ms": [
+      1.949924,
+      2.123715,
+      2.35565
+    ],
+    "median_wall_ms": 2.123714999470394,
+    "tokens_cached": [
+      0,
+      0,
+      0
+    ],
+    "prompt_tokens_evaluated": [
+      10,
+      10,
+      10
+    ]
+  },
+  "true": {
+    "warmup_count": 1,
+    "timed_count": 3,
+    "wall_ms": [
+      1.43732,
+      2.784847,
+      2.370146
+    ],
+    "median_wall_ms": 2.3701459995209007,
+    "tokens_cached": [
+      9,
+      9,
+      9
+    ],
+    "prompt_tokens_evaluated": [
+      1,
+      1,
+      1
+    ]
+  }
+}

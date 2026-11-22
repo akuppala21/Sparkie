@@ -161,10 +161,12 @@ def catalog_tool(args, **kwargs):
             'message': 'The enrolled service catalog is unavailable. This lookup could not verify a service or endpoint.',
             'next_step': (
                 'If the owner or their project already supplied a separately verified endpoint, use it within its scope. '
-                'Otherwise stop service discovery now. Repeating the lookup or searching files, environment variables, '
-                'processes or network addresses cannot establish enrollment. Report what remains unmeasured and what '
-                'verified endpoint is needed. If the owner asked to save the outcome, write this blocker in the requested '
-                'project, read it back, and remember its location for the next chat.'
+                'Otherwise stop service discovery now. Repeat lookups and machine or network searches cannot verify enrollment. '
+                'Report the unavailable catalog, what remains unmeasured, and the endpoint needed to proceed. '
+                'If the owner requested a record, write this blocker in one short file in their project and read it back once. '
+                'Only if the owner requested cross-chat recall, save one native memory pointer to that file. '
+                'Reserve measurement skills for successful measurements. Finish the owner reply as soon as those tools '
+                'confirm the writes.'
             ),
         })
 

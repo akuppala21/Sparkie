@@ -1,0 +1,32 @@
+{
+  "preliminary_schema_probe": 1,
+  "qualified_sequence_requests": 8,
+  "medians": {
+    "false": {
+      "timed_samples_ms": [
+        2.4372,
+        2.0432,
+        2.1335
+      ],
+      "median_ms": 2.1335,
+      "cached_tokens": [
+        0,
+        0,
+        0
+      ]
+    },
+    "true": {
+      "timed_samples_ms": [
+        1.499,
+        1.1656,
+        1.2465
+      ],
+      "median_ms": 1.2465,
+      "cached_tokens": [
+        9,
+        9,
+        9
+      ]
+    }
+  }
+}

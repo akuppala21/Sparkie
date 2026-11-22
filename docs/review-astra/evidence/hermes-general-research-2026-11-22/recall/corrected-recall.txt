@@ -1,0 +1,1 @@
+What is the current conclusion for Cedar Glass about enabling prompt caching? Tell me what the project supports and which record I should rely on.
