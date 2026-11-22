@@ -1,0 +1,19 @@
+{
+  "first_attempt": true,
+  "complete_native_seconds": 24.877,
+  "first_visible_text_seconds": 20.229,
+  "local_requests": 3,
+  "tool_calls": [
+    "terminal",
+    "read_file"
+  ],
+  "readme_bytes": 3162,
+  "readme_lines": 129,
+  "github_blob": "c285926a22524e3ee600a74193db9a68eb6ead3a",
+  "source_sha256": "7b7ee5894f0b6acaef95c8f306c1bb4d902b0139c437ee3b2e59769f772e445c",
+  "source": "https://github.com/sindresorhus/p-limit/blob/v6.2.0/readme.md",
+  "assembled_skill_count": 3,
+  "every_request_exact_soul_and_skill": true,
+  "checks": "33 pytest tests on Spark 2",
+  "cleanup_verified": true
+}

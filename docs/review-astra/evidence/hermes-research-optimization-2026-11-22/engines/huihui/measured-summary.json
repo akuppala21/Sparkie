@@ -1,0 +1,158 @@
+{
+  "workloads": {
+    "huihui": {
+      "chat": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1808,
+          "min": 0.1791,
+          "max": 0.1821
+        },
+        "first_visible_seconds": {
+          "median": 0.1808,
+          "min": 0.1791,
+          "max": 0.1821
+        },
+        "wall_seconds": {
+          "median": 0.6837,
+          "min": 0.6819,
+          "max": 0.6848
+        },
+        "decode_tokens_per_second": {
+          "median": 47.7616,
+          "min": 47.7385,
+          "max": 47.7921
+        },
+        "completion_tokens": [
+          25,
+          25,
+          25
+        ],
+        "prompt_tokens": [
+          63,
+          63,
+          63
+        ],
+        "cache_tokens": [
+          0,
+          0,
+          0
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "code": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1736,
+          "min": 0.1731,
+          "max": 0.2755
+        },
+        "first_visible_seconds": {
+          "median": 0.1736,
+          "min": 0.1731,
+          "max": 0.2755
+        },
+        "wall_seconds": {
+          "median": 2.1889,
+          "min": 2.1881,
+          "max": 2.2882
+        },
+        "decode_tokens_per_second": {
+          "median": 83.8881,
+          "min": 83.8793,
+          "max": 83.9847
+        },
+        "completion_tokens": [
+          170,
+          170,
+          170
+        ],
+        "prompt_tokens": [
+          67,
+          67,
+          67
+        ],
+        "cache_tokens": [
+          64,
+          64,
+          64
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "sources": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1832,
+          "min": 0.1815,
+          "max": 0.1858
+        },
+        "first_visible_seconds": {
+          "median": 0.1832,
+          "min": 0.1815,
+          "max": 0.1858
+        },
+        "wall_seconds": {
+          "median": 2.0,
+          "min": 1.999,
+          "max": 2.0004
+        },
+        "decode_tokens_per_second": {
+          "median": 46.8218,
+          "min": 46.7509,
+          "max": 46.8554
+        },
+        "completion_tokens": [
+          86,
+          86,
+          86
+        ],
+        "prompt_tokens": [
+          121,
+          121,
+          121
+        ],
+        "cache_tokens": [
+          64,
+          64,
+          64
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      }
+    }
+  },
+  "request_sha256": {
+    "chat": "5a8b610b55fc534ce02055aeaf63362f72c9362c1d49073a690d69a1add22a1d",
+    "code": "ba117c0d7ee850abb06ac0f0186054858c818287436b68957908532f15d0ddff",
+    "sources": "e6de8490fcfc798f105ddf8617f852046be9597bd4784bc8c6d0a5452b03539e"
+  }
+}

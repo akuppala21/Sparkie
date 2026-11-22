@@ -1,0 +1,307 @@
+{
+  "workloads": {
+    "vllm": {
+      "chat": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.2689,
+          "min": 0.2685,
+          "max": 0.2707
+        },
+        "first_visible_seconds": {
+          "median": 0.2689,
+          "min": 0.2685,
+          "max": 0.2707
+        },
+        "wall_seconds": {
+          "median": 0.9489,
+          "min": 0.9473,
+          "max": 0.9493
+        },
+        "decode_tokens_per_second": {
+          "median": 33.918,
+          "min": 33.8006,
+          "max": 33.925
+        },
+        "completion_tokens": [
+          24,
+          24,
+          24
+        ],
+        "prompt_tokens": [
+          63,
+          63,
+          63
+        ],
+        "cache_tokens": [
+          null,
+          null,
+          null
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "code": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.2736,
+          "min": 0.2729,
+          "max": 0.2754
+        },
+        "first_visible_seconds": {
+          "median": 0.2736,
+          "min": 0.2729,
+          "max": 0.2754
+        },
+        "wall_seconds": {
+          "median": 3.5282,
+          "min": 3.5225,
+          "max": 3.5427
+        },
+        "decode_tokens_per_second": {
+          "median": 33.4933,
+          "min": 33.3625,
+          "max": 33.5439
+        },
+        "completion_tokens": [
+          110,
+          110,
+          110
+        ],
+        "prompt_tokens": [
+          67,
+          67,
+          67
+        ],
+        "cache_tokens": [
+          null,
+          null,
+          null
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "sources": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.2812,
+          "min": 0.2799,
+          "max": 0.2819
+        },
+        "first_visible_seconds": {
+          "median": 0.2812,
+          "min": 0.2799,
+          "max": 0.2819
+        },
+        "wall_seconds": {
+          "median": 3.6771,
+          "min": 3.6751,
+          "max": 3.6939
+        },
+        "decode_tokens_per_second": {
+          "median": 25.0373,
+          "min": 24.8992,
+          "max": 25.0466
+        },
+        "completion_tokens": [
+          86,
+          86,
+          86
+        ],
+        "prompt_tokens": [
+          121,
+          121,
+          121
+        ],
+        "cache_tokens": [
+          null,
+          null,
+          null
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      }
+    },
+    "sglang": {
+      "chat": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1884,
+          "min": 0.1878,
+          "max": 0.1884
+        },
+        "first_visible_seconds": {
+          "median": 0.1884,
+          "min": 0.1878,
+          "max": 0.1884
+        },
+        "wall_seconds": {
+          "median": 0.7107,
+          "min": 0.7097,
+          "max": 0.7245
+        },
+        "decode_tokens_per_second": {
+          "median": 44.0595,
+          "min": 42.8779,
+          "max": 44.1379
+        },
+        "completion_tokens": [
+          24,
+          24,
+          24
+        ],
+        "prompt_tokens": [
+          63,
+          63,
+          63
+        ],
+        "cache_tokens": [
+          null,
+          null,
+          null
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "code": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1734,
+          "min": 0.1698,
+          "max": 0.7505
+        },
+        "first_visible_seconds": {
+          "median": 0.1734,
+          "min": 0.1698,
+          "max": 0.7505
+        },
+        "wall_seconds": {
+          "median": 1.8405,
+          "min": 1.84,
+          "max": 2.417
+        },
+        "decode_tokens_per_second": {
+          "median": 63.6108,
+          "min": 63.4586,
+          "max": 63.6173
+        },
+        "completion_tokens": [
+          107,
+          107,
+          107
+        ],
+        "prompt_tokens": [
+          67,
+          67,
+          67
+        ],
+        "cache_tokens": [
+          64,
+          64,
+          64
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      },
+      "sources": {
+        "measured": 3,
+        "ttft_seconds": {
+          "median": 0.1815,
+          "min": 0.1799,
+          "max": 0.1871
+        },
+        "first_visible_seconds": {
+          "median": 0.1815,
+          "min": 0.1799,
+          "max": 0.1871
+        },
+        "wall_seconds": {
+          "median": 2.1674,
+          "min": 2.167,
+          "max": 2.1737
+        },
+        "decode_tokens_per_second": {
+          "median": 46.3173,
+          "min": 46.2964,
+          "max": 46.3421
+        },
+        "completion_tokens": [
+          93,
+          93,
+          93
+        ],
+        "prompt_tokens": [
+          121,
+          121,
+          121
+        ],
+        "cache_tokens": [
+          64,
+          64,
+          64
+        ],
+        "reasoning_chars": [
+          0,
+          0,
+          0
+        ],
+        "finish_reasons": [
+          "stop",
+          "stop",
+          "stop"
+        ],
+        "unique_answer_count": 1
+      }
+    }
+  },
+  "request_sha256": {
+    "chat": "408a0a360fb69d0b19462bee90cee27b71de07bc9b2bee0c4a3703838249f5f4",
+    "code": "9d0918a5f0adb738c1d04b9cf5cb40423c99c8b028ed3eca55578694f2bb461e",
+    "sources": "13e8d9b3a6895b51406f70c757a6cfefd9c714574e0e9c39d3aa5034637271a3"
+  }
+}

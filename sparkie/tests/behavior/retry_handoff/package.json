@@ -1,0 +1,9 @@
+{
+  "name": "report-client-retry-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test report-client.test.mjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "p-retry": "7.1.1" }
+}
