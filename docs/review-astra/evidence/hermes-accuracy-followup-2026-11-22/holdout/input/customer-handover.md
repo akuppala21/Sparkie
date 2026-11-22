@@ -1,0 +1,2 @@
+# Alder handover, ticket AR-206
+Destination is Harbor 4.2. The source is a 24 GiB encrypted full snapshot, HFA format version 3. Its original project key is available in the customer vault. An empty standby instance is available. The previous instance is still serving. Friday's cutover window is twenty minutes. No rehearsal of this project has completed. The release lead is requesting a recommendation only.

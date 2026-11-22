@@ -1,7 +1,7 @@
 ---
 name: local-recipe-review
 description: Compare source claims with citations and exact output.
-version: 1.6.0
+version: 1.6.2
 metadata:
   hermes:
     tags: [research, recipes, sources]
@@ -30,6 +30,14 @@ engines or hardware setups from source material.
    Pass the requested version exactly. Omit `--ref` for the default branch.
    Open the returned `file` with native `read_file` and cite the returned
    `source`. Use the immutable blob link when the exact revision matters.
+   If versioned documentation leaves an answer open, pass `--path 'path/to/file'`
+   to the same reader to inspect the publisher's implementation or tests at that
+   revision. A small reproduction with the exact release can settle a runtime
+   question. For questions about specific facts at a named version, give one
+   short answer per requested fact, with the supporting line or link. Once those
+   facts are established, finish. If the question actually requires a claim about
+   another component or an older version, read that component's applicable source
+   or exercise it before drawing the conclusion.
    A failed fetch supplies no source. Report the cause or use another authorized original.
    If the matching entry supplies the requested values, quote its fields and link
    to it. Stop there unless another part of the question needs more evidence.

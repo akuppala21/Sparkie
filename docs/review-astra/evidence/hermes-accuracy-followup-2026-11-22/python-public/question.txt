@@ -1,0 +1,1 @@
+We unpack customer-supplied tar archives on stock CPython workers with archive.extractall(path=job_dir). We're rolling from 3.13 to 3.14. What changes for that call, can I count on the new default to keep a customer from filling our disk, and what should we ship during the mixed-version rollout? Please cite the Python release documentation that supports your answer.

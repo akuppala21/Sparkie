@@ -1,0 +1,2 @@
+# Harbor 4.2 recovery bulletin RB-42
+Scope: release 4.2, HFA format version 3. Live replay into the active instance supports unencrypted snapshots only. For an encrypted full snapshot up to 32 GiB, restore to an empty standby with the original project key. Verify the restored catalog checksum against the snapshot manifest before changing the traffic alias. Standby restore and verification can be completed while the previous instance is serving. Alias changes still need release-lead authorization.

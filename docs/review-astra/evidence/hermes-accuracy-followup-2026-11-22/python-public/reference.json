@@ -1,0 +1,28 @@
+[
+  {
+    "url": "https://docs.python.org/3.13/library/tarfile.html",
+    "final_url": "https://docs.python.org/3.13/library/tarfile.html",
+    "http_status": 200,
+    "sha256": "dcf9066a08e6859c1b6342c3b8d0038e93b1b39cb2eb513e8dcb68dea56bda55",
+    "source_bytes": 189904,
+    "verified_anchors": [
+      "tarfile.TarFile.extraction_filter",
+      "extraction-filters",
+      "hints-for-further-verification"
+    ],
+    "retrieved_utc": "2026-11-22T22:35:26.840703+00:00"
+  },
+  {
+    "url": "https://docs.python.org/3.14/library/tarfile.html",
+    "final_url": "https://docs.python.org/3.14/library/tarfile.html",
+    "http_status": 200,
+    "sha256": "e4e9f1cd13017fde4ca40c17e950aad70ce981967bd1304e5de744d7301e3a70",
+    "source_bytes": 197383,
+    "verified_anchors": [
+      "tarfile.TarFile.extraction_filter",
+      "extraction-filters",
+      "hints-for-further-verification"
+    ],
+    "retrieved_utc": "2026-11-22T22:35:27.240643+00:00"
+  }
+]

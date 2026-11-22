@@ -1,0 +1,1 @@
+The Alder team needs a decision for Friday’s 20-minute recovery window. Can we recover their project into Harbor 4.2, and what should I tell the release lead to do next?

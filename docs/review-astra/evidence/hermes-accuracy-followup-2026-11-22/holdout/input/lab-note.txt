@@ -1,0 +1,2 @@
+Recovery lab run L-44 | Harbor 4.2
+Live replay of a 6 GiB unencrypted HFA v3 snapshot to an active test instance completed in 8 minutes. The clock included replay and catalog verification. The lab did not run encrypted standby restore or measure the traffic-alias switch. No completion-time commitment was issued.

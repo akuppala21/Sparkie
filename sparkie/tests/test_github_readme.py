@@ -78,3 +78,34 @@ def test_unavailable_tag_is_not_replaced_with_default_branch(tmp_path, monkeypat
     with pytest.raises(HTTPError):
         reader.save_readme('example/tool', 'missing', tmp_path)
     assert len(calls) == 1 and not list(tmp_path.iterdir())
+
+
+def test_reads_a_named_versioned_source_in_one_request(tmp_path, monkeypatch):
+    name = 'src/a #.ts'
+    source = 'https://github.com/example/tool/blob/v2/src/a%20%23.ts'
+    calls = mock_api(monkeypatch, METADATA | {'path': name, 'html_url': source})
+    result = reader.save_readme('example/tool', 'v2', tmp_path, path=name)
+    assert [r.full_url for r in calls] == ['https://api.github.com/repos/example/tool/contents/src/a%20%23.ts?ref=v2']
+    assert result['source'] == source
+    assert Path(result['file']).read_bytes() == BODY
+    assert result['immutable_blob'].endswith('/' + SHA)
+
+
+@pytest.mark.parametrize('name', ['', '/package.json', 'src/../test.ts', 'src//test.ts'])
+def test_invalid_source_path_never_reaches_the_network(tmp_path, monkeypatch, name):
+    calls = mock_api(monkeypatch, METADATA)
+    with pytest.raises(ValueError):
+        reader.save_readme('example/tool', 'v2', tmp_path, path=name)
+    assert not calls and not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('metadata', [
+    [METADATA],
+    METADATA | {'path': 'another.ts', 'html_url': 'https://github.com/example/tool/blob/v2/src/test.ts'},
+    METADATA | {'path': 'src/test.ts', 'html_url': 'https://github.com/example/tool/blob/v2/src/other.ts'},
+])
+def test_requested_path_must_resolve_to_its_own_file(tmp_path, monkeypatch, metadata):
+    mock_api(monkeypatch, metadata)
+    with pytest.raises(ValueError):
+        reader.save_readme('example/tool', 'v2', tmp_path, path='src/test.ts')
+    assert not list(tmp_path.iterdir())
