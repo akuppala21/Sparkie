@@ -1,4 +1,4 @@
-from behavior.native_acceptance import chat_replay_cases, has_successful_memory_write, read_once
+from behavior.native_acceptance import chat_replay_cases, has_successful_memory_write, only_called_file_reader, read_once
 
 
 def test_memory_replay_runs_prerequisites_once_in_order():
@@ -30,3 +30,17 @@ def test_memory_success_requires_a_native_result_and_an_observed_write():
     for name, body in [('terminal', '{"success": true}'), ('memory', 'example: "success": true'),
                        ('memory', '{"success":false,"example":{"success":true}}')]:
         assert not has_successful_memory_write(dict(saved, messages=[{'role': 'tool', 'name': name, 'content': body}]))
+
+
+def test_decisive_file_rejects_unrelated_calls_even_when_the_answer_is_correct():
+    read = {'function': {'name': 'read_file'}}
+    view = {'function': {'name': 'skill_view'}}
+    requested = {'role': 'assistant', 'tool_calls': [read]}
+    observed = {'role': 'tool', 'name': 'read_file'}
+    final = {'role': 'assistant', 'content': 'The workload was still running.'}
+    assert only_called_file_reader([requested, observed, final])
+    assert not only_called_file_reader([requested, final])
+    assert not only_called_file_reader([observed, final])
+    assert not only_called_file_reader([dict(requested, tool_calls=[read, view]), observed, final])
+    assert not only_called_file_reader([requested, observed, {'role': 'assistant', 'function_call': {'name': 'skill_view'}}, final])
+    assert not only_called_file_reader([requested, observed, {'role': 'tool', 'name': 'skill_view'}, final])
