@@ -1,0 +1,198 @@
+{
+  "viewport": {
+    "width": 1280,
+    "height": 850
+  },
+  "unsigned_sessions_get": 401,
+  "unsigned_websocket": {
+    "opened": false,
+    "closeCode": 1006
+  },
+  "owner_submit_rpc_count": 1,
+  "owner_interrupt_rpc_count": 1,
+  "observed_browser_phases": {
+    "liveDefault": {
+      "first": true,
+      "interpretation": true,
+      "raw": false,
+      "owner": true,
+      "assistantRows": [
+        "I will inspect the synthetic check.\n\nRan cat /tmp/interrupt-proof.txt\n333ms\n\nThe recorded checker result is seven for beta.\n\nRan true\n19ms\n8:52 AM"
+      ]
+    },
+    "liveExpanded": {
+      "first": true,
+      "interpretation": true,
+      "raw": true,
+      "owner": true,
+      "assistantRows": [
+        "I will inspect the synthetic check.\n\nRan cat /tmp/interrupt-proof.txt\n333ms\n$ cat /tmp/interrupt-proof.txt\nexit 0\nRAW-EVIDENCE-KITE-5807\nbeta=7\n\nThe recorded checker result is seven for beta.\n\nRan true\n19ms\n$ true\nexit 0\n8:52 AM"
+      ]
+    },
+    "stopped": {
+      "first": true,
+      "interpretation": true,
+      "raw": false,
+      "owner": true,
+      "assistantRows": [
+        "I will inspect the synthetic check.\n\nRan cat /tmp/interrupt-proof.txt\n\nThe recorded checker result is seven for beta.\n\nRan true\n\nOperation interrupted: waiting for model response (1.5s elapsed).\n\nResponse stopped\n8:52 AM"
+      ]
+    },
+    "reloadDefault": {
+      "first": true,
+      "interpretation": true,
+      "raw": false,
+      "owner": true,
+      "assistantRows": [
+        "I will inspect the synthetic check.\n\nRan cat /tmp/interrupt-proof.txt\n\nThe recorded checker result is seven for beta.\n\nRan true\n\nOperation interrupted: waiting for model response (1.5s elapsed).\n\nResponse stopped\n8:52 AM"
+      ]
+    },
+    "reloadExpanded": {
+      "first": true,
+      "interpretation": true,
+      "raw": true,
+      "owner": true,
+      "assistantRows": [
+        "I will inspect the synthetic check.\n\nRan cat /tmp/interrupt-proof.txt\n$ cat /tmp/interrupt-proof.txt\nexit 0\nRAW-EVIDENCE-KITE-5807\nbeta=7\n\nThe recorded checker result is seven for beta.\n\nRan true\n$ true\nexit 0\n\nOperation interrupted: waiting for model response (1.5s elapsed).\n\nResponse stopped\n8:52 AM"
+      ]
+    }
+  },
+  "authenticated_message_reads": [
+    {
+      "path": "/api/sessions/[id]/messages",
+      "status": 200,
+      "first": true,
+      "interpretation": true,
+      "raw": true,
+      "owner": true
+    },
+    {
+      "path": "/api/sessions/[id]/messages",
+      "status": 200,
+      "first": true,
+      "interpretation": true,
+      "raw": true,
+      "owner": true
+    },
+    {
+      "path": "/api/sessions/[id]/messages",
+      "status": 200,
+      "first": true,
+      "interpretation": true,
+      "raw": true,
+      "owner": true
+    }
+  ],
+  "live_disclosure_controls": [
+    {
+      "label": null,
+      "text": "Ran cat /tmp/interrupt-proof.txt\n333ms",
+      "title": ""
+    },
+    {
+      "label": null,
+      "text": "Ran true\n19ms",
+      "title": ""
+    }
+  ],
+  "reloaded_disclosure_controls": [
+    {
+      "label": null,
+      "text": "Ran cat /tmp/interrupt-proof.txt",
+      "title": ""
+    },
+    {
+      "label": null,
+      "text": "Ran true",
+      "title": ""
+    }
+  ],
+  "native_receipt_rows": [
+    {
+      "id": 1,
+      "role": "user",
+      "content": "Run the disposable study and report the observation.",
+      "tool_name": null,
+      "tool_call_id": null,
+      "tool_calls": null
+    },
+    {
+      "id": 2,
+      "role": "assistant",
+      "content": "I will inspect the synthetic check.",
+      "tool_name": null,
+      "tool_call_id": null,
+      "tool_calls": "[{\"id\": \"call_interrupt_fixture_0\", \"call_id\": \"call_interrupt_fixture_0\", \"response_item_id\": \"fc_interrupt_fixture_0\", \"type\": \"function\", \"function\": {\"name\": \"terminal\", \"arguments\": \"{\\\"command\\\": \\\"cat /tmp/interrupt-proof.txt\\\"}\"}}]"
+    },
+    {
+      "id": 3,
+      "role": "tool",
+      "content": "{\"output\": \"RAW-EVIDENCE-KITE-5807\\nbeta=7\", \"exit_code\": 0, \"error\": null}",
+      "tool_name": "terminal",
+      "tool_call_id": "call_interrupt_fixture_0",
+      "tool_calls": null
+    },
+    {
+      "id": 4,
+      "role": "assistant",
+      "content": "The recorded checker result is seven for beta.",
+      "tool_name": null,
+      "tool_call_id": null,
+      "tool_calls": "[{\"id\": \"call_interrupt_fixture_1\", \"call_id\": \"call_interrupt_fixture_1\", \"response_item_id\": \"fc_interrupt_fixture_1\", \"type\": \"function\", \"function\": {\"name\": \"terminal\", \"arguments\": \"{\\\"command\\\": \\\"true\\\"}\"}}]"
+    },
+    {
+      "id": 5,
+      "role": "tool",
+      "content": "{\"output\": \"\", \"exit_code\": 0, \"error\": null}",
+      "tool_name": "terminal",
+      "tool_call_id": "call_interrupt_fixture_1",
+      "tool_calls": null
+    },
+    {
+      "id": 6,
+      "role": "assistant",
+      "content": "Operation interrupted: waiting for model response (1.5s elapsed).",
+      "tool_name": null,
+      "tool_call_id": null,
+      "tool_calls": null
+    }
+  ],
+  "durable_source": "state.db",
+  "scripted_provider_rounds": [
+    {
+      "stage": 0,
+      "stream": true,
+      "marker_read": false,
+      "actual_tool_results": []
+    },
+    {
+      "stage": 1,
+      "stream": true,
+      "marker_read": true,
+      "actual_tool_results": [
+        "{\"output\": \"RAW-EVIDENCE-KITE-5807\\nbeta=7\", \"exit_code\": 0, \"error\": null}"
+      ]
+    },
+    {
+      "stage": 2,
+      "stream": true,
+      "marker_read": true,
+      "actual_tool_results": [
+        "{\"output\": \"RAW-EVIDENCE-KITE-5807\\nbeta=7\", \"exit_code\": 0, \"error\": null}",
+        "{\"output\": \"\", \"exit_code\": 0, \"error\": null}"
+      ]
+    }
+  ],
+  "sandbox_allocations": [
+    {
+      "allocated": true,
+      "user": "sandbox",
+      "backend": "spark_compute"
+    },
+    {
+      "allocated": true,
+      "user": "sandbox",
+      "backend": "spark_compute"
+    }
+  ]
+}

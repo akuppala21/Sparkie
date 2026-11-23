@@ -50,6 +50,43 @@ not just modifications since the last commit. Compare with a named baseline. Sha
 bring their consumers. Dependency or environment changes can invalidate results without source
 changes. Print the selected groups and reasons before running them.
 
+## Python environment for an offline maintenance checkout
+
+`spark_update_source` exports the sealed release, its base interpreter, and
+the upstream lock. The serving runtime uses `uv sync --frozen --no-dev`.
+Activating that runtime supplies Hermes and its application dependencies.
+Pytest and its async plugin belong to the upstream `dev` group.
+
+For a maintenance worker, provision a separate test environment **before
+the chat**. Supply a private, writable copy of an offline uv cache containing
+the frozen dev group's wheels for the worker architecture and exported Python,
+including transitive extras. Use the release's bundled uv and interpreter.
+The helper below runs frozen, offline sync with builds and Python downloads
+disabled. It adds two plain path entries connecting the dev environment to
+that exact release's Hermes source and installed runtime dependencies.
+Use a new absolute destination that is writable during provisioning and
+keep that same path in the test worker.
+
+```sh
+# baseline is the absolute release path returned by spark_update_source.
+dev="/opt/sparkie-dev/${baseline##*/}"
+UV_CACHE_DIR="$private_dev_cache" bash prepare-dev.sh "$baseline" "$dev"
+```
+
+Place the prepared environment, predecessor and base interpreter at their
+original absolute paths in the isolated worker. They can all be read-only.
+Set the maintenance terminal's PATH to include `$dev/bin` first, or activate
+`"$dev/bin/activate"` in that shell. From the writable extension checkout,
+run the normal command. The test worker needs no uv cache or installation
+step. An ordinary source export with no prepared dev environment or cached
+wheels cannot supply these tests offline. [Provisioning helper](../../docs/review-astra/evidence/hermes-offline-developer-tests-2026-11-23/prepare-dev.sh) · [Fresh-worker evidence](../../docs/review-astra/evidence/hermes-offline-developer-tests-2026-11-23/results.md)
+
+```sh
+export PATH="$dev/bin:$PATH"
+python3 -m pytest --version
+python3 tools/checks.py --paths tools/checks.py --run-python
+```
+
 ## A compact behavior eval for the brain
 
 Use the real local model and Hermes runtime with stand-in fleet changes. Evaluate the model,

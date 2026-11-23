@@ -1,0 +1,22 @@
+[
+  {
+    "type": "bind",
+    "destination": "/opt/sparkie-dev/20261123-attachment1",
+    "rw": false
+  },
+  {
+    "type": "bind",
+    "destination": "/fixture/test-normal.sh",
+    "rw": false
+  },
+  {
+    "type": "bind",
+    "destination": "/opt/sparkie/releases/20261123-attachment1",
+    "rw": false
+  },
+  {
+    "type": "bind",
+    "destination": "/opt/sparkie/python",
+    "rw": false
+  }
+]

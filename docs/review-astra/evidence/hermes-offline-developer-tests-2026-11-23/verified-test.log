@@ -1,0 +1,40 @@
+{"python": "/opt/sparkie-dev/20261123-attachment1/bin/python3", "python_version": "3.14.10", "uid": 12001, "hermes_source": "/opt/sparkie/releases/20261123-attachment1/hermes/hermes_cli/__init__.py", "pytest": "/opt/sparkie-dev/20261123-attachment1/lib/python3.14/site-packages/pytest/__init__.py", "fastapi": "/opt/sparkie/releases/20261123-attachment1/hermes/.venv/lib/python3.14/site-packages/fastapi/__init__.py", "explicit_dev_versions": {"debugpy": "1.8.22", "pytest": "9.1.1", "pytest-asyncio": "1.4.0", "mcp": "2.3.0", "httpx2": "2.15.1", "starlette": "1.9.0", "ty": "0.0.89", "ruff": "0.15.22", "setuptools": "84.1.0"}, "credential_variables": 0, "home_initially_empty": true}
+{
+  "python_tests": [
+    "tests/test_check_selection.py",
+    "tests/test_energy_integration.py",
+    "tests/test_native_integration.py",
+    "tests/test_preservation_selection.py"
+  ],
+  "javascript_syntax": false,
+  "desktop_phone_browser": false,
+  "compact_local_behavior": false,
+  "native_execution_isolation": false,
+  "native_compute_workspace": false,
+  "enrolled_service_lifecycle": false,
+  "native_research": false,
+  "disposable_workload_stop": false,
+  "private_broker_stop": false,
+  "native_shared_sessions": false,
+  "compute_power_validation": false,
+  "native_candidate": false,
+  "broad_qualification": false,
+  "reasons": [
+    "tools/checks.py: changed-path selection regressions and existing registration smoke"
+  ]
+}
+============================= test session starts ==============================
+platform linux -- Python 3.14.10, pytest-9.1.1, pluggy-1.7.0
+rootdir: /workspace/sparkie
+configfile: pyproject.toml
+plugins: anyio-4.15.1, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 43 items
+
+tests/test_check_selection.py .....................................      [ 86%]
+tests/test_energy_integration.py ..                                      [ 90%]
+tests/test_native_integration.py .                                       [ 93%]
+tests/test_preservation_selection.py ...                                 [100%]
+
+============================== 43 passed in 1.81s ==============================
+{"remaining_check_groups": [], "release_qualified": false}

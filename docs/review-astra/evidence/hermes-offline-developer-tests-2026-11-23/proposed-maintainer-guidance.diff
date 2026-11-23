@@ -1,0 +1,13 @@
+--- a/sparkie/skills/maintain-sparkie/SKILL.md
++++ b/sparkie/skills/maintain-sparkie/SKILL.md
+@@ -32,6 +32,10 @@
+    those cases through the affected callers. Preserve existing assertions and
+    add a focused regression for behavior they missed. If the cause or scope
+    remains uncertain, say which observation could settle it.
++   Use the supplied checkout’s prepared Python test environment. The sealed
++   app environment omits the development group. If `python3 -m pytest --version`
++   fails, check the checkout’s documented interpreter once and report a missing
++   test environment if it is unavailable.
+    From the extension root, `python3 tools/checks.py --paths <changed paths>
+    --run-python` prints the plan and runs its Python tests. It lists other
+    required checks separately. A plan alone is not a test result.

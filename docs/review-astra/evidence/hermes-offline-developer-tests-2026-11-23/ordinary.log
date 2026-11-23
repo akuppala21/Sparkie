@@ -1,0 +1,30 @@
+uid=12001(sandbox) gid=12001(sandbox) groups=12001(sandbox)
+/usr/bin/git
+/usr/local/bin/python3
+Python 3.13.18
+Python 3.14.10
+uv 0.13.9 (aarch64-unknown-linux-gnu)
+Selected release lock
+d0ae8bfd20db7a8ca0e75418df718315c58088b120366227cc62ee8fe25d4274  /opt/sparkie/releases/20261123-attachment1/hermes/uv.lock
+6cb17aeeb63c8ecd78b748990598d05a8fe87e74f89fb2013a344d378a55bf1a  /opt/sparkie/releases/20261123-attachment1/hermes/pyproject.toml
+a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903  /opt/sparkie/releases/20261123-attachment1/candidate.json
+Worker default selector exit 1
+    "tools/checks.py: changed-path selection regressions and existing registration smoke"
+  ]
+}
+/usr/local/bin/python3: No module named pytest
+/opt/sparkie/releases/20261123-attachment1/hermes/.venv/bin/python3
+/opt/sparkie/releases/20261123-attachment1/hermes/.venv/bin/python3 {'hermes_cli': True, 'pytest': False, 'pytest_asyncio': False, 'fastapi': True}
+Activated predecessor selector exit 1
+    "tools/checks.py: changed-path selection regressions and existing registration smoke"
+  ]
+}
+/opt/sparkie/releases/20261123-attachment1/hermes/.venv/bin/python3: No module named pytest
+Unstocked native offline dev sync exit 1
+warning: `VIRTUAL_ENV=/opt/sparkie/releases/20261123-attachment1/hermes/.venv` does not match the project environment path `/workspace/empty-dev` and will be ignored; use `--active` to target the active environment instead
+Using CPython 3.14.10 interpreter at: /opt/sparkie/releases/20261123-attachment1/hermes/.venv/bin/python
+Creating virtual environment at: /workspace/empty-dev
+error: Failed to download `ty==0.0.89`
+  cause: Network connectivity is disabled, but the requested data wasn't found in the cache: https://files.pythonhosted.org/packages/6a/89/baae2b407101c4cb02f19216123900c147af8fd87cdb1ed7eba139472734/ty-0.0.89-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+
+hint: `ty` (v0.0.89) was included because `hermes-agent:dev` (v0.0.0) depends on `ty`
