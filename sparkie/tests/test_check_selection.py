@@ -117,10 +117,12 @@ def test_native_skills_and_their_instruction_files_are_runtime_behavior():
 
 def test_general_skill_edits_keep_the_runtime_prompt_consumers():
     prompt = select(['sparkie/prompts/operator.md'])
-    skill = select(['sparkie/skills/ops/steps.md'])
     consumers = set(prompt['python_tests'])
     assert {'tests/test_fleet.py', 'tests/test_energy.py'} <= consumers
-    assert consumers <= set(skill['python_tests'])
+    for path in ('sparkie/skills/desk-assistant/steps.md', 'sparkie/skills/fleet/SKILL.md'):
+        skill = select([path])
+        assert skill['compact_local_behavior'] is True, path
+        assert consumers <= set(skill['python_tests']), path
 
 
 def test_sandbox_image_and_execution_config_require_real_isolation_check_without_blanket_suite():

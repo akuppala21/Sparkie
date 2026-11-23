@@ -23,7 +23,7 @@ the direct owner view does not depend on the model repeating that guidance.
 
 ## Chat replies after a check
 
-On native web chat (Hermes platform `cli`) and Telegram (`telegram`), the
+On Hermes chat-completions turns tagged `cli` or `telegram`, the
 model can pass `final_reply: true` to `spark_check_change` when the owner
 only wants the checked results and their permitted next steps. A request
 to repeat the original action, including a request for another stop, needs
@@ -38,6 +38,22 @@ ID. The chat-completions middleware can use those receipts to finish the
 reply without another inference call. The owner sees the recorded state,
 recovery advice and original request ID. Text in a transcript cannot supply
 a receipt. This option has no confirmation or dispatch authority.
+
+Every matching workload stop check returns a `stop_receipt` with the saved
+ID, state, nullable `stopped` value and the recorded recovery advice. Only
+a successful stop proves the exact workload was observed stopped. A failed
+or unsent operation, an unknown result and a read-only check's dispatch flag
+cannot establish that the workload was running. Those outcomes retain null.
+An unavailable or mismatched ID yields no stop receipt.
+
+For a single JSON receipt naming exactly `receipt_id`, `state`, `stopped`
+and `next_step`, the model can pass `reply_format: "stop_receipt_json"`.
+The middleware checks the owner's declared field list and the same-turn
+tool result before returning that JSON. Other formats, other platforms and
+explicit provider response schemas retain the ordinary model round with the
+typed tool data. For a separate current-state question or additional work
+the model should omit both reply options. The dashboard sidebar creates a
+session tagged `tool` and therefore follows the ordinary provider route.
 
 The model can invoke the known check directly through native Tool Search.
 The recovery instructions call for a silent check before offering advice.

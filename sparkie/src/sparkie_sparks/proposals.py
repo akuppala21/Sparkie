@@ -136,12 +136,24 @@ def status_tool(args, **kwargs):
 
 def check_tool(args, **kwargs):
     try:
-        if (not isinstance(args, dict) or 'operation' not in args or set(args) - {'operation', 'final_reply'}
-                or type(args.get('final_reply', False)) is not bool):
+        if (not isinstance(args, dict) or 'operation' not in args or set(args) - {'operation', 'final_reply', 'reply_format'}
+                or type(args.get('final_reply', False)) is not bool
+                or ('reply_format' in args and args['reply_format'] != 'stop_receipt_json')):
             raise ValueError('Use one request ID.')
-        return json.dumps({'available': True, 'request': configured().proposal_check(operation=args['operation']),
-                           'change_dispatched': False,
-                           'message': 'This check sent no change. The request shows the recorded result.'})
+        row = configured().proposal_check(operation=args['operation'])
+        if row['id'] != args['operation']:
+            raise ValueError('The returned request ID does not match.')
+        result = {'available': True, 'request': row, 'change_dispatched': False,
+                  'message': 'This check sent no change. The request shows the recorded result.'}
+        if row['intent']['action'] == 'stop_workload':
+            # Only a successful stop records that the exact workload was observed
+            # stopped. Even a failed dispatch does not establish that it ran on.
+            result['stop_receipt'] = {
+                'receipt_id': row['id'], 'state': row['state'],
+                'stopped': True if row['state'] == 'succeeded' else None,
+                'next_step': row['recovery']['message'] or 'Review the existing request card for the next owner action.',
+            }
+        return json.dumps(result)
     except (PermissionError, ValueError, RuntimeError, KeyError, TypeError):
         return json.dumps({'available': False, 'change_dispatched': False,
                            'message': 'This check could not read the result. No change was sent. Keep any unresolved request.'})
@@ -196,8 +208,10 @@ def register(ctx):
     }, handler=status_tool, description='Read the recorded Spark change result')
     ctx.register_tool(name='spark_check_change', toolset='sparks', schema={
         'name': 'spark_check_change',
-        'description': 'Check the original Spark request before promising or preparing a repeat. If the whole task concerns these requests or repeating the same change, use final_reply on the last check. The tool determines whether a checked result can finish the reply or whether work continues. Leave it off for independent questions and distinct new work. This read-only check cannot send a change or diagnose a cause.',
+        'description': 'Read the original Spark request before promising or preparing a repeat. For a workload stop, stop_receipt gives the recorded result, including null for an unverified stop. Use final_reply for a plain-text receipt or reply_format for the four-field stop receipt when that answers the whole task. Leave both off for custom formats or other work. This check cannot send a change.',
         'parameters': {'type': 'object', 'properties': {'operation': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'},
-            'final_reply': {'type': 'boolean', 'description': 'Use true for the recorded change or its repeat, including a report that the target still looks active. This permits a final only for held or successful results. Failed or unsent attempts continue. Omit for mixed tasks. Default false.'}},
+            'final_reply': {'type': 'boolean', 'description': 'Use true for a standard plain-text receipt for the recorded change or its repeat. Only held or successful results can finish. Omit for JSON, other requested formats or mixed tasks. Default false.'},
+            'reply_format': {'type': 'string', 'enum': ['stop_receipt_json'],
+                             'description': 'Use when the whole answer is one JSON stop receipt with exactly receipt_id, state, stopped and next_step. Omit for other fields, a separate current-state question or additional work.'}},
                        'required': ['operation'], 'additionalProperties': False},
     }, handler=check_tool, description='Check the existing Spark request without sending another change')

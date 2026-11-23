@@ -348,8 +348,10 @@ def test_native_plugin_registers_actual_check_handler_and_narrow_schema(rig, tmp
     entry = registry.get_entry('spark_check_change', scope=manager.scope_key)
     assert entry is not None
     assert entry.schema['parameters']['required'] == ['operation']
-    assert set(entry.schema['parameters']['properties']) == {'operation', 'final_reply'}
+    assert set(entry.schema['parameters']['properties']) == {'operation', 'final_reply', 'reply_format'}
     assert entry.schema['parameters']['properties']['final_reply']['type'] == 'boolean'
+    assert entry.schema['parameters']['properties']['reply_format']['enum'] == ['stop_receipt_json']
+    assert json.loads(entry.handler({'operation': 'a' * 32, 'reply_format': 'arbitrary'}))['available'] is False
     assert entry.schema['parameters']['additionalProperties'] is False
     row = uncertain(rig[0])
     checked = json.loads(entry.handler({'operation': row['id']}))

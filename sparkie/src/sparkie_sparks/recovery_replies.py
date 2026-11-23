@@ -11,6 +11,7 @@ from .controls import result_text
 
 OPERATION = re.compile(r'(?<![a-zA-Z0-9])[a-f0-9]{32}(?![a-zA-Z0-9])')
 READ_TOOLS = {'tool_search', 'tool_describe', 'spark_change_status', 'spark_check_change'}
+JSON_FIELDS = re.compile(r'\bjson\b\s*(?:(?:with|containing)\s+)?(?:(?:the|these)\s+)?(?:(?:fields|keys)\s*)?[:{(]?\s*(.+?)\s*[.})]*\s*$', re.I | re.S)
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class Checked:
     text: str
     final: bool
     can_finish: bool
+    stop_receipt: dict | None
 
 
 def _turn_rows(messages):
@@ -62,6 +64,7 @@ class RecoveryReplies:
             if body['change_dispatched'] is not False:
                 return result
             can_finish = False
+            stop_receipt = None
             if body['available'] is True:
                 row = body['request']
                 if row['id'] != operation:
@@ -72,6 +75,8 @@ class RecoveryReplies:
                 # A failed or unsent attempt can require a fresh state review
                 # and draft. Preserve that work even if the model asked to finish.
                 can_finish = row['state'] in ('uncertain', 'dispatching', 'succeeded')
+                if args.get('reply_format') == 'stop_receipt_json' and row.get('intent', {}).get('action') == 'stop_workload':
+                    stop_receipt = body.get('stop_receipt')
             elif body['available'] is False:
                 text = 'Could not verify the result of request ' + operation + '. Keep the original request. No change was sent.'
             else:
@@ -81,7 +86,8 @@ class RecoveryReplies:
         key = (session_id, turn_id)
         with self.lock:
             checks = self.turns.setdefault(key, {})
-            checks[tool_call_id] = Checked(operation, text, args.get('final_reply') is True, can_finish)
+            checks[tool_call_id] = Checked(operation, text, args.get('final_reply') is True or stop_receipt is not None,
+                                           can_finish, stop_receipt)
             self.turns.move_to_end(key)
             if len(self.turns) > 128:
                 self.turns.popitem(last=False)
@@ -111,20 +117,44 @@ class RecoveryReplies:
         # A mixed natural-language request with no second tool still relies on the model
         # leaving final_reply off. The option is not an intent classifier.
         user = rows[0].get('content')
+        if not isinstance(user, str):
+            return next_call()
+        for payload in (request, request.get('extra_body') or {}):
+            if payload.get('response_format') not in (None, {'type': 'text'}):
+                return next_call()
         try:
             only_reads = _only_request_reads(rows)
         except (ValueError, KeyError, TypeError, AttributeError):
             only_reads = False
-        if not isinstance(user, str) or not only_reads:
+        if not only_reads:
             return next_call()
         receipts = {checks[row['tool_call_id']].operation: checks[row['tool_call_id']]
                     for row in rows if row.get('role') == 'tool' and row.get('tool_call_id') in checks}
-        if not set(OPERATION.findall(user)).issubset(receipts) or not all(item.can_finish for item in receipts.values()):
+        requested = set(OPERATION.findall(user))
+        if not requested.issubset(receipts):
             return next_call()
+        if re.search(r'\bjson\b', user, re.IGNORECASE):
+            # Only honor the named single-receipt option for the owner's exact
+            # field list. Other shapes, additional records and native schemas
+            # keep their normal model round and the typed tool result.
+            if len(receipts) != 1 or requested != receipts.keys():
+                return next_call()
+            item = next(iter(receipts.values()))
+            fields = JSON_FIELDS.search(user)
+            if not item.stop_receipt or not fields:
+                return next_call()
+            names = re.findall(r'\w+', fields[1])
+            if {name for name in names if name.lower() != 'and'} != item.stop_receipt.keys():
+                return next_call()
+            content = json.dumps(item.stop_receipt)
+        else:
+            if not all(item.can_finish for item in receipts.values()) or any(item.stop_receipt for item in receipts.values()):
+                return next_call()
+            content = '\n\n'.join(item.text for item in receipts.values())
         from openai.types.chat import ChatCompletion
         return ChatCompletion(id='spark-check-' + turn_id, object='chat.completion', created=int(time.time()),
                               model=model, choices=[{'index': 0, 'finish_reason': 'stop',
-                                                     'message': {'role': 'assistant', 'content': '\n\n'.join(item.text for item in receipts.values())}}])
+                                                     'message': {'role': 'assistant', 'content': content}}])
 
 
 def register(ctx):

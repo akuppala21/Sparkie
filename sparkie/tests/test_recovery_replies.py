@@ -47,6 +47,27 @@ def test_native_bridge_carries_the_same_identity_to_the_following_provider_round
     text = result.choices[0].message.content
     assert row['id'] in text and 'Recorded state: uncertain' in text and 'Do not retry or replace' in text
     assert 'untrusted replay' not in text and not effects
+
+    # An opted-in check must still hand the original receipt to the native
+    # provider when the owner or client asks for structured output.
+    checked_call = ('tool_call', args, 'call-A')
+    prompt = f"We lost the acknowledgement for my request {row['id']}. Please check that same request. Did it stop?"
+    structured = turn(prompt + ' I need the result for my log as JSON with receipt_id, state, stopped and next_step.',
+                      [checked_call])
+    for formatted in (structured,
+                      dict(turn(prompt, [checked_call]), response_format={'type': 'json_object'}),
+                      dict(turn(prompt, [checked_call]), extra_body={'response_format': {
+                          'type': 'json_schema', 'json_schema': {'name': 'receipt', 'schema': {'type': 'object'}}}})):
+        formatted['messages'][-1]['content'] = json.dumps(data)
+        forwarded = []
+        def native(request):
+            forwarded.append(request)
+            return 'provider response'
+        assert run_llm_execution_middleware(formatted, native, api_mode='chat_completions',
+                                            model='local', platform='telegram', **ids) == 'provider response'
+        assert forwarded == [formatted]
+        assert json.loads(forwarded[0]['messages'][-1]['content']) == data
+    assert controls.store.get(row['id'])['state'] == 'uncertain' and not effects
     for platform in ('api_server', '', 'external'):
         assert run_llm_execution_middleware(request, lambda _req: 'normal stream', api_mode='chat_completions',
                                             model='local', platform=platform, **ids) == 'normal stream'
@@ -80,6 +101,48 @@ def test_session_turn_call_id_and_actual_tool_bind_receipts(rig):
         assert render('first', 'a') == 'continue normally'
     replies.checked('spark_check_change', args, lambda: proposals.check_tool(args), 'first', 'a', 'other-call')
     assert render('first', 'a') == 'continue normally'
+
+
+@pytest.mark.parametrize(('observed', 'state', 'stopped'), [
+    ('unknown', 'uncertain', None), ('failed', 'failed', None), ('succeeded', 'succeeded', True),
+])
+def test_json_stop_receipt_uses_checked_outcome_on_the_same_request(rig, observed, state, stopped):
+    controls, effects, *_ = rig
+    row = uncertain(controls, action='stop_workload', container='a' * 64)
+    controls.observe = lambda *_: observed
+    controls.result_view = lambda _: 'A separate observation says the workload is running.'
+    replies = RecoveryReplies()
+    args = {'operation': row['id'], 'reply_format': 'stop_receipt_json'}
+    actual = json.loads(replies.checked('spark_check_change', args, lambda: proposals.check_tool(args),
+                                        session_id='owner', turn_id='turn', tool_call_id='read'))
+    expected = {'receipt_id': row['id'], 'state': state, 'stopped': stopped, 'next_step': actual['request']['recovery']['message']}
+    assert actual['change_dispatched'] is False and actual['stop_receipt'] == expected
+    assert json.loads(proposals.check_tool({'operation': row['id']}))['stop_receipt'] == expected
+    prompt = f"We lost the acknowledgement for my request {row['id']}. Check that same request. Did it stop?"
+    fields = ' I need the result for my log as JSON with receipt_id, state, stopped and next_step.'
+    call = ('spark_check_change', args, 'read')
+    def answer(question, platform='telegram', calls=(call,)):
+        return replies.reply(turn(question, calls), lambda: 'native answer', session_id='owner', turn_id='turn',
+                             api_mode='chat_completions', model='local', platform=platform)
+    for platform in ('cli', 'telegram'):
+        assert json.loads(answer(prompt + fields, platform).choices[0].message.content) == expected
+    assert answer(prompt + fields, 'tool') == 'native answer'
+    assert answer(prompt + fields + ' Also tell me what is running now.') == 'native answer'
+    assert answer(prompt + fields.replace('and next_step', 'next_step and hostname')) == 'native answer'
+    assert answer(prompt + fields, calls=(('terminal', {}, 'extra'), call)) == 'native answer'
+    assert not effects and len(controls.recent(Owner('one', 'web'))) == 1
+
+
+def test_checked_receipt_excludes_unavailable_mismatched_and_nonstop_operations(rig, monkeypatch):
+    controls, effects, *_ = rig
+    wake = uncertain(controls)
+    args = {'operation': wake['id'], 'reply_format': 'stop_receipt_json'}
+    assert 'stop_receipt' not in json.loads(proposals.check_tool(args))
+    missing = json.loads(proposals.check_tool(dict(args, operation='f' * 32)))
+    assert missing['available'] is False and 'stop_receipt' not in missing
+    mismatched = {'id': '0' * 32, 'intent': {'action': 'stop_workload'}, 'state': 'succeeded'}
+    monkeypatch.setattr(controls, 'proposal_check', lambda **_: mismatched)
+    assert json.loads(proposals.check_tool(args)) == missing and not effects
 
 
 def test_all_explicit_requests_are_required_and_mixed_work_continues(rig):

@@ -1,7 +1,7 @@
 ---
 name: local-recipe-review
 description: Compare source claims with citations and exact output.
-version: 1.6.4
+version: 1.6.7
 metadata:
   hermes:
     tags: [research, recipes, sources]
@@ -17,6 +17,13 @@ engines or hardware setups from source material.
 
 ## Procedure
 
+For a recommendation with a strict requirement, give the action the owner can
+take now. Try one counterexample to each proposed workaround: what could another
+participant observe if a step fails halfway? Discard an option if that outcome
+breaks the requirement even briefly. Detecting or repairing a violation afterward
+cannot guarantee prevention. When the evidence supports only keeping the current
+state, recommend that and finish with the prerequisite for a different decision.
+
 When the owner asks to measure a model server, open the native
 `one-spark-serving-results` skill before sending a completion request. It covers
 allocated CPU servers and prompt-cache comparisons as well as GPU serving.
@@ -24,11 +31,16 @@ allocated CPU servers and prompt-cache comparisons as well as GPU serving.
 1. Read the relevant original source body with the available native tools. Search
    snippets and titles help locate material; they do not establish its results.
    If the owner supplied sufficient excerpts, use them without an unnecessary search.
-   When the owner links to a specific section of an HTML manual, keep the full
-   URL, including the fragment. To read the linked section in the terminal use
-   `python3 ~/.hermes/skills/local-recipe-review/scripts/read_manual.py 'URL#section' --find 'term'`
-   with a term from the question. Use its section passages. If it cannot locate
-   the section, inspect the saved page before attributing a rule to it.
+   When a decision depends on the behavior of a named option or API, open the
+   publisher's reference for the applicable release even if the owner gave no
+   link. Use a known manual directly, or locate it with native web search using
+   the public project and option names. Keep any supplied or discovered section
+   fragment. For an HTML manual, run
+   `python3 ~/.hermes/skills/local-recipe-review/scripts/read_manual.py 'URL' --find='term'`
+   with the exact option, API or condition. If the excerpts omit a needed
+   qualification, read the returned section's line range in the saved text.
+   When the section is unresolved, locate the named entry in that text. Cite
+   the rule that settles the decision. An unsuccessful lookup leaves it open.
    For a named project option, first check the project's README or official option
    index. Match the full option name in that list before following a variant's own
    guide. If several entries fit the owner's wording, distinguish their settings

@@ -1,7 +1,7 @@
 ---
 name: maintain-sparkie
-version: 1.0.0
-description: Prepare, test and offer a compatible Sparkie application update using an isolated compute workspace and exact owner review.
+version: 1.0.2
+description: Diagnose and repair Sparkie in a private checkout, verify its affected callers, or prepare a compatible application update for exact owner review.
 ---
 
 # Work on Sparkie
@@ -10,6 +10,11 @@ Use the native coding, terminal, files and test tools. Preparing a change is not
 permission to install it. Never use an owner shell, privileged container or a
 manually written approval to replace the app.
 
+If the owner supplied a private development checkout, use that source and start
+at step 2. For a review-only repair, finish that step with the diff, actual test
+results and any checks still outstanding. Preparing an installable update also
+requires the sealed predecessor and steps 3–7.
+
 1. Call `spark_update_source` once to copy the installed sealed application and
    its base interpreter into the current private compute workspace. The tool
    returns the archive hash and exact predecessor manifest identity. Verify the
@@ -17,8 +22,14 @@ manually written approval to replace the app.
    workspace**. This path is backed by the workspace's own storage. It is not the
    host's installation. Never copy the host's home, private configuration, keys,
    conversations, operations, electricity database or model weights.
-2. Copy the baseline's `extension` to a separate working directory under
-   `/workspace`; edit that source. Read its instructions and affected interfaces.
+2. Use the supplied checkout or copy the exported baseline's `extension` to a
+   working directory under `/workspace`. Read its instructions and affected callers.
+   For a bug, reproduce the reported symptom through its normal entry point in
+   that copy. Trace the observation to the failing code before editing. If you
+   cannot distinguish the cause, report what you observed and the smallest check
+   that could settle it. After editing, repeat the reproduction and check a
+   neighboring case that should keep working. Check what each affected caller
+   actually receives. Report a partial repair when any required behavior is missing.
    Use the smallest coherent fix, preserve useful assertions, and run affected
    checks with `tools/checks.py --paths ...`. Record actual results and duration.
    The selector also lists browser, native integration and local behavior checks
