@@ -43,6 +43,13 @@ def selection(paths):
     compute = services = research = power = candidate = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
+        relative = Path(path)
+        is_test = (relative.is_relative_to('tests') and '..' not in relative.parts
+                   and (relative.match('test_*.py') or relative.match('*_test.py'))
+                   and (ROOT / relative).is_file())
+        if is_test:
+            # A changed regression may also belong to a specialized check below.
+            tests.add(relative.relative_to('tests').as_posix())
         if path in ('src/sparkie_sparks/application_updates.py', 'src/sparkie_sparks/update_proposals.py',
                     'deploy/upgrade.py', 'deploy/upgrade_installation.py'):
             tests.update(UPDATES | OPERATIONS | {'test_deployment.py', 'test_installation_paths.py',
@@ -273,8 +280,7 @@ def selection(paths):
         elif path == 'tests/upstream-sessions.json':
             sessions = True
             reasons.append(original + ': maintained upstream session/streaming/restart selection changed')
-        elif path.startswith('tests/test_') and path.endswith('.py') and (ROOT / path).is_file():
-            tests.add(Path(path).name)
+        elif is_test:
             reasons.append(original + ': changed test')
         elif path == 'upstream.lock.json':
             tests.update(DEPLOY)
@@ -315,12 +321,13 @@ def selection(paths):
             compute = research = power = candidate = True
             reasons.append(original + ': impact is not classified; include all extension tests and integration checks')
     if broad:
-        tests = {p.name for p in (ROOT / 'tests').glob('test_*.py')}
         candidate = True
     # Even a small functional change gets the existing native registration/API smoke.
     if tests:
         tests.update(ADAPTERS)
-    return {'python_tests': ['tests/' + name for name in sorted(tests)],
+    # Hand broad collection to pytest so it honors conftest and its discovery configuration.
+    targets = ['tests'] if broad else ['tests/' + name for name in sorted(tests)]
+    return {'python_tests': targets,
             'javascript_syntax': syntax, 'desktop_phone_browser': browser,
             'compact_local_behavior': behavior, 'native_execution_isolation': isolation,
             'native_compute_workspace': compute, 'enrolled_service_lifecycle': services or broad, 'native_research': research,

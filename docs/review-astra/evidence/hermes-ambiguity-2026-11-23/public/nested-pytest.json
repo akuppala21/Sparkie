@@ -1,0 +1,259 @@
+{
+  "scope": "Developer repair checklist. A nonzero pytest result for an intentionally failing item proves that it actually ran.",
+  "baseline_source_sha256": "5b13b0388f7b06c6c93c850cde690525eae3917009169a2b8c6dfa753c5ed7f7",
+  "reference_source_sha256": "a275dc419a02d69222ac27a7d0053b33597a975bcf1188dd27ac71d0629d1b22",
+  "grader_sha256": "c29e1a681e82a0023fbdd5aeea6653579c4e70557ef3f256b6c34d60e8c3c724",
+  "before": {
+    "nested_prefix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "nested_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "suffix_at_root": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "preexisting_behavior_group": {
+      "exit": 0,
+      "broad": false,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "broad": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "broad_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "discovered": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "unrelated": {
+      "exit": 0,
+      "broad": false,
+      "selected": [],
+      "behavior": false,
+      "red_test_executed": false,
+      "met_requirement": true
+    }
+  },
+  "after": {
+    "nested_prefix": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "nested_suffix": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/formatting/render_test.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "suffix_at_root": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/render_test.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "preexisting_behavior_group": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/behavior/test_output.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "broad": {
+      "exit": 1,
+      "broad": true,
+      "selected": [
+        "tests"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "broad_suffix": {
+      "exit": 1,
+      "broad": true,
+      "selected": [
+        "tests"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "discovered": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "unrelated": {
+      "exit": 0,
+      "broad": false,
+      "selected": [],
+      "behavior": false,
+      "red_test_executed": false,
+      "met_requirement": true
+    }
+  },
+  "affected": {
+    "private": {
+      "tests": "48",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "3.437",
+      "junit_sha256": "3064be80add53830a3189fa9a06b88640dbccce042fb249c0bab661abf1a50a1",
+      "selection": {
+        "python_tests": [
+          "tests/test_check_selection.py",
+          "tests/test_energy_integration.py",
+          "tests/test_native_integration.py",
+          "tests/test_preservation_selection.py"
+        ],
+        "javascript_syntax": false,
+        "desktop_phone_browser": false,
+        "compact_local_behavior": false,
+        "native_execution_isolation": false,
+        "native_compute_workspace": false,
+        "enrolled_service_lifecycle": false,
+        "native_research": false,
+        "disposable_workload_stop": false,
+        "private_broker_stop": false,
+        "native_shared_sessions": false,
+        "compute_power_validation": false,
+        "native_candidate": false,
+        "broad_qualification": false,
+        "reasons": [
+          "tests/test_check_selection.py: changed test",
+          "tools/checks.py: changed-path selection regressions and existing registration smoke"
+        ]
+      }
+    },
+    "public": {
+      "tests": "47",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "3.519",
+      "junit_sha256": "2aa187c12e4bd8a4f6e8f715f964f6612dd952dcc5a4843a1fa05a26e7f4d908",
+      "selection": {
+        "python_tests": [
+          "tests/test_check_selection.py",
+          "tests/test_energy_integration.py",
+          "tests/test_native_integration.py",
+          "tests/test_preservation_selection.py"
+        ],
+        "javascript_syntax": false,
+        "desktop_phone_browser": false,
+        "compact_local_behavior": false,
+        "native_execution_isolation": false,
+        "native_compute_workspace": false,
+        "enrolled_service_lifecycle": false,
+        "native_research": false,
+        "disposable_workload_stop": false,
+        "private_broker_stop": false,
+        "native_shared_sessions": false,
+        "compute_power_validation": false,
+        "native_candidate": false,
+        "broad_qualification": false,
+        "reasons": [
+          "tests/test_check_selection.py: changed test",
+          "tools/checks.py: changed-path selection regressions and existing registration smoke"
+        ]
+      }
+    }
+  }
+}

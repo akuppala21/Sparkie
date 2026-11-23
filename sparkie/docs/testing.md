@@ -6,6 +6,12 @@ selection rule or check as working before it is implemented and its result exist
 
 Use the changed-file selector in `sparkie/tools/checks.py` on an enrolled compute worker. The public CPU suite and synthetic data can be exercised offline. Historical private receipts and third-party comparison texts are available only to operators with independent access.
 
+The `python_tests` list contains arguments for pytest. A changed regression is
+selected by its relative path, including tests in subdirectories and both
+standard pytest file names. When impact is unknown, the entry is `tests`.
+Pytest then applies its own recursive collection and project exclusions. Use
+the items collected by pytest for any per-module accounting of that run.
+
 ## Keep the normal loop short
 
 Memory correction feedback includes native memory consumers. It does not select

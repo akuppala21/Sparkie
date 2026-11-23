@@ -23,7 +23,9 @@ def test_unknown_or_deleted_file_never_silently_skips_checks():
     plan = select(['sparkie/src/sparkie_sparks/new_feature.py', 'sparkie/tests/test_deleted.py'])
     assert plan['broad_qualification'] is True
     assert plan['compact_local_behavior'] is True
-    assert 'tests/test_energy.py' in plan['python_tests']
+    # A broad selection hands the full extension test directory to native pytest.
+    assert plan['python_tests'] == ['tests']
+    assert (Path(__file__).resolve().parents[1] / plan['python_tests'][0] / 'test_energy.py').is_file()
 
 
 def test_shared_plugin_change_includes_both_consumers_and_behavior():
@@ -405,3 +407,34 @@ def test_git_discovery_selects_a_repair_in_its_own_checkout(tmp_path, layout):
     paths = {p.removeprefix('sparkie/') for p in paths}
     assert paths == {'skills/reports/assets/old.dat', 'skills/reports/assets/new.bin',
                      'skills/nested/SKILL.md'}, layout
+
+
+def test_nested_regressions_reach_pytest_and_broad_collection_honors_ignores(tmp_path):
+    root = tmp_path / 'extension'
+    (root / 'tools').mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parents[1] / 'tools/checks.py', root / 'tools/checks.py')
+    tests = root / 'tests'
+    component = tests / 'behavior'
+    component.mkdir(parents=True)
+    # Marker files show which items ran even when a different test fails.
+    for name in ('test_native_integration.py', 'test_energy_integration.py',
+                 'test_sandbox_cleanup.py', 'test_energy.py'):
+        (tests / name).write_text(
+            f"from pathlib import Path\ndef test_smoke():\n    Path('{name}.ran').touch()\n")
+    (tests / 'conftest.py').write_text("collect_ignore = ['excluded_test.py']\n")
+    (tests / 'excluded_test.py').write_text("raise RuntimeError('excluded module was imported')\n")
+    (component / 'report_test.py').write_text("def test_red():\n    assert False, 'nested-repro'\n")
+
+    def run(path):
+        return subprocess.run([sys.executable, 'tools/checks.py', '--paths', path, '--run-python'],
+                              cwd=root, text=True, capture_output=True, timeout=30)
+
+    focused = run('tests/behavior/report_test.py')
+    assert focused.returncode == 1 and 'AssertionError: nested-repro' in focused.stdout
+    assert json.JSONDecoder().raw_decode(focused.stdout)[0]['compact_local_behavior']
+    assert not (root / 'test_energy.py.ran').exists()
+
+    broad = run('src/new_feature.py')
+    assert broad.returncode == 1 and 'AssertionError: nested-repro' in broad.stdout
+    assert 'excluded module was imported' not in broad.stdout
+    assert (root / 'test_energy.py.ran').is_file()
