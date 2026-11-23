@@ -72,6 +72,11 @@ allocated CPU servers and prompt-cache comparisons as well as GPU serving.
    If the matching entry supplies the requested values, quote its fields and link
    to it. Stop there unless another part of the question needs more evidence.
    Preserve the source's units; explain an unfamiliar setting only if verified.
+   If you need an NVIDIA Developer Forum post and general search misses it,
+   search the forum directly with public project terms:
+   `python3 ~/.hermes/skills/local-recipe-review/scripts/read_forum.py --search 'public search terms'`.
+   Choose a relevant link and read the post before citing a result. An empty
+   list means this search found no matching posts.
    For NVIDIA Developer Forum topic links, use the native terminal's bundled reader
    first. Run this command exactly with the terminal sandbox's own home path.
    Pass each topic link individually quoted:

@@ -99,3 +99,37 @@ def test_unavailable_or_ambiguous_alternate_cannot_supply_a_result(tmp_path, mon
     with pytest.raises(ValueError, match='exact requested post'):
         reader.save_post('https://forums.developer.nvidia.com/t/20/14', tmp_path)
     assert len(paths) == 2 and not list(tmp_path.iterdir())
+
+
+def test_search_links_to_the_ranked_post_and_joins_its_own_topic_title(monkeypatch):
+    paths = []
+    def fetch(opener, path):
+        paths.append(path)
+        return {
+            'topics': [{'id': 42, 'title': 'Other setup'}, {'id': 20, 'title': 'Benchmarks'}],
+            'posts': [{'topic_id': 20, 'post_number': 14, 'url': 'https://other.tld/'},
+                      {'topic_id': 20, 'post_number': 14}, {'topic_id': 99, 'post_number': 1},
+                      {'topic_id': 42, 'post_number': True}, {'topic_id': 42, 'post_number': 1}],
+        }
+    monkeypatch.setattr(reader, 'read_json', fetch)
+    assert reader.search_posts('  Qwen & MTP  ') == [
+        {'title': 'Benchmarks', 'url': 'https://forums.developer.nvidia.com/t/20/14'},
+        {'title': 'Other setup', 'url': 'https://forums.developer.nvidia.com/t/42/1'}]
+    assert paths == ['/search.json?q=Qwen+%26+MTP']
+
+
+def test_empty_search_and_service_error_are_distinct(monkeypatch):
+    monkeypatch.setattr(reader, 'read_json', lambda *args: {'topics': [], 'posts': []})
+    assert reader.search_posts('no such topic') == []
+    monkeypatch.setattr(reader, 'read_json', lambda *args: {'errors': ['search unavailable'], 'topics': [], 'posts': []})
+    with pytest.raises(ValueError, match='did not return search results'):
+        reader.search_posts('query')
+
+
+@pytest.mark.parametrize('topics', [[{'id': 5, 'title': 'Unrelated'}],
+                                    [{'id': 12, 'title': 'First'}, {'id': 12, 'title': 'Conflicting'}]])
+def test_unidentifiable_hits_are_reported_as_unusable(monkeypatch, topics):
+    monkeypatch.setattr(reader, 'read_json', lambda *args: {
+        'topics': topics, 'posts': [{'topic_id': 12, 'post_number': 14}]})
+    with pytest.raises(ValueError, match='without usable topic links'):
+        reader.search_posts('query')

@@ -1,4 +1,4 @@
-"""Save original Markdown from public NVIDIA Developer Forum post links."""
+"""Locate public NVIDIA Developer Forum posts or save their original Markdown."""
 import argparse
 import json
 from pathlib import Path
@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
 
@@ -38,6 +38,41 @@ def read_json(opener, path):
     if len(payload) > MAX_BYTES:
         raise ValueError('The post exceeds the download limit.')
     return json.loads(payload)
+
+
+def search_posts(query):
+    if not query.strip():
+        raise ValueError('Enter public forum search terms.')
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    data = read_json(opener, '/search.json?' + urlencode({'q': query.strip()}))
+    if (not isinstance(data, dict) or data.get('errors') or not isinstance(data.get('topics'), list)
+            or not isinstance(data.get('posts'), list)):
+        raise ValueError('The forum did not return search results.')
+    titles = {}
+    for topic in data['topics']:
+        if not isinstance(topic, dict) or type(topic.get('id')) is not int:
+            continue
+        topic_id, title = topic['id'], topic.get('title')
+        if isinstance(title, str) and title.strip():
+            # A conflicting topic row cannot identify a reliable title.
+            titles[topic_id] = title if titles.get(topic_id, title) == title else None
+    results = []
+    seen = set()
+    for post in data['posts']:
+        if not isinstance(post, dict):
+            continue
+        topic, number = post.get('topic_id'), post.get('post_number')
+        if type(topic) is not int or type(number) is not int or min(topic, number) < 1:
+            continue
+        if not titles.get(topic) or (topic, number) in seen:
+            continue
+        seen.add((topic, number))
+        results.append({'title': titles[topic], 'url': f'https://{HOST}/t/{topic}/{number}'})
+        if len(results) == 5:
+            break
+    if data['posts'] and not results:
+        raise ValueError('The forum returned posts without usable topic links.')
+    return results
 
 
 def fetch_post(topic, number):
@@ -78,8 +113,18 @@ def save_post(url, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('urls', nargs='+')
+    parser.add_argument('--search', metavar='TERMS', help='List matching post links from the forum.')
+    parser.add_argument('urls', nargs='*')
     args = parser.parse_args()
+    if (args.search is not None) == bool(args.urls):
+        parser.error('Supply post URL(s) or --search TERMS.')
+    if args.search is not None:
+        try:
+            print(json.dumps(search_posts(args.search), ensure_ascii=False))
+            return 0
+        except (ValueError, OSError, URLError) as exc:
+            print(f'Could not search the forum: {exc}', file=sys.stderr)
+            return 1
     failed = False
     for url in args.urls:
         try:
