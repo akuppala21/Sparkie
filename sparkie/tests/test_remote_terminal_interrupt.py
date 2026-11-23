@@ -50,3 +50,40 @@ def test_local_interruption_and_normal_text_stay_distinct(monkeypatch):
     local = finish({'output': '[Command interrupted]', 'returncode': 130, 'hermes_interrupted': True}, 'local')
     assert json.loads(local)['exit_code'] == 130 and is_interrupted_tool_result(local)
     assert not is_interrupted_tool_result(json.dumps({'exit_code': None, 'output':'remote_outcome_unknown'}))
+
+
+@pytest.mark.parametrize(('tool_name', 'body', 'expected_notice'), [
+    ('terminal', {'status':'remote_outcome_unknown', 'exit_code':None, 'error':'unobserved'}, True),
+    ('read_file', {'status':'remote_outcome_unknown', 'exit_code':None, 'error':'unobserved'}, False),
+    ('terminal', {'exit_code':0, 'output':'{"status":"remote_outcome_unknown","exit_code":null}'}, False),
+    ('terminal', {'exit_code':130, 'output':'[Command interrupted]'}, False),
+])
+def test_stopped_display_row_only_exposes_real_remote_terminal_outcome(tool_name, body, expected_notice):
+    from agent.message_sanitization import close_interrupted_tool_sequence
+    from agent.turn_context import substitute_api_content
+    call = {'role':'assistant', 'tool_calls':[{'id':'a','function':{'name':tool_name,'arguments':'{}'}}]}
+    terminal = {'role':'tool','tool_call_id':'a','content':json.dumps(body)}
+    messages = [call, terminal]
+    assert close_interrupted_tool_sequence(messages, stopped=True)
+    row = messages[-1]
+    assert ('remote command may still be running' in row['content']) is expected_notice
+    assert (row.get('display_kind') == 'hidden') is not expected_notice
+    assert row['display_metadata']['interrupted'] is True
+    assert substitute_api_content(row.copy()) == '[interrupt: no assistant output for this turn]'
+
+
+def test_remote_notice_survives_sibling_results_and_preserves_existing_partial_answer():
+    from agent.message_sanitization import close_interrupted_tool_sequence
+    from agent.turn_context import substitute_api_content
+    calls = [{'id':key, 'function':{'name':name, 'arguments':'{}'}} for key,name in [('t','terminal'),('r','read_file')]]
+    original = [{'role':'assistant','tool_calls':calls},
+                {'role':'tool','tool_call_id':'t','content':json.dumps({'status':'remote_outcome_unknown','exit_code':None,'error':'unobserved'})},
+                {'role':'tool','tool_call_id':'r','content':'{}'}]
+    for stopped in [True, False]:
+        messages = list(original)
+        assert close_interrupted_tool_sequence(messages, 'Earlier partial answer.', stopped=stopped)
+        row = messages[-1]
+        assert row['content'].startswith('Earlier partial answer.')
+        assert ('remote command may still be running' in row['content']) is stopped
+        if stopped:
+            assert substitute_api_content(row.copy()) == 'Earlier partial answer.'

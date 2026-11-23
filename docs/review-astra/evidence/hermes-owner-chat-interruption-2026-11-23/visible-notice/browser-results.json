@@ -1,0 +1,96 @@
+[
+  {
+    "case": "stop-desktop",
+    "viewport": "desktop",
+    "stopped": true,
+    "native_stop_rpcs": 1,
+    "notice_first_visible_after_click_ms": 679,
+    "notice_visible_by_phase": {
+      "active": false,
+      "clickDefault": true,
+      "after": true,
+      "reloadDefault": true,
+      "reloadExpanded": true
+    },
+    "durable_tool_exit": null,
+    "notice_persisted_as_display_text": true,
+    "reloaded_notice_viewport_box": {
+      "visible": true,
+      "top": 153,
+      "bottom": 175
+    },
+    "marker_written": true,
+    "first_marker_seconds": 12.29,
+    "synthetic_completion_requests": 1,
+    "inference_requests": 0
+  },
+  {
+    "case": "stop-phone",
+    "viewport": "phone",
+    "stopped": true,
+    "native_stop_rpcs": 1,
+    "notice_first_visible_after_click_ms": 643,
+    "notice_visible_by_phase": {
+      "active": false,
+      "clickDefault": true,
+      "after": true,
+      "reloadDefault": true,
+      "reloadExpanded": true
+    },
+    "durable_tool_exit": null,
+    "notice_persisted_as_display_text": true,
+    "reloaded_notice_viewport_box": {
+      "visible": true,
+      "top": 170,
+      "bottom": 213
+    },
+    "marker_written": true,
+    "first_marker_seconds": 12.09,
+    "synthetic_completion_requests": 1,
+    "inference_requests": 0
+  },
+  {
+    "case": "zero-desktop",
+    "viewport": "desktop",
+    "stopped": false,
+    "native_stop_rpcs": 0,
+    "notice_first_visible_after_click_ms": null,
+    "notice_visible_by_phase": {
+      "active": false,
+      "after": false,
+      "reloadDefault": false,
+      "reloadExpanded": false
+    },
+    "durable_tool_exit": 0,
+    "notice_persisted_as_display_text": false,
+    "reloaded_notice_viewport_box": {
+      "visible": false
+    },
+    "marker_written": true,
+    "first_marker_seconds": 12.06,
+    "synthetic_completion_requests": 2,
+    "inference_requests": 0
+  },
+  {
+    "case": "own130-desktop",
+    "viewport": "desktop",
+    "stopped": false,
+    "native_stop_rpcs": 0,
+    "notice_first_visible_after_click_ms": null,
+    "notice_visible_by_phase": {
+      "active": false,
+      "after": false,
+      "reloadDefault": false,
+      "reloadExpanded": false
+    },
+    "durable_tool_exit": 130,
+    "notice_persisted_as_display_text": false,
+    "reloaded_notice_viewport_box": {
+      "visible": false
+    },
+    "marker_written": true,
+    "first_marker_seconds": 12.15,
+    "synthetic_completion_requests": 2,
+    "inference_requests": 0
+  }
+]

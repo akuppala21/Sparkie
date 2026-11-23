@@ -161,9 +161,11 @@ def selection(paths):
             candidate = compute = research = behavior = True
             reasons.append(original + ': packaged native skill footer and compute workspace paths')
         elif path in ('deploy/patches/hermes-remote-terminal-interrupt.patch',
-                      'deploy/patches/hermes-remote-terminal-interrupt.json', 'tests/test_remote_terminal_interrupt.py'):
+                      'deploy/patches/hermes-remote-terminal-interrupt.json',
+                      'deploy/patches/hermes-remote-terminal-notice.patch',
+                      'deploy/patches/hermes-remote-terminal-notice.json', 'tests/test_remote_terminal_interrupt.py'):
             tests.update({'test_remote_terminal_interrupt.py', 'test_deployment.py', 'test_sandbox_provider.py'})
-            candidate = browser = compute = behavior = True
+            candidate = browser = compute = sessions = behavior = True
             reasons.append(original + ': remote command outcomes, resumed sessions and the native owner view')
         elif path in ('deploy/patches/hermes-attachment-tool-path.patch', 'deploy/patches/hermes-attachment-tool-path.json',
                       'tests/test_attachment_tool_paths.py'):
@@ -274,7 +276,7 @@ def selection(paths):
         elif path.startswith('deploy/'):
             tests.update(DEPLOY)
             if path == 'deploy/candidate.py':
-                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py'})
+                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py', 'test_remote_terminal_interrupt.py'})
             services = True
             if path == 'deploy/stage.py':
                 tests.update(THEME)

@@ -1,0 +1,24 @@
+{
+  "base_manifest": "a6730d4ed5b9108f19dc785a6a7098a3338e7fb3d02d305ff8741f7496ceaf1e",
+  "notice_patch": {
+    "patch_sha256": "b8abe081bd1f86c888e57fdfb8e3a876d49927e06568967965a60898be5d932b",
+    "files": {
+      "agent/message_sanitization.py": {
+        "before_sha256": "fe09bed00c3665c14b663990522e013e311259e860a2bc2cfff8fc924721d444",
+        "after_sha256": "004fd2160b110e943402b6b1f795228e0cf2a427426adaf1f325d949bb402368"
+      }
+    }
+  },
+  "cases": {
+    "terminal_replay_display": {
+      "passed": 10,
+      "seconds": 1.26
+    },
+    "selector": {
+      "passed": 1,
+      "deselected": 44,
+      "seconds": 0.03
+    }
+  },
+  "provider_inference": 0
+}

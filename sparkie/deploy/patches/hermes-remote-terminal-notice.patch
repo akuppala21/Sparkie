@@ -1,0 +1,50 @@
+--- a/agent/message_sanitization.py
++++ b/agent/message_sanitization.py
+@@ -285,6 +285,33 @@
+     return "{}"
+ 
+ 
++def _unconfirmed_terminal_in_tail(messages: list) -> bool:
++    """Match only actual terminal call IDs in the just-completed tool round."""
++    unconfirmed = set()
++    for message in reversed(messages):
++        if not isinstance(message, dict):
++            return False
++        if message.get("role") != "tool":
++            if not unconfirmed or message.get("role") != "assistant":
++                return False
++            return any(isinstance(call, dict) and isinstance(call.get("function"), dict)
++                       and call["function"].get("name") == "terminal"
++                       and (call.get("id") or call.get("call_id")) in unconfirmed
++                       for call in message.get("tool_calls") or [])
++        content = message.get("content")
++        call_id = message.get("tool_call_id")
++        if not isinstance(content, str) or not isinstance(call_id, str) or "remote_outcome_unknown" not in content:
++            continue
++        try:
++            outcome = json.loads(content)
++        except ValueError:
++            continue
++        if (isinstance(outcome, dict) and outcome.get("status") == "remote_outcome_unknown"
++                and "exit_code" in outcome and outcome["exit_code"] is None and outcome.get("error")):
++            unconfirmed.add(call_id)
++    return False
++
++
+ def close_interrupted_tool_sequence(messages: list, final_response: Any = None, *, stopped: bool = False) -> bool:
+     """Append a synthetic assistant turn when an interrupted tail is a tool result: a transcript
+     ending on a raw ``tool`` message makes the next user message land as ``tool → user``, an
+@@ -316,6 +343,13 @@
+         row = {"role": "assistant", "content": stripped}
+     if stopped:
+         row["display_metadata"] = {"interrupted": True}
++        if _unconfirmed_terminal_in_tail(messages):
++            # Use the existing stopped row. Provider replay keeps its original
++            # placeholder or partial response independently of the owner notice.
++            row.setdefault("api_content", row["content"])
++            row.pop("display_kind", None)
++            warning = "The remote command may still be running. Check its workspace before repeating it."
++            row["content"] = (row["content"] + "\n\n" + warning).strip()
+     append_message(messages, row)
+     return True
+ 

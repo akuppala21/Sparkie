@@ -463,3 +463,14 @@ def test_development_interpreter_selects_worker_and_focused_consumers():
     assert plan['native_compute_workspace']
     assert {'tests/test_check_selection.py', 'tests/test_native_integration.py'} <= set(plan['python_tests'])
     assert not plan['broad_qualification'] and not plan['compute_power_validation']
+
+
+def test_remote_stop_changes_select_session_and_packaged_provenance_consumers():
+    for change in ('hermes-remote-terminal-interrupt', 'hermes-remote-terminal-notice'):
+        for extension in ('json', 'patch'):
+            plan = select([f'deploy/patches/{change}.{extension}'])
+            assert {'tests/test_deployment.py', 'tests/test_remote_terminal_interrupt.py'} <= set(plan['python_tests'])
+            assert all(plan[key] for key in ('native_shared_sessions', 'desktop_phone_browser', 'native_compute_workspace', 'native_candidate'))
+    builder_tests = set(select(['deploy/candidate.py'])['python_tests'])
+    assert {'tests/test_native_restore_guard.py', 'tests/test_skill_terminal_paths.py',
+            'tests/test_attachment_tool_paths.py', 'tests/test_remote_terminal_interrupt.py'} <= builder_tests
