@@ -421,3 +421,47 @@ def test_malformed_xhtml_is_refused_without_current_passages(monkeypatch, tmp_pa
     with pytest.raises(reader.ManualError, match="well-formed XHTML"):
         linked_page(raw, "desk", "19:00", monkeypatch, tmp_path, "application/xhtml+xml")
     assert not (tmp_path / "passages.txt").exists()
+
+
+@pytest.mark.parametrize("markup", [
+    "<br hidden>",
+    '<span aria-hidden="true"><br></span>',
+    '<span hidden>earlier value<br>19:00</span>',
+])
+def test_hidden_break_does_not_split_a_visible_value(markup, monkeypatch, tmp_path):
+    raw = f'<section id="desk"><p>The cutoff is 16{markup}:30.<br>Next line.</p></section>'
+    result = linked_page(raw, "desk", "16:30", monkeypatch, tmp_path)
+    assert Path(result["text"]).read_text().splitlines() == ["The cutoff is 16:30.", "Next line."]
+    assert result["matches"][0]["hits"] == 1
+    assert Path(result["original"]).read_text() == raw
+
+
+@pytest.mark.parametrize("element", [
+    '<div hidden><p>Old</p><pre>example</pre></div>',
+    '<section aria-hidden="TRUE"><ul><li>Old</li></ul></section>',
+    '<script type="application/json">{"value": 17}</script><template><p>Old</p></template>',
+])
+def test_excluded_subtree_preserves_visible_identifier_and_anchor(element, monkeypatch, tmp_path):
+    raw = f'<div id="key">Choose AB{element}29.</div><p id="other">Later.</p>'
+    result = linked_page(raw, "key", "AB29", monkeypatch, tmp_path)
+    assert Path(result["text"]).read_text().splitlines() == ["Choose AB29.", "Later."]
+    hit, = result["matches"][0]["passages"]
+    assert hit["anchor"] == "key" and hit["context_lines"] == [1, 1]
+    assert result["section"]["line_ranges"] == [[1, 1]]
+
+
+def test_hidden_sibling_closes_a_visible_implied_paragraph():
+    doc = reader.Manual()
+    doc.feed('<div><p id="first">First<div hidden>Old</div>Second</div>')
+    assert doc.lines == [("first", "First"), ("", "Second")]
+
+
+@pytest.mark.parametrize("xhtml", [True, False])
+def test_opaque_illustration_cannot_join_two_visible_numbers(xhtml, monkeypatch, tmp_path):
+    graphic = '<svg xmlns="http://www.w3.org/2000/svg"><text>figure</text></svg>'
+    body = '<p id="limits">12' + graphic + '34</p>'
+    raw = '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + body + '</body></html>' if xhtml else body
+    media = "application/xhtml+xml" if xhtml else "text/html"
+    result = linked_page(raw, "limits", "1234", monkeypatch, tmp_path, media)
+    assert result["matches"][0]["hits"] == 0
+    assert Path(result["text"]).read_text().splitlines() == ["12", "34"]

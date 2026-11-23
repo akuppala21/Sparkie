@@ -26,7 +26,8 @@ class Manual(HTMLParser):
     """Keep visible text blocks and the nearest enclosing block's HTML anchor."""
 
     boundaries = set("p div section article h1 h2 h3 h4 h5 h6 li dt dd pre table thead tbody tfoot tr br".split())
-    ignored = set("head nav aside footer script style noscript svg template".split())
+    omitted_boundaries = {"aside", "footer", "nav", "noscript", "svg", "#foreign"}
+    ignored = omitted_boundaries | {"head", "script", "style", "template"}
     headings = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
     section_tags = {"div", "section", "article", "pre", "li", "dt", "dd", "p", "table", "tr"}
     closes_paragraph = set(("address article aside blockquote details div dl fieldset figcaption figure footer form "
@@ -97,11 +98,12 @@ class Manual(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        explicitly_hidden = "hidden" in attrs or (attrs.get("aria-hidden") or "").lower() == "true"
         # A deleted subtree cannot end a current line, row or list item.
         # Keep its structural tags out of the visible document's stack.
         if self.withdrawn_tags or tag in {"del", "s", "strike"}:
             if (not self.withdrawn_tags and not (self.stack and self.stack[-1][2])
-                    and "hidden" not in attrs and attrs.get("aria-hidden") != "true"):
+                    and not explicitly_hidden):
                 self.has_withdrawals = True
             if self.fragment and attrs.get("id") == self.fragment:
                 self.fragment_count += 1
@@ -110,27 +112,24 @@ class Manual(HTMLParser):
                     raise ManualError("The manual exceeds the supported HTML nesting depth.")
                 self.withdrawn_tags.append(tag)
             return
-        if self.pre_depth is None and (tag in self.boundaries or tag in self.ignored):
-            self.flush()
         if self.pre_depth is None and tag in self.table_parents:
             # HTML permits these end tags to be omitted. Keep each sibling in its
             # own row or group, including when the previous cell was hidden.
             for i in range(len(self.stack) - 1, -1, -1):
                 open_tag = self.stack[i][0]
                 if open_tag in self.table_parents[tag]:
-                    self.pop_elements(i + 1)
+                    self.pop_elements(i + 1, finish_block=tag not in {"th", "td"})
                     break
                 if open_tag == "table" or open_tag in self.ignored:
                     break
-        if self.fragment and tag in self.closes_paragraph:
+        if self.pre_depth is None and tag in self.closes_paragraph:
             # HTML closes an open p before these block starts, even without </p>.
             for i in range(len(self.stack) - 1, -1, -1):
                 open_tag = self.stack[i][0]
                 if open_tag in self.paragraph_scope:
                     break
                 if open_tag == "p":
-                    self.flush()
-                    self.pop_elements(i)
+                    self.pop_elements(i, finish_block=True)
                     break
         if tag in {"li", "dt", "dd"}:
             # HTML permits omitted ends before a sibling item. Nested lists
@@ -141,10 +140,14 @@ class Manual(HTMLParser):
                 if open_tag in self.list_scope_boundaries:
                     break
                 if open_tag in items:
-                    self.pop_elements(index)
+                    self.pop_elements(index, finish_block=True)
                     break
-        hidden = ((bool(self.stack) and self.stack[-1][2]) or tag in self.ignored
-                  or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+        suppressed = explicitly_hidden or (bool(self.stack) and self.stack[-1][2])
+        hidden = suppressed or tag in self.ignored
+        # Structural HTML can close a visible sibling even when the new element
+        # is hidden. Only rendered content should introduce a new layout break.
+        if self.pre_depth is None and not suppressed and (tag in self.boundaries or tag in self.omitted_boundaries):
+            self.flush()
         if self.pre_depth is not None and not hidden and tag in self.boundaries and tag != "br":
             self.code_line_break()
         parent = self.stack[-1] if self.stack else None
@@ -187,7 +190,7 @@ class Manual(HTMLParser):
             if (tag in self.boundaries and 0 < len(element_id) <= 200 and element_id.isprintable()
                     and not any(c.isspace() for c in element_id)):
                 anchor = element_id
-            if tag == "pre" and self.pre_depth is None:
+            if tag == "pre" and self.pre_depth is None and not hidden:
                 self.pre_depth = len(self.stack)
             self.stack.append((tag, anchor, hidden, selected))
         elif tag == "br" and not hidden:
@@ -202,7 +205,9 @@ class Manual(HTMLParser):
                     value = span if re.fullmatch(r"[0-9]{1,5}", span) else "?"
                     self.parts.append(f"[{name}={value}] ")
 
-    def pop_elements(self, index):
+    def pop_elements(self, index, *, finish_block=False):
+        if finish_block and self.pre_depth is None and any(not item[2] for item in self.stack[index:]):
+            self.flush()
         if self.heading_level and index <= self.heading_parent_depth:
             self.heading_level = 0
         del self.stack[index:]
@@ -222,7 +227,7 @@ class Manual(HTMLParser):
                         self.pre_depth = None
                     elif tag in self.boundaries and not self.stack[i][2]:
                         self.code_line_break()
-                elif tag in self.boundaries or tag in self.ignored or tag in self.list_containers:
+                elif not self.stack[i][2] and (tag in self.boundaries or tag in self.list_containers):
                     self.flush()
                 self.pop_elements(i)
                 break
@@ -240,7 +245,7 @@ def read_xhtml(manual, page):
 
     def tag_for(name):
         # A foreign element is an opaque subtree, e.g. an embedded SVG graphic.
-        return name.removeprefix(namespace) if name.startswith(namespace) else "template"
+        return name.removeprefix(namespace) if name.startswith(namespace) else "#foreign"
 
     def start(name, attrs):
         nonlocal depth
