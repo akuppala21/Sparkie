@@ -134,3 +134,13 @@ systemd job must settle before reconciliation can report an outcome. Use
 owner check. If reconciling reports an unverified restoration start or unit
 drift, inspect the unit and journal jointly before sending another systemd
 command. Preserve both model records, caches and Hermes state.
+
+Rollback follows the recorded switch even when systemd has automatically restarted
+its replacement. A different container or an in-progress start must have a verified
+systemd restart history from the recorded invocation. A manual replacement, a later
+switch, or missing restart evidence cannot authorize stopping that instance.
+An interrupted rollback retains and rechecks its target before continuing.
+This check does not grant owner approval or change the operator-only switch path.
+The November 23 regression ran on Spark 2: 36 CPU checks passed in 2.21 seconds,
+and real events from a disposable systemd user service exercised restart matching.
+That is separate from a production-systemd model handover or a live Spark 1 update.

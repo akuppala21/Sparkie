@@ -20,10 +20,12 @@ def rig(tmp_path, monkeypatch):
     previous = switch.Recipe(ROOT / 'models/main-model.json', tmp_path, tmp_path, 1000, b'old-unit')
     replacement = switch.Recipe(ROOT / 'models/alternate-model.json', tmp_path, tmp_path, 1000, b'new-unit')
 
-    class FakeHost:
+    class FakeHost(switch.Host):
         def __init__(self):
             self.recipe = previous
             self.container = '1' * 64
+            self.invocation = 'a' * 32
+            self.restarts = 0
             self.starting = self.stale = False
             self.pending_start = self.lose_reply = self.rate_limited = False
             self.fail_replacement = self.crash_after_stop = False
@@ -33,7 +35,9 @@ def rig(tmp_path, monkeypatch):
         def observe(self, old, new, *, abort_start=False):
             if self.starting and not abort_start:
                 raise RuntimeError('The previous systemd request is still pending.')
-            return switch.Observed(self.recipe, self.container, self.stale, self.starting)
+            live = self.container or self.starting
+            return switch.Observed(self.recipe, self.container, self.stale, self.starting,
+                                   self.invocation if live else '', self.restarts if live else 0)
 
         def ready(self, recipe):
             assert self.container and self.recipe == recipe and not self.starting
@@ -151,6 +155,50 @@ def test_successful_switch_can_roll_back_only_the_observed_replacement(rig):
     assert host.started == [replacement, previous]
 
 
+@pytest.mark.parametrize('missing_event', [False, True])
+@pytest.mark.parametrize('before_container', [False, True])
+def test_rollback_traces_systemd_restarts_to_the_recorded_invocation(rig, monkeypatch, missing_event, before_container):
+    import json
+    _, _, host, previous, _, _, invoke = rig
+    assert invoke('switch') == 'replacement-ready'
+    host.container, host.invocation, host.restarts = 'f' * 64, 'c' * 32, 2
+    if before_container:
+        host.container, host.starting = None, True
+    start, restart = '7d4958e842da4a758f6c1cdc7b36dcc5', '5eb03494b6584870a536b337290809b3'
+    events = [(restart, 'a'), (start, 'b'), (restart, 'b'), (start, 'c')]
+    if missing_event:
+        events[2] = (start, 'd')  # A later manual start breaks the chain.
+
+    def read_journal(argv, **kwargs):
+        assert '_PID=1' in argv and 'UNIT=sparkie-main-brain.service' in argv and '--boot=0' in argv
+        assert '--lines=4' in argv and 'MESSAGE_ID=' + start in argv and 'MESSAGE_ID=' + restart in argv
+        return subprocess.CompletedProcess(argv, 0, '\n'.join(
+            json.dumps({'MESSAGE_ID': event, 'INVOCATION_ID': identity * 32}) for event, identity in events))
+
+    monkeypatch.setattr(subprocess, 'run', read_journal)
+    if missing_event:
+        with pytest.raises(RuntimeError, match='replacement changed'):
+            invoke('rollback')
+        assert host.calls.count('stop') == 1
+    else:
+        assert invoke('rollback') == 'previous-model-restored'
+        assert host.started[-1] == previous
+
+
+@pytest.mark.parametrize('has_container', [False, True])
+def test_historical_rollback_cannot_target_a_later_operation_using_the_same_recipe(rig, has_container):
+    switch, _, host, previous, replacement, _, invoke = rig
+    assert invoke('switch') == 'replacement-ready'
+    assert switch.execute('switch', 'brain-002', 'b' * 64, replacement, previous, host) == 'replacement-ready'
+    assert invoke('switch', name='brain-003') == 'replacement-ready'
+    if not has_container:
+        host.container = None
+    calls = list(host.calls)
+    with pytest.raises(RuntimeError, match='later or ambiguous'):
+        invoke('rollback')
+    assert host.calls == calls
+
+
 def test_bad_replacement_preflight_has_no_live_effect(rig, monkeypatch):
     switch, directory, host, _, replacement, _, invoke = rig
 
@@ -172,7 +220,7 @@ def test_observation_refuses_unreviewed_unit_and_queued_jobs(rig, tmp_path, monk
     monkeypatch.setattr(switch, 'UNIT_PATH', unit)
     host = switch.Host()
     state = {'FragmentPath': str(unit), 'DropInPaths': '', 'NeedDaemonReload': 'no',
-             'ActiveState': 'activating', 'Job': '42'}
+             'ActiveState': 'activating', 'Job': '42', 'InvocationID': 'b' * 32, 'NRestarts': '3'}
     monkeypatch.setattr(host, 'systemctl', lambda *args: '\n'.join(f'{k}={v}' for k, v in state.items()))
     monkeypatch.setattr(switch.model_unit, 'inspect_container', lambda *args, **kwargs: None)
     with pytest.raises(RuntimeError, match='unsettled'):
@@ -180,7 +228,8 @@ def test_observation_refuses_unreviewed_unit_and_queued_jobs(rig, tmp_path, monk
     unit.write_bytes(replacement.unit)
     with pytest.raises(RuntimeError, match='unsettled'):
         host.observe(previous, replacement)
-    assert host.observe(previous, replacement, abort_start=True).starting
+    assert host.observe(previous, replacement, abort_start=True) == switch.Observed(
+        replacement, starting=True, invocation='b' * 32, restarts=3)
     state['DropInPaths'] = '/etc/systemd/system/unknown.conf'
     with pytest.raises(RuntimeError, match='loaded definition'):
         host.observe(previous, replacement, abort_start=True)
@@ -221,6 +270,41 @@ def test_approved_rollback_recovers_a_ready_model_that_has_since_crashed(rig, pe
     assert invoke('rollback') == 'previous-model-restored'
     assert host.started == [replacement, previous]
     assert host.calls.count('stop') == (2 if pending_restart else 1)
+
+
+def test_rollback_refuses_a_manual_start_before_docker_creates_the_container(rig):
+    _, _, host, _, _, _, invoke = rig
+    assert invoke('switch') == 'replacement-ready'
+    host.starting, host.container, host.invocation = True, None, 'f' * 32
+    calls = list(host.calls)
+    with pytest.raises(RuntimeError, match='replacement changed'):
+        invoke('rollback')
+    assert host.calls == calls
+
+
+def test_interrupted_rollback_rechecks_the_exact_target_before_stopping_it(rig, monkeypatch):
+    switch, directory, host, previous, _, _, invoke = rig
+    assert invoke('switch') == 'replacement-ready'
+    original = host.container
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as during_stop:
+        during_stop.setattr(host, 'stop', interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            invoke('rollback')
+    journal = switch.Journal(directory / 'brain-001')
+    assert journal.data['state'] == 'restoring'
+    assert journal.data['rollback_target']['container_id'] == original
+    host.container, host.invocation = 'f' * 64, 'e' * 32
+    calls = list(host.calls)
+    with pytest.raises(RuntimeError, match='replacement changed'):
+        invoke('reconcile')
+    assert host.calls == calls
+    host.container = None  # Independently observed stopped. Restore the predecessor.
+    assert invoke('reconcile') == 'previous-model-restored'
+    assert host.started[-1] == previous
 
 
 @pytest.mark.parametrize('loaded', [False, True])

@@ -88,6 +88,8 @@ class Observed:
     container: str | None = None
     stale: bool = False
     starting: bool = False
+    invocation: str = ''
+    restarts: int = 0
 
 
 class Host:
@@ -107,7 +109,7 @@ class Host:
         if recipe is None:
             raise RuntimeError('The installed brain unit differs from both reviewed recipes.')
         state = dict(line.split('=', 1) for line in self.systemctl(
-            'show', UNIT, '--all', '--property=FragmentPath,DropInPaths,NeedDaemonReload,ActiveState,Job').splitlines()
+            'show', UNIT, '--all', '--property=FragmentPath,DropInPaths,NeedDaemonReload,ActiveState,Job,InvocationID,NRestarts').splitlines()
                      if '=' in line)
         active = state.get('ActiveState')
         stale = state.get('NeedDaemonReload')
@@ -121,12 +123,40 @@ class Host:
         if row is None:
             if active == 'active':
                 raise RuntimeError('The active brain has no matching container.')
-            return Observed(recipe, stale=stale == 'yes', starting=starting)
+            return Observed(recipe, stale=stale == 'yes', starting=starting,
+                            invocation=state.get('InvocationID', '') if starting else '',
+                            restarts=int(state.get('NRestarts', 0)) if starting else 0)
         model_unit.require_identity(row, recipe.record, model_unit.selected(recipe.record))
         if (not (active == 'active' and row['State']['Running'] or starting)
                 or not re.fullmatch('[a-f0-9]{64}', row.get('Id', ''))):
             raise RuntimeError('The reviewed brain container and service state disagree.')
-        return Observed(recipe, row['Id'], starting=starting)
+        return Observed(recipe, row['Id'], starting=starting, invocation=state.get('InvocationID', ''),
+                        restarts=int(state.get('NRestarts', 0)))
+
+    def automatic_restart(self, target, observed):
+        # A manual start also changes the invocation ID. Require every intervening
+        # start to follow PID 1 scheduling the prior invocation's automatic restart.
+        invocation = target.get('invocation', '')
+        count = observed.restarts - target.get('restarts', 0)
+        if count <= 0 or not all(re.fullmatch('[0-9a-f]{32}', value) for value in (invocation, observed.invocation)):
+            return False
+        restart = '5eb03494b6584870a536b337290809b3'
+        start = '7d4958e842da4a758f6c1cdc7b36dcc5'
+        result = subprocess.run(['/usr/bin/journalctl', '--boot=0', '--quiet', '--output=json',
+                                 '--output-fields=MESSAGE_ID,INVOCATION_ID', '--lines=' + str(2 * count),
+                                 '_PID=1', 'UNIT=' + UNIT, 'MESSAGE_ID=' + restart, 'MESSAGE_ID=' + start],
+                                capture_output=True, text=True, check=True, timeout=10)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        if len(events) != 2 * count:
+            return False
+        for scheduled, started in zip(events[::2], events[1::2]):
+            if (scheduled.get('MESSAGE_ID') != restart or scheduled.get('INVOCATION_ID') != invocation
+                    or started.get('MESSAGE_ID') != start):
+                return False
+            invocation = started.get('INVOCATION_ID', '')
+            if not re.fullmatch('[0-9a-f]{32}', invocation):
+                return False
+        return invocation == observed.invocation
 
     def ready(self, recipe):
         model_unit.wait_ready(recipe.record, timeout=12)
@@ -177,10 +207,24 @@ def mark(journal, state, identifier):
     return state
 
 
-def settle(journal, previous, replacement, host, *, rollback=False):
+def require_rollback_target(target, observed, host):
+    if not observed.container and not observed.starting:
+        return  # Nothing is running or scheduled to stop.
+    invocation = target.get('invocation')
+    same_invocation = bool(invocation and invocation == observed.invocation)
+    if observed.container and target.get('container_id'):
+        if observed.container == target['container_id'] and (same_invocation or not invocation):
+            return  # Older journals record only the original container ID.
+    elif same_invocation:
+        return  # The verified start can be observed before Docker creates its container.
+    if not host.automatic_restart(target, observed):
+        raise RuntimeError('The exact running replacement changed after this operation.')
+
+
+def settle(journal, previous, replacement, host, *, rollback=False, reviewed=None):
     """Observe an uncertain result. Only restore the predecessor when recovery needs a mutation."""
     abort = rollback or journal.data.get('replacement_start_refused') or journal.data['state'] == 'restoring'
-    observed = host.observe(previous, replacement, abort_start=abort)
+    observed = reviewed or host.observe(previous, replacement, abort_start=abort)
     if (observed.recipe == replacement and observed.container and not observed.starting
             and not rollback and journal.data['state'] == 'switching'):
         try:
@@ -190,6 +234,7 @@ def settle(journal, previous, replacement, host, *, rollback=False):
         else:
             if host.observe(previous, replacement) != observed:
                 raise RuntimeError('The replacement changed during its readiness check.')
+            journal.data.update(invocation=observed.invocation, restarts=observed.restarts)
             return mark(journal, 'replacement-ready', observed.container)
     if observed.recipe == previous and observed.container:
         host.ready(previous)
@@ -198,6 +243,14 @@ def settle(journal, previous, replacement, host, *, rollback=False):
         return mark(journal, 'previous-model-restored', observed.container)
 
     previous.verify_artifacts()
+    if observed.recipe == replacement:
+        if reviewed is not None or journal.data['state'] == 'restoring':
+            require_rollback_target(journal.data.get('rollback_target', journal.data), observed, host)
+        if host.observe(previous, replacement, abort_start=True) != observed:
+            raise RuntimeError('The exact running replacement changed during rollback preflight.')
+        # Persist this identity together with restoring, before the first stop can be dispatched.
+        journal.data['rollback_target'] = {'container_id': observed.container, 'invocation': observed.invocation,
+                                           'restarts': observed.restarts}
     journal.data['state'] = 'restoring'
     journal.save()
     if observed.container or observed.starting:
@@ -226,12 +279,12 @@ def settle(journal, previous, replacement, host, *, rollback=False):
     return mark(journal, 'previous-model-restored', observed.container)
 
 
-def begin(directory, plan_hash, previous, replacement, identifier):
+def begin(directory, plan_hash, previous, replacement, identifier, generation):
     # A crash during journal creation can leave only a hidden temporary directory. No service
     # effect is dispatched until the complete journal and its directory entry are durable.
     with tempfile.TemporaryDirectory(dir=directory.parent, prefix='.brain-switch-') as staging:
         journal = Journal(Path(staging) / directory.name, plan_hash=plan_hash)
-        journal.data.update(kind='brain-switch', state='switching', previous_container_id=identifier,
+        journal.data.update(kind='brain-switch', state='switching', generation=generation, previous_container_id=identifier,
                             previous_unit_sha256=previous.unit_hash, replacement_unit_sha256=replacement.unit_hash)
         journal.save()
         os.replace(journal.directory, directory)
@@ -243,7 +296,7 @@ def begin(directory, plan_hash, previous, replacement, identifier):
     return Journal(directory)
 
 
-def switch(directory, plan_hash, previous, replacement, host):
+def switch(directory, plan_hash, previous, replacement, host, generation):
     observed = host.observe(previous, replacement)
     if observed.recipe != previous or not observed.container:
         raise RuntimeError('The reviewed predecessor must be running before the switch.')
@@ -252,7 +305,7 @@ def switch(directory, plan_hash, previous, replacement, host):
     replacement.verify_artifacts()
     if host.observe(previous, replacement) != observed:
         raise RuntimeError('The running predecessor changed during preflight.')
-    journal = begin(directory, plan_hash, previous, replacement, observed.container)
+    journal = begin(directory, plan_hash, previous, replacement, observed.container, generation)
     try:
         journal.step('stop-exact-previous-brain', host.stop)
         if host.observe(previous, replacement) != Observed(previous):
@@ -279,10 +332,12 @@ def execute(action, operation_id, plan_hash, previous, replacement, host):
     fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'r+b') as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
+        other_generations = []
         for other in OPERATIONS.glob('brain-*'):
             if other == directory:
                 continue
             entry = Journal(other)
+            other_generations.append(entry.data.get('generation', 0))
             if entry.data.get('state') not in FINISHED:
                 raise RuntimeError('Reconcile the prior brain operation before dispatching any new one.')
         if directory.exists() or directory.is_symlink():
@@ -296,15 +351,19 @@ def execute(action, operation_id, plan_hash, previous, replacement, host):
                 return state  # Repeat delivery never sends the stop/start sequence again.
             if state == 'previous-model-restored' or (state == 'replacement-ready' and action == 'reconcile'):
                 return state
+            reviewed = None
             if state == 'replacement-ready':
                 observed = host.observe(previous, replacement, abort_start=True)
-                if (observed.recipe != replacement
-                        or observed.container not in (None, journal.data.get('container_id'))):
+                generation = journal.data.get('generation', 0)
+                if any(other > generation or other == generation and not observed.container for other in other_generations):
+                    raise RuntimeError('A later or ambiguous brain operation prevents rollback of this one.')
+                if observed.recipe != replacement:
                     raise RuntimeError('The exact running replacement changed after this operation.')
-            return settle(journal, previous, replacement, host, rollback=(action == 'rollback'))
+                reviewed = observed
+            return settle(journal, previous, replacement, host, rollback=(action == 'rollback'), reviewed=reviewed)
         if action != 'switch':
             raise ValueError('No recorded brain operation to reconcile.')
-        return switch(directory, plan_hash, previous, replacement, host)
+        return switch(directory, plan_hash, previous, replacement, host, max(other_generations, default=0) + 1)
 
 
 def main():
