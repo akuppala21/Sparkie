@@ -1,0 +1,55 @@
+{
+  "date_utc": "2026-11-23",
+  "host": "Spark 2",
+  "release": "20261123-ownerstop2",
+  "manifest_sha256": "0b1621a80c14533484f39abcaa8a8bd1704191e91f5d6d1d24876fe443588b9e",
+  "worker_image_id": "sha256:c268cfef5714cf58129c5b55b1da3871847a097f6f4e2a95e28546e099819414",
+  "working_skill_version": "1.0.6",
+  "working_skill_sha256": "7aba954ff6f7aae4d30e3d964621f75445b4354c6533848221beab64498471be",
+  "working_browser_helper_sha256": "9355b93d6d2a58a7a51ab7850024b7937a0ffa0f480a843cfdb30164fd6e9334",
+  "worker": {
+    "uid": 12001,
+    "cpus": 1,
+    "memory_limit_gib": 2,
+    "network": "none",
+    "read_only_root_and_release": true,
+    "capabilities_dropped": "ALL",
+    "docker_socket_available": false,
+    "node_version": "v26.13.1",
+    "chromium_headless_shell_directory": "chromium_headless_shell-1255"
+  },
+  "cold_browser": {
+    "started": false,
+    "output_directory_created": false,
+    "diagnostic": "Desktop/phone check unavailable: needs playwright-core@1.58.2 in tests/browser/node_modules or /home/sandbox/.cache/sparkie/browser/node_modules."
+  },
+  "preparation": {
+    "python": "Preseeded the private uv cache with the previously prepared wheel cache and set UV_OFFLINE=1.",
+    "browser": "Copied a previously installed playwright-core@1.58.2 into the private worker home. The helper checked the resolved package version before launching Chromium."
+  },
+  "native_skill_view_matched_working_file": true,
+  "javascript_syntax_passed": ["tests/browser/sparks.mjs", "plugin/dashboard/index.js"],
+  "affected_python": {"passed": 112, "pytest_elapsed_seconds": 1.82},
+  "desktop_phone_browser": {
+    "passed": true,
+    "checks": [
+      "Anonymous fleet and energy requests refused",
+      "Day, ISO week, month and year use recorded history for each period",
+      "Historical estimates update locally and preserve selected rate across periods",
+      "Preset estimates price recorded periods without writes",
+      "Native login reaches the Sparks tab",
+      "Authenticated fleet and electricity APIs return observations",
+      "Historical month changes the measured total",
+      "Physical network view reports link state and speed",
+      "Workload details open and supporting services are grouped separately",
+      "Phone custom rate updates with six-decimal precision and no writes",
+      "Desktop and phone open the read-only Recipes page",
+      "Phone layout fits at 390 pixels and refresh and month selection work"
+    ],
+    "independent_checkout_only_javascript_marker_seen_in_page": true,
+    "screenshots_generated_in_disposable_workspace": ["desktop.png", "phone-workload.png", "phone.png"]
+  },
+  "worker_exit_code": 0,
+  "model_calls": 0,
+  "full_release_qualification": false
+}

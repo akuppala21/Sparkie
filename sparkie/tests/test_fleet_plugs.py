@@ -65,3 +65,26 @@ def test_missing_device_measurement_is_not_a_new_wall_reading():
     assert len(calls) == 1
     assert result['sparks'][0]['state'] == 'unreachable'
     assert 'wall' not in result['sparks'][0]
+
+
+def test_powered_plug_and_failed_management_check_are_reported_separately(tmp_path):
+    from types import SimpleNamespace
+    calls = []
+    def unavailable(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=255, stdout='')
+
+    plug = {'id': 'spark2', 'available': True, 'on': True, 'watts': 43.1,
+            'observed_at': NOW.isoformat(), 'source': 'Matter device read'}
+    path = tmp_path / 'fleet.json'
+    write_snapshot(path, collect([NODE], runner=unavailable, clock=lambda: NOW, plug_readings=[plug]))
+    row = read_status(path=path, now=NOW)['sparks'][0]
+    assert len(calls) == 1
+    assert row['observed_state'] == 'unreachable' and row['workloads'] is None
+    assert row['wall']['on'] is True and row['wall']['watts'] == 43.1
+    assert 'plug reported power on' in row['issue'] and 'could not verify' in row['issue']
+
+    # A controller cache is a different source from a physical device read.
+    cached_plug = dict(plug, source='Matter controller report')
+    write_snapshot(path, collect([NODE], runner=unavailable, clock=lambda: NOW, plug_readings=[cached_plug]))
+    assert 'issue' not in read_status(path=path, now=NOW)['sparks'][0]

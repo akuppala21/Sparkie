@@ -1,6 +1,6 @@
 ---
 name: maintain-sparkie
-version: 1.0.3
+version: 1.0.6
 description: Diagnose and repair Sparkie in a private checkout, verify its affected callers, or prepare a compatible application update for exact owner review.
 ---
 
@@ -17,27 +17,47 @@ requires the sealed predecessor and steps 3–7.
 
 1. Call `spark_update_source` once to copy the installed sealed application and
    its base interpreter into the current private compute workspace. The tool
-   returns the archive hash and exact predecessor manifest identity. Verify the
-   archive hash, then extract its build inputs into `/opt/sparkie` **inside that
-   workspace**. This path is backed by the workspace's own storage. It is not the
+   returns the archive hash, predecessor manifest identity and absolute `baseline`
+   path. Verify the archive hash, then extract its build inputs into
+   `/opt/sparkie` **inside that workspace**. This path is backed by the workspace's own storage. It is not the
    host's installation. Never copy the host's home, private configuration, keys,
    conversations, operations, electricity database or model weights.
 2. Use the supplied checkout or copy the exported baseline's `extension` to a
    working directory under `/workspace`. Read its instructions and affected callers.
    For a bug, reproduce the reported symptom through its normal entry point in
-   that copy. Trace the observation to the failing code before editing. If you
-   cannot distinguish the cause, report what you observed and the smallest check
-   that could settle it. After editing, repeat the reproduction and check a
-   neighboring case that should keep working. Check what each affected caller
-   actually receives. Report a partial repair when any required behavior is missing.
-   Use the smallest coherent fix, preserve useful assertions, and run affected
-   checks. From the extension root, `python3 tools/checks.py --paths <changed paths>
-   --run-python` prints the plan and runs its Python tests. It lists other
-   required checks separately. A plan alone is not a test result.
+   that copy. Trace the symptom to its producer and inspect how callers use the
+   result. Use their contract to identify other inputs or entry points that
+   should behave alike and a nearby case that should still behave differently.
+   After the smallest coherent fix, replay the original failure and exercise
+   those cases through the affected callers. Preserve existing assertions and
+   add a focused regression for behavior they missed. If the cause or scope
+   remains uncertain, say which observation could settle it.
+   From an exported extension checkout, set `baseline` to the exact path returned
+   in step 1. Substitute the changed paths in this command.
+
+   ```sh
+   bash tools/dev-python.sh "$baseline" tools/checks.py --paths path/to/changed.py --run-python
+   ```
+
+   The helper uses the pinned Hermes
+   runtime and development tools. For a supplied, preconfigured checkout, use
+   its development Python with the same selector arguments. Read the test
+   runner's actual results and the selector's separately listed checks.
+   For the Sparks panel or electricity UI, use the exported baseline when
+   available and a fresh output directory.
+
+   ```sh
+   python3 tests/browser/run_sparks.py "$baseline" /workspace/sparks-browser-results
+   ```
+
+   The check uses the checkout, an isolated native dashboard and desktop and
+   phone viewports. If a browser dependency is unavailable, report the named
+   dependency with the completed checks and reviewable diff.
 
    For a review-only repair, inspect the final diff and send the owner the result
    as soon as the reproduction and affected checks have outcomes. Include the
-   observed before/after behavior, files changed, tests that ran and any gap.
+   observed before/after behavior, affected callers, files changed, tests that
+   ran and any gap. Link the patch or give its path in the checkout.
    If a check cannot collect, verify its path and the missing dependency once.
    Run any independent checks that still work. Name the blocked check and what
    it needs in the same reply. A partial result is useful. Stop there for a review.

@@ -74,6 +74,10 @@ def _details(row):
         result['wall']['observed_at'] = _timestamp(wall.get('observed_at')).astimezone(timezone.utc).isoformat()
     if row.get('issue') == 'identity_mismatch':
         result['issue'] = 'The responding machine did not match this Spark. Check its saved address.'
+    elif (row.get('state') == 'unreachable' and isinstance(wall, dict)
+          and wall.get('on') is True and wall.get('source') == 'Matter device read'):
+        result['issue'] = ('The plug reported power on. The management check could not verify '
+                           'the Spark or its workloads.')
     return result
 
 
