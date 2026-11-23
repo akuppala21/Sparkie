@@ -1,6 +1,25 @@
 from behavior.native_acceptance import chat_replay_cases, has_successful_memory_write, only_called_file_reader, read_once
 
 
+def test_compact_runner_requires_enrollment_before_writing_results(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    import pytest
+    from behavior import native_acceptance
+
+    identity = Path('/etc/machine-id')
+    original = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *args, **kwargs:
+                        'unenrolled-test-worker' if path == identity else original(path, *args, **kwargs))
+    for options in ([], ['--structured-only'], ['--missing-reader-only'], ['--case', 'simple_question']):
+        output = tmp_path / 'results'
+        monkeypatch.setattr(sys, 'argv', ['native_acceptance.py', '--out', str(output), *options])
+        with pytest.raises(RuntimeError, match='allocated compute Spark'):
+            native_acceptance.main()
+        assert not output.exists()
+
+
 def test_memory_replay_runs_prerequisites_once_in_order():
     assert chat_replay_cases(['unknown_preference', 'fresh_session_recall', 'correct_preference']) == [
         'save_preference', 'correct_preference', 'fresh_session_recall', 'unknown_preference']

@@ -132,9 +132,10 @@ def main():
     url = urlparse(args.base_url)
     if url.scheme != 'http' or url.hostname != '127.0.0.1' or url.username or url.password or url.path != '/v1':
         parser.error('Use the isolated loopback model endpoint.')
-    if socket.gethostname() != 'compute2-host.invalid':
-        parser.error('This receipt is reserved for compute Spark 2.')
     root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root / 'tests'))
+    from native_docker_fixture import configure_compute_docker, require_compute_spark
+    require_compute_spark()
     selected = json.loads((root / 'models/main-model.json').read_text())
     args.out.mkdir(parents=True, exist_ok=False)
     home = args.out / 'hermes-home'
@@ -142,8 +143,6 @@ def main():
     if not needs_reader:
         shutil.copyfile(root / 'config/hermes.example.yaml', home / 'config.yaml')
     else:
-        sys.path.insert(0, str(root / 'tests'))
-        from native_docker_fixture import configure_compute_docker
         configure_compute_docker(home, root / 'config/hermes.example.yaml', network=False)
     shutil.copyfile(root / 'SOUL.md', home / 'SOUL.md')
     shutil.copytree(root / 'skills', home / 'skills')

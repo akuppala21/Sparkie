@@ -41,7 +41,7 @@ GROUPS = ('javascript_syntax', 'desktop_phone_browser', 'compact_local_behavior'
 def selection(paths):
     tests, reasons = set(), []
     browser = behavior = broad = syntax = isolation = workload = sessions = broker = False
-    compute = services = research = power = candidate = False
+    compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
         relative = Path(path)
@@ -89,11 +89,11 @@ def selection(paths):
             tests.update(FLEET)
             if path.endswith('collector.py'):
                 tests.update(COMPUTE | POWER)
-            browser = behavior = True
+            panel = browser = behavior = True
             reasons.append(original + ': fleet producer, native consumers and observation behavior')
         elif path in ('src/sparkie_sparks/energy.py', 'src/sparkie_sparks/energy_history.py'):
             tests.update(ENERGY)
-            browser = True
+            panel = browser = True
             reasons.append(original + ': electricity calculations, history and both consumers')
         elif path == 'src/sparkie_sparks/matter.py':
             tests.update(FLEET | ENERGY | POWER)
@@ -213,7 +213,7 @@ def selection(paths):
             reasons.append(original + ': exact workload identity, protected services, stop observations and disposable real-container check')
         elif path == 'plugin/dashboard/index.js':
             tests.update(SERVICES | UPDATES | ADAPTERS | {'test_dashboard_packaging.py', 'test_native_controls.py', 'test_controls_availability.py'})
-            browser = syntax = True
+            panel = browser = syntax = True
             reasons.append(original + ': panel syntax, data interfaces and desktop/phone interactions')
         elif path.startswith('plugin/'):
             tests.update(NATIVE)
@@ -224,6 +224,7 @@ def selection(paths):
             reasons.append(original + ': native plugin registration, API and tool schemas')
         elif path.startswith('tests/browser/'):
             browser = syntax = True
+            panel = panel or path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs')
             reasons.append(original + ': browser validation itself changed')
         elif path.startswith('tests/behavior/'):
             if path == 'tests/behavior/native_acceptance.py':
@@ -239,7 +240,7 @@ def selection(paths):
             reasons.append(original + ': native public-source search and reading qualification changed')
         elif path in ('tests/sandbox_cleanup.py', 'tests/native_docker_fixture.py'):
             tests.add('test_sandbox_cleanup.py')
-            behavior = path.endswith('sandbox_cleanup.py') or behavior
+            behavior = True
             research = isolation = True
             reasons.append(original + ': isolated Docker fixture and cleanup absence proof shared by native checks')
         elif path.startswith('tests/hardware/'):
@@ -341,7 +342,7 @@ def selection(paths):
         tests.update(ADAPTERS)
     # Hand broad collection to pytest so it honors conftest and its discovery configuration.
     targets = ['tests'] if broad else ['tests/' + name for name in sorted(tests)]
-    return {'python_tests': targets,
+    return {'python_tests': targets, 'sparks_panel': panel,
             'javascript_syntax': syntax, 'desktop_phone_browser': browser,
             'compact_local_behavior': behavior, 'native_execution_isolation': isolation,
             'native_compute_workspace': compute, 'enrolled_service_lifecycle': services or broad, 'native_research': research,
@@ -407,6 +408,12 @@ def main():
     if not args.run_python:
         return 0
     final = {'remaining_check_groups': [name for name in GROUPS if plan[name]], 'release_qualified': False}
+    if plan['sparks_panel']:
+        final['sparks_panel_check'] = {
+            'scope': 'Sparks panel on desktop and phone',
+            'from_extension_checkout': 'python3 tests/browser/run_sparks.py "$baseline"',
+            'baseline': 'Path to the extracted development release',
+        }
     code = 0
     if plan['python_tests']:
         # Preserve python -m pytest's checkout import path and the caller's native options.

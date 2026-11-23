@@ -169,6 +169,13 @@ try {
   report.checks.push("Home opens the read-only Recipes page with selected and previous trial records at desktop and phone widths");
   assert.deepEqual(pageErrors, [], "Native page must render without JavaScript errors");
   report.checks.push("390px phone layout fits; refresh and month selection remain usable");
+  const calendarRequests = energyReads.map(url => new URL(url).searchParams);
+  assert.ok(calendarRequests.some(params => params.get("period") === "month" && !params.has("selected")));
+  assert.ok(calendarRequests.some(params => params.get("selected") === historical));
+  assert.ok(calendarRequests.every(params => params.get("selected") !== ""));
+  const emptySelection = await page.request.get(base + "/api/plugins/sparkie-sparks/energy?period=day&selected=");
+  assert.equal(emptySelection.status(), 400, "An explicitly empty selection cannot default to the current period");
+  report.checks.push("Calendar requests distinguish the default period, recorded history and an invalid empty selection");
   report.passed = true;
 } catch (error) {
   report.passed = false;

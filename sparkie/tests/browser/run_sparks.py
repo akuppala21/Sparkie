@@ -47,7 +47,11 @@ def run(baseline, output):
     runtime = baseline / "hermes/.venv/bin/python"
     if not runtime.is_file() or not (baseline / "dashboard/index.html").is_file():
         raise SystemExit("Desktop/phone check unavailable: pass the extracted baseline containing Hermes and its dashboard.")
-    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    if output is None:
+        output = Path(tempfile.mkdtemp(prefix="sparkie-browser-results-"))
+    else:
+        output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    print(f"Browser results: {output}", flush=True)
     with tempfile.TemporaryDirectory(prefix="sparkie-browser-") as work:
         scratch = Path(work)
         home = scratch / "dashboard-home"
@@ -117,6 +121,7 @@ def run(baseline, output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", type=Path, help="release path returned by spark_update_source")
-    parser.add_argument("output", type=Path, help="new directory for the browser report and screenshots")
+    parser.add_argument("output", type=Path, nargs="?",
+                        help="new directory for the browser report and screenshots (default: a fresh temporary directory)")
     args = parser.parse_args()
-    run(args.baseline.resolve(), args.output.resolve())
+    run(args.baseline.resolve(), args.output.resolve() if args.output is not None else None)

@@ -112,7 +112,7 @@ def test_memory_feedback_and_cleanup_changes_include_native_consumers():
     for path in ('tests/sandbox_cleanup.py', 'tests/native_docker_fixture.py'):
         cleanup = select([path])
         assert 'tests/test_sandbox_cleanup.py' in cleanup['python_tests']
-        assert cleanup['compact_local_behavior'] is path.endswith('sandbox_cleanup.py')
+        assert cleanup['compact_local_behavior']
         assert cleanup['native_research']
         assert cleanup['native_execution_isolation']
         assert not cleanup['compute_power_validation'] and not cleanup['broad_qualification']
@@ -493,3 +493,15 @@ def test_remote_stop_changes_select_session_and_packaged_provenance_consumers():
     builder_tests = set(select(['deploy/candidate.py'])['python_tests'])
     assert {'tests/test_native_restore_guard.py', 'tests/test_skill_terminal_paths.py',
             'tests/test_attachment_tool_paths.py', 'tests/test_remote_terminal_interrupt.py'} <= builder_tests
+
+
+def test_browser_followup_points_to_the_selected_panel_only():
+    script = Path(__file__).resolve().parents[1] / 'tools/checks.py'
+    for path, panel in [('tests/browser/sparks.mjs', True), ('tests/browser/controls.mjs', False)]:
+        output = subprocess.check_output([sys.executable, str(script), '--paths', path, '--run-python'], text=True)
+        remaining = json.loads(output.splitlines()[-1])
+        assert 'desktop_phone_browser' in remaining['remaining_check_groups']
+        assert ('sparks_panel_check' in remaining) is panel
+        if panel:
+            assert remaining['sparks_panel_check']['from_extension_checkout'] == 'python3 tests/browser/run_sparks.py "$baseline"'
+    assert select(['src/sparkie_sparks/energy.py'])['sparks_panel']

@@ -228,3 +228,18 @@ New CI cancels superseded runs, caches dependencies, selects affected checks for
 and reserves broad qualification for releases, version changes or justified periodic runs.
 Do not carry the old full-suite-after-every-landing automation into this application. This guide
 does not enable a workflow, change billing or claim a CI result.
+
+## Running checks in a prepared worker
+
+For an electricity or Sparks panel change, the final JSON also gives the desktop
+and phone check to run from the extension checkout. Set `baseline` to the
+extracted development release. The browser helper prints a fresh results directory
+for each invocation. Pass a new output path as its second argument to retain the
+report and screenshots in the task workspace. The browser check exercises the
+calendar requests, including the difference between an omitted historical
+selection and an explicitly empty one. Other browser surfaces have their own checks.
+
+The compact behavior runner checks compute enrollment before creating test
+state, including for cases that use only memory. The same allocated-worker
+identity check applies on Sparks 2–4. Use each worker's local test model and
+keep the installed owner endpoint available.
