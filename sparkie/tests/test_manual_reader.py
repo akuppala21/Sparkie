@@ -179,3 +179,95 @@ def test_preformatted_line_limit_is_cumulative_and_checked_before_expansion(monk
     with pytest.raises(reader.ManualError, match="number of text lines"):
         doc.feed("<pre>" + "\n" * 10_000 + "</pre>")
     assert len(doc.lines) == 4
+
+
+def linked_page(raw, fragment, term, monkeypatch, directory):
+    resolve(monkeypatch, ["1.1.1.1"])
+
+    def fetch(args, **kwargs):
+        assert args[-1] == "https://docs.example.org/release"
+        Path(args[args.index("--output") + 1]).write_bytes(raw.encode())
+        return subprocess.CompletedProcess(args, 0, stdout="200\ntext/html; charset=UTF-8")
+
+    monkeypatch.setattr(subprocess, "run", fetch)
+    return reader.read_page("https://docs.example.org/release#" + fragment, [term], directory)
+
+
+def test_definition_fragment_returns_only_its_entry_with_document_line_numbers(monkeypatch, tmp_path):
+    raw = ("<section><dl><dt id='old'>old(x=1)<dd>first default: 1"
+           "<dt id='option.parse'>parse(x=2)<dt>alias(x=2)<dd>correct default: 2"
+           "<dd>second description of its default"
+           "<dt id='new'>new(x=3)<dd>last default: 3</dl></section>")
+    result = linked_page(raw, "option%2Eparse", "default", monkeypatch, tmp_path)
+    assert result["source"].endswith("#option.parse")
+    assert result["section"] == {"status": "found", "basis": "definition", "line_ranges": [[3, 3], [5, 6]]}
+    match = result["matches"][0]
+    assert match["hits"] == 2
+    lines = Path(result["text"]).read_text().splitlines()
+    assert [lines[p["line"] - 1] for p in match["passages"]] == ["correct default: 2", "second description of its default"]
+
+
+def test_heading_fragment_stops_at_peer_heading_or_new_section(monkeypatch, tmp_path):
+    raw = ("<article><h2 id='choice'>Choice</h2><p>Rule one.</p><h3>Details</h3><p>Rule two.</p>"
+           "<h2>Other</h2><p>Rule three.</p></article><aside>Rule four.</aside>")
+    result = linked_page(raw, "choice", "rule", monkeypatch, tmp_path)
+    assert result["section"]["line_ranges"] == [[1, 4]]
+    assert result["matches"][0]["hits"] == 2
+    assert all("three" not in x["excerpt"] for x in result["matches"][0]["passages"])
+
+
+@pytest.mark.parametrize(("raw", "fragment", "status"), [
+    ("<section><p>Nearby rule</p></section>", "private-token", "unresolved"),
+    ("<section id='hidden-id' hidden>Hidden rule</section><p>Visible rule</p>", "hidden-id", "unresolved"),
+    ("<section id='dup-id'>Rule one</section><div id='dup-id'>Rule two</div>", "dup-id", "ambiguous"),
+    ("<p><span id='inline-id'>Unscoped locator</span> Nearby rule</p>", "inline-id", "unresolved"),
+])
+def test_unresolved_fragments_do_not_borrow_evidence_or_echo_input(raw, fragment, status, monkeypatch, tmp_path):
+    result = linked_page(raw, fragment, "rule", monkeypatch, tmp_path)
+    assert result["section"] == {"status": status, "line_ranges": []}
+    assert result["matches"] == [{"term": "rule", "hits": 0, "passages": []}]
+    assert fragment not in json.dumps(result)
+    assert Path(result["original"]).read_text() == raw
+
+
+def test_section_fragment_keeps_child_sections_but_excludes_its_neighbours(monkeypatch, tmp_path):
+    raw = ("<section id='old'><p>Old rule</p></section><section id='selected'><h2>Middle</h2>"
+           "<section id='child'><p>Qualified rule</p></section></section><section id='last'>New rule</section>")
+    result = linked_page(raw, "selected", "rule", monkeypatch, tmp_path)
+    assert result["matches"][0]["hits"] == 1
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Qualified rule"
+    assert result["section"]["line_ranges"] == [[2, 3]]
+
+
+def test_heading_keeps_visible_qualifier_and_stops_at_nested_peer_after_implicit_p(monkeypatch, tmp_path):
+    raw = ("<article><h2 id='target'>Target</h2><p>Allowed.<script>analytics()</script>"
+           "<div><h2 hidden>Hidden</h2><p>Only after verification."
+           "<h2>Other</h2><p>Different rule.</div></article>")
+    result = linked_page(raw, "target", "verification", monkeypatch, tmp_path)
+    assert result["section"] == {"status": "found", "basis": "heading", "line_ranges": [[1, 3]]}
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Only after verification."
+
+
+def test_grouped_definition_keeps_qualifier_and_excludes_hidden_next_term(monkeypatch, tmp_path):
+    raw = ("<dl><div><dt id='a'>A<dd>Default A.</dd><script>ignored</script>"
+           "<dd>Default A has a qualifier.<dt hidden>B<dd>Default B.</div></dl>")
+    result = linked_page(raw, "a", "default", monkeypatch, tmp_path)
+    assert result["matches"][0]["hits"] == 2
+    assert result["section"] == {"status": "found", "basis": "definition", "line_ranges": [[1, 3]]}
+
+
+def test_heading_cannot_extend_past_its_parent_or_an_implicit_paragraph(monkeypatch, tmp_path):
+    raw = ("<article><p id='first'>First rule.<h2>Other</h2><div><h3 id='choice'>Choice</h3>"
+           "<p>Rule inside.</div><p>Rule outside.</article>")
+    result = linked_page(raw, "choice", "rule", monkeypatch, tmp_path)
+    assert result["matches"][0]["hits"] == 1
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Rule inside."
+
+
+def test_heading_in_section_header_includes_its_body_and_excludes_the_next_section(monkeypatch, tmp_path):
+    raw = ("<section><header><hgroup><h2 id='choice'>Choice</h2><p>Subtitle.</p></hgroup></header>"
+           "<p>Rule inside.</p></section><p>Rule outside.</p>")
+    result = linked_page(raw, "choice", "rule", monkeypatch, tmp_path)
+    assert result["section"]["line_ranges"] == [[1, 3]]
+    assert result["matches"][0]["hits"] == 1
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Rule inside."

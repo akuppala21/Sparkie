@@ -1,0 +1,182 @@
+{
+  "runner": "Spark 2, isolated compute trial",
+  "previous_revision": "0169391fa0e5c26edc9eff464d4fee3e646b1e95",
+  "previous_reader_sha256": "341a74bd1c8f2c1970333f9ca5af3d53cf3a2711c9f3671aa987fcf5f92e8852",
+  "new_reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+  "test_sha256": "98cddbd5aa0a4cfa553af8347c2c9a4861b2fa931216080f62938c9c23f7f26d",
+  "affected_tests": {
+    "passed": 121,
+    "failed": 0,
+    "seconds": 8.36,
+    "reader_cases_included": 40,
+    "warning": "Existing Starlette/httpx test-client deprecation in the integration suite."
+  },
+  "linked_manuals": [
+    {
+      "url": "https://docs.python.org/3.13/library/gzip.html#gzip.compress",
+      "html_sha256": "f2344c620a8ae34628c553f9d24baf8c7346345bb4afe398ad5349f05646d6f7",
+      "section": {
+        "status": "found",
+        "basis": "definition",
+        "line_ranges": [
+          [
+            65,
+            70
+          ]
+        ]
+      },
+      "previous_first_hits": [
+        33,
+        40
+      ],
+      "scoped_first_hits": [
+        65,
+        66
+      ],
+      "required_passage": "mtime=None",
+      "excluded_neighbour": "gzip.decompress(",
+      "full_text_matches": true
+    },
+    {
+      "url": "https://docs.python.org/3.14/library/gzip.html#gzip.compress",
+      "html_sha256": "e4204ecf0c9547ceeb37575e8083bb5e40e4e39a50ea9c7193dce1238651b67d",
+      "section": {
+        "status": "found",
+        "basis": "definition",
+        "line_ranges": [
+          [
+            66,
+            72
+          ]
+        ]
+      },
+      "previous_first_hits": [
+        34,
+        41
+      ],
+      "scoped_first_hits": [
+        66,
+        67
+      ],
+      "required_passage": "mtime=0",
+      "excluded_neighbour": "gzip.decompress(",
+      "full_text_matches": true
+    },
+    {
+      "url": "https://docs.python.org/3.13/tutorial/controlflow.html#else-clauses-on-loops",
+      "html_sha256": "b985d14cc9c7b109996d54c17e32b3f214c5e4cd0e9020de060f12ed0413bd49",
+      "section": {
+        "status": "found",
+        "basis": "element",
+        "line_ranges": [
+          [
+            120,
+            145
+          ]
+        ]
+      },
+      "previous_first_hits": [
+        133,
+        135
+      ],
+      "scoped_first_hits": [
+        133,
+        135
+      ],
+      "required_passage": "is a prime number",
+      "excluded_neighbour": "def fib(",
+      "full_text_matches": true
+    },
+    {
+      "url": "https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus",
+      "html_sha256": "0753ee80af0694cff5fb8b959059e79f0648933f8ed4719405680d887f115109",
+      "section": {
+        "status": "found",
+        "basis": "definition",
+        "line_ranges": [
+          [
+            248,
+            251
+          ]
+        ]
+      },
+      "previous_first_hits": [
+        15,
+        21
+      ],
+      "scoped_first_hits": [
+        248,
+        250
+      ],
+      "required_passage": "string must be a str",
+      "excluded_neighbour": "string may be either a str or a bytes object",
+      "full_text_matches": true
+    }
+  ],
+  "versioned_example_details": [
+    {
+      "source": "https://docs.python.org/3.13/library/gzip.html#gzip.compress",
+      "html_sha256": "f2344c620a8ae34628c553f9d24baf8c7346345bb4afe398ad5349f05646d6f7",
+      "section_lines": [
+        [
+          65,
+          70
+        ]
+      ],
+      "full_text_matches_previous": true,
+      "previous_first_hits": [
+        [
+          33,
+          "class gzip.GzipFile(filename=None, mode=None, compresslevel=9, fileobj=None, mtime=None)¶"
+        ],
+        [
+          40,
+          "The optional mtime argument is the timestamp requested by gzip. The time is in Unix format, i.e., seconds since 00:00:00 UTC, January 1, 197"
+        ]
+      ],
+      "scoped_first_hits": [
+        [
+          65,
+          "gzip.compress(data, compresslevel=9, *, mtime=None)¶"
+        ],
+        [
+          66,
+          "Compress the data, returning a bytes object containing the compressed data. compresslevel and mtime have the same meaning as in the GzipFile"
+        ]
+      ],
+      "section_signature_or_heading": "gzip.compress(data, compresslevel=9, *, mtime=None)¶"
+    },
+    {
+      "source": "https://docs.python.org/3.14/library/gzip.html#gzip.compress",
+      "html_sha256": "e4204ecf0c9547ceeb37575e8083bb5e40e4e39a50ea9c7193dce1238651b67d",
+      "section_lines": [
+        [
+          66,
+          72
+        ]
+      ],
+      "full_text_matches_previous": true,
+      "previous_first_hits": [
+        [
+          34,
+          "class gzip.GzipFile(filename=None, mode=None, compresslevel=9, fileobj=None, mtime=None)¶"
+        ],
+        [
+          41,
+          "The optional mtime argument is the timestamp requested by gzip. The time is in Unix format, i.e., seconds since 00:00:00 UTC, January 1, 197"
+        ]
+      ],
+      "scoped_first_hits": [
+        [
+          66,
+          "gzip.compress(data, compresslevel=9, *, mtime=0)¶"
+        ],
+        [
+          67,
+          "Compress the data, returning a bytes object containing the compressed data. compresslevel and mtime have the same meaning as in the GzipFile"
+        ]
+      ],
+      "section_signature_or_heading": "gzip.compress(data, compresslevel=9, *, mtime=0)¶"
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import re
 import socket
 import subprocess
 import tempfile
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 
 MAX_BYTES = 4 * 1024 * 1024
@@ -26,14 +26,27 @@ class Manual(HTMLParser):
 
     boundaries = set("p div section article h1 h2 h3 h4 h5 h6 li dt dd pre tr br".split())
     ignored = set("head nav aside footer script style noscript svg template".split())
-    list_containers = {"ul", "ol", "menu"}
+    headings = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+    section_tags = {"div", "section", "article", "pre", "li", "dt", "dd", "p"}
+    closes_paragraph = set(("address article aside blockquote details div dl fieldset figcaption figure footer form "
+                            "h1 h2 h3 h4 h5 h6 header hgroup hr main menu nav ol p pre search section table ul").split())
+    paragraph_scope = {"button", "table", "td", "th", "html", "template", "applet", "caption", "object", "marquee"}
+    list_containers = {"ul", "ol", "menu", "dl"}
     list_scope_boundaries = list_containers | ignored | {
         "html", "applet", "pre", "caption", "table", "td", "th", "marquee", "object",
     }
     void = set("area base br col embed hr img input link meta param source track wbr".split())
 
-    def __init__(self):
+    def __init__(self, fragment=None):
         super().__init__()
+        self.fragment = fragment
+        self.fragment_count = 0
+        self.fragment_ranges = []
+        self.definition_parent = None
+        self.heading_parent_depth = -1
+        self.fragment_basis = None
+        self.definition_phase = None
+        self.heading_level = 0
         self.stack = []
         self.parts = []
         self.lines = []
@@ -45,12 +58,12 @@ class Manual(HTMLParser):
         self.parts.clear()
         if not raw:
             return
+        first = len(self.lines)
         if self.pre_depth is not None:
             # Preserve physical lines, including indentation and internal blank lines.
             # Check the count before splitting untrusted input into Python objects.
             value = raw.replace("\r\n", "\n").replace("\r", "\n").removesuffix("\n")
             count = value.count("\n") + 1
-            first = len(self.lines)
             if first + count > MAX_LINES:
                 raise ManualError("The manual exceeds the supported number of text lines.")
             anchor = self.stack[self.pre_depth][1]
@@ -63,6 +76,12 @@ class Manual(HTMLParser):
                     raise ManualError("The manual exceeds the supported number of text lines.")
                 anchor = self.stack[-1][1] if self.stack else ""
                 self.lines.append((anchor, value))
+        end = len(self.lines)
+        if end > first and (self.heading_level or (self.stack and self.stack[-1][3])):
+            if self.fragment_ranges and self.fragment_ranges[-1][1] == first:
+                self.fragment_ranges[-1] = (self.fragment_ranges[-1][0], end)
+            else:
+                self.fragment_ranges.append((first, end))
 
     def code_line_break(self):
         # Some highlighters wrap each line in a div instead of writing an LF.
@@ -73,20 +92,63 @@ class Manual(HTMLParser):
         attrs = dict(attrs)
         if self.pre_depth is None and (tag in self.boundaries or tag in self.ignored):
             self.flush()
-        if tag == "li":
-            # An li end tag may be omitted before its next sibling. A nested
-            # list or another scope boundary protects the outer item.
+        if self.fragment and tag in self.closes_paragraph:
+            # HTML closes an open p before these block starts, even without </p>.
+            for i in range(len(self.stack) - 1, -1, -1):
+                open_tag = self.stack[i][0]
+                if open_tag in self.paragraph_scope:
+                    break
+                if open_tag == "p":
+                    self.flush()
+                    self.pop_elements(i)
+                    break
+        if tag in {"li", "dt", "dd"}:
+            # HTML permits omitted ends before a sibling item. Nested lists
+            # protect the outer item from an inner term or definition.
+            items = {"li"} if tag == "li" else {"dt", "dd"}
             for index in range(len(self.stack) - 1, -1, -1):
                 open_tag = self.stack[index][0]
                 if open_tag in self.list_scope_boundaries:
                     break
-                if open_tag == "li":
-                    del self.stack[index:]
+                if open_tag in items:
+                    self.pop_elements(index)
                     break
         hidden = ((bool(self.stack) and self.stack[-1][2]) or tag in self.ignored
                   or "hidden" in attrs or attrs.get("aria-hidden") == "true")
         if self.pre_depth is not None and not hidden and tag in self.boundaries and tag != "br":
             self.code_line_break()
+        parent = self.stack[-1] if self.stack else None
+        selected = bool(parent and parent[3])
+        if self.definition_phase and parent is self.definition_parent:
+            if tag == "dd":
+                selected = True
+                self.definition_phase = "descriptions"
+            elif tag == "dt":
+                if self.definition_phase != "terms":
+                    self.definition_phase = None
+            elif not hidden:
+                self.definition_phase = None
+        if not hidden and self.heading_level and self.headings.get(tag, 7) <= self.heading_level:
+            self.heading_level = 0
+        if self.fragment and attrs.get("id") == self.fragment:
+            self.fragment_count += 1
+            if not hidden and tag in self.headings:
+                self.heading_parent_depth = len(self.stack) - 1
+                # header/hgroup can label their enclosing article or section.
+                container = self.heading_parent_depth
+                while container >= 0 and self.stack[container][0] in {"header", "hgroup"}:
+                    container -= 1
+                if container >= 0 and self.stack[container][0] in {"article", "section", "main"}:
+                    self.heading_parent_depth = container
+                self.heading_level = self.headings[tag]
+                self.fragment_basis = "heading"
+            elif not hidden and tag in self.section_tags:
+                selected = True
+                self.fragment_basis = "element"
+                if tag == "dt" and parent and (parent[0] == "dl" or
+                        (parent[0] == "div" and len(self.stack) > 1 and self.stack[-2][0] == "dl")):
+                    self.definition_parent, self.definition_phase = parent, "terms"
+                    self.fragment_basis = "definition"
         if tag not in self.void:
             if len(self.stack) >= MAX_DEPTH:
                 raise ManualError("The manual exceeds the supported HTML nesting depth.")
@@ -97,11 +159,16 @@ class Manual(HTMLParser):
                 anchor = element_id
             if tag == "pre" and self.pre_depth is None:
                 self.pre_depth = len(self.stack)
-            self.stack.append((tag, anchor, hidden))
+            self.stack.append((tag, anchor, hidden, selected))
         elif tag == "br" and not hidden:
             self.parts.append("\n" if self.pre_depth is not None else " ")
         if tag in {"th", "td"} and not hidden:
             self.parts.append(" ")
+
+    def pop_elements(self, index):
+        if self.heading_level and index <= self.heading_parent_depth:
+            self.heading_level = 0
+        del self.stack[index:]
 
     def handle_endtag(self, tag):
         for i in range(len(self.stack) - 1, -1, -1):
@@ -114,7 +181,7 @@ class Manual(HTMLParser):
                         self.code_line_break()
                 elif tag in self.boundaries or tag in self.ignored or tag in self.list_containers:
                     self.flush()
-                del self.stack[i:]
+                self.pop_elements(i)
                 break
 
     def handle_data(self, data):
@@ -145,34 +212,38 @@ def public_target(url):
     return urlunsplit(parsed._replace(fragment="")), f"{host}:443:{pinned}"
 
 
-def passages(lines, terms, code_ranges=()):
+def passages(lines, terms, code_ranges=(), search_ranges=None):
+    if search_ranges is None:
+        search_ranges = [(0, len(lines))]
     code_starts = {start for start, _ in code_ranges}
     found = []
     for term in terms:
         pattern = re.compile(re.escape(term), re.IGNORECASE)
         excerpts = []
         hits = 0
-        for i, (anchor, line) in enumerate(lines):
-            match = pattern.search(line)
-            if not match:
-                continue
-            hits += 1
-            if len(excerpts) == 2:
-                continue
-            left = max(0, match.start() - 120)
-            text = line[left:]
-            end = i
-            code = next((span for span in code_ranges if span[0] <= i < span[1]), None)
-            limit = min(code[1] if code else len(lines), i + 3)
-            while (code or anchor) and len(text) < 460 and end + 1 < limit:
-                next_anchor, following = lines[end + 1]
-                if not code and (next_anchor != anchor or end + 1 in code_starts):
-                    break
-                end += 1
-                text += ("\n" if code else " ") + following
-            partial_block = code is not None and (i > code[0] or end + 1 < code[1])
-            excerpts.append({"line": i + 1, "anchor": anchor, "context_lines": [i + 1, end + 1],
-                             "excerpt": text[:460], "clipped": left > 0 or len(text) > 460 or partial_block})
+        for start, stop in search_ranges:
+            for i in range(start, stop):
+                anchor, line = lines[i]
+                match = pattern.search(line)
+                if not match:
+                    continue
+                hits += 1
+                if len(excerpts) == 2:
+                    continue
+                left = max(0, match.start() - 120)
+                text = line[left:]
+                end = i
+                code = next((span for span in code_ranges if span[0] <= i < span[1]), None)
+                limit = min(code[1] if code else stop, stop, i + 3)
+                while (code or anchor) and len(text) < 460 and end + 1 < limit:
+                    next_anchor, following = lines[end + 1]
+                    if not code and (next_anchor != anchor or end + 1 in code_starts):
+                        break
+                    end += 1
+                    text += ("\n" if code else " ") + following
+                partial_block = code is not None and (i > code[0] or end + 1 < code[1])
+                excerpts.append({"line": i + 1, "anchor": anchor, "context_lines": [i + 1, end + 1],
+                                 "excerpt": text[:460], "clipped": left > 0 or len(text) > 460 or partial_block})
         found.append({"term": term, "hits": hits, "passages": excerpts})
     return found
 
@@ -199,7 +270,9 @@ def read_page(url, terms, directory):
         raise ManualError("Manual exceeds the download size limit.")
     data = raw.read_bytes()
     charset = re.search(r"charset\s*=\s*[\"']?([\w.-]+)", content_type, re.I)
-    manual = Manual()
+    fragment = unquote(urlsplit(url).fragment)
+    safe_fragment = 0 < len(fragment) <= 200 and fragment.isprintable() and not any(c.isspace() for c in fragment)
+    manual = Manual(fragment if safe_fragment else None)
     manual.feed(data.decode(charset[1] if charset else "utf-8"))
     manual.close()
     manual.flush()
@@ -207,8 +280,23 @@ def read_page(url, terms, directory):
         raise ManualError("The page provided no readable text blocks.")
     plain = directory / "passages.txt"
     plain.write_text("\n".join(line for _, line in manual.lines) + "\n", encoding="utf-8")
-    return {"source": source, "raw_sha256": hashlib.sha256(data).hexdigest(), "original": str(raw),
-            "text": str(plain), "lines": len(manual.lines), "matches": passages(manual.lines, terms, manual.code_ranges)}
+    result = {"source": source, "raw_sha256": hashlib.sha256(data).hexdigest(), "original": str(raw),
+              "text": str(plain), "lines": len(manual.lines)}
+    ranges = None
+    if fragment:
+        # Never echo an unknown fragment, which may contain private URL state.
+        # An unresolved link supplies no section evidence. The full artifact
+        # remains available for separately identified whole-page research.
+        ranges = []
+        if manual.fragment_count == 1 and manual.fragment_ranges:
+            ranges = manual.fragment_ranges
+            result["source"] += "#" + quote(fragment, safe="-._~:")
+            result["section"] = {"status": "found", "basis": manual.fragment_basis, "line_ranges": [[a + 1, b] for a, b in ranges]}
+        else:
+            status = "ambiguous" if manual.fragment_count > 1 else "unresolved"
+            result["section"] = {"status": status, "line_ranges": []}
+    result["matches"] = passages(manual.lines, terms, manual.code_ranges, ranges)
+    return result
 
 
 def main():
