@@ -7,7 +7,7 @@ Sparkie adds fleet, electricity, workload and owner-approved operations to the p
 - `src/sparkie_sparks` contains the controller, owner binding, operation ledger, collectors, workload and power workers, checked update path and native transport adapters.
 - `plugin` and `recipes_plugin` extend the Hermes tools and dashboard. `skills` contains the three native skills, including the two version-aware evidence readers. `SOUL.md` and `config/hermes.example.yaml` configure the local agent.
 - `deploy` builds a pinned offline-capable release and stages its protected home, systemd units and update steward. Use a fresh private build directory, obtain and verify the pinned dependencies, then review every release-specific input and check. [Build procedure](deploy/README.md)
-- `tests` includes the Python, browser, model and hardware fixtures. `tools/checks.py --paths <changed-path>` selects affected portable tests and indicates the further checks their callers need. Run `python -m pytest tests` from this directory with the pinned Hermes environment on a compute worker. Some tests need an assembled candidate, native Linux interfaces, local model service or hardware. [Testing policy](docs/testing.md)
+- `tests` includes the Python, browser, model and hardware fixtures. `tools/checks.py --paths <changed-path>` selects affected portable tests and indicates the further checks their callers need. For an ordinary edit, run `python3 tools/checks.py --paths <changed-path> --run-python` from this directory in the prepared development environment on a compute Spark. The selector prints the affected checks and runs the Python group. Some tests need an assembled candidate, native Linux interfaces, local model service or hardware. [Testing policy](docs/testing.md)
 
 ## Operator enrollment
 
@@ -23,7 +23,7 @@ Review the enrolled source and target-specific operator files, build a fresh pac
 
 ## Reproducibility and redistribution
 
-This is the public source form of the November 22 research update. Public site templates, the generic assistant identity, public research abstracts and development documentation differ from the private input tree, so its source hashes and release manifest differ. No packaged Hermes runtime, frontend bundle, model weights, owner state, physical fleet inventory or machine credentials are included.
+This development branch includes the November 22 and 23 research and recovery updates. Public site templates, the generic assistant identity, public research abstracts and development documentation differ from the private input tree, so its source hashes and release manifest differ. No packaged Hermes runtime, frontend bundle, model weights, owner state, physical fleet inventory or machine credentials are included.
 
 The compact source-eval JSON uses project-authored summaries of public observations. It exercises the same harness and schema with different source text. Frozen comparisons that require a third-party held-out corpus or full model card require independently authorized copies whose hashes match the private fixture. Results from public inputs cannot reproduce the private historical timings or semantic grades. [Source-input provenance](tests/behavior/SOURCE-INPUTS.md)
 

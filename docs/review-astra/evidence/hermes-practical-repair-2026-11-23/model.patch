@@ -1,0 +1,21 @@
+--- a/sparkie/tools/checks.py
++++ b/sparkie/tools/checks.py
+@@ -276,6 +276,9 @@
+         elif path.startswith('tests/test_') and path.endswith('.py') and (ROOT / path).is_file():
+             tests.add(Path(path).name)
+             reasons.append(original + ': changed test')
++        elif path.startswith('tests/components/') and path.endswith('.py') and (ROOT / path).is_file():
++            tests.add('components/' + Path(path).name)
++            reasons.append(original + ': changed test')
+         elif path == 'upstream.lock.json':
+             tests.update(DEPLOY)
+             services = True
+@@ -315,7 +318,7 @@
+             compute = research = power = candidate = True
+             reasons.append(original + ': impact is not classified; include all extension tests and integration checks')
+     if broad:
+-        tests = {p.name for p in (ROOT / 'tests').glob('test_*.py')}
++        tests = {p.relative_to(ROOT / 'tests').as_posix() for p in (ROOT / 'tests').glob('**/test_*.py')}
+         candidate = True
+     # Even a small functional change gets the existing native registration/API smoke.
+     if tests:

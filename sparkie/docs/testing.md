@@ -141,6 +141,13 @@ which the independent replay ran. These are targeted checks for changes to the
 brain or its instructions. Ordinary dashboard and electricity edits keep their
 existing selection.
 
+For timed repair trials, record which process supplied an exit status. A hard
+deadline once interrupted the attached Docker client while pytest was still
+running. The client returned zero and only the banner reached the agent. Use
+the external test supervisor to close the trial and verify sandbox cleanup.
+Keep a timeout as unfinished and inspect the checkout and actual test report
+independently. A longer retry is a separate measurement. [Reproduction and verified watchdog](../../docs/review-astra/evidence/hermes-native-dev-repair-2026-11-23/terminal-deadline/README.md)
+
 For a focused replay in the reserved compute test environment, run
 `python tests/behavior/native_acceptance.py --case failed_stop --out <fresh-directory>`
 from the extension root. Repeat `--case` to combine ordinary chat cases. A recall

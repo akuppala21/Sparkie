@@ -1,0 +1,235 @@
+{
+  "completion": {
+    "runner_exited": true,
+    "exit_code": 137,
+    "elapsed_seconds": 780.0,
+    "provider_requests": 30,
+    "provider_idle": true,
+    "owned_sandbox_cleanup": true,
+    "recovered_containers": 1,
+    "answer_saved": false,
+    "answer": null,
+    "patched_snapshot_or_workspace": true,
+    "model_request_times": [
+      4.607,
+      16.915,
+      22.927,
+      24.916,
+      28.724,
+      42.181,
+      114.059,
+      120.468,
+      127.74,
+      130.665,
+      133.54,
+      151.897,
+      163.441,
+      169.302,
+      228.991,
+      241.449,
+      303.851,
+      313.06,
+      491.519,
+      498.052,
+      506.628,
+      561.601,
+      566.232,
+      595.274,
+      598.41,
+      638.502,
+      668.238,
+      678.069,
+      735.525,
+      749.203
+    ],
+    "provider_usage": [
+      {
+        "input_tokens": 41482,
+        "output_tokens": 16777,
+        "cache_read_tokens": 861120,
+        "reasoning_tokens": 0
+      }
+    ],
+    "provider_counter_deltas": {
+      "sglang:prompt_tokens_total{engine_type=\"unified\",is_streaming=\"false\",model_name=\"sparkie-hermes-main\"}": 2470.0,
+      "sglang:prompt_tokens_total{engine_type=\"unified\",is_streaming=\"true\",model_name=\"sparkie-hermes-main\"}": 906420.0,
+      "sglang:generation_tokens_total{engine_type=\"unified\",is_streaming=\"false\",model_name=\"sparkie-hermes-main\"}": 1570.0,
+      "sglang:generation_tokens_total{engine_type=\"unified\",is_streaming=\"true\",model_name=\"sparkie-hermes-main\"}": 17924.0,
+      "sglang:num_aborted_requests_total{engine_type=\"unified\",model_name=\"sparkie-hermes-main\"}": 1.0
+    }
+  },
+  "hidden_cases": {
+    "nested_prefix": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "nested_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "suffix_at_root": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "preexisting_behavior_group": {
+      "exit": 0,
+      "broad": false,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "broad": {
+      "exit": 1,
+      "broad": true,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "broad_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "discovered": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "unrelated": {
+      "exit": 0,
+      "broad": false,
+      "selected": [],
+      "behavior": false,
+      "red_test_executed": false,
+      "met_requirement": true
+    }
+  },
+  "changed_files": {
+    "base_files": 271,
+    "result_files": 271,
+    "changed": [
+      {
+        "path": "sparkie/tools/checks.py",
+        "before": {
+          "kind": "file",
+          "sha256": "5b13b0388f7b06c6c93c850cde690525eae3917009169a2b8c6dfa753c5ed7f7",
+          "size": 25050,
+          "executable": false
+        },
+        "after": {
+          "kind": "file",
+          "sha256": "5ee44a21da7786ea1cae865a3b1cbd778f37a0cc329bea1565cb79551112d108",
+          "size": 25302,
+          "executable": false
+        }
+      }
+    ],
+    "ignored_generated_items": [
+      ".git",
+      ".pytest_cache",
+      "__pycache__",
+      "*.pyc",
+      ".DS_Store",
+      "AppleDouble metadata"
+    ]
+  },
+  "selector": {
+    "changed": [
+      "tools/checks.py"
+    ],
+    "fixture_preserved": true,
+    "selector_changed": true,
+    "base_sha256": "5b13b0388f7b06c6c93c850cde690525eae3917009169a2b8c6dfa753c5ed7f7",
+    "model_selector_sha256": "5ee44a21da7786ea1cae865a3b1cbd778f37a0cc329bea1565cb79551112d108",
+    "answer_returned": false
+  },
+  "postrun_cpu_checks": {
+    "affected-after": {
+      "returncode": 0,
+      "pytest_summary": [
+        "46 passed in 1.92s"
+      ],
+      "reported_assertion": false,
+      "output_excerpt": "{\n  \"python_tests\": [\n    \"tests/test_check_selection.py\",\n    \"tests/test_energy_integration.py\",\n    \"tests/test_native_integration.py\",\n    \"tests/test_preservation_selection.py\"\n  ],\n  \"javascript_syntax\": false,\n  \"desktop_phone_browser\": false,\n  \"compact_local_behavior\": false,\n  \"native_execution_isolation\": false,\n  \"native_compute_workspace\": false,\n  \"enrolled_service_lifecycle\": false,\n  \"native_research\": false,\n  \"disposable_workload_stop\": false,\n  \"private_broker_stop\": false,\n  \"native_shared_sessions\": false,\n  \"compute_power_validation\": false,\n  \"native_candidate\": false,\n  \"broad_qualification\": false,\n  \"reasons\": [\n    \"tools/checks.py: changed-path selection regressions and existing registration smoke\"\n  ]\n}\n============================= test session starts ==============================\nplatform linux -- Python 3.14.10, pytest-9.1.1, pluggy-1.7.0\nrootdir: /tmp/candidate\nconfigfile: pyproject.toml\nplugins: anyio-4.15.1, asyncio-1.4.0\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 46 items\n\ntests/test_check_selection.py ........................................   [ 86%]\ntests/test_energy_integration.py ..                                      [ 91%]\ntests/test_native_integration.py .                                       [ 93%]\ntests/test_preservation_selection.py ...                                 [100%]\n\n============================== 46 passed in 1.92s ==============================\n{\"remaining_check_groups\": [], \"release_qualified\": false}\n"
+    },
+    "direct-red-after": {
+      "returncode": 1,
+      "pytest_summary": [
+        "1 failed in 0.01s"
+      ],
+      "reported_assertion": true,
+      "output_excerpt": "F                                                                        [100%]\n=================================== FAILURES ===================================\n__________________________ test_reports_reproduction ___________________________\n\n    def test_reports_reproduction():\n>       raise AssertionError(\"The selected test actually ran.\")\nE       AssertionError: The selected test actually ran.\n\ntests/components/test_reports.py:2: AssertionError\n=========================== short test summary info ============================\nFAILED tests/components/test_reports.py::test_reports_reproduction - Assertio...\n1 failed in 0.01s\n"
+    }
+  },
+  "model_timing_samples": [
+    {
+      "utc": 1795427455.755317,
+      "metrics": {
+        "sglang:http_requests_active": 1.0,
+        "sglang:num_running_reqs": 1.0,
+        "sglang:num_queue_reqs": 0.0,
+        "sglang:gen_throughput": 44.669936641580996,
+        "sglang:generation_tokens_total": 6917.0
+      }
+    },
+    {
+      "utc": 1795427527.8251562,
+      "metrics": {
+        "sglang:http_requests_active": 0.0,
+        "sglang:num_running_reqs": 0.0,
+        "sglang:num_queue_reqs": 0.0,
+        "sglang:gen_throughput": 0.0,
+        "sglang:generation_tokens_total": 12555.0
+      }
+    }
+  ]
+}

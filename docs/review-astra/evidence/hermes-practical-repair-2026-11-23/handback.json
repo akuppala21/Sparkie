@@ -1,0 +1,51 @@
+{
+  "exact_model": {
+    "unit_stopped": true,
+    "container_absent": true,
+    "port_free": true,
+    "unit_file_absent": true
+  },
+  "host_samples": [
+    {
+      "utc": 1795427820.992029,
+      "available_gib": 117.64662170410156,
+      "unit": "LoadState=not-found\nActiveState=inactive\nSubState=dead",
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795427824.0539865,
+      "available_gib": 117.64110565185547,
+      "unit": "LoadState=not-found\nActiveState=inactive\nSubState=dead",
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795427827.111412,
+      "available_gib": 117.63475799560547,
+      "unit": "LoadState=not-found\nActiveState=inactive\nSubState=dead",
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    }
+  ],
+  "same_fixture_containers_remaining": [],
+  "provider_drained": true,
+  "owner_fleet_observation": {
+    "source": "Authenticated owner Mac, checked fleet_status action; independently observed by recovery reviewer. The worker-origin request was denied HTTP 403.",
+    "observed_at": "2026-11-23T09:57:29.904Z",
+    "spark2": "online",
+    "spark2_running_containers": 0,
+    "spark2_needed_for": [],
+    "spark2_switchable": true,
+    "normal_idle_minutes": 30,
+    "spark1": "online",
+    "spark3_and_spark4": "off",
+    "manual_power_off": false
+  }
+}
