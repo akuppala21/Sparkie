@@ -33,3 +33,5 @@ The selected package passed eight of nine compact behavior cases in 214.86 secon
 ## Development decision
 
 The optional reader can be used directly in the Hermes workspace. The automatic prompt changes remain experiments. An accurate citation or a successful tool run does not establish that every line in the final recommendation is supported. The native tool and ordinary model behavior were assessed separately. [Research7 instructions](trial-skills/research7/SKILL.md) · [Research8 instructions](trial-skills/research8/SKILL.md) · [Research9 instructions](trial-skills/research9/SKILL.md)
+
+Across the twelve ordinary chats, nine delivered an answer and three timed out. The full live update remains on hold. Spark 1 remained online. After the test supervisor expired, three checks found the model, its sandboxes and GPU processes gone from Spark 2. The fleet recorded no holds on Spark 2 and retained its 30-minute idle-power policy. Sparks 3 and 4 were off.
