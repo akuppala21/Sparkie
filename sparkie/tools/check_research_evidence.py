@@ -10,9 +10,13 @@ import sys
 CONDITIONS = ('nodes', 'workload', 'thinking', 'protocol')
 FIELDS = {'source', 'kind', 'quote', *CONDITIONS}
 NUMERIC = {'metric', 'value', 'unit'}
+DECIMAL = r'-?[0-9]+(?:\.[0-9]+)?'
+RANGE_SEPARATOR = r'(?:[ \t]*[-–—][ \t]*|[ \t]+to[ \t]+)'
+RECORD_BREAK = re.compile(r'\n|(?<=;)[ \t]*|(?<=[.!?])[ \t]+')
 LIMIT = 2 * 1024 * 1024 + 4096   # forum reader body limit plus its citation header
 SEMANTIC_LIMIT = (
-    'Literal matches establish wording only. Read the surrounding text to decide '
+    'Arithmetic is conditional on the supplied measurement labels. Literal matches establish wording only. '
+    'Read the surrounding text to decide '
     'which setup a quote describes, whether it was measured, and whether the '
     'declared conditions actually apply to both numbers.'
 )
@@ -42,10 +46,22 @@ def literal(value, body, field):
         raise ValueError(f'{field} must be an exact, nonempty excerpt from its source.')
 
 
-def scalar_in_quote(value, quote, *, unit=None, source=None):
-    if not isinstance(value, str) or len(value) > 32 or not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', value):
+def amount_pattern(value):
+    values = value if isinstance(value, list) else [value]
+    if isinstance(value, list) and len(value) != 2:
+        return None
+    if any(not isinstance(v, str) or len(v) > 32 or not re.fullmatch(DECIMAL, v) for v in values):
+        return None
+    if len(values) == 2 and Decimal(values[0]) > Decimal(values[1]):
+        return None
+    return RANGE_SEPARATOR.join(re.escape(v) for v in values)
+
+
+def amount_in_quote(value, quote, *, unit=None, source=None):
+    pattern = amount_pattern(value)
+    if pattern is None:
         return False
-    number = re.compile(r'(?<![\w.+-])(?<!\d,)' + re.escape(value) + r'(?!\w|\.\d|,\d)')
+    number = re.compile(r'(?<![\w.+−-])(?<!\d,)' + pattern + r'(?!\w|\.\d|,\d)')
     amounts = list(number.finditer(quote))
     if not amounts:
         return False
@@ -53,7 +69,7 @@ def scalar_in_quote(value, quote, *, unit=None, source=None):
     # A truncated quote can hide part of a number, a range, or a unit. Check
     # boundaries in the original while requiring the witness inside the quote.
     leading_qualifier = r'(?:\d\s*(?:[-–—]|\bto)|[~≈<>≤≥])\s*(?:[$€£¥][ \t]*)?'
-    qualified = {m.end() for m in re.finditer(leading_qualifier + '(?=' + re.escape(value) + ')', text)}
+    qualified = {m.end() for m in re.finditer(leading_qualifier + '(?=' + pattern + ')', text)}
     range_end = re.compile(r'\s*(?:[-–—]|to\b)\s*(?:[$€£¥]\s*)?\d')
     if unit is not None:
         suffix = re.compile(r'[^\S\n]*' + re.escape(unit) + r'(?![\w/%*^·]|[.-]\w|\s+per\s+\w)')
@@ -78,6 +94,68 @@ def scalar_in_quote(value, quote, *, unit=None, source=None):
             return False
         offset = text.find(quote, offset + 1)
     return True
+
+
+def scalar_in_quote(value, quote, *, unit=None, source=None):
+    return isinstance(value, str) and amount_in_quote(value, quote, unit=unit, source=source)
+
+
+def bound_measurement(row, body):
+    """Require the same numeric record and conditions at every occurrence of the result quote."""
+    quote, unit, metric = row['quote'], row['unit'], row['metric']
+    labels = [row[key] for key in CONDITIONS]
+    if not all(labels):
+        return False
+    amount = rf'{DECIMAL}(?:{RANGE_SEPARATOR}{DECIMAL})?'
+    escaped_unit = re.escape(unit)
+    numeric = (rf'{escaped_unit}[^\S\n]*({amount})(?!\w|\.\d|,\d)' if unit in ('$', '€', '£', '¥')
+               else rf'({amount})[^\S\n]*{escaped_unit}(?![\w/%*^·])')
+    readings = re.compile(r'(?<![\w.+−-])(?<!\d,)' + numeric)
+    expected = re.compile(amount_pattern(row['value']))
+
+    def literal_term(term):
+        start = r'(?<!\w)' if re.match(r'\w', term[0]) else ''
+        end = r'(?!\w)' if re.match(r'\w', term[-1]) else ''
+        return re.compile(start + re.escape(term) + end)
+
+    terms = [literal_term(label) for label in sorted(labels, key=len, reverse=True)]
+    metric_term = literal_term(metric)
+    def one_amount(record):
+        matches = list(readings.finditer(record))
+        if not matches or any(not expected.fullmatch(match[1]) for match in matches):
+            return False
+        residual = readings.sub(' ', record)
+        for term in [*terms, metric_term]:
+            residual = term.sub(' ', residual, count=1)
+        return not any(char.isnumeric() for char in residual)
+
+    complete_quote = metric_term.search(quote) and all(term.search(quote) for term in terms)
+    occurrences = 0
+    for paragraph in re.split(r'\n[ \t]*\n', body):
+        if quote not in paragraph:
+            continue
+        records = RECORD_BREAK.split(paragraph)
+        matching = [record for record in records if quote in record]
+        count = paragraph.count(quote)
+        if (complete_quote and sum(record.count(quote) for record in matching) == count
+                and all(one_amount(record) for record in matching)):
+            occurrences += count
+            continue
+        # Existing sheets can quote only the result under a complete, literal settings header.
+        marker = metric_term.search(paragraph)
+        if not marker:
+            return False
+        header, result = paragraph[:marker.start()], paragraph[marker.start():].rstrip()
+        for term in terms:
+            header, removed = term.subn('', header)
+            if not removed:
+                return False
+        if (header.strip(' \t\r\n.,;:|') or '\n' in result or result.count(quote) != count
+                or any(quote not in record for record in RECORD_BREAK.split(result))
+                or not one_amount(result)):
+            return False
+        occurrences += count
+    return occurrences == body.count(quote) and occurrences > 0
 
 
 def check(sheet, sources):
@@ -108,9 +186,9 @@ def check(sheet, sources):
             for key in ('metric', 'unit'):
                 literal(row[key], body, f'Claim {i} {key}')
             value = row['value']
-            if not scalar_in_quote(value, row['quote'], source=body):
-                raise ValueError(f'Claim {i} value needs one standalone decimal from its result quote. '
-                                 'Keep ranges as quoted text and omit the numeric fields.')
+            if not amount_in_quote(value, row['quote'], source=body):
+                raise ValueError(f'Claim {i} value needs one standalone decimal or its complete ordered range '
+                                 'from the result quote.')
         rows.append(dict(row, reference=ref))
         covered.add(index)
     if covered != set(range(1, len(sources) + 1)):
@@ -124,18 +202,31 @@ def check(sheet, sources):
         reasons = []
         if any(row['kind'] != 'measured' or 'value' not in row for row in (left, right)):
             reasons.append('Two measured scalar values are required.')
-        elif any(not scalar_in_quote(row['value'], row['quote'], unit=row['unit'], source=sources[row['source'] - 1][1]) for row in (left, right)):
-            reasons.append('The result quote must show each scalar with its stated unit before calculating a ratio.')
+        elif any(not amount_in_quote(row['value'], row['quote'], unit=row['unit'], source=sources[row['source'] - 1][1]) for row in (left, right)):
+            reasons.append('The result quote must show the complete value or interval with its stated unit.')
         for key in ('metric', 'unit', *CONDITIONS):
             if not left.get(key) or left.get(key) != right.get(key):
                 reasons.append(f'{key} is missing or differs.')
+        if not reasons and any(not bound_measurement(row, sources[row['source'] - 1][1])
+                               for row in (left, right)):
+            reasons.append('The result, metric and conditions must belong to one unambiguous source record.')
         result = {'claims': pair, 'unmatched': reasons}
         if not reasons:
-            divisor = Decimal(right['value'])
-            if divisor == 0:
+            numerator, denominator = left['value'], right['value']
+            if isinstance(numerator, list) or isinstance(denominator, list):
+                left_bounds = [Decimal(n) for n in (numerator if isinstance(numerator, list) else [numerator])]
+                right_bounds = [Decimal(n) for n in (denominator if isinstance(denominator, list) else [denominator])]
+                if right_bounds[0] <= 0 <= right_bounds[-1]:
+                    reasons.append('The denominator includes zero.')
+                else:
+                    ratios = [a / b for a in left_bounds for b in right_bounds]
+                    bounds = [min(ratios), max(ratios)]
+                    result['left_divided_by_right_range'] = [str(r) for r in bounds]
+                    result['relative_change_percent_range'] = [str((r - 1) * 100) for r in bounds]
+            elif Decimal(denominator) == 0:
                 reasons.append('The denominator is zero.')
             else:
-                result['left_divided_by_right'] = str(Decimal(left['value']) / divisor)
+                result['left_divided_by_right'] = str(Decimal(numerator) / Decimal(denominator))
         comparisons.append(result)
     return {'claims': rows, 'comparisons': comparisons, 'limit': SEMANTIC_LIMIT}
 

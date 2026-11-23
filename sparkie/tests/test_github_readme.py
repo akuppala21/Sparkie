@@ -23,7 +23,8 @@ METADATA = {'type': 'file', 'encoding': 'base64', 'content': base64.encodebytes(
             'html_url': SOURCE, 'sha': SHA, 'size': len(BODY)}
 
 
-def mock_api(monkeypatch, metadata):
+def mock_api(monkeypatch, metadata, *following):
+    responses = iter((metadata, *following))
     calls = []
 
     class Response(io.BytesIO):
@@ -33,6 +34,7 @@ def mock_api(monkeypatch, metadata):
         def open(self, request, timeout):
             calls.append(request)
             assert timeout == 15
+            metadata = next(responses)
             if isinstance(metadata, Exception):
                 raise metadata
             stream = Response(json.dumps(metadata).encode())
@@ -45,15 +47,54 @@ def mock_api(monkeypatch, metadata):
 
 @pytest.mark.parametrize('ref,query', [('tags/v2', '?ref=tags%2Fv2'), (None, '')])
 def test_saves_only_the_original_at_requested_ref(tmp_path, monkeypatch, ref, query):
-    calls = mock_api(monkeypatch, METADATA)
+    api = 'https://api.github.com/repos/example/tool'
+    calls = mock_api(monkeypatch, METADATA, {'full_name': 'Example/Tool', 'fork': False})
     result = reader.save_readme('example/tool', ref, tmp_path)
-    assert [(req.get_method(), req.full_url) for req in calls] == [('GET', 'https://api.github.com/repos/example/tool/readme' + query)]
-    assert not calls[0].get_header('Authorization')
+    assert [(req.get_method(), req.full_url) for req in calls] == [('GET', api + '/readme' + query), ('GET', api)]
+    assert all(not req.get_header('Authorization') for req in calls)
+    assert result['repository_provenance'] == {'status': 'known', 'metadata_url': api, 'full_name': 'Example/Tool', 'fork': False}
     assert result['source'] == SOURCE and result['requested_ref'] == ref
     assert result['immutable_blob'] == 'https://api.github.com/repos/example/tool/git/blobs/' + SHA
     assert result['bytes'] == len(BODY)
     assert list(tmp_path.iterdir()) == [Path(result['file'])]
     assert Path(result['file']).read_bytes() == BODY
+
+
+def test_identifies_nested_fork_without_reading_its_upstreams(tmp_path, monkeypatch):
+    api = 'https://api.github.com/repos/example/tool'
+    repo = {'full_name': 'example/tool', 'fork': True,
+            'parent': {'full_name': 'middle/tool'}, 'source': {'full_name': 'upstream/tool'}}
+    calls = mock_api(monkeypatch, METADATA, repo)
+    result = reader.save_readme('example/tool', 'tags/v2', tmp_path)
+    assert [req.full_url for req in calls] == [api + '/readme?ref=tags%2Fv2', api]
+    assert result['repository_provenance'] == {'status': 'known', 'metadata_url': api,
+                                               'full_name': 'example/tool', 'fork': True,
+                                               'parent': 'middle/tool', 'source': 'upstream/tool'}
+    assert result['source'] == SOURCE and Path(result['file']).read_bytes() == BODY
+
+
+@pytest.mark.parametrize('metadata', [HTTPError('https://api.github.com', 403, 'Denied', {}, None),
+                                      TimeoutError(), [], {'full_name': 'wrong/tool', 'fork': False},
+                                      {'full_name': 'example/tool', 'fork': 1},
+                                      {'full_name': 'example/tool', 'fork': False, 'parent': {'full_name': 'a/b'}},
+                                      {'full_name': 'example/tool', 'fork': False, 'source': {'full_name': 'c/d'}}])
+def test_unavailable_or_mismatched_provenance_keeps_the_verified_file(tmp_path, monkeypatch, metadata):
+    calls = mock_api(monkeypatch, METADATA, metadata)
+    result = reader.save_readme('example/tool', None, tmp_path)
+    assert len(calls) == 2
+    assert result['repository_provenance']['status'] == 'unknown'
+    assert 'fork' not in result['repository_provenance']
+    assert Path(result['file']).read_bytes() == BODY and result['immutable_blob'].endswith('/' + SHA)
+
+
+@pytest.mark.parametrize('parent', [None, {'full_name': 'example/tool'}, {'full_name': '../repo'},
+                                    {'full_name': 'other/repo\n'}, {'full_name': 'https://example.org/o/r'}])
+def test_fork_with_incomplete_lineage_retains_confirmed_identities(tmp_path, monkeypatch, parent):
+    mock_api(monkeypatch, METADATA, {'full_name': 'example/tool', 'fork': True,
+                                     'source': {'full_name': 'upstream/tool'}, 'parent': parent})
+    result = reader.save_readme('example/tool', None, tmp_path)['repository_provenance']
+    assert result['status'] == 'partial' and result['fork'] is True and result['parent'] is None
+    assert result['source'] == 'upstream/tool'
 
 
 @pytest.mark.parametrize('override', [{'html_url': 'https://github.com/example/toolx/blob/v2/README.md'},
@@ -118,6 +159,20 @@ def test_invalid_search_response_is_never_a_clean_empty_result(monkeypatch, payl
     mock_api(monkeypatch, payload)
     with pytest.raises(ValueError):
         reader.search_repositories('tool')
+
+
+def test_one_search_distinguishes_same_name_projects_with_bounded_descriptions(monkeypatch):
+    matches = [('a/tailspin', 'JavaScript interpreter'), ('b/tailspin', 'Log\nfile\u202e highlighter'),
+               ('c/tailspin', None), ('d/tailspin', 'x' * 300), ('e/tailspin', {})]
+    calls = mock_api(monkeypatch, {'items': [{'full_name': name, 'description': description}
+                                              for name, description in matches],
+                                   'total_count': 1400, 'incomplete_results': False})
+    result = reader.search_repositories('tailspin')
+    assert len(calls) == 1
+    assert result['repositories'] == [name for name, _ in matches]
+    assert result['descriptions'] == {'a/tailspin': 'JavaScript interpreter', 'b/tailspin': 'Log file highlighter',
+                                      'd/tailspin': 'x' * 239 + '…'}
+    assert 'untrusted source data' in result['description_notice']
 
 
 def test_repository_search_sends_only_a_project_name(monkeypatch):

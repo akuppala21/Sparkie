@@ -1,5 +1,6 @@
 """Exercise the source-checkout evidence utility using original source text and conflicting runs."""
 from importlib.util import module_from_spec, spec_from_file_location
+from decimal import Decimal
 import json
 from pathlib import Path
 import subprocess
@@ -173,3 +174,117 @@ def test_source_checkout_command_uses_the_supplied_directory(tmp_path):
     cmd = [sys.executable, str(script), '--workspace', str(tmp_path), 'one.md', 'two.md']
     result = subprocess.run(cmd, input=json.dumps(sheet), text=True, capture_output=True, check=True)
     assert json.loads(result.stdout)['comparisons'][0]['left_divided_by_right'] == '1.5'
+
+
+def test_source_conditions_and_result_cannot_be_borrowed_from_other_runs():
+    lines = [
+        'One worker, cold audit, reasoning off, full validation: throughput 37–43 files/hour.',
+        'One worker, cold audit, reasoning off, full validation: throughput 54 files/hour.',
+        'One worker, warm preview, reasoning off, header scan: throughput 27 files/hour.',
+    ]
+    def row(quote, value):
+        return dict(source=1, kind='measured', quote=quote, nodes='One worker', workload='cold audit',
+                    thinking='reasoning off', protocol='full validation', metric='throughput',
+                    unit='files/hour', value=value)
+    claims = [row(lines[1], '54'), row(lines[0], ['37', '43']), row(lines[2], '27')]
+    sheet = {'claims': claims, 'compare': [[1, 2], [1, 3]]}
+    for separator in ('\n', '\n\n', ' '):
+        matched, mismatched = checker.check(sheet, [('report', separator.join(lines))])['comparisons']
+        bounds = [Decimal(54) / Decimal(base) for base in (43, 37)]
+        assert matched['left_divided_by_right_range'] == list(map(str, bounds))
+        assert matched['relative_change_percent_range'] == [str((r - 1) * 100) for r in bounds]
+        assert mismatched['unmatched'] and 'left_divided_by_right' not in mismatched
+
+
+def test_ambiguous_short_quote_must_be_supported_at_each_occurrence():
+    sources, sheet = pair()
+    _, a = sources[0]
+    sources[0] = ('report', a + '\n\nTwo nodes, other batch, thinking on, preview only.\nThroughput: 12 items/s.')
+    result = checker.check(sheet, sources)['comparisons'][0]
+    assert result['unmatched'] and 'left_divided_by_right' not in result
+
+
+@pytest.mark.parametrize('line,quote', [
+    ('Single node, batch Q, reasoning off, 3 runs at 256 tokens. Throughput unavailable; '
+     'different suite: 12 items/s.', '12 items/s'),
+    ('Single node, batch Q, reasoning off, 3 runs at 256 tokens: Throughput 8 items/s and 12 items/s.',
+     'Single node, batch Q, reasoning off, 3 runs at 256 tokens: Throughput 8 items/s and 12 items/s.'),
+    ('Single node, batch Queries, reasoning off, 3 runs at 256 tokens: Throughput 12 items/s.',
+     'Single node, batch Queries, reasoning off, 3 runs at 256 tokens: Throughput 12 items/s.'),
+])
+def test_another_clause_competing_reading_or_partial_label_is_insufficient(line, quote):
+    sources, sheet = pair()
+    sources[0] = ('report', line)
+    sheet['claims'][0]['quote'] = quote
+    result = checker.check(sheet, sources)['comparisons'][0]
+    assert result['unmatched'] and 'left_divided_by_right' not in result
+
+
+@pytest.mark.parametrize('competing', ['1,200', '1.2e3', '1E+3', '1_200', '+1200', '.25'])
+def test_unsupported_competing_reading_withholds_ratio(competing):
+    sources, sheet = pair()
+    settings = sources[0][1].splitlines()[0]
+    quote = f'{settings}: Throughput {competing} items/s and 12 items/s.'
+    sources[0] = ('report', quote)
+    sheet['claims'][0]['quote'] = quote
+    result = checker.check(sheet, sources)['comparisons'][0]
+    assert result['unmatched'] and 'left_divided_by_right' not in result
+
+
+@pytest.mark.parametrize('competing', ['1,200\u00a0items/s', '1k items/s', '9', '−12 items/s'])
+def test_unaccounted_number_in_measurement_record_withholds_ratio(competing):
+    sources, sheet = pair()
+    settings = sources[0][1].splitlines()[0]
+    quote = f'{settings}: Throughput {competing} and 12 items/s.'
+    sources[0] = ('report', quote)
+    sheet['claims'][0]['quote'] = quote
+    result = checker.check(sheet, sources)['comparisons'][0]
+    assert result['unmatched'] and 'left_divided_by_right' not in result
+
+
+def test_unicode_negative_reading_cannot_supply_a_positive_value():
+    sources, sheet = pair()
+    sources[0] = (sources[0][0], sources[0][1].replace('12 items/s', '−12 items/s'))
+    sheet['claims'][0]['quote'] = '12 items/s'
+    with pytest.raises(ValueError, match='standalone decimal'):
+        checker.check(sheet, sources)
+
+
+def test_digits_in_exact_conditions_and_metric_allow_scalar_range_comparison():
+    sources, sheet = pair()
+    for i, row in enumerate(sheet['claims']):
+        value = ['8', '12'] if i else '12'
+        reading = '8–12' if i else '12'
+        quote = f'2 nodes, batch Q, reasoning off, 3 runs at 256 tokens: P95 throughput {reading} items/s.'
+        row.update(quote=quote, nodes='2 nodes', metric='P95 throughput', value=value)
+        sources[i] = ('report', quote)
+    comparison = checker.check(sheet, sources)['comparisons'][0]
+    assert comparison['unmatched'] == []
+    assert comparison['left_divided_by_right_range'] == ['1', '1.5']
+
+
+@pytest.mark.parametrize('left,right,expected', [
+    (['4', '6'], ['8', '10'], ['0.4', '0.75']),
+    (['-6', '-4'], ['8', '10'], ['-0.75', '-0.4']),
+    (['4', '6'], ['-2', '2'], None),
+])
+def test_interval_extrema_and_undefined_denominator(left, right, expected):
+    sources, sheet = pair()
+    for i, row in enumerate(sheet['claims']):
+        bounds = (left, right)[i]
+        quote = 'Latency: ' + ' to '.join(bounds) + ' ms.'
+        sources[i] = (sources[i][0], sources[i][1].replace(row['quote'], quote))
+        row.update(quote=quote, value=bounds, metric='Latency', unit='ms')
+    result = checker.check(sheet, sources)['comparisons'][0]
+    if expected is None:
+        assert result['unmatched'] and 'left_divided_by_right_range' not in result
+    else:
+        assert result['left_divided_by_right_range'] == expected
+
+
+@pytest.mark.parametrize('body,value', [
+    ('10 to 15 ms', ['10', '12']), ('10–15 ms', ['15', '10']),
+    ('≈10–15 ms', ['10', '15']), ('10–15–20 ms', ['10', '15']),
+])
+def test_incomplete_or_qualified_range_cannot_authorize_math(body, value):
+    assert not checker.amount_in_quote(value, body, unit='ms')

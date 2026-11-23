@@ -37,6 +37,29 @@ project. The public GitHub search resolved the project and its README through
 the native sandbox without credentials. The operator selected that route in
 this test. Search results (private record)
 
+The development reader also preserves short repository descriptions from that
+same search response. These help distinguish projects sharing a name without
+fetching every README. It keeps the existing repository list and search
+completeness fields, omits malformed optional descriptions, and visibly marks
+truncation. Descriptions are author-supplied discovery cues; the original files
+still supply the evidence for an answer. No additional network or model request
+is required to return this metadata.
+Change and checks (private record)
+
+README reads now make one additional bounded, anonymous request to GitHub's
+repository metadata endpoint. The result reports the requested repository's
+current fork status and the parent/source names GitHub supplies. It preserves
+the exact requested repository, ref and file; it never substitutes an upstream
+file. A missing or malformed response leaves the verified file available and
+marks provenance unknown or partial. Explicit `--path` reads still use one GET.
+[Development validation and limits](source-validation-2026-11-23.md).
+Repository metadata describes the current repository, even for a historical
+file ref. A nonfork result does not establish authorship or prove that it is
+the project the owner intended. The extra request uses GitHub's API allowance
+and uses a 15-second socket timeout, rather than a total request deadline.
+Reader checks (private record)
+· Native research and exact-fork control (private record)
+
 Both runs read the original forum and repository through native sandbox Chromium
 and `browser_cdp`. The forum body contained the actual vLLM command, five MTP
 speculative tokens, single-Spark setting and measurement conditions. The repository
@@ -158,18 +181,29 @@ The sheet has a `claims` array and a `compare` array. Each row needs a 1-based
 `source`, `kind` (`measured`, `configured` or `described`), the exact result
 `quote`, and four condition fields named `nodes`, `workload`, `thinking` and
 `protocol`. Use brief literal text from that same source for conditions and
-JSON null for unknowns. A scalar row can additionally include the exact
-`metric`, decimal `value` as a string, and `unit` together. For example,
-`"compare":[[2,3]]` requests the ratio of claim 2 to claim 3. Ranges can
-remain quoted without scalar fields.
+JSON null for unknowns. Numeric rows include the exact `metric`, `unit` and
+`value`. A decimal string represents a scalar. A pair of decimal strings in
+ascending order, such as `["37","43"]`, represents an interval. Quote the
+complete interval and unit together, as in `37–43 files/hour` or
+`37 to 43 files/hour`. A quote-only row can still describe any type of range.
 
 The checker requires a quote from every supplied original. It returns the
 source citation line or workspace path with each row and checks literal quote
-occurrence. Two scalar measurements with matching, complete condition fields
-permit arithmetic. Missing or different fields, ranges and a zero denominator
-suppress the ratio. The output describes any mismatches. It cannot verify
-whether the cited conditions actually apply to the result or whether the author
-measured what the row claims. It never edits the original source files.
+occurrence. For arithmetic, all declared conditions and the metric must appear
+with the reading in one record at every occurrence of the quote. The utility
+recognizes a single clause or a paragraph consisting of the quoted settings
+followed by one metric row. A second distinct reading in the chosen record,
+conditions found elsewhere in the document, missing conditions and unexplained
+numeric text in the measurement record withhold the ratio. This conservative
+check may withhold a usable result when an unrelated number remains. Older sheets that relied on scattered labels can still be read and
+show the reason in `unmatched`. A human must still interpret the author's words.
+
+`"compare":[[2,3]]` divides claim 2 by claim 3. Two supported scalars retain
+the `left_divided_by_right` result. With intervals, the checker returns the
+minimum and maximum endpoint ratios in `left_divided_by_right_range` and the
+corresponding values of `100 × (ratio − 1)` in `relative_change_percent_range`.
+A denominator that includes zero withholds both results. These are independent
+endpoint bounds. Paired observations require their own pairwise comparisons.
 
 The mandatory version was evaluated on the original forum task and a fresh
 matched/unmatched comparison. The observed cost and failures are recorded in
