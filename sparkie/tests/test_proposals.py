@@ -192,3 +192,32 @@ def test_native_telegram_proposal_routes_only_to_paired_owner_and_keeps_real_con
                 assert await asyncio.to_thread(telegram_controls.deliver_proposal, controls, route | bad, 'a' * 32) is False
             assert effects == []
     asyncio.run(run())
+
+
+def test_delivery_key_can_name_an_entirely_different_operation(rig):
+    controls, effects, binding, _ = rig
+    owner = Owner('one', 'web')
+    first = controls.store.prepare(owner, request_key='first-delivery', request_ref='source A',
+                                   action='wake', spark='spark2')
+    # Deliberately use the *other* valid record ID for the new delivery key.
+    second = controls.store.prepare(owner, request_key=first['id'], request_ref='7' * 32,
+                                    action='sleep', spark='spark3')
+    recorded = {'operation': second}
+    assert first['id'] != second['id']
+    assert controls.store.for_request(owner, first['id'])['id'] == second['id']
+    assert controls.store.get(first['id'])['id'] == first['id']
+
+    def read(operation):
+        return json.loads(proposals.status_tool({'operation': operation}))
+
+    result = read(recorded['operation']['id'])
+    assert result['available'] and result['request']['id'] == second['id']
+    assert result['request']['intent']['spark'] == 'spark3'
+    assert read(second['request_key'])['request']['intent']['spark'] == 'spark2'
+    assert read(second['request_ref'])['available'] is False
+    assert {'request_key', 'request_ref', 'digest'}.isdisjoint(result['request'])
+    assert json.loads(proposals.check_tool({'operation': second['id']}))['change_dispatched'] is False
+
+    binding[0] = OwnerBinding('new-owner-generation', 'owner', 'basic', '', 12345, 12345)
+    assert read(second['id'])['available'] is False
+    assert not effects

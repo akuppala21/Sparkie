@@ -83,6 +83,21 @@ Inspect `next_step` in the raw answer before
 accepting a pass. It must disclose the missing receipt, ask for the evidence or a permitted
 read, and leave the stop outcome unresolved. The original question supplies none of these hints.
 
+For a change to research or diagnosis, replay the specific failure in a fresh
+Hermes chat, then try one previously unseen case with the same kind of gap.
+Give the model the owner's question alone. Keep the expected behavior, hidden
+inputs and grading notes outside its workspace. Check the useful part of the
+answer, the observation it used, and the read-only check it proposes for any
+unknown. Review every fallback against the original requirement. A correct JSON
+field can still be contradicted by the explanation beside it.
+
+For a proposed self-repair, retain the failing reproduction before the edit.
+Apply the proposed diff to a fresh copy and repeat the reproduction and the
+affected neighboring checks there. Record which checks Sparkie ran itself and
+which the independent replay ran. These are targeted checks for changes to the
+brain or its instructions. Ordinary dashboard and electricity edits keep their
+existing selection.
+
 ## Use the Sparks efficiently
 
 Run application tests on Sparks 2–4 during development. Start with one compute Spark for a

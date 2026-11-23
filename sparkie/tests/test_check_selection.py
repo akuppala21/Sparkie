@@ -115,6 +115,14 @@ def test_native_skills_and_their_instruction_files_are_runtime_behavior():
         assert 'tests/test_native_integration.py' in plan['python_tests']
 
 
+def test_general_skill_edits_keep_the_runtime_prompt_consumers():
+    prompt = select(['sparkie/prompts/operator.md'])
+    skill = select(['sparkie/skills/ops/steps.md'])
+    consumers = set(prompt['python_tests'])
+    assert {'tests/test_fleet.py', 'tests/test_energy.py'} <= consumers
+    assert consumers <= set(skill['python_tests'])
+
+
 def test_sandbox_image_and_execution_config_require_real_isolation_check_without_blanket_suite():
     for path in ('sparkie/config/hermes.example.yaml', 'sparkie/config/sandbox.lock.json', 'sparkie/tests/hardware/native_sandbox.py'):
         plan = select([path])
