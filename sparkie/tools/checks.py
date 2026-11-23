@@ -52,10 +52,13 @@ def selection(paths):
             reasons.append(original + ': exact application update review, native transfer, owner parity, interrupted handover and rollback')
         elif path in ('skills/local-recipe-review/scripts/read_forum.py',
                       'skills/local-recipe-review/scripts/read_github_readme.py',
+                      'skills/local-recipe-review/scripts/read_manual.py',
                       'skills/local-recipe-review/scripts/check_evidence.py',
                       'skills/local-recipe-review/SKILL.md',
                       'skills/one-spark-serving-results/SKILL.md'):
             tests.update({'test_forum_reader.py', 'test_github_readme.py', 'test_research_claims.py', 'test_native_config.py'})
+            if path in {'skills/local-recipe-review/scripts/read_manual.py', 'skills/local-recipe-review/SKILL.md'}:
+                tests.add('test_manual_reader.py')
             if path == 'skills/one-spark-serving-results/SKILL.md':
                 tests.add('test_cache_measurement.py')
             research = behavior = True
