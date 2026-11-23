@@ -507,6 +507,32 @@ def test_browser_followup_points_to_the_selected_panel_only():
     assert select(['src/sparkie_sparks/energy.py'])['sparks_panel']
 
 
+@pytest.mark.parametrize('path', [
+    'tests/browser/dashboard_fixture.py', 'tests/browser/package.json',
+    'tests/browser/package-lock.json', 'tools/package_plugins.py', 'themes/sparkie.yaml',
+    'plugin/dashboard/manifest.json', 'plugin/dashboard/plugin_api.py', 'src/new_feature.py',
+])
+def test_shared_dashboard_inputs_select_panel_and_preserve_other_browser_checks(path):
+    plan = select([path])
+    assert plan['sparks_panel'] and plan['other_desktop_phone_browser']
+    assert plan['broad_qualification'] == (path == 'src/new_feature.py')
+
+
+def test_shared_dashboard_fixture_failure_reaches_maintenance_command(tmp_path):
+    root = tmp_path / 'checkout'
+    (root / 'tools').mkdir(parents=True)
+    (root / 'tests/browser').mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parents[1] / 'tools/checks.py', root / 'tools/checks.py')
+    (root / 'tests/browser/run_sparks.py').write_text('raise SystemExit(23)\n')
+    result = subprocess.run(
+        [sys.executable, 'tools/checks.py', '--paths', 'tests/browser/dashboard_fixture.py',
+         '--run-affected', str(tmp_path)], cwd=root, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 23
+    receipt = json.loads(result.stdout.splitlines()[-1])
+    assert receipt['sparks_panel_check']['passed'] is False
+    assert 'desktop_phone_browser' in receipt['remaining_check_groups']
+
+
 def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_path):
     root = tmp_path / 'checkout'
     browser = root / 'tests/browser'

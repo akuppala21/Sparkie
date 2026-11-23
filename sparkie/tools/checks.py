@@ -157,7 +157,7 @@ def selection(paths):
             reasons.append(original + ': reviewed recipe records, native discovery, dashboard API and owner view')
         elif path == 'themes/sparkie.yaml':
             tests.update(THEME)
-            browser = True
+            panel = browser = True
             reasons.append(original + ': staged theme, native discovery and owner theme preferences')
         elif path in ('deploy/patches/hermes-sandbox-skill-path.patch', 'deploy/patches/hermes-sandbox-skill-path.json',
                       'tests/test_skill_terminal_paths.py'):
@@ -191,7 +191,7 @@ def selection(paths):
             tests.update(AUTH)
             if path == 'tools/package_plugins.py':
                 tests.update(CATALOG)
-                syntax = True
+                panel = syntax = True
             browser = sessions = True
             reasons.append(original + ': native owner login, packaged providers, HTTP/API/WebSocket admission, provider reload and private controls')
         elif path in ('src/sparkie_sparks/power.py', 'src/sparkie_sparks/power_worker.py',
@@ -226,13 +226,16 @@ def selection(paths):
                 tests.add('test_checked_comparison.py')
             if path == 'plugin/dashboard/manifest.json':
                 tests.update(CATALOG)
-            browser = behavior = syntax = True
+            panel = browser = behavior = syntax = True
             research = compute = True
             reasons.append(original + ': native plugin registration, API and tool schemas')
         elif path.startswith('tests/browser/'):
             syntax = True
             if path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs'):
                 panel = True
+            elif path in ('tests/browser/dashboard_fixture.py', 'tests/browser/package.json',
+                          'tests/browser/package-lock.json'):
+                panel = browser = True
             else:
                 browser = True
             reasons.append(original + ': browser validation itself changed')
@@ -346,7 +349,7 @@ def selection(paths):
             compute = research = power = candidate = True
             reasons.append(original + ': impact is not classified; include all extension tests and integration checks')
     if broad:
-        candidate = True
+        panel = candidate = True
     # Even a small functional change gets the existing native registration/API smoke.
     if tests:
         tests.update(ADAPTERS)
