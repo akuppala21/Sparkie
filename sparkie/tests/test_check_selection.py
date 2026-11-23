@@ -1,5 +1,11 @@
 from pathlib import Path
+import json
 import runpy
+import shutil
+import subprocess
+import sys
+
+import pytest
 
 select = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/checks.py'))['selection']
 
@@ -358,3 +364,44 @@ def test_developer_evidence_tool_does_not_start_model_or_hardware_evaluations():
     assert not any(plan[k] for k in ('compact_local_behavior', 'native_research',
                                     'broad_qualification', 'compute_power_validation',
                                     'native_compute_workspace', 'native_candidate'))
+
+
+@pytest.mark.parametrize('layout', ['standalone', 'monorepo', 'nested'])
+def test_git_discovery_selects_a_repair_in_its_own_checkout(tmp_path, layout):
+    script = Path(__file__).resolve().parents[1] / 'tools/checks.py'
+    repo = tmp_path / layout
+    extension = {'standalone': repo, 'monorepo': repo / 'sparkie',
+                 'nested': repo / 'projects' / 'agent'}[layout]
+    tools_dir = extension / 'tools'
+    tools_dir.mkdir(parents=True)
+    shutil.copyfile(script, tools_dir / 'checks.py')
+    assets = extension / 'skills' / 'reports' / 'assets'
+    assets.mkdir(parents=True)
+    (assets / 'old.dat').write_bytes(b'fixed fixture')
+
+    def git(*args):
+        return subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                               '-c', 'commit.gpgsign=false', *args], cwd=repo, check=True, capture_output=True)
+
+    def plan():
+        return json.loads(subprocess.check_output(
+            [sys.executable, str(tools_dir / 'checks.py'), '--base', 'HEAD'], cwd=tmp_path))
+
+    git('init', '-q')
+    git('add', '.')
+    git('commit', '-qm', 'fixture')
+    assert plan()['python_tests'] == [], layout
+    (assets / 'old.dat').rename(assets / 'new.bin')
+    git('add', '-A')
+    entry = extension / 'skills' / 'nested' / 'SKILL.md'
+    entry.parent.mkdir(parents=True)
+    entry.write_text('New skill')
+    if layout != 'standalone':
+        (repo / 'unrelated.py').write_text('unrelated project')
+    changed = plan()
+    assert changed['compact_local_behavior'] and not changed['broad_qualification'], layout
+    assert 'tests/test_energy_integration.py' in changed['python_tests'], layout
+    paths = {reason.split(': ', 1)[0] for reason in changed['reasons']}
+    paths = {p.removeprefix('sparkie/') for p in paths}
+    assert paths == {'skills/reports/assets/old.dat', 'skills/reports/assets/new.bin',
+                     'skills/nested/SKILL.md'}, layout

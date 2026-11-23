@@ -1,0 +1,41 @@
+{
+  "execution": "Dedicated temporary Git repositories on compute Spark 2. The selector was called by absolute path from a different working directory; it received a staged rename and an untracked skill entry. The passing checks also created an unrelated out-of-scope file in the two enclosing repositories.",
+  "before": {
+    "standalone": "failed",
+    "monorepo": "passed",
+    "nested": "failed"
+  },
+  "before_observations": {
+    "standalone": "Git was invoked outside the repository; the command returned status 2.",
+    "nested": "The command returned success with no compact behavior checks selected, despite two changed assets and a new skill entry.",
+    "monorepo": "The normal Sparkie repository layout detected all three changed paths."
+  },
+  "after": {
+    "private": {
+      "tests": "47",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "1.981"
+    },
+    "public": {
+      "tests": "46",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "1.861"
+    }
+  },
+  "selected_python_modules": [
+    "tests/test_check_selection.py",
+    "tests/test_energy_integration.py",
+    "tests/test_native_integration.py",
+    "tests/test_preservation_selection.py"
+  ],
+  "command": "python tools/checks.py --paths tools/checks.py tests/test_check_selection.py --run-python",
+  "verification": "Both green selections include native registration and electricity-adapter smoke. No GPU, live configuration change or hosted CI was required for this selector fix.",
+  "public_source_sha256": {
+    "sparkie/tools/checks.py": "38eac3fa6bc24ef3be0bbfd1e9afb9f362b28988daa319c914539a8e37c92d3a",
+    "sparkie/tests/test_check_selection.py": "6e6de79daa054af96912380251e20eea18ad7af776550a8261224497d8a16f2a"
+  }
+}

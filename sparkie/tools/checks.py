@@ -6,6 +6,7 @@ This selects checks; it is not a new runner, scheduler or release approval.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -326,11 +327,20 @@ def selection(paths):
 
 
 def changed_paths(base):
-    repo = ROOT.parent
-    scope = ['sparkie', 'AGENTS.md', 'README.md', 'docs/contract.md', 'docs/architecture.md', 'docs/hermes-testing.md']
-    changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', base, '--', *scope], cwd=repo)
-    untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z', '--', *scope], cwd=repo)
-    return [path for path in (changed + untracked).decode().split('\0') if path]
+    tree = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], cwd=ROOT)
+    repo = Path(os.fsdecode(tree.removesuffix(b'\n'))).resolve()
+    extension = ROOT.relative_to(repo).as_posix()
+    scope = [extension]
+    if extension != '.':
+        scope.extend(['AGENTS.md', 'README.md', 'docs/contract.md', 'docs/architecture.md', 'docs/hermes-testing.md'])
+    git = ['git', '--literal-pathspecs']
+    changed = subprocess.check_output([*git, 'diff', '--no-renames', '--name-only', '-z', base, '--', *scope], cwd=repo)
+    untracked = subprocess.check_output([*git, 'ls-files', '--others', '--exclude-standard', '-z', '--', *scope], cwd=repo)
+    paths = [path for path in os.fsdecode(changed + untracked).split('\0') if path]
+    if extension not in ('.', 'sparkie'):
+        # Explicit --paths accepts extension-relative paths, regardless of checkout name.
+        return [path.removeprefix(extension + '/') for path in paths]
+    return paths
 
 
 def main():
