@@ -19,6 +19,20 @@ import uuid
 from urllib.parse import urlparse
 
 
+def has_fixture_evidence(case, result, expected_fleet):
+    if result.get('available') is not True:
+        return False
+    if case == 'electricity':
+        return (result.get('month') == '2026-10' and result.get('recorded_kwh') == 0.02
+                and result.get('partial') is True)
+    sparks = result.get('sparks')
+    if not isinstance(sparks, list) or len(sparks) != len(expected_fleet):
+        return False
+    observed = {row.get('id'): (row.get('observed_state'), row.get('stale'))
+                for row in sparks if isinstance(row, dict)}
+    return observed == expected_fleet
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
@@ -100,6 +114,7 @@ def main():
               'source_hashes': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                                 for folder in ('src', 'plugin') for p in (root / folder).rglob('*')
                                 if p.is_file() and '__pycache__' not in str(p)}, 'cases': []}
+    expected_fleet = {row['id']: (row['state'], row['id'] == 'spark4') for row in snapshot['sparks']}
     for case, prompt, expected_tool, expected_args in cases:
         trace.clear()
         agent = AIAgent(base_url=args.base_url, model='sparkie-hermes-main', api_key='local-placeholder',
@@ -117,13 +132,19 @@ def main():
             receipt.update(seconds=round(time.monotonic() - started, 3), tools=list(trace), prompt=prompt)
             (args.out / (case + '.json')).write_text(json.dumps(receipt, indent=2, default=str))
             calls_ok = len(trace) == 1 and trace[0]['tool'] == expected_tool and trace[0]['arguments'] == expected_args
-            report['cases'].append({'case': case, 'completed': result.get('completed'), 'seconds': receipt['seconds'],
-                                    'exactly_one_correct_read': calls_ok, 'semantic_review_required': True})
+            final = receipt['final_response']
+            report['cases'].append({'case': case, 'completed': receipt['completed'], 'seconds': receipt['seconds'],
+                                    'exactly_one_correct_read': calls_ok,
+                                    'fixture_evidence_returned': calls_ok and has_fixture_evidence(
+                                        case, trace[0]['result'], expected_fleet),
+                                    'answer_present': isinstance(final, str) and bool(final.strip()),
+                                    'semantic_review_required': True})
         finally:
             agent.close()
         (args.out / 'summary.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
-    return 0 if all(case['completed'] and case['exactly_one_correct_read'] for case in report['cases']) else 1
+    return 0 if all(case['completed'] is True and case['fixture_evidence_returned'] and case['answer_present']
+                    for case in report['cases']) else 1
 
 
 if __name__ == '__main__':

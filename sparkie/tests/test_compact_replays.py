@@ -37,6 +37,7 @@ def test_failed_wrong_and_partial_file_reads_cannot_qualify_a_response():
     assert not read_once(receipt('/workspace/other.json', observed), path)
     assert not read_once(receipt(path, {'not_found': True, 'error': 'missing'}), path)
     assert not read_once(receipt(path, dict(observed, truncated=True)), path)
+    assert not read_once(receipt(path, dict(observed, truncated_lines=True)), path)
     suffix = receipt(path, observed)
     suffix['reads'][0]['arguments']['offset'] = 2
     assert not read_once(suffix, path)
@@ -64,3 +65,18 @@ def test_decisive_file_rejects_unrelated_calls_even_when_the_answer_is_correct()
     assert not only_called_file_reader([dict(requested, tool_calls=[read, view]), observed, final])
     assert not only_called_file_reader([requested, observed, {'role': 'assistant', 'function_call': {'name': 'skill_view'}}, final])
     assert not only_called_file_reader([requested, observed, {'role': 'tool', 'name': 'skill_view'}, final])
+
+
+def test_read_tool_selection_requires_the_seeded_observations():
+    from behavior.read_tools import has_fixture_evidence
+
+    expected = {'spark1': ('online', False), 'spark4': ('online', True)}
+    rows = [{'id': spark, 'observed_state': state, 'stale': stale}
+            for spark, (state, stale) in expected.items()]
+    assert has_fixture_evidence('fleet', {'available': True, 'sparks': rows}, expected)
+    assert not has_fixture_evidence('fleet', {'available': True, 'sparks': []}, expected)
+    assert not has_fixture_evidence('fleet', {'available': True, 'sparks': [rows[0], rows[0]]}, expected)
+    month = {'available': True, 'month': '2026-10', 'recorded_kwh': 0.02, 'partial': True}
+    assert has_fixture_evidence('electricity', month, expected)
+    assert not has_fixture_evidence('electricity', dict(month, available=False), expected)
+    assert not has_fixture_evidence('electricity', dict(month, recorded_kwh=None), expected)

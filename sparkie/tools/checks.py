@@ -240,7 +240,7 @@ def selection(paths):
                 browser = True
             reasons.append(original + ': browser validation itself changed')
         elif path.startswith('tests/behavior/'):
-            if path == 'tests/behavior/native_acceptance.py':
+            if path in ('tests/behavior/native_acceptance.py', 'tests/behavior/read_tools.py'):
                 tests.add('test_compact_replays.py')
             if path == 'tests/behavior/research_output.py':
                 tests.add('test_research_output.py')

@@ -222,6 +222,12 @@ def test_selector_and_research_changes_are_classified():
     assert plan['native_research'] and not plan['broad_qualification']
 
 
+def test_read_tool_eval_selects_its_evidence_regression():
+    plan = select(['tests/behavior/read_tools.py'])
+    assert 'tests/test_compact_replays.py' in plan['python_tests']
+    assert plan['compact_local_behavior'] and not plan['broad_qualification']
+
+
 def test_operation_changes_include_model_reconciliation_and_its_private_boundary():
     for path in ('operations.py', 'controls.py', 'proposals.py', 'broker.py'):
         plan = select(['sparkie/src/sparkie_sparks/' + path])

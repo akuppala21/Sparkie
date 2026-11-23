@@ -50,7 +50,7 @@ def read_once(receipt, path):
         return False
     result = reads[0]['result']
     return (result.get('not_found') is False and result.get('truncated') is False
-            and not result.get('error') and bool(result.get('content')))
+            and not result.get('truncated_lines') and not result.get('error') and bool(result.get('content')))
 
 
 def only_called_file_reader(messages):
