@@ -10,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
+from xml.parsers import expat
 
 
 MAX_BYTES = 4 * 1024 * 1024
@@ -57,6 +58,7 @@ class Manual(HTMLParser):
         self.pre_depth = None
         self.code_ranges = []
         self.has_withdrawals = False
+        self.withdrawn_tags = []
 
     def flush(self):
         raw = "".join(self.parts)
@@ -95,6 +97,19 @@ class Manual(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        # A deleted subtree cannot end a current line, row or list item.
+        # Keep its structural tags out of the visible document's stack.
+        if self.withdrawn_tags or tag in {"del", "s", "strike"}:
+            if (not self.withdrawn_tags and not (self.stack and self.stack[-1][2])
+                    and "hidden" not in attrs and attrs.get("aria-hidden") != "true"):
+                self.has_withdrawals = True
+            if self.fragment and attrs.get("id") == self.fragment:
+                self.fragment_count += 1
+            if tag not in self.void:
+                if len(self.stack) + len(self.withdrawn_tags) >= MAX_DEPTH:
+                    raise ManualError("The manual exceeds the supported HTML nesting depth.")
+                self.withdrawn_tags.append(tag)
+            return
         if self.pre_depth is None and (tag in self.boundaries or tag in self.ignored):
             self.flush()
         if self.pre_depth is None and tag in self.table_parents:
@@ -130,9 +145,6 @@ class Manual(HTMLParser):
                     break
         hidden = ((bool(self.stack) and self.stack[-1][2]) or tag in self.ignored
                   or "hidden" in attrs or attrs.get("aria-hidden") == "true")
-        if tag in {"del", "s", "strike"} and not hidden:
-            self.has_withdrawals = True
-            hidden = True
         if self.pre_depth is not None and not hidden and tag in self.boundaries and tag != "br":
             self.code_line_break()
         parent = self.stack[-1] if self.stack else None
@@ -196,6 +208,12 @@ class Manual(HTMLParser):
         del self.stack[index:]
 
     def handle_endtag(self, tag):
+        if self.withdrawn_tags:
+            for i in range(len(self.withdrawn_tags) - 1, -1, -1):
+                if self.withdrawn_tags[i] == tag:
+                    del self.withdrawn_tags[i:]
+                    break
+            return
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i][0] == tag:
                 if self.pre_depth is not None:
@@ -210,8 +228,47 @@ class Manual(HTMLParser):
                 break
 
     def handle_data(self, data):
-        if not self.stack or not self.stack[-1][2]:
+        if not self.withdrawn_tags and (not self.stack or not self.stack[-1][2]):
             self.parts.append(data)
+
+
+def read_xhtml(manual, page):
+    """Pass XHTML element events to the reader without loading a DTD or entities."""
+    namespace = "http://www.w3.org/1999/xhtml "
+    parser = expat.ParserCreate(namespace_separator=" ")
+    depth = 0
+
+    def tag_for(name):
+        # A foreign element is an opaque subtree, e.g. an embedded SVG graphic.
+        return name.removeprefix(namespace) if name.startswith(namespace) else "template"
+
+    def start(name, attrs):
+        nonlocal depth
+        if depth == 0 and name != namespace + "html":
+            raise ManualError("The XHTML manual needs an HTML root in the XHTML namespace.")
+        depth += 1
+        if depth > MAX_DEPTH:
+            raise ManualError("The manual exceeds the supported XHTML nesting depth.")
+        manual.handle_starttag(tag_for(name), attrs)
+
+    def end(name):
+        nonlocal depth
+        manual.handle_endtag(tag_for(name))
+        depth -= 1
+
+    def doctype(name, system_id, public_id, internal_subset):
+        if system_id or public_id or internal_subset:
+            raise ManualError("The XHTML manual uses an unsupported DTD or entity declaration.")
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = manual.handle_data
+    parser.StartDoctypeDeclHandler = doctype
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    try:
+        parser.Parse(page, True)
+    except expat.ExpatError:
+        raise ManualError("The publisher did not return well-formed XHTML.") from None
 
 
 def public_target(url):
@@ -289,7 +346,8 @@ def read_page(url, terms, directory):
         if re.fullmatch(r"[0-9]{3}", status):
             raise ManualError(f"The publisher returned HTTP {status}.")
         raise ManualError("The publisher did not return an HTTP status.")
-    if content_type.split(";")[0].strip().lower() not in {"text/html", "application/xhtml+xml"}:
+    media_type = content_type.split(";")[0].strip().lower()
+    if media_type not in {"text/html", "application/xhtml+xml"}:
         raise ManualError("The publisher did not return an HTML manual.")
     if raw.stat().st_size > MAX_BYTES:
         raise ManualError("Manual exceeds the download size limit.")
@@ -302,8 +360,11 @@ def read_page(url, terms, directory):
         page = data.decode(charset[1] if charset else "utf-8")
     except (UnicodeError, LookupError):
         raise ManualError("Could not decode the publisher's page using its declared or default encoding.") from None
-    manual.feed(page)
-    manual.close()
+    if media_type == "application/xhtml+xml":
+        read_xhtml(manual, page)
+    else:
+        manual.feed(page)
+        manual.close()
     manual.flush()
     if not manual.lines and not manual.has_withdrawals:
         raise ManualError("The page provided no readable text blocks.")

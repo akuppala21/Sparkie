@@ -219,13 +219,13 @@ def test_preformatted_line_limit_is_cumulative_and_checked_before_expansion(monk
     assert len(doc.lines) == 4
 
 
-def linked_page(raw, fragment, term, monkeypatch, directory):
+def linked_page(raw, fragment, term, monkeypatch, directory, media_type="text/html"):
     resolve(monkeypatch, ["1.1.1.1"])
 
     def fetch(args, **kwargs):
         assert args[-1] == "https://docs.example.org/release"
         Path(args[args.index("--output") + 1]).write_bytes(raw.encode())
-        return subprocess.CompletedProcess(args, 0, stdout="200\ntext/html; charset=UTF-8")
+        return subprocess.CompletedProcess(args, 0, stdout=f"200\n{media_type}; charset=UTF-8")
 
     monkeypatch.setattr(subprocess, "run", fetch)
     return reader.read_page("https://docs.example.org/release#" + fragment, [term], directory)
@@ -368,3 +368,56 @@ def test_documentation_about_edit_markup_remains_literal(monkeypatch, tmp_path):
     result = linked_page(raw, "example", "42", monkeypatch, tmp_path)
     assert result["matches"][0]["passages"][0]["excerpt"] == "<del>42</del>"
     assert "revision_note" not in result
+
+
+@pytest.mark.parametrize("removed", [
+    "<del><br>19:00</del>",
+    "<s><span><del>19:00<br>once</del></span><br></s>",
+])
+def test_removed_break_preserves_current_time_and_search_hit(removed, monkeypatch, tmp_path):
+    raw = f'<section id="desk"><p>Thursday 16{removed}:30 collection.</p></section>'
+    result = linked_page(raw, "desk", "16:30", monkeypatch, tmp_path)
+    assert Path(result["text"]).read_text() == "Thursday 16:30 collection.\n"
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Thursday 16:30 collection."
+
+
+@pytest.mark.parametrize("prefix", ["", "h:"])
+def test_xhtml_edits_use_their_namespace_and_preserve_current_fragment(prefix, monkeypatch, tmp_path):
+    ns = 'xmlns:h' if prefix else 'xmlns'
+    raw = (f'<{prefix}html {ns}="http://www.w3.org/1999/xhtml"><{prefix}body>'
+           f'<{prefix}section id="desk"><{prefix}p>Thursday <{prefix}del><{prefix}s>19:00</{prefix}s>'
+           f'</{prefix}del><{prefix}ins>16:30</{prefix}ins> collection.</{prefix}p></{prefix}section>'
+           f'</{prefix}body></{prefix}html>')
+    result = linked_page(raw, "desk", "16:30", monkeypatch, tmp_path, "application/xhtml+xml")
+    assert result["section"] == {"status": "found", "basis": "element", "line_ranges": [[1, 1]]}
+    assert result["matches"][0]["passages"][0]["excerpt"] == "Thursday 16:30 collection."
+    assert "19:00" not in Path(result["text"]).read_text()
+    assert "revision_note" in result and Path(result["original"]).read_text() == raw
+
+
+@pytest.mark.parametrize("declaration", [
+    '<!DOCTYPE html SYSTEM "https://example.invalid/external.dtd">',
+    '<!DOCTYPE html [<!ENTITY old "19:00">]>',
+])
+def test_xhtml_refuses_external_and_internal_dtds_before_writing_passages(declaration, monkeypatch, tmp_path):
+    raw = declaration + '<html xmlns="http://www.w3.org/1999/xhtml"><p id="desk">16:30</p></html>'
+    with pytest.raises(reader.ManualError, match="DTD"):
+        linked_page(raw, "desk", "16:30", monkeypatch, tmp_path, "application/xhtml+xml")
+    assert not (tmp_path / "passages.txt").exists()
+
+
+def test_foreign_xhtml_content_stays_out_of_the_current_measurement(monkeypatch, tmp_path):
+    raw = ('<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" '
+           'xmlns:h="http://www.w3.org/1999/xhtml" xmlns:v="http://www.w3.org/2000/svg">'
+           '<body><p id="desk">Thursday <h:del><v:svg><v:text>19:00</v:text></v:svg>'
+           '</h:del>16:30 &amp; later.</p><v:svg><v:text>19:00</v:text></v:svg></body></html>')
+    result = linked_page(raw, "desk", "16:30", monkeypatch, tmp_path, "application/xhtml+xml")
+    assert Path(result["text"]).read_text() == "Thursday 16:30 & later.\n"
+    assert result["matches"][0]["hits"] == 1 and "revision_note" in result
+
+
+def test_malformed_xhtml_is_refused_without_current_passages(monkeypatch, tmp_path):
+    raw = '<html xmlns="http://www.w3.org/1999/xhtml"><p id="desk"><del>19:00</p></html>'
+    with pytest.raises(reader.ManualError, match="well-formed XHTML"):
+        linked_page(raw, "desk", "19:00", monkeypatch, tmp_path, "application/xhtml+xml")
+    assert not (tmp_path / "passages.txt").exists()
