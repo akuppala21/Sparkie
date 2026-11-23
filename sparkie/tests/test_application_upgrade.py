@@ -107,7 +107,10 @@ class ApplicationUpgrade(unittest.TestCase):
         (self.base/'candidate.json').write_text('unexpected predecessor')
         self.invoke('observe')
         self.assertFalse(self.notices[-1]['rollback_available'])
-        (self.target/'candidate.json').write_text('unexpected candidate')
+        manifest = self.target / 'candidate.json'
+        self.assertEqual(manifest.stat().st_mode & 0o222, 0)
+        manifest.chmod(0o600)  # The unprivileged fixture owns its private release.
+        manifest.write_text('unexpected candidate')
         self.invoke('observe')
         self.assertFalse(self.notices[-1]['accept_available'])
 
@@ -194,6 +197,40 @@ class ApplicationUpgrade(unittest.TestCase):
         self.assertEqual(self.restart.call_count,1)
         self.restart.side_effect = None
         self.assertEqual(self.invoke('rollback')['state'],'rolled_back')
+
+    def test_interrupted_preparation_waits_for_the_exact_predecessor(self):
+        # The release name can survive a missing or replaced manifest.
+        with patch.object(up, 'materialize', side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.invoke('apply')
+        manifest = self.base / 'candidate.json'
+        original = manifest.read_bytes()
+        manifest.write_bytes(b'{"different":"release"}')
+        self.assertEqual(self.invoke('observe')['state'], 'unknown')
+        manifest.unlink()
+        self.assertEqual(self.invoke('observe')['state'], 'unknown')
+        self.assertFalse(self.notices[-1]['rollback_available'])
+        self.assertFalse(self.notices[-1]['accept_available'])
+        same_bytes = self.work / 'untrusted-manifest'
+        same_bytes.write_bytes(original)
+        manifest.symlink_to(same_bytes)
+        self.assertEqual(self.invoke('observe')['state'], 'unknown')
+        manifest.unlink()
+        manifest.write_bytes(original)
+        self.assertEqual(self.invoke('observe')['state'], 'failed')
+        self.assertEqual(self.invoke('apply')['state'], 'failed')
+        self.assertFalse(self.target.exists())
+        self.restart.assert_not_called()
+        self.guidance.assert_not_called()
+
+    def test_admission_failure_with_changed_predecessor_keeps_update_held(self):
+        def interrupted_admission(*_):
+            (self.base / 'candidate.json').write_text('different predecessor')
+            raise ValueError('predecessor changed')
+        with patch.object(up, 'materialize', side_effect=interrupted_admission):
+            self.assertEqual(self.invoke('apply')['state'], 'unknown')
+        self.assertEqual(self.invoke('apply')['state'], 'unknown')
+        self.restart.assert_not_called()
+        self.assertFalse(self.target.exists())
 
     @unittest.skipUnless(os.geteuid() == 0 and hasattr(socket,'SO_PEERCRED'), 'Linux container root needed for real peer credential tests')
     def test_real_unix_peer_can_only_inspect_as_the_authorized_controller_pid(self):

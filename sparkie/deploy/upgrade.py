@@ -424,6 +424,24 @@ def transition(operation, data, state, message):
     record(operation, data)
 
 
+def reconcile_preparation(operation, data):
+    """Resolve a stopped worker before switching, using the approved release identity."""
+    try:
+        active = selector()
+        manifest = active / 'candidate.json'
+        verified = (active == RELEASES / data['previous_name']
+                    and stat.S_ISREG(manifest.lstat().st_mode)
+                    and file_hash(manifest) == data['previous'])
+    except (OSError, RuntimeError, ValueError):
+        verified = False
+    if verified:
+        state, message = 'failed', 'Preparation stopped before switching. The recorded previous release is active.'
+    else:
+        state, message = 'unknown', 'Preparation stopped before switching. The active release could not be verified. Check this request again after inspecting the release.'
+    if (data['state'], data['message']) != (state, message):
+        transition(operation, data, state, message)
+
+
 def refresh_guidance(before, after):
     # Hermes SSH deliberately skips symlinked skill trees. Keep the original
     # regular files and install only the bootstrap's exact protected roster.
@@ -496,14 +514,11 @@ def action(method, operation, proposal, notify):
         if data:
             require(data['proposal'] == proposal, 'This operation belongs to another proposal.')
         if method == 'observe':
-            if data and data['state'] == 'running':
-                # We obtained the single lock, so the prior worker has exited.
-                # A pre-switch crash cannot have changed the selector. Never
-                # retry a partially dispatched handover from an observation.
-                if not data['switch_started'] and selector().name == data['previous_name']:
-                    transition(operation,data,'failed','Preparation was interrupted before switching. Previous release is active.')
-                else:
-                    transition(operation,data,'unknown','The previous handover was interrupted. Check or restore this recorded release.')
+            # Holding the single lock proves the earlier worker has exited.
+            if data and not data['switch_started'] and data['state'] in ('running', 'unknown'):
+                reconcile_preparation(operation, data)
+            elif data and data['state'] == 'running':
+                transition(operation,data,'unknown','The previous handover was interrupted. Check or restore this recorded release.')
             notify(state_result(data or {'state':'unknown','message':'No steward journal for this request.'}))
             return
         if method in ('accept', 'rollback'):
@@ -581,7 +596,7 @@ def action(method, operation, proposal, notify):
                 except (OSError, ValueError, subprocess.SubprocessError):
                     transition(operation, data,'unknown','Could not verify rollback. Reconcile this journal.')
             else:
-                transition(operation, data,'failed','The candidate failed admission before switching; previous release is active.')
+                reconcile_preparation(operation, data)
 
 
 def serve(connection):
