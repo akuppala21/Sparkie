@@ -1,7 +1,7 @@
 ---
 name: local-recipe-review
 description: Compare source claims with citations and exact output.
-version: 1.6.3
+version: 1.6.4
 metadata:
   hermes:
     tags: [research, recipes, sources]
@@ -24,6 +24,11 @@ allocated CPU servers and prompt-cache comparisons as well as GPU serving.
 1. Read the relevant original source body with the available native tools. Search
    snippets and titles help locate material; they do not establish its results.
    If the owner supplied sufficient excerpts, use them without an unnecessary search.
+   When the owner links to a specific section of an HTML manual, keep the full
+   URL, including the fragment. To read the linked section in the terminal use
+   `python3 ~/.hermes/skills/local-recipe-review/scripts/read_manual.py 'URL#section' --find 'term'`
+   with a term from the question. Use its section passages. If it cannot locate
+   the section, inspect the saved page before attributing a rule to it.
    For a named project option, first check the project's README or official option
    index. Match the full option name in that list before following a variant's own
    guide. If several entries fit the owner's wording, distinguish their settings
