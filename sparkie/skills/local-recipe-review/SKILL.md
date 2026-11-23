@@ -1,7 +1,7 @@
 ---
 name: local-recipe-review
-description: Compare source claims with citations and exact output.
-version: 1.6.7
+description: Research technical decisions from original sources and target observations.
+version: 1.6.8
 metadata:
   hermes:
     tags: [research, recipes, sources]
@@ -12,17 +12,26 @@ metadata:
 
 ## When to Use
 
-Use when reading, comparing or recommending technical recipes, models, serving
-engines or hardware setups from source material.
+Use when answering a technical question from documentation, examples or a
+particular system's state.
 
 ## Procedure
 
-For a recommendation with a strict requirement, give the action the owner can
-take now. Try one counterexample to each proposed workaround: what could another
-participant observe if a step fails halfway? Discard an option if that outcome
-breaks the requirement even briefly. Detecting or repairing a violation afterward
-cannot guarantee prevention. When the evidence supports only keeping the current
-state, recommend that and finish with the prerequisite for a different decision.
+When the question asks what is true on a particular system, or what is safe
+under a hard requirement, choose the applicable answer below after reading the
+evidence. Answer the owner's decision first; attach the source rule and the
+smallest resolving check. These are alternative conclusions.
+
+| Evidence in hand | Answer to give |
+| --- | --- |
+| The owner or an authorized read supplies the relevant value on the named target. | Give the observed value and the result it implies, including its scope. |
+| Two different target settings both fit the facts and imply different answers. | Lead with “the actual value is unknown.” Name the missing setting, give the relationship symbolically and say exactly where to read it on that target. If the owner asks only for the actual value, omit numerical defaults and worked examples from the entire answer. A sandbox reproduction can demonstrate the mechanism but cannot select either setting for their target. |
+| A proposed action has a documented guarantee covering the required outcome on this target, for the existing participants, including interruption. | Cite that guarantee and its preconditions before recommending the action. |
+| No such guarantee has been established. | Withhold the change. Explain one allowed failure sequence and the first thing an existing participant could see that breaks the requirement. End with the missing guarantee or prerequisite. A workaround belongs in the recommendation only after it passes this same test. Leave unverified alternatives out, including “optional” advice at the end. |
+
+When both a rule and a private fact are asked for, answer each. A source
+can settle the rule even while the target value remains unknown. A successful
+trial can show one allowed outcome; it cannot prove every permitted outcome.
 
 When the owner asks to measure a model server, open the native
 `one-spark-serving-results` skill before sending a completion request. It covers

@@ -1,6 +1,6 @@
 ---
 name: maintain-sparkie
-version: 1.0.2
+version: 1.0.3
 description: Diagnose and repair Sparkie in a private checkout, verify its affected callers, or prepare a compatible application update for exact owner review.
 ---
 
@@ -31,9 +31,16 @@ requires the sealed predecessor and steps 3–7.
    neighboring case that should keep working. Check what each affected caller
    actually receives. Report a partial repair when any required behavior is missing.
    Use the smallest coherent fix, preserve useful assertions, and run affected
-   checks with `tools/checks.py --paths ...`. Record actual results and duration.
-   The selector also lists browser, native integration and local behavior checks
-   that still need to run. Its Python pass alone does not qualify a release.
+   checks. From the extension root, `python3 tools/checks.py --paths <changed paths>
+   --run-python` prints the plan and runs its Python tests. It lists other
+   required checks separately. A plan alone is not a test result.
+
+   For a review-only repair, inspect the final diff and send the owner the result
+   as soon as the reproduction and affected checks have outcomes. Include the
+   observed before/after behavior, files changed, tests that ran and any gap.
+   If a check cannot collect, verify its path and the missing dependency once.
+   Run any independent checks that still work. Name the blocked check and what
+   it needs in the same reply. A partial result is useful. Stop there for a review.
 3. Build with the existing `deploy/candidate.py` at a **new** final path
    `/opt/sparkie/releases/<release-name>` in the same private workspace. Use the
    original pinned upstream archive from `upstream.lock.json`, checking its SHA,

@@ -14,6 +14,14 @@ READ_TOOLS = {'tool_search', 'tool_describe', 'spark_change_status', 'spark_chec
 JSON_FIELDS = re.compile(r'\bjson\b\s*(?:(?:with|containing)\s+)?(?:(?:the|these)\s+)?(?:(?:fields|keys)\s*)?[:{(]?\s*(.+?)\s*[.})]*\s*$', re.I | re.S)
 
 
+# Native Webapp shares the GUI transport with desktop. A whole, explicit receipt
+# request can finish there without relying on model classification of other tasks.
+WEB_RECEIPT_PREFIX = re.compile(
+    r'(?:please\s+)?(?:check|show|get|return)\s+(?:the\s+)?(?:stop\s+)?(?:request|receipt)\s+'
+    r'[a-f0-9]{32}\s+as', re.I,
+)
+
+
 @dataclass(frozen=True)
 class Checked:
     operation: str
@@ -103,7 +111,7 @@ class RecoveryReplies:
             checks = self.turns.get(key, {}).copy()
         # The pinned OpenAI-compatible SSE writer omits a non-streamed final after
         # an earlier tool preamble. Its own provider stream must finish the answer.
-        if platform not in ('cli', 'telegram') or api_mode != 'chat_completions' or not any(item.final for item in checks.values()):
+        if platform not in ('cli', 'telegram', 'desktop') or api_mode != 'chat_completions' or not any(item.final for item in checks.values()):
             return next_call()
         rows = _turn_rows(request.get('messages') or [])
         trailing = set()
@@ -143,12 +151,16 @@ class RecoveryReplies:
             fields = JSON_FIELDS.search(user)
             if not item.stop_receipt or not fields:
                 return next_call()
+            if platform == 'desktop' and (
+                    not WEB_RECEIPT_PREFIX.fullmatch(user[:fields.start()].strip())
+                    or not re.fullmatch(r'[a-zA-Z_ ,]+', fields[1])):
+                return next_call()
             names = re.findall(r'\w+', fields[1])
             if {name for name in names if name.lower() != 'and'} != item.stop_receipt.keys():
                 return next_call()
             content = json.dumps(item.stop_receipt)
         else:
-            if not all(item.can_finish for item in receipts.values()) or any(item.stop_receipt for item in receipts.values()):
+            if platform == 'desktop' or not all(item.can_finish for item in receipts.values()) or any(item.stop_receipt for item in receipts.values()):
                 return next_call()
             content = '\n\n'.join(item.text for item in receipts.values())
         from openai.types.chat import ChatCompletion

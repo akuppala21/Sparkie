@@ -49,11 +49,19 @@ An unavailable or mismatched ID yields no stop receipt.
 For a single JSON receipt naming exactly `receipt_id`, `state`, `stopped`
 and `next_step`, the model can pass `reply_format: "stop_receipt_json"`.
 The middleware checks the owner's declared field list and the same-turn
-tool result before returning that JSON. Other formats, other platforms and
-explicit provider response schemas retain the ordinary model round with the
-typed tool data. For a separate current-state question or additional work
-the model should omit both reply options. The dashboard sidebar creates a
-session tagged `tool` and therefore follows the ordinary provider route.
+tool result before returning that JSON. In the signed-in native Webapp,
+use a standalone request such as `Check stop request <ID> as JSON with
+receipt_id, state, stopped and next_step.` The gateway's authenticated
+browser socket creates a `gui` session, whose agent uses the shared
+`desktop` platform. The gateway can carry the checked receipt in its final
+message even after the assistant streamed a preamble.
+
+The Webapp shortcut requires the whole prompt to request that one receipt.
+Additional questions, other field lists, explicit response schemas and
+plain-text requests use ordinary model completion there. For a separate
+current-state question or additional work the model should omit both reply
+options. The standalone dashboard's terminal, its connection-status sidecar
+and the OpenAI-compatible streaming API use different transports.
 
 The model can invoke the known check directly through native Tool Search.
 The recovery instructions call for a silent check before offering advice.

@@ -126,6 +126,21 @@ def test_json_stop_receipt_uses_checked_outcome_on_the_same_request(rig, observe
                              api_mode='chat_completions', model='local', platform=platform)
     for platform in ('cli', 'telegram'):
         assert json.loads(answer(prompt + fields, platform).choices[0].message.content) == expected
+    from gateway.session_policy import SURFACES
+    web = SURFACES['gui']
+    short = f"Check stop request {row['id']} as JSON with receipt_id, state, stopped and next_step."
+    assert json.loads(answer(short, web).choices[0].message.content) == expected
+    for question in (
+        'Explain kWh as well. ' + short,
+        short + ' Also tell me whether the workload is running.',
+        short.replace('as JSON', 'as a list in JSON'),
+        short.replace('stopped and next_step', 'machine and next_step'),
+        short.replace('state, stopped', 'state: [stopped]'),
+        f"Check stop request {row['id']}.",
+    ):
+        assert answer(question, web) == 'native answer'
+    for platform in ('tui', 'tool', 'api_server'):
+        assert answer(short, platform) == 'native answer'
     assert answer(prompt + fields, 'tool') == 'native answer'
     assert answer(prompt + fields + ' Also tell me what is running now.') == 'native answer'
     assert answer(prompt + fields.replace('and next_step', 'next_step and hostname')) == 'native answer'
