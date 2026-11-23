@@ -273,7 +273,11 @@ def read_page(url, terms, directory):
     fragment = unquote(urlsplit(url).fragment)
     safe_fragment = 0 < len(fragment) <= 200 and fragment.isprintable() and not any(c.isspace() for c in fragment)
     manual = Manual(fragment if safe_fragment else None)
-    manual.feed(data.decode(charset[1] if charset else "utf-8"))
+    try:
+        page = data.decode(charset[1] if charset else "utf-8")
+    except (UnicodeError, LookupError):
+        raise ManualError("Could not decode the publisher's page using its declared or default encoding.") from None
+    manual.feed(page)
     manual.close()
     manual.flush()
     if not manual.lines:
@@ -302,7 +306,8 @@ def read_page(url, terms, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("urls", nargs="+")
-    parser.add_argument("--find", action="append", required=True, help="Literal phrase to locate, repeat for other facts.")
+    parser.add_argument("--find", action="append", required=True,
+                        help="Literal phrase to locate. For a flag, use --find=--flag.")
     args = parser.parse_args()
     if len(args.urls) > 4 or len(args.find) > 4 or any(not t.strip() or len(t) > 160 for t in args.find):
         parser.error("Use at most four pages and one to four short search phrases.")
@@ -312,11 +317,28 @@ def main():
             directory = Path(tempfile.mkdtemp(prefix="manual-", dir="/workspace"))
             print(json.dumps(read_page(url, args.find, directory), ensure_ascii=False), flush=True)
         except (OSError, ValueError, LookupError, subprocess.SubprocessError) as error:
-            # Library and process exceptions can contain URLs, headers or arguments.
-            message = str(error) if isinstance(error, ManualError) else "Could not fetch or decode this public manual."
-            print(json.dumps({"input": number, "error": message}), flush=True)
+            print(json.dumps({"input": number, "error": failure_message(error)}), flush=True)
             ok = False
     return 0 if ok else 1
+
+
+def failure_message(error):
+    # DNS and curl exceptions can include a private URL, hostname or command.
+    if isinstance(error, ManualError):
+        return str(error)
+    if isinstance(error, socket.gaierror):
+        return "DNS lookup failed for the manual publisher."
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "The manual request timed out."
+    if isinstance(error, subprocess.CalledProcessError):
+        return {
+            7: "Could not connect to the manual publisher.",
+            28: "The manual request timed out.",
+            35: "The TLS handshake with the manual publisher failed.",
+            60: "Could not verify the manual publisher's TLS certificate.",
+            63: "Manual exceeds the download size limit.",
+        }.get(error.returncode, "The manual download failed.")
+    return "Could not fetch or decode this public manual."
 
 
 if __name__ == "__main__":

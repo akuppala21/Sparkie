@@ -124,6 +124,44 @@ def test_cli_redacts_subprocess_exception(monkeypatch, tmp_path, capsys):
     assert json.loads(captured.out)["error"]
 
 
+@pytest.mark.parametrize(("failure", "message"), [
+    (socket.gaierror("sensitive_detail"), "DNS lookup failed"),
+    (subprocess.TimeoutExpired(["curl", "sensitive_detail"], 22), "timed out"),
+    (subprocess.CalledProcessError(28, ["curl", "sensitive_detail"]), "timed out"),
+    (subprocess.CalledProcessError(60, ["curl", "sensitive_detail"]), "TLS certificate"),
+    (subprocess.CalledProcessError(63, ["curl", "sensitive_detail"]), "size limit"),
+])
+def test_cli_reports_failure_stage_without_echoing_private_details(failure, message, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "argv", ["read_manual.py", "https://docs.example.org/ref", "--find=--limit"])
+    monkeypatch.setattr(reader.tempfile, "mkdtemp", lambda **kw: str(tmp_path))
+    calls = []
+
+    def read(url, terms, directory):
+        calls.append(terms)
+        raise failure
+
+    monkeypatch.setattr(reader, "read_page", read)
+    assert reader.main() == 1
+    output = capsys.readouterr()
+    assert message in json.loads(output.out)["error"]
+    assert "sensitive_detail" not in output.out + output.err
+    assert calls == [["--limit"]]
+
+
+def test_bad_page_encoding_is_reported_without_returning_page_bytes(monkeypatch, tmp_path):
+    resolve(monkeypatch, ["1.1.1.1"])
+
+    def fetch(args, **kwargs):
+        Path(args[args.index("--output") + 1]).write_bytes(b"private_fixture\xff")
+        return subprocess.CompletedProcess(args, 0, stdout="200\ntext/html; charset=utf-8")
+
+    monkeypatch.setattr(subprocess, "run", fetch)
+    with pytest.raises(reader.ManualError, match="decode the publisher") as caught:
+        reader.read_page("https://docs.example.org/ref", ["--limit"], tmp_path)
+    assert "private_fixture" not in str(caught.value)
+    assert not (tmp_path / "passages.txt").exists()
+
+
 def test_omitted_list_ends_preserve_each_sibling_and_close_the_last_item():
     doc = reader.Manual()
     items = "".join(f'<li id="item-{i}"><a href="/">Entry {i}.</a>' for i in range(250))
