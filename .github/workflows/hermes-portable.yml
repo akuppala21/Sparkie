@@ -1,6 +1,8 @@
 name: Hermes portable release checks
 
 on:
+  push:
+    branches: [codex/hermes-portable-release]
   workflow_dispatch:
     inputs:
       source_ref:
@@ -20,7 +22,7 @@ concurrency:
 
 jobs:
   portable:
-    if: github.event.repository.visibility == 'public' && (github.event_name == 'workflow_dispatch' || vars.SPARKIE_NIGHTLY == 'true')
+    if: github.event.repository.visibility == 'public' && (github.event_name != 'schedule' || vars.SPARKIE_NIGHTLY == 'true')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:

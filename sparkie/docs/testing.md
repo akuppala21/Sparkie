@@ -224,9 +224,13 @@ portable CPU selection for electricity, fleet state, source readers, owner contr
 and update recovery. Hardware, the selected local model, native browser sign-in and
 the installed system have their own qualification records. [Workflow](../../.github/workflows/hermes-portable.yml)
 
-Once the workflow is on the default branch, a maintainer can run it from Actions
-on the chosen release ref. Nightly jobs require the repository variable
-`SPARKIE_NIGHTLY=true`. Pushes and pull requests do not trigger it. The job
+In Actions, select **Hermes portable release checks** and enter the exact
+source commit in **Run workflow**. A maintainer can also start the checks
+by advancing the dedicated `codex/hermes-portable-release` branch to a
+reviewed development commit that contains this trigger. The job checks that
+exact revision. Ordinary development pushes and pull requests use Spark checks.
+Nightly jobs require the schedule on the default branch and the repository
+variable `SPARKIE_NIGHTLY=true`. The job
 checks public visibility and uses one standard Ubuntu Arm runner. It has read-only
 repository permission and uploads no caches or artifacts. Results appear in the
 job log. Private repositories would need a separate zero-spend decision.
