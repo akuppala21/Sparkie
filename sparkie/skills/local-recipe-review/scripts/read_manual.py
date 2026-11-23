@@ -56,6 +56,7 @@ class Manual(HTMLParser):
         self.lines = []
         self.pre_depth = None
         self.code_ranges = []
+        self.has_withdrawals = False
 
     def flush(self):
         raw = "".join(self.parts)
@@ -129,6 +130,9 @@ class Manual(HTMLParser):
                     break
         hidden = ((bool(self.stack) and self.stack[-1][2]) or tag in self.ignored
                   or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+        if tag in {"del", "s", "strike"} and not hidden:
+            self.has_withdrawals = True
+            hidden = True
         if self.pre_depth is not None and not hidden and tag in self.boundaries and tag != "br":
             self.code_line_break()
         parent = self.stack[-1] if self.stack else None
@@ -301,12 +305,14 @@ def read_page(url, terms, directory):
     manual.feed(page)
     manual.close()
     manual.flush()
-    if not manual.lines:
+    if not manual.lines and not manual.has_withdrawals:
         raise ManualError("The page provided no readable text blocks.")
     plain = directory / "passages.txt"
-    plain.write_text("\n".join(line for _, line in manual.lines) + "\n", encoding="utf-8")
+    plain.write_text("".join(line + "\n" for _, line in manual.lines), encoding="utf-8")
     result = {"source": source, "raw_sha256": hashlib.sha256(data).hexdigest(), "original": str(raw),
               "text": str(plain), "lines": len(manual.lines)}
+    if manual.has_withdrawals:
+        result["revision_note"] = "Passages omit text marked as deleted or struck through. The original HTML preserves it."
     ranges = None
     if fragment:
         # Never echo an unknown fragment, which may contain private URL state.

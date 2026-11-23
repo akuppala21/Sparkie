@@ -341,3 +341,30 @@ def test_merged_cells_keep_their_scope_and_separate_rows_in_excerpt(monkeypatch,
     assert excerpt.splitlines() == [
         "| Group | [colspan=2] Rates", "| [rowspan=0] Plan | 10 | 20", "| 30 | 40",
     ]
+
+
+@pytest.mark.parametrize("tag", ["del", "s", "strike"])
+def test_corrected_values_are_read_without_joining_old_and_new_digits(tag, monkeypatch, tmp_path):
+    raw = (f'<section id="limits"><p>Limit: <{tag}><b>112</b></{tag}><ins>12</ins> items/s.</p>'
+           '<p>Only for one worker.</p></section>')
+    result = linked_page(raw, "limits", "12 items/s", monkeypatch, tmp_path)
+    hit, = result["matches"][0]["passages"]
+    assert hit["excerpt"] == "Limit: 12 items/s.\nOnly for one worker."
+    assert "struck through" in result["revision_note"]
+    assert Path(result["original"]).read_text() == raw
+
+
+def test_entirely_withdrawn_section_provides_no_current_evidence(monkeypatch, tmp_path):
+    raw = '<section id="price"><del><p>Price is 51 credits.</p></del></section>'
+    result = linked_page(raw, "price", "51 credits", monkeypatch, tmp_path)
+    assert result["lines"] == 0 and Path(result["text"]).read_bytes() == b""
+    assert result["matches"][0]["hits"] == 0 and result["section"]["line_ranges"] == []
+    assert "original" in result["revision_note"]
+    assert Path(result["original"]).read_text() == raw
+
+
+def test_documentation_about_edit_markup_remains_literal(monkeypatch, tmp_path):
+    raw = '<section id="example"><pre>&lt;del&gt;42&lt;/del&gt;</pre></section>'
+    result = linked_page(raw, "example", "42", monkeypatch, tmp_path)
+    assert result["matches"][0]["passages"][0]["excerpt"] == "<del>42</del>"
+    assert "revision_note" not in result
