@@ -12,7 +12,8 @@ def test_compact_runner_requires_enrollment_before_writing_results(tmp_path, mon
     original = Path.read_text
     monkeypatch.setattr(Path, 'read_text', lambda path, *args, **kwargs:
                         'unenrolled-test-worker' if path == identity else original(path, *args, **kwargs))
-    for options in ([], ['--structured-only'], ['--missing-reader-only'], ['--case', 'simple_question']):
+    for options in ([], ['--structured-only'], ['--missing-reader-only'], ['--case', 'simple_question'],
+                    ['--custody-record'], ['--custody-record', '--missing-reader-only']):
         output = tmp_path / 'results'
         monkeypatch.setattr(sys, 'argv', ['native_acceptance.py', '--out', str(output), *options])
         with pytest.raises(RuntimeError, match='allocated compute Spark'):
