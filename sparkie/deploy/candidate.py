@@ -62,29 +62,33 @@ def install_structured_validator(uv, native, runtime, env):
 
 
 def apply_restore_guard(native, extension):
-    patch = (extension / RESTORE_PATCH).resolve(strict=True)
+    return apply_native_patch(native, extension, RESTORE_PATCH, RESTORE_ROUTERS)
+
+
+def apply_native_patch(native, extension, patch_path, targets):
+    patch = (extension / patch_path).resolve(strict=True)
     reviewed = json.loads(patch.with_suffix(".json").read_text())
     patch_hash = sha(patch)
-    if patch_hash != reviewed["patch_sha256"] or set(reviewed["files"]) != set(RESTORE_ROUTERS):
-        raise ValueError("The sealed-home restore patch or its reviewed targets changed.")
-    before = {name: sha(native / name) for name in RESTORE_ROUTERS}
+    if patch_hash != reviewed["patch_sha256"] or set(reviewed["files"]) != set(targets):
+        raise ValueError("The reviewed native patch or its targets changed.")
+    before = {name: sha(native / name) for name in targets}
     if any(before[name] != reviewed["files"][name]["before_sha256"] for name in before):
-        raise ValueError("The sealed-home restore patch requires the reviewed native router files.")
+        raise ValueError("The native patch requires the reviewed upstream files.")
     # Extracted sources have no .git. Keep Git outside any enclosing checkout
     # and ignore ambient repository and whitespace configuration.
     env = {"PATH": os.environ.get("PATH", os.defpath), "GIT_CEILING_DIRECTORIES": str(native.parent),
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
     command = ["git", "apply", "--whitespace=error"]
     stats = subprocess.check_output([*command, "--numstat", "-z", str(patch)], cwd=native, env=env)
-    targets = [row.split(b"\t", 2)[2].decode() for row in stats.split(b"\0") if row]
-    if sorted(targets) != sorted(RESTORE_ROUTERS):
-        raise ValueError("The sealed-home restore patch targets different native files.")
+    patched_targets = [row.split(b"\t", 2)[2].decode() for row in stats.split(b"\0") if row]
+    if sorted(patched_targets) != sorted(targets):
+        raise ValueError("The native patch targets different upstream files.")
     subprocess.run([*command, "--check", str(patch)], cwd=native, env=env, check=True)
     subprocess.run([*command, str(patch)], cwd=native, env=env, check=True)
     after = {name: sha(native / name) for name in before}
     if any(after[name] != reviewed["files"][name]["after_sha256"] for name in after):
-        raise ValueError("The patched native restore routers differ from the reviewed result.")
-    return {"patch": "extension/" + RESTORE_PATCH.as_posix(), "sha256": patch_hash,
+        raise ValueError("The patched native files differ from the reviewed result.")
+    return {"patch": "extension/" + patch_path.as_posix(), "sha256": patch_hash,
             "upstream_files": before, "patched_files": after}
 
 
@@ -151,6 +155,9 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     (destination / roots.pop()).rename(destination / "hermes")
     shutil.copytree(extension, destination / "extension", ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "node_modules"))
     restore_guard = apply_restore_guard(destination / "hermes", destination / "extension")
+    skill_path_patch = apply_native_patch(destination / "hermes", destination / "extension",
+                                         Path("deploy/patches/hermes-sandbox-skill-path.patch"),
+                                         ("agent/skill_commands.py",))
     shutil.copytree(webapp, destination / "webapp")
     shutil.copytree(dashboard, destination / "dashboard")
     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
@@ -197,7 +204,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
-        "native_patches": [restore_guard],
+        "native_patches": [restore_guard, skill_path_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

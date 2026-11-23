@@ -1,0 +1,107 @@
+--- a/agent/skill_commands.py
++++ b/agent/skill_commands.py
+@@ -68,6 +68,13 @@
+ # Closing sentence of the skill-directory footer note (see _SKILL_DIR_NOTE in this module):
+ # the last thing in every built payload, so it marks where an auto-load payload ends and the
+ # next payload or the user's typed text begins.
++_SANDBOX_SKILL_FILES_END = "[End of sandbox skill paths.]"
++_SANDBOX_SKILL_FOOTER = re.compile(
++    r"^\[(?:Terminal skill directory: [^\n]+|This skill has no verified terminal directory\. "
++    r"Use skill_view for linked files\.)\]\n"
++    r"(?:- [^\n]*\n)*(?:Load a listed file with skill_view\([^\n]*\)\.\n)?"
++    + re.escape(_SANDBOX_SKILL_FILES_END) + r"(?=\n|$)", re.MULTILINE)
++
+ _SKILL_DIR_NOTE_END = "then run them with the terminal tool using the absolute path."
+ 
+ # SQL LIKE pattern for listing queries that recognize scaffolding before the row
+@@ -191,6 +198,14 @@
+     registered = _registered_auto_load_tail(content)
+     if registered is not None:
+         return registered.strip()
++    # Consume each generated sandbox footer once. A literal closing marker or a
++    # quoted footer in the owner's text is part of the request.
++    remaining = content
++    while footer := _SANDBOX_SKILL_FOOTER.search(remaining):
++        tail = remaining[footer.end():].lstrip()
++        if not _AUTO_LOAD_HEADER_RE.match(tail):
++            return tail.strip()
++        remaining = tail
+     footer_end = content.rfind(_SKILL_DIR_NOTE_END)
+     if footer_end == -1:
+         return ""
+@@ -411,6 +426,44 @@
+     return supporting
+ 
+ 
++def _sandbox_skill_footer(skill_dir: Path, target: str, supporting: list[str], task_id: str | None):
++    """Render paths for the managed compute backend and its Docker qualification fixture.
++    Use the same declared roots as native mounts/sync. Never initialize a workspace here.
++    """
++    from tools.credential_files import _skill_dir_roots, _terminal_backend
++    backend = _terminal_backend()
++    if task_id:
++        from tools.terminal_tool import resolve_task_overrides
++        backend = resolve_task_overrides(task_id).get("env_type", backend)
++    if backend not in ("docker", "spark_compute"):
++        return None
++    from agent.skill_utils import EXCLUDED_SKILL_DIRS
++    from agent.terminal_env_registry import provider_flag
++    base = "/root/.hermes" if backend == "docker" else provider_flag(backend, "cache_path_base", None)
++    terminal_dir = None
++    for root, dest in _skill_dir_roots(base) if base else ():
++        if not skill_dir.is_relative_to(root):
++            continue
++        rel = skill_dir.relative_to(root)
++        # The native uploader omits symlinks and excluded directories. A package
++        # with mixed or unlisted paths gets the conservative skill_view footer.
++        for item in ["SKILL.md", *supporting]:
++            path = rel / item
++            if (path.is_absolute() or ".." in path.parts or EXCLUDED_SKILL_DIRS.intersection(path.parts)
++                    or not (root / path).is_file() or (root / path).resolve() != root.resolve() / path):
++                break
++        else:
++            terminal_dir = Path(dest) / rel
++        break
++    footer = ["", f"[Terminal skill directory: {terminal_dir}]" if terminal_dir else
++              "[This skill has no verified terminal directory. Use skill_view for linked files.]"]
++    if supporting:
++        footer.extend(f"- {item}" for item in supporting)
++        footer.append(f'Load a listed file with skill_view(name={json.dumps(target)}, file_path="<path>").')
++    footer.append(_SANDBOX_SKILL_FILES_END)
++    return footer
++
++
+ def _build_skill_message(
+     loaded_skill: dict[str, Any],
+     skill_dir: Path | None,
+@@ -427,18 +480,23 @@
+     )
+     parts = [activation_note, "", content.strip()]
+     # Absolute skill dir lets the agent run bundled scripts without a skill_view() round-trip.
++    supporting = _supporting_files(loaded_skill, skill_dir)
++    footer = None
+     if skill_dir:
+-        parts += ["", f"[Skill directory: {skill_dir}]", _SKILL_DIR_NOTE]
++        try:
++            skill_view_target = str(skill_dir.relative_to(_skills_dir()))
++        except ValueError:
++            skill_view_target = str(loaded_skill.get("name") or skill_dir.name)
++        footer = _sandbox_skill_footer(skill_dir, skill_view_target, supporting, session_id)
++        if footer is None:
++            parts += ["", f"[Skill directory: {skill_dir}]", _SKILL_DIR_NOTE]
+     _inject_skill_config(loaded_skill, parts)
+     setup_note = _setup_note(loaded_skill)
+     if setup_note:
+         parts += ["", f"[Skill setup note: {setup_note}]"]
+-    supporting = _supporting_files(loaded_skill, skill_dir)
+-    if supporting and skill_dir:
+-        try:
+-            skill_view_target = str(skill_dir.relative_to(_skills_dir()))
+-        except ValueError:
+-            skill_view_target = str(loaded_skill.get("name") or skill_dir.name)
++    if footer is not None:
++        parts.extend(footer)
++    elif supporting and skill_dir:
+         parts += ["", "[This skill has supporting files (paths relative to the skill directory above):]"]
+         parts += [f"- {sf}" for sf in supporting]
+         parts.append(

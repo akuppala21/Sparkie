@@ -1,0 +1,9 @@
+{
+  "patch_sha256": "ea6118f4d9f92a08e9ffcb9db9d3044c44c2a185aafbff99de31e6e7cdad9c4f",
+  "files": {
+    "agent/skill_commands.py": {
+      "before_sha256": "e3014b177dce704142c23b7a4ab1b28440eca19867e6d6f1e3ce9171d3fdf17d",
+      "after_sha256": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba"
+    }
+  }
+}

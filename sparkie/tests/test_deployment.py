@@ -77,10 +77,20 @@ print(json.dumps({'version':stamp['baseVersion'],'update_refused':True}))
     assert json.loads(result.stdout.splitlines()[-1])["update_refused"] is True
 
 
-def test_sealed_restore_patch_provenance_matches_installed_routers(prepared):
+@pytest.mark.parametrize(('patch_name', 'targets'), [
+    ('hermes-sealed-web-restore.patch', {'hermes_cli/web_routers/ops.py', 'hermes_cli/web_routers/transfer.py'}),
+    ('hermes-sandbox-skill-path.patch', {'agent/skill_commands.py'}),
+])
+def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_name, targets):
     root, candidate, _ = prepared
     manifest = json.loads((root / "candidate.json").read_text())
-    applied, = manifest["native_patches"]
+    records = manifest["native_patches"]
+    assert [record["patch"] for record in records] == [
+        "extension/deploy/patches/hermes-sealed-web-restore.patch",
+        "extension/deploy/patches/hermes-sandbox-skill-path.patch",
+    ]
+    applied, = [record for record in records if Path(record["patch"]).name == patch_name]
+    assert set(applied["patched_files"]) == targets
     patch = root / applied["patch"]
     reviewed = json.loads(patch.with_suffix(".json").read_text())
     assert applied["sha256"] == reviewed["patch_sha256"] == candidate.sha(patch)
@@ -97,7 +107,7 @@ def test_restore_patch_refuses_a_previously_patched_source(prepared, tmp_path):
         router.parent.mkdir(parents=True, exist_ok=True)
         router.write_bytes((root / "hermes" / name).read_bytes())
     before = [candidate.sha(router) for router in routers]
-    with pytest.raises(ValueError, match="reviewed native router files"):
+    with pytest.raises(ValueError, match="reviewed upstream files"):
         candidate.apply_restore_guard(tmp_path, root / "extension")
     assert [candidate.sha(router) for router in routers] == before
 

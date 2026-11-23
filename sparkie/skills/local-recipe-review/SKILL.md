@@ -48,8 +48,7 @@ allocated CPU servers and prompt-cache comparisons as well as GPU serving.
    Preserve the source's units; explain an unfamiliar setting only if verified.
    For NVIDIA Developer Forum topic links, use the native terminal's bundled reader
    first. Run this command exactly with the terminal sandbox's own home path.
-   Hermes displays the host's skill directory in its footer; that directory belongs
-   to another machine. Keep the literal `~/.hermes` below. Pass the links individually quoted:
+   Pass each topic link individually quoted:
    `python3 ~/.hermes/skills/local-recipe-review/scripts/read_forum.py 'URL' 'URL'`.
    Use native `read_file` on each printed file. Each contains the original author's
    Markdown, original link and post number. A topic link selects its opening post.
