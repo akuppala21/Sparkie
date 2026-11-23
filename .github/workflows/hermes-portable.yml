@@ -2,6 +2,12 @@ name: Hermes portable release checks
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Hermes release commit, tag or development branch to test
+        required: true
+        type: string
+        default: codex/hermes-research-update
   schedule:
     - cron: '31 9 * * *'
 
@@ -20,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
       - name: Read the Hermes revision
         id: hermes
