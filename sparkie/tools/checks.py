@@ -5,6 +5,7 @@ This selects checks; it is not a new runner, scheduler or release approval.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -369,6 +370,13 @@ def main():
     if args.run_python and plan['python_tests']:
         code = subprocess.call([sys.executable, '-m', 'pytest', *plan['python_tests']], cwd=ROOT)
         if code:
+            missing = [module for module in ('pytest', 'hermes_cli')
+                       if importlib.util.find_spec(module) is None]
+            if 'pytest' in missing or (code == 2 and missing):
+                print(f"{sys.executable} cannot find {', '.join(missing)}. "
+                      "Use the prepared development Python and the matching Hermes source "
+                      "from this checkout's test setup. The sealed serving environment "
+                      "omits development dependencies.", file=sys.stderr)
             return code
     if args.run_python:
         remaining = [name for name in GROUPS if plan[name]]

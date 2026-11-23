@@ -438,3 +438,20 @@ def test_nested_regressions_reach_pytest_and_broad_collection_honors_ignores(tmp
     assert broad.returncode == 1 and 'AssertionError: nested-repro' in broad.stdout
     assert 'excluded module was imported' not in broad.stdout
     assert (root / 'test_energy.py.ran').is_file()
+
+
+def test_missing_pytest_names_the_interpreter_and_offline_development_setup(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(tmp_path / 'dev')],
+                   check=True)
+    clean_python = tmp_path / 'dev/bin/python'
+    import os
+    env = {key: value for key, value in os.environ.items()
+           if key not in {'PYTHONPATH', 'PYTHONHOME'}}
+    result = subprocess.run([str(clean_python), str(root / 'tools/checks.py'),
+                             '--paths', 'tools/checks.py', '--run-python'],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert str(clean_python) in result.stderr
+    assert 'cannot find pytest' in result.stderr
+    assert 'prepared development Python' in result.stderr

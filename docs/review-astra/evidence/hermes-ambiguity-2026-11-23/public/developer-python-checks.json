@@ -1,0 +1,19 @@
+{
+  "private": {
+    "tests": "49",
+    "time": "2.576",
+    "skipped": "0",
+    "errors": "0",
+    "failures": "0",
+    "junit_sha256": "6a0476b8ad845971545fc8635a7b9230431e6ab896f1d5af7450a4a8ce938b94"
+  },
+  "public": {
+    "tests": "48",
+    "time": "2.529",
+    "skipped": "0",
+    "errors": "0",
+    "failures": "0",
+    "junit_sha256": "c494e45f6bab8f43ca04140d515e8ddf820ed1f98a544e9d83f7c9c1a6bdf1b5"
+  },
+  "scope": "Changing the developer test runner includes the native adapter smoke and the clean venv missing-pytest regression. On failure, the selector reports the actual interpreter and missing imports and retains the test exit status. Planning alone does not import pytest or start an installation."
+}
