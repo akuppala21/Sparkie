@@ -245,3 +245,35 @@ full-answer accuracy is ungraded. The engine continued decoding within the
 memory guard, and the test sandbox and model were verified absent afterward.
 Neither BF16 path qualifies a replacement research profile.
 Ordinary-path result (private record)
+
+## Check two supplied reports
+
+Paste the question and both source texts into the explicit Hermes command. Each
+block starts with a title and a link on separate lines. The links identify the
+sources as supplied by the caller. The command assesses only the pasted text.
+
+```text
+/checked-comparison Which option demonstrated the requested result?
+Source: First report
+URL: https://example.org/first
+Paste the first report here.
+Source: Second report
+URL: https://example.org/second
+Paste the second report here.
+```
+
+Hermes asks the selected local model which source demonstrates the full
+requirement and which passages support each judgment. Sparkie checks that each
+quoted passage occurs in its assigned text. It displays the verdict, both
+source links, quoted evidence and an optional next test directly. Short
+paragraphs retain their surrounding context. The renderer escapes backticks in
+source fences and checks the result with Hermes’s attachment parsers. A passage
+that would send an attachment, an invalid quotation, or an unavailable local
+model produces a message without a verdict. Ordinary chat makes no
+automatic comparison request.
+
+The command accepts up to 60,000 UTF-8 bytes. A quotation can be accurate while
+its interpretation is wrong. A signed-in isolated Webapp exercised the multiline command over its
+native WebSocket. The messaging handler was tested with synthetic Telegram events. The messaging gateway accepts
+`/checked_comparison` and normalizes en and em dashes in command arguments.
+Quotation matching on that path uses the normalized text.

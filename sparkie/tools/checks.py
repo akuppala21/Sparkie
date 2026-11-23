@@ -77,6 +77,10 @@ def selection(paths):
             tests.update({'test_cache_measurement.py', 'test_native_config.py'})
             research = behavior = True
             reasons.append(original + ': matched cache measurements, saved receipts and native skill use')
+        elif path == 'src/sparkie_sparks/checked_comparison.py':
+            tests.add('test_checked_comparison.py')
+            behavior = research = True
+            reasons.append(original + ': explicit native comparison, source quotation and direct command delivery')
         elif path == 'tools/check_research_evidence.py':
             tests.add('test_research_claims.py')
             reasons.append(original + ': developer-only quote and arithmetic utility; not loaded in agent conversations')
@@ -218,6 +222,8 @@ def selection(paths):
             reasons.append(original + ': panel syntax, data interfaces and desktop/phone interactions')
         elif path.startswith('plugin/'):
             tests.update(NATIVE)
+            if path == 'plugin/__init__.py':
+                tests.add('test_checked_comparison.py')
             if path == 'plugin/dashboard/manifest.json':
                 tests.update(CATALOG)
             browser = behavior = syntax = True

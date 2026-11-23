@@ -18,6 +18,8 @@ def fleet_status(args, **kwargs):
 
 
 def register(ctx, *, compute_provider=None):
+    from sparkie_sparks.checked_comparison import register as register_comparison
+    register_comparison(ctx)
     from sparkie_sparks.memory_controls import correction_feedback, guard
     ctx.register_hook('pre_tool_call', guard)
     ctx.register_hook('transform_tool_result', correction_feedback)
