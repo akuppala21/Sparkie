@@ -60,6 +60,8 @@ class Manual(HTMLParser):
         self.code_ranges = []
         self.has_withdrawals = False
         self.withdrawn_tags = []
+        self.image_alternatives = False
+        self.missing_image_text = False
 
     def flush(self):
         raw = "".join(self.parts)
@@ -97,7 +99,9 @@ class Manual(HTMLParser):
             self.parts.append("\n")
 
     def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
+        # HTML keeps the first duplicate attribute. Expat supplies a unique mapping.
+        if not isinstance(attrs, dict):
+            attrs = dict(reversed(attrs))
         explicitly_hidden = "hidden" in attrs or (attrs.get("aria-hidden") or "").lower() == "true"
         # A deleted subtree cannot end a current line, row or list item.
         # Keep its structural tags out of the visible document's stack.
@@ -195,6 +199,15 @@ class Manual(HTMLParser):
             self.stack.append((tag, anchor, hidden, selected))
         elif tag == "br" and not hidden:
             self.parts.append("\n" if self.pre_depth is not None else " ")
+        elif tag == "img" and not hidden:
+            if "alt" in attrs:
+                alternative = attrs["alt"] or ""
+                self.parts.append(alternative)
+                self.image_alternatives |= bool(alternative.strip())
+            else:
+                # Keep the inline object in place, including in table cells and code.
+                self.missing_image_text = True
+                self.parts.append("\N{OBJECT REPLACEMENT CHARACTER}")
         if tag in {"th", "td"} and not hidden and self.pre_depth is None:
             self.parts.append(" | ")
             for name in ("colspan", "rowspan"):
@@ -379,6 +392,10 @@ def read_page(url, terms, directory):
               "text": str(plain), "lines": len(manual.lines)}
     if manual.has_withdrawals:
         result["revision_note"] = "Passages omit text marked as deleted or struck through. The original HTML preserves it."
+    if manual.image_alternatives or manual.missing_image_text:
+        result["image_note"] = "Image descriptions use the publisher's alternative text. Image pixels were not inspected."
+        if manual.missing_image_text:
+            result["image_note"] += " U+FFFC marks the position of an image with missing alternative text."
     ranges = None
     if fragment:
         # Never echo an unknown fragment, which may contain private URL state.

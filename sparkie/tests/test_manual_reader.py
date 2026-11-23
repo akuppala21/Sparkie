@@ -456,6 +456,35 @@ def test_hidden_sibling_closes_a_visible_implied_paragraph():
     assert doc.lines == [("first", "First"), ("", "Second")]
 
 
+@pytest.mark.parametrize("media", ["text/html", "application/xhtml+xml"])
+def test_image_alternatives_supply_the_published_values_only(media, monkeypatch, tmp_path):
+    raw = ('<html xmlns="http://www.w3.org/1999/xhtml"><body><section id="matrix">'
+           '<table><tr><th>Platform</th><th>Restore</th></tr>'
+           '<tr><td>Larch</td><td><img src="status.svg" alt="Preview &amp; beta only"/></td></tr></table>'
+           '<p>Measured 23<img alt="%" src="unit.svg"/> at idle.</p>'
+           '<p>SKU A<img alt="" src="dot.svg"/>17.</p>'
+           '<p>Run 12<img title="old 99" src="private-file.png"/>34.</p>'
+           '<del><img alt="formerly stable"/></del><span hidden=""><img alt="old value"/></span>'
+           '</section></body></html>')
+    result = linked_page(raw, "matrix", "Preview & beta only", monkeypatch, tmp_path, media)
+    assert Path(result["text"]).read_text().splitlines() == [
+        "| Platform | Restore", "| Larch | Preview & beta only", "Measured 23% at idle.",
+        "SKU A17.", "Run 12\ufffc34.",
+    ]
+    hit, = result["matches"][0]["passages"]
+    assert hit["line"] == 2 and hit["anchor"] == "matrix"
+    assert "alternative text" in result["image_note"] and "missing" in result["image_note"]
+    assert Path(result["original"]).read_text() == raw
+
+
+def test_first_html_attribute_controls_image_text_and_visibility(monkeypatch, tmp_path):
+    raw = ('<p id="entry">Part B<img alt="" ALT="decoy"/>7. '
+           '<img aria-hidden="true" aria-hidden="false" alt="unpublished"/>'
+           '<img alt="Green" alt="Red"/></p>')
+    result = linked_page(raw, "entry", "B7", monkeypatch, tmp_path)
+    assert Path(result["text"]).read_text() == "Part B7. Green\n"
+
+
 @pytest.mark.parametrize("xhtml", [True, False])
 def test_opaque_illustration_cannot_join_two_visible_numbers(xhtml, monkeypatch, tmp_path):
     graphic = '<svg xmlns="http://www.w3.org/2000/svg"><text>figure</text></svg>'
