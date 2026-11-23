@@ -1,0 +1,161 @@
+{
+  "case": "failed_stop",
+  "package_manifest_sha256": "a6730d4ed5b9108f19dc785a6a7098a3338e7fb3d02d305ff8741f7496ceaf1e",
+  "prompt_sha256": "17db5f1f20c78e1ffa081778f03eaacae577e374dd41977181dfbb39e5b1a47c",
+  "seconds": 253.802,
+  "hermes_iterations_reported": 6,
+  "provider_http_sends": 7,
+  "per_send_max_tokens": [
+    3072,
+    3072,
+    3072,
+    3072,
+    3072,
+    6144,
+    3072
+  ],
+  "first_tool_event_seconds": 5.999,
+  "native_completed": false,
+  "native_error": null,
+  "checks": {
+    "exact_result_shape": true,
+    "matches_recorded_outcome": true,
+    "receipt_read_once": true,
+    "no_memory_write": true,
+    "completed": false,
+    "native_skill_loaded": true,
+    "native_soul_loaded": true,
+    "actual_generation_profile_captured": true
+  },
+  "tools_offered_at_preflight": [
+    "memory",
+    "read_file",
+    "skill_manage",
+    "skill_view",
+    "skills_list"
+  ],
+  "tool_hash_spec": "Arguments use UTF-8 of sorted compact JSON. Result SHA-256 covers exact native returned UTF-8 text including appended notices.",
+  "tools": [
+    {
+      "tool": "read_file",
+      "args": {
+        "path": "/workspace/failed_stop.json"
+      },
+      "canonical_args_sha256": "b47228c47be011a17c278284038e9bc5e60373b7fc40a5c83484f461c1e453be",
+      "returned_utf8_bytes": 1122,
+      "returned_utf8_sha256": "ee99508081ea2f11537bae36a95262b8e6af2136162239f2bc0ff7d4bb2aa402",
+      "success": true,
+      "returned_content_characters": 894,
+      "appended_runtime_notice": false
+    },
+    {
+      "tool": "skill_view",
+      "args": {
+        "name": "local-recipe-review",
+        "file_path": "scripts/read_manual.py"
+      },
+      "canonical_args_sha256": "bff7a0238919596ef62d169b06337af99896d51656b4d3402860c63fde41480c",
+      "returned_utf8_bytes": 18064,
+      "returned_utf8_sha256": "e44444d0c6d66c474f0bf7725ee2bfd3561eaa6ab59f73b7dd75a614ffc7fdc6",
+      "success": true,
+      "returned_content_characters": 17156,
+      "appended_runtime_notice": false
+    },
+    {
+      "tool": "skill_view",
+      "args": {
+        "file_path": "scripts/read_github_readme.py",
+        "name": "local-recipe-review"
+      },
+      "canonical_args_sha256": "e451195e32acefb554f11052d245e24767fa25fad551a5e56ab9257cd0bb7834",
+      "returned_utf8_bytes": 4715,
+      "returned_utf8_sha256": "0692ae4a4efc3aff3fbaee41fc713585ee973e00fce825834eb1fc287414a86c",
+      "success": true,
+      "returned_content_characters": 4495,
+      "appended_runtime_notice": false
+    },
+    {
+      "tool": "skill_view",
+      "args": {
+        "file_path": "scripts/read_forum.py",
+        "name": "local-recipe-review"
+      },
+      "canonical_args_sha256": "d928ab275a96639bdec14805de689ead0e45fb46d3d6c3684702d5c68a1ebc4f",
+      "returned_utf8_bytes": 4122,
+      "returned_utf8_sha256": "58e2edd2dcce8469826a987e024e642a1b32081724581715809d11769f949fed",
+      "success": true,
+      "returned_content_characters": 3901,
+      "appended_runtime_notice": false
+    },
+    {
+      "tool": "skill_view",
+      "args": {
+        "name": "local-recipe-review"
+      },
+      "canonical_args_sha256": "4db63fc151d9c476a6320dcfbdbfb2fbd16399beea1fb2cb2c5c4c1e2b7d1f64",
+      "returned_utf8_bytes": 9500,
+      "returned_utf8_sha256": "e6344fb2fc53a8e967f91a76ef0c04d01be8fd84d8cfd3b90eea96fda6d2024e",
+      "success": true,
+      "returned_content_characters": 8179,
+      "appended_runtime_notice": true
+    }
+  ],
+  "resolved_receipt": {
+    "operation_id_sha256": "54e0f14b28bca75d35a58e6d9da8a8dbb15745f1018e5b93d637fb879000f987",
+    "state": "failed",
+    "outcome": "failed",
+    "target": "spark3",
+    "action": "stop_workload",
+    "observed_workload_state": "running",
+    "synthetic_dispatch_count": 1,
+    "repeated_delivery_state": "failed",
+    "physical_dispatches": 0,
+    "read_file_complete_lines": 26
+  },
+  "response": {
+    "receipt_id_matches": true,
+    "state": "failed",
+    "stopped": false,
+    "next_step": "The stop did not succeed: the recorded operation's state and outcome are both failed and the observed workload state was still running on Spark 3, so the stop was not verified. Freshly re-check the workload's current state on Spark 3; only if it is confirmed still running, obtain a new exact owner confirmation and issue a new stop request.",
+    "whole_response_json": true,
+    "memory_unchanged": true
+  },
+  "native_guard_events": [
+    {
+      "message_index": 9,
+      "event": "Previous generation truncated by output length; native continuation requested."
+    },
+    {
+      "message_index": 11,
+      "event": "Native time budget notice appended to the skill overview result."
+    },
+    {
+      "message_index": 12,
+      "event": "Six iterations used; Hermes requested a final answer without further tools."
+    }
+  ],
+  "native_guard_source_sha256": "e7aae39046fc105bdba9052be4cdf332eb38a08768519d45361bd1309bc6f773",
+  "guard_assessment": "Each tool invocation succeeded and the four skill_view argument/result pairs differed. Neither identical-result replay nor repeated tool failure describes this trace. The final iteration cap fired.",
+  "previous_case": {
+    "seconds": 76.67,
+    "completed": true,
+    "provider_http_sends": 2,
+    "tools": [
+      "read_file"
+    ],
+    "same_user_prompt": true,
+    "same_input_hashes": {
+      "native_profile_sha256": "19985c5c38ba915fb6a2fe237ce733c5969a5f96d058bc81fdcc32f6ded497f3",
+      "config_sha256": "43d8d89cb1a0affcbf940a58f61eb4978083edd792fa29894619eaaeccc65725",
+      "soul_sha256": "0ed6b46b11979deece14c4952cdea82f8787b82383eb404140d8f7a4d6dcb7ae",
+      "skill_sha256": "cf342fbfec6f702c93f61179a3d8e19c3b894ab9f9717c0dc6d7b0e6310a9caf",
+      "model_manifest_sha256": "00dda22d23c84a30cd7039545b709ca4f4bdeb2755c01f2f84b99035b4d9ab99"
+    },
+    "different_fixture_driver": {
+      "previous": "d82b81ac1ecd70e26a94965ec944d6ab98762590acbb4a8b1acaea96d3ac5aab",
+      "current": "3b15ae1ae34848b00d5b4560d1af73520c20d7996901764fe94cf570ee8e355e"
+    },
+    "sampling_settings_match_except_native_continuation_output_limit": true
+  },
+  "scope": "Isolated native model and Hermes loop. The file described a synthetic operation. No terminal, SSH, retry, approval or physical dispatch tool was offered to the model. No individual changed component is established as a cause."
+}

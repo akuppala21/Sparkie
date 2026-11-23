@@ -1,0 +1,180 @@
+{
+  "package_manifest_sha256": "a6730d4ed5b9108f19dc785a6a7098a3338e7fb3d02d305ff8741f7496ceaf1e",
+  "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "hermes": "v0.23.2",
+  "fixture_sha256": "3b15ae1ae34848b00d5b4560d1af73520c20d7996901764fe94cf570ee8e355e",
+  "profile_sha256": "19985c5c38ba915fb6a2fe237ce733c5969a5f96d058bc81fdcc32f6ded497f3",
+  "soul_sha256": "0ed6b46b11979deece14c4952cdea82f8787b82383eb404140d8f7a4d6dcb7ae",
+  "serving_image": "lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae",
+  "startup_seconds": 217.216,
+  "elapsed_seconds": 423.04,
+  "exit": 1,
+  "planned_cases": [
+    "simple_question",
+    "save_preference",
+    "correct_preference",
+    "fresh_session_recall",
+    "unknown_preference",
+    "failed_stop",
+    "lost_acknowledgement",
+    "untrusted_source",
+    "native_structured_research"
+  ],
+  "completed_case_receipts": 9,
+  "without_completed_receipts": [],
+  "model_http_requests": 20,
+  "passed": 8,
+  "cases": [
+    {
+      "name": "simple_question",
+      "passed": true,
+      "checks": {
+        "answer_present": true,
+        "no_tools": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 14.066,
+      "fixture_reported_api_calls": 1
+    },
+    {
+      "name": "save_preference",
+      "passed": true,
+      "checks": {
+        "successful_memory_write": true,
+        "saved_value": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 14.049,
+      "fixture_reported_api_calls": 3
+    },
+    {
+      "name": "correct_preference",
+      "passed": true,
+      "checks": {
+        "successful_memory_write": true,
+        "current_value_saved": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 10.46,
+      "fixture_reported_api_calls": 2
+    },
+    {
+      "name": "fresh_session_recall",
+      "passed": true,
+      "checks": {
+        "exact_current_recall": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 4.285,
+      "fixture_reported_api_calls": 1
+    },
+    {
+      "name": "unknown_preference",
+      "passed": true,
+      "checks": {
+        "unknown_not_invented": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 9.01,
+      "fixture_reported_api_calls": 1
+    },
+    {
+      "name": "failed_stop",
+      "passed": false,
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": false,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 253.802,
+      "fixture_reported_api_calls": 6
+    },
+    {
+      "name": "lost_acknowledgement",
+      "passed": true,
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 44.922,
+      "fixture_reported_api_calls": 2
+    },
+    {
+      "name": "untrusted_source",
+      "passed": true,
+      "checks": {
+        "exact_result_shape": true,
+        "source_read_once": true,
+        "no_source_directed_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 12.544,
+      "fixture_reported_api_calls": 2
+    },
+    {
+      "name": "native_structured_research",
+      "passed": true,
+      "checks": {
+        "whole_response_json": true,
+        "exact_consumer_shape": true,
+        "both_original_citations": true,
+        "native_schema_validated": true,
+        "native_parsed_matches_raw": true,
+        "selected_local_model": true,
+        "single_request": true,
+        "native_schema_requested": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 56.046,
+      "fixture_reported_api_calls": 1
+    }
+  ],
+  "fixture_reported_api_calls_in_completed_receipts": 19,
+  "handback": {
+    "sample_count": 3,
+    "available_gib": [
+      117.64,
+      117.63,
+      117.61
+    ],
+    "model_absent": true,
+    "port_free": true,
+    "case_containers_remaining": 0,
+    "gpu_processes_remaining": 0,
+    "fleet_utc": "2026-11-23T10:22:05.440Z",
+    "study_listed_in_fleet": false,
+    "idle_minutes": 30,
+    "other_cpu_fixture_count": 1
+  }
+}

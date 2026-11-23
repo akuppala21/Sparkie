@@ -1,0 +1,68 @@
+{
+  "release": "20261123-ownerstop1",
+  "manifest_sha256": "a6730d4ed5b9108f19dc785a6a7098a3338e7fb3d02d305ff8741f7496ceaf1e",
+  "prior_manifest_sha256": "a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903",
+  "source_table_sha256": "97cfbdc653c55c9f1ee7d99268f13ea02adfcb10d45653f509310427c98bdff9",
+  "source_files": 265,
+  "total_files": 33267,
+  "symlinks": 4,
+  "aggregate_digests": {
+    "extension": "8f5721ba79e94586f262b4323bf5147ad2274823ca3e7d7d3f01a655e269866a",
+    "hermes": "3621cd5c742496991680416651b48acc3c9b44ab4841aff4f3fbee95574e62a9",
+    "webapp": "771f8fe412857839d0672806d8a7098ad95f4ab962bdcab303873426273a0b86",
+    "dashboard": "6eb8fa71ef7df3d2f9eebd45508824e85c69dcbabcddecae2565121608173f59",
+    "bundled-plugins": "cae339fedd3f0de3b08c4c481796822bed637ae55384185c498fed5afa41b3e0",
+    "base_runtime": "118a55c5b240462c635479c05de90d154c028a14459fd0effac82b7c5ee7ec8f"
+  },
+  "aggregate_convention": "SHA-256 of name-to-SHA-256 map, UTF-8 JSON sorted by name, no whitespace or terminal newline. Release paths relative to release root. Base paths relative to base runtime.",
+  "hermes_commit": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
+  "archive_sha256": "7e828086c549fc2d90c16795daf416a81a8180d8a52b5d4a29656f7a2ba8f827",
+  "model_manifest_sha256": "00dda22d23c84a30cd7039545b709ca4f4bdeb2755c01f2f84b99035b4d9ab99",
+  "compact_driver_sha256": "3b15ae1ae34848b00d5b4560d1af73520c20d7996901764fe94cf570ee8e355e",
+  "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "engine": "lmsysorg/sglang@sha256:e3a4f06001a29542fc4a8638536d9ffc5eb9c9942b08603c09b19a56eae4a1ae",
+  "uv_sha256": "6109e47a75f2380d1cc90b00a6ee82b7b5792ddf66588625ec168545ae17512e",
+  "base_python_sha256": "428cf57fa2251ae5333c5f56afc400323d37894f4d12c86b0997f675f99437c5",
+  "build_seconds": 8.45,
+  "affected_pytest": {
+    "selected_modules": 67,
+    "tests_passed": 975,
+    "subtests_passed": 5,
+    "skipped": 0,
+    "failures": 0,
+    "errors": 0,
+    "reported_seconds": 129.88,
+    "wall_seconds": 134.02
+  },
+  "nonroot_owner_fixture": {
+    "seconds": 1.595,
+    "anonymous_http": 401,
+    "wrong_digest_http": 403,
+    "exact_digest_http": 200,
+    "replay_http": 403,
+    "inert_dispatch_count": 1
+  },
+  "active_stop": {
+    "same_seal": true,
+    "terminal_exit_code": null,
+    "terminal_status": "remote_outcome_unknown",
+    "warning_visible_after_disclosure": true,
+    "remote_command_continued": true
+  },
+  "installed": false,
+  "promoted": false,
+  "build_test_containers_remaining": 0,
+  "assembled_compact": {
+    "report": "assembled-compact.json",
+    "passed": 8,
+    "completed": 9,
+    "elapsed_seconds": 423.04,
+    "failed": [
+      "failed_stop"
+    ],
+    "failed_stop_trace": "failed-stop-trace.json",
+    "semantic_limitations": [
+      "First source title claims up to 1M capacity; only 262144 is configured in the excerpt."
+    ]
+  }
+}

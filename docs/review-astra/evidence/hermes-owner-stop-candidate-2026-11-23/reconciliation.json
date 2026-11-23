@@ -1,0 +1,74 @@
+{
+  "predecessor_manifest": "a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903",
+  "predecessor_source_table": "f9c9f3810155588803a7325e4c2a331f2f8ed05a0f9813282345d4df09ddbd4d",
+  "baseline_files": 261,
+  "candidate_files": 265,
+  "changed": 8,
+  "added": 4,
+  "unchanged": 253,
+  "removed": 0,
+  "application_revisions": [
+    "0d7c45b8bbb4f45d1571cc8c83e7f693f3c05478",
+    "789de6ff709d3ec281b279191e4df8982f060eca",
+    "a995dd5a9b13b2a9ec2bc4577bd3cf038db66367",
+    "38932879745e573e03ea90e54d2392d04ec8be30",
+    "9ecabea387a1a4234f497fa2b4d1aed1c942969a"
+  ],
+  "private_paths": {
+    "sparkie/deploy/candidate.py": {
+      "after": "cc51a7fd97aa8ce00a689fccd32fa787f525ecdaae800b2c22f491d4714bfe57",
+      "before": "68d5dfae6330203f913cb96fcd490c6f02cc3f02263a1e11f2dcb999f3d9f085"
+    },
+    "sparkie/deploy/patches/hermes-remote-terminal-interrupt.json": {
+      "after": "0dae5f7f9a89aecd65de5da54bfb4d39113cf8a4e67edc005954895e7eaf1352",
+      "before": null
+    },
+    "sparkie/deploy/patches/hermes-remote-terminal-interrupt.patch": {
+      "after": "8868e67ab64d9912c4f8690fe31d423222b25acdc5b71187e8802363b74c8171",
+      "before": null
+    },
+    "sparkie/docs/operation-recovery.md": {
+      "after": "531e28cade324a9ae60f99bc796f8cc022cf0bc91d018e4451a4220c25a7aee3",
+      "before": "b60ec14651225c4aaa0314ec81317a09acc8c594ed8295d945e0c7c3b1fb9a7e"
+    },
+    "sparkie/src/sparkie_sparks/recovery_replies.py": {
+      "after": "f55ecfa9e4675664cca12a585582b1fdcfa57fbd1946fa91fe1a25c84f5cb7b1",
+      "before": "974b177c0a5129aeb5b8c185ef7bf5ebd9ede7cd9e797983106413fa3c904674"
+    },
+    "sparkie/tests/behavior/native_acceptance.py": {
+      "after": "3b15ae1ae34848b00d5b4560d1af73520c20d7996901764fe94cf570ee8e355e",
+      "before": "d82b81ac1ecd70e26a94965ec944d6ab98762590acbb4a8b1acaea96d3ac5aab"
+    },
+    "sparkie/tests/test_check_selection.py": {
+      "after": "42afef6dcb82f4309158a860f7ac8676e51300615fc698445f709c3745a57bab",
+      "before": "f3d627217dcce97696970f9f036aa04f9dafc09de1dcb8fcff7b65daffbaed27"
+    },
+    "sparkie/tests/test_compact_replays.py": {
+      "after": "6061aad206ac8428a865f5943dc2b0ec74bf20aa79e9597542d75dc0ef606ede",
+      "before": null
+    },
+    "sparkie/tests/test_deployment.py": {
+      "after": "f9d4f86ccd48237d13dab57eb426f9196c0a03118179a71f1c4857a9b880b86d",
+      "before": "f694d5d539ebdd682116c5c54cac998e1511ca42830bd9c86902d9bce9d5824f"
+    },
+    "sparkie/tests/test_recovery_replies.py": {
+      "after": "71a697a186c23e19c8f9edb2c26182bdeae44c00372c8b47069e7dfd18179243",
+      "before": "7f1c3937a90ade7678a36fe2179ebc44a9bf74123d0d07cd80d7b384bb006be7"
+    },
+    "sparkie/tests/test_remote_terminal_interrupt.py": {
+      "after": "cddd295c867ff7e2b505c5ae649c5ec6ffa11665842924670848d40dc6d1867d",
+      "before": null
+    },
+    "sparkie/tools/checks.py": {
+      "after": "7d657c33a9b28292829e9d97828f23033062f15d118132238ea8a1633ab901d5",
+      "before": "46eba530ef1e448db988157f6d0c20503ad8d927690ac1ac4d34bd2e73d97ad0"
+    }
+  },
+  "final_source_table_sha256": "97cfbdc653c55c9f1ee7d99268f13ea02adfcb10d45653f509310427c98bdff9",
+  "source_selector": {
+    "exact_stop_submitter_input": "f134a8efe613370e01e22a7ef8da9bbb341f76043fa6843aae055fcc01218d2a",
+    "actual_private_output": "7d657c33a9b28292829e9d97828f23033062f15d118132238ea8a1633ab901d5",
+    "only_branch_added_from_worktree": "deploy/patches/hermes-remote-terminal-interrupt"
+  },
+  "deferred_parent_testing_doc": "docs/hermes-testing.md accompanies the private checkout outside the 265-file packaged extension."
+}

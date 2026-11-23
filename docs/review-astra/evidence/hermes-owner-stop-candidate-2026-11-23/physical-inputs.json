@@ -1,0 +1,130 @@
+{
+  "rule": "A historical test is an assembled pass only when the test, fixture, implementation, relevant consumers and configuration match. A receipt for a real device remains historical where any relevant inputs changed.",
+  "power": {
+    "src/sparkie_sparks/power.py": {
+      "historical": "213b52607144dd8ca8f2f013e1442ceb9e77810695f7c2444d102da4e338a2fd",
+      "predecessor": "6391053f29db5d7a283ddf7a7d8482f9fafa9820d058dff718c12dba18ef6108",
+      "assembled": "6391053f29db5d7a283ddf7a7d8482f9fafa9820d058dff718c12dba18ef6108",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/idle.py": {
+      "historical": "1f41a56bd7724ccae2c2aa4cd064737e374f1f29839d6829b8fed2a08a886632",
+      "predecessor": "9541d9c8dbc037f1ec8befbcb57cfd77863bb4d355cd60d5478e67036b035edf",
+      "assembled": "9541d9c8dbc037f1ec8befbcb57cfd77863bb4d355cd60d5478e67036b035edf",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/controls.py": {
+      "historical": "f515920e1f6067b2902be54870d125ea8046bdf7426c5155def180ac86b30ff4",
+      "predecessor": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "assembled": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/workspace_service.py": {
+      "historical": "c0f509695334a0a20c49f317d72fedb1fd16364867038061e814dec46f8c5643",
+      "predecessor": "c0f509695334a0a20c49f317d72fedb1fd16364867038061e814dec46f8c5643",
+      "assembled": "c0f509695334a0a20c49f317d72fedb1fd16364867038061e814dec46f8c5643",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    }
+  },
+  "workload_stop": {
+    "src/sparkie_sparks/workloads.py": {
+      "historical": "d903ac6a8269731ab013d3e6ba4aa3ccf7844fe2639582a4089643574d37bc1f",
+      "predecessor": "d903ac6a8269731ab013d3e6ba4aa3ccf7844fe2639582a4089643574d37bc1f",
+      "assembled": "d903ac6a8269731ab013d3e6ba4aa3ccf7844fe2639582a4089643574d37bc1f",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "tests/hardware/workload_stop.py": {
+      "historical": "a50588ed969b878c9538314eb42a3a6f175c370a609f611ca9896c1fce39777e",
+      "predecessor": "a50588ed969b878c9538314eb42a3a6f175c370a609f611ca9896c1fce39777e",
+      "assembled": "a50588ed969b878c9538314eb42a3a6f175c370a609f611ca9896c1fce39777e",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "config/fleet.example.json": {
+      "historical": "a6f05fc05b6e2514524789e1f30fd938b9018ad827b6fa580d71c1306b7a48ac",
+      "predecessor": "a6f05fc05b6e2514524789e1f30fd938b9018ad827b6fa580d71c1306b7a48ac",
+      "assembled": "a6f05fc05b6e2514524789e1f30fd938b9018ad827b6fa580d71c1306b7a48ac",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/authority.py": {
+      "historical": "6560e94303ff60fb5432e34b9441a03cbb1a9a2bdc90690dc3fa55cc0479574d",
+      "predecessor": "6560e94303ff60fb5432e34b9441a03cbb1a9a2bdc90690dc3fa55cc0479574d",
+      "assembled": "6560e94303ff60fb5432e34b9441a03cbb1a9a2bdc90690dc3fa55cc0479574d",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/controls.py": {
+      "historical": "c76f3b7854906676753c667605902772e6bd88729c0c8757311fdb5aa1977ead",
+      "predecessor": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "assembled": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/operations.py": {
+      "historical": "71c90a4fe80f7f4747dd1bca74d84a5ea148f1b23a07b432afcc7adb9e4a3321",
+      "predecessor": "1a1238af86ea3cc8d9d87b5cea00b047c8982cd1b0d6b00466b54ea24a1a3975",
+      "assembled": "1a1238af86ea3cc8d9d87b5cea00b047c8982cd1b0d6b00466b54ea24a1a3975",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/web_controls.py": {
+      "historical": "cf493f15614e31a878e23a87870a313e939c71c62f1f7b84b5bdb2978c7e865d",
+      "predecessor": "f776be07e6c2a5de22e24921f3452f2d686288457dc6565b5054f5117edd5e6e",
+      "assembled": "f776be07e6c2a5de22e24921f3452f2d686288457dc6565b5054f5117edd5e6e",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    }
+  },
+  "enrolled_service": {
+    "src/sparkie_sparks/service_worker.py": {
+      "historical": "0c687679451bf69b9a155137239fd87aa36be803cde6c253bb80653d92f3ca63",
+      "predecessor": "0c687679451bf69b9a155137239fd87aa36be803cde6c253bb80653d92f3ca63",
+      "assembled": "0c687679451bf69b9a155137239fd87aa36be803cde6c253bb80653d92f3ca63",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/recipes.py": {
+      "historical": "041220385678174cb79ab3b446478756da57423462ff46006545d978b64fd157",
+      "predecessor": "041220385678174cb79ab3b446478756da57423462ff46006545d978b64fd157",
+      "assembled": "041220385678174cb79ab3b446478756da57423462ff46006545d978b64fd157",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/controls.py": {
+      "historical": "a9bbe25d6e36a9545d2c9e8458feac3673d665699d3d610a623635d6dec52526",
+      "predecessor": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "assembled": "227ec440a74b62a6486fc047c092d7a3d981072b2c3fb9c2b4a184aebe868860",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    }
+  },
+  "workspace_ssh": {
+    "src/sparkie_sparks/sandbox_ssh.py": {
+      "historical": "27840cc4fde4cf318050d31dd12244fd2ed5d72a2efed490adacf933802de9b5",
+      "predecessor": "27840cc4fde4cf318050d31dd12244fd2ed5d72a2efed490adacf933802de9b5",
+      "assembled": "27840cc4fde4cf318050d31dd12244fd2ed5d72a2efed490adacf933802de9b5",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    },
+    "src/sparkie_sparks/sandbox_provider.py": {
+      "historical": "9f3618b0797df55d410ce77992e27295490b1d149253b860d7d6d39c24e70275",
+      "predecessor": "29b5ca6c68e9561b0a9888f42023e597c4938e3a054faee620060b0f3c0e26d1",
+      "assembled": "29b5ca6c68e9561b0a9888f42023e597c4938e3a054faee620060b0f3c0e26d1",
+      "historical_matches": false,
+      "unchanged_from_predecessor": true
+    },
+    "tests/hardware/native_ssh.py": {
+      "historical": "61e1a5b1b2463d8ec0fd019d745f021a1b25b40e520a0b65139caef324e1d5f8",
+      "predecessor": "61e1a5b1b2463d8ec0fd019d745f021a1b25b40e520a0b65139caef324e1d5f8",
+      "assembled": "61e1a5b1b2463d8ec0fd019d745f021a1b25b40e520a0b65139caef324e1d5f8",
+      "historical_matches": true,
+      "unchanged_from_predecessor": true
+    }
+  }
+}
