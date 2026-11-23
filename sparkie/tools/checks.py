@@ -160,6 +160,11 @@ def selection(paths):
                           'test_deployment.py', 'test_sandbox_provider.py'})
             candidate = compute = research = behavior = True
             reasons.append(original + ': packaged native skill footer and compute workspace paths')
+        elif path in ('deploy/patches/hermes-remote-terminal-interrupt.patch',
+                      'deploy/patches/hermes-remote-terminal-interrupt.json', 'tests/test_remote_terminal_interrupt.py'):
+            tests.update({'test_remote_terminal_interrupt.py', 'test_deployment.py', 'test_sandbox_provider.py'})
+            candidate = browser = compute = behavior = True
+            reasons.append(original + ': remote command outcomes, resumed sessions and the native owner view')
         elif path in ('deploy/patches/hermes-attachment-tool-path.patch', 'deploy/patches/hermes-attachment-tool-path.json',
                       'tests/test_attachment_tool_paths.py'):
             tests.update({'test_attachment_tool_paths.py', 'test_deployment.py', 'test_sandbox_provider.py'})

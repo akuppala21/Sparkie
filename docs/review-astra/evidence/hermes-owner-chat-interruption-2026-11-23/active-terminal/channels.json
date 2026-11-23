@@ -1,0 +1,23 @@
+{
+  "focused_and_gateway_tests": 21,
+  "selected_pytest_seconds": 2.42,
+  "telegram": [
+    {
+      "path": "unlisted_sender",
+      "handler_calls": 0
+    },
+    {
+      "path": "busy",
+      "reply": "Agent response stopped. If a remote command was running, check its workspace before repeating it. You can continue this session.",
+      "interrupt_requests": 1,
+      "adapter_send_captured": true
+    },
+    {
+      "path": "active_dispatch",
+      "reply": "Agent response stopped. If a remote command was running, check its workspace before repeating it. You can continue this session.",
+      "interrupt_requests": 1,
+      "adapter_send_captured": true
+    }
+  ],
+  "telegram_vendor_delivery_verified": false
+}

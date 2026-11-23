@@ -1,0 +1,21 @@
+{
+  "patch_sha256": "8868e67ab64d9912c4f8690fe31d423222b25acdc5b71187e8802363b74c8171",
+  "files": {
+    "tools/terminal_tool_result.py": {
+      "before_sha256": "f6eccba8f8259c9586a884c3f3f17a7c2d634a9e38cf3e01a3cadb5c146397a2",
+      "after_sha256": "0d6eecca7088b9b7feed30ad4d090583e1862e346bf45c3099ab91847ed72446"
+    },
+    "agent/replay_cleanup.py": {
+      "before_sha256": "59a1a52691283536848c1f77b6aa14f1a76d22011707edf3298a17413b8bcb85",
+      "after_sha256": "b9e281cd96fc0bd99218fa53747785552afbb2143d1a52fa5869d9428b23c684"
+    },
+    "tools/terminal_tool.py": {
+      "before_sha256": "f83ba040124a4f586ad2abc9bd0188df851807be455424cd61d753911d31d1e0",
+      "after_sha256": "af8c60132f2e91077ba57bd57a0b8818a376dc3f0111e8c29ce82ab636588fa0"
+    },
+    "locales/en.yaml": {
+      "before_sha256": "b26bd0ccde437755bf2624c77a3803630733a2f267eba5d3a36d4ce43e4b3a22",
+      "after_sha256": "392f6bb3ba1392040d92c947a359949211f9cdb99f1f44ec227732d2cd6c5504"
+    }
+  }
+}

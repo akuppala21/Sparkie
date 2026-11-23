@@ -1,0 +1,136 @@
+--- a/tools/terminal_tool_result.py
++++ b/tools/terminal_tool_result.py
+@@ -253,8 +253,12 @@
+     # prefix. Real prefixes, auth headers, JWTs, private keys are masked in both modes. See issue #43025.
+     output = redact_terminal_output(output.strip(), command) if output else ""
+ 
+-    exit_note = _interpret_exit_code(command, returncode)
+-    failure_hint = _failure_hint(command, returncode, output, exit_note)
++    # Closing the SSH client interrupts our wait. The remote process can outlive it.
++    remote_interrupted = env_type == "spark_compute" and result.get("hermes_interrupted") is True
++    if remote_interrupted:
++        output = output.removesuffix("[Command interrupted]").rstrip()
++    exit_note = None if remote_interrupted else _interpret_exit_code(command, returncode)
++    failure_hint = None if remote_interrupted else _failure_hint(command, returncode, output, exit_note)
+     # cwd echo when the command changed directory (gated on the observation
+     # flag so an interrupted command can't echo another session's cwd).
+     changed_cwd = None
+@@ -264,10 +268,18 @@
+     # rc=130 is an interrupt only with the executor's marker — a command can
+     # legitimately `exit 130` itself. An interrupted approved run keeps the
+     # audit note but must never imply success.
+-    if approval_note and returncode == 130 and "[Command interrupted]" in output:
++    if approval_note and returncode == 130 and (remote_interrupted or "[Command interrupted]" in output):
+         approval_note = approval_note.rstrip(".") + ", then interrupted."
+ 
+     result_dict = {"output": output, "exit_code": returncode, "error": None}
++    if remote_interrupted:
++        result_dict.update(exit_code=None, status="remote_outcome_unknown",
++                           error="Stopped waiting for the remote command. It may still be running. Check the workspace before repeating it.")
++        lease = getattr(env, "lease", None)
++        if lease is not None:
++            result_dict["workspace_id"] = lease.workspace_id
++            result_dict["error"] += f" Workspace {lease.workspace_id}."
++        result_dict["user_summary"] = result_dict["error"]
+     # Optional fields in observable JSON key order; None means "omit". Spill
+     # metadata is present only when output overflowed the capture window.
+     optional_fields: list[tuple[str, Any]] = [
+@@ -275,7 +287,7 @@
+         ("environment_recreated", _ENV_RECREATED_NOTE if result.get("environment_recreated") else None),
+         ("cwd_fallback", _cwd_fallback_note(result.get("cwd_fallback"))),
+         *_redact_spill_file(result.get("full_output_path"), result.get("output_total_chars"), command),
+-        ("verification_evidence", _verification_evidence(
++        ("verification_evidence", None if remote_interrupted else _verification_evidence(
+             command, command_cwd, session_id or task_id or effective_task_id or "default",
+             returncode, output, result.get("pipeline_status"))),
+         ("approval", approval_note or None),
+--- a/agent/replay_cleanup.py
++++ b/agent/replay_cleanup.py
+@@ -38,7 +38,7 @@
+ _INTERRUPT_MARKER_LINE = re.compile(r"^\[(?:command|execution) interrupted\b[^\n]*\]\s*$", re.IGNORECASE)
+ 
+ 
+-def is_interrupted_tool_result(content: Any) -> bool:
++def is_interrupted_tool_result(content: Any, *, tool_name: str = "") -> bool:
+     """True only when the result has the executor's interrupt SHAPE: the marker is the last
+     line of the output (JSON envelope with a non-zero exit code, or a bare text result). A
+     marker quoted inside successful output — a grep hit, a doc example — is ordinary data;
+@@ -51,7 +51,14 @@
+             envelope = json.loads(content)
+         except ValueError:
+             return False
+-        if not isinstance(envelope, dict) or envelope.get("exit_code") in (0, None):
++        if not isinstance(envelope, dict):
++            return False
++        # An interrupted SSH wait supplies no remote exit status. Keep the
++        # existing unknown-side-effect recovery when resuming that turn.
++        if (tool_name == "terminal" and envelope.get("status") == "remote_outcome_unknown" and "exit_code" in envelope
++                and envelope["exit_code"] is None and envelope.get("error")):
++            return True
++        if envelope.get("exit_code") in (0, None):
+             return False
+         output = envelope.get("output")
+         if not isinstance(output, str):
+@@ -94,15 +101,25 @@
+             while j < n and agent_history[j].get("role") == "tool":
+                 j += 1
+             tool_results = agent_history[i + 1:j]
+-            if any(is_interrupted_tool_result(m.get("content", "")) for m in tool_results):
+-                calls = msg.get("tool_calls") or []
++            calls = msg.get("tool_calls") or []
++            call_names = {_call_id(call): _call_name(call) for call in calls}
++            if any(is_interrupted_tool_result(m.get("content", ""), tool_name=call_names.get(
++                    str(m.get("tool_call_id") or ""), "")) for m in tool_results):
+                 if _any_side_effecting(calls):
+-                    call_names = {_call_id(call): _call_name(call) for call in calls}
+                     cleaned.append(msg)
+                     for tool_result in tool_results:
+-                        if is_interrupted_tool_result(tool_result.get("content", "")):
+-                            name = call_names.get(str(tool_result.get("tool_call_id") or ""), "")
++                        name = call_names.get(str(tool_result.get("tool_call_id") or ""), "")
++                        if is_interrupted_tool_result(tool_result.get("content", ""), tool_name=name):
+                             disposition, content = _orphan_recovery(name, _INTERRUPTED_NOTICES)
++                            if name == "terminal":
++                                try:
++                                    envelope = json.loads(tool_result["content"])
++                                except (ValueError, TypeError):
++                                    envelope = None
++                                if isinstance(envelope, dict) and envelope.get("status") == "remote_outcome_unknown":
++                                    workspace = envelope.get("workspace_id")
++                                    if isinstance(workspace, str) and re.fullmatch(r"[a-f0-9]{32}", workspace):
++                                        content += f" Workspace {workspace}."
+                             tool_result = {**tool_result, "effect_disposition": disposition, "content": content}
+                         cleaned.append(tool_result)
+                 else:
+@@ -110,7 +127,8 @@
+                                  i, j - 1, len(tool_results))
+                 i = j
+                 continue
+-        if msg.get("role") == "tool" and is_interrupted_tool_result(msg.get("content", "")):
++        if msg.get("role") == "tool" and is_interrupted_tool_result(
++                msg.get("content", ""), tool_name=msg.get("name") or msg.get("tool_name") or ""):
+             logger.debug("Stripping orphan interrupted tool result from replay history")
+         else:
+             cleaned.append(msg)
+--- a/tools/terminal_tool.py
++++ b/tools/terminal_tool.py
+@@ -1475,7 +1475,7 @@
+             "pid": result.get("pid"), "notify_on_complete": True, "note": _YIELDED_NOTE,
+             **({"cwd_fallback": note} if (note := _cwd_fallback_note(result.get("cwd_fallback"))) else {}),
+         }, ensure_ascii=False)
+-    if metered:
++    if metered and not (env_type == "spark_compute" and result.get("hermes_interrupted") is True):
+         record_terminal_outcome(command, env_type, result)
+     return finalize_foreground_result(
+         command=command, result=result, env=env, env_type=env_type, effective_task_id=eff,
+--- a/locales/en.yaml
++++ b/locales/en.yaml
+@@ -477,7 +477,7 @@
+     done: "🗑️ Discarded {count} lost turn(s); they were not re-run. Your saved messages will be answered now."
+   stop:
+     stopped_pending: "⚡ Stopped. The agent hadn't started yet — you can continue this session."
+-    stopped: "⚡ Stopped. You can continue this session."
++    stopped: "Agent response stopped. If a remote command was running, check its workspace before repeating it. You can continue this session."
+     no_active: "No active task to stop."
+     force_stopped_pending: "⚡ Force-stopped. The agent was still starting — session unlocked."
+   title:

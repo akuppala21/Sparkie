@@ -1,0 +1,20 @@
+{
+  "observed": "2026-11-23",
+  "active_service_container": "sparkie-hermes-dashboard",
+  "active_release": "20261119-candidate1",
+  "active_image": "sha256:b01d6c00473943b03c0ccd902d22331f61f37b5ffcdadff8083af18b8485144d",
+  "active_configured_terminal_backend": "spark_compute",
+  "baseline_fixture_release": "20261123-attachment1",
+  "baseline_fixture_manifest": "a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903",
+  "matched_active_and_fixture_sha256": {
+    "tools/terminal_tool_result.py": "f6eccba8f8259c9586a884c3f3f17a7c2d634a9e38cf3e01a3cadb5c146397a2",
+    "agent/replay_cleanup.py": "59a1a52691283536848c1f77b6aa14f1a76d22011707edf3298a17413b8bcb85",
+    "tools/terminal_tool.py": "f83ba040124a4f586ad2abc9bd0188df851807be455424cd61d753911d31d1e0",
+    "locales/en.yaml": "b26bd0ccde437755bf2624c77a3803630733a2f267eba5d3a36d4ce43e4b3a22",
+    "extension/sandbox_provider.py": "29b5ca6c68e9561b0a9888f42023e597c4938e3a054faee620060b0f3c0e26d1",
+    "extension/sandbox_ssh.py": "27840cc4fde4cf318050d31dd12244fd2ed5d72a2efed490adacf933802de9b5",
+    "tools/environments/ssh.py": "620d4d2301781ee08f9d00dc34436b38d8959ff7f8ebbbc1e06adfd0da5213fd",
+    "tools/environments/base.py": "636b537ce83d2a00717ce0c234b36676a5a929449349ef7ddf56e89893888c8b"
+  },
+  "live_owner_turn_submitted": false
+}
