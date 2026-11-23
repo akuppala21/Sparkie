@@ -217,17 +217,19 @@ Owner approval authorizes only that candidate. Verify health, access and the cha
 after installation. Failed approved installs can return to the previous release; they cannot
 promote another unapproved candidate.
 
-## GitHub later
+## Portable release checks on GitHub
 
-Use compute Sparks during development. Later, portable release/nightly checks may use standard
-hosted runners within verified free eligibility or remaining allowance. Hardware and local-model
-evals stay on Sparks when needed. Set a hard zero-spend budget before relying on a private-repo
-allowance; a workflow comment does not establish billing configuration.
+Development checks run on the compute Sparks. The public release workflow runs a
+portable CPU selection for electricity, fleet state, source readers, owner controls
+and update recovery. Hardware, the selected local model, native browser sign-in and
+the installed system have their own qualification records. [Workflow](../../.github/workflows/hermes-portable.yml)
 
-New CI cancels superseded runs, caches dependencies, selects affected checks for ordinary changes
-and reserves broad qualification for releases, version changes or justified periodic runs.
-Do not carry the old full-suite-after-every-landing automation into this application. This guide
-does not enable a workflow, change billing or claim a CI result.
+Once the workflow is on the default branch, a maintainer can run it from Actions
+on the chosen release ref. Nightly jobs require the repository variable
+`SPARKIE_NIGHTLY=true`. Pushes and pull requests do not trigger it. The job
+checks public visibility and uses one standard Ubuntu Arm runner. It has read-only
+repository permission and uploads no caches or artifacts. Results appear in the
+job log. Private repositories would need a separate zero-spend decision.
 
 ## Running checks in a prepared worker
 
