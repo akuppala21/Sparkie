@@ -319,6 +319,10 @@ def selection(paths):
             tests.update(FLEET | ENERGY | POWER | {'test_native_config.py'})
             behavior = True
             reasons.append(original + ': inventory or meter configuration')
+        elif path == 'tools/dev-python.sh':
+            tests.update({'test_check_selection.py', 'test_preservation_selection.py'})
+            compute = True
+            reasons.append(original + ': run affected selection and verify the locked developer Python in an exported workspace')
         elif path == 'tools/checks.py':
             tests.update({'test_check_selection.py', 'test_preservation_selection.py'})
             reasons.append(original + ': changed-path selection regressions and existing registration smoke')
@@ -382,6 +386,10 @@ def main():
                       "Use the prepared development Python and the matching Hermes source "
                       "from this checkout's test setup. The sealed serving environment "
                       "omits development dependencies.", file=sys.stderr)
+                if (ROOT / 'tools/dev-python.sh').is_file():
+                    print("In a private worker with the extracted release, run "
+                          "bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py "
+                          "with the same selector arguments.", file=sys.stderr)
             return code
     if args.run_python:
         remaining = [name for name in GROUPS if plan[name]]

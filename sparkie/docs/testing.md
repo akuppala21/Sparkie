@@ -52,6 +52,22 @@ changes. Print the selected groups and reasons before running them.
 
 ## Python environment for an offline maintenance checkout
 
+In an ordinary private compute workspace, extract the verified release returned by
+`spark_update_source`. From the extension checkout, use its `baseline` path in this command.
+
+```sh
+bash tools/dev-python.sh "$baseline" tools/checks.py --paths tools/checks.py --run-python
+```
+
+The helper uses the exported uv and Python to prepare the frozen Hermes development
+group under the worker's own home. Pass `-m pytest tests/test_energy.py` to the same
+helper for a direct reproduction. Each invocation selects the same environment for
+that release, including in a fresh terminal shell. The first run needs the locked
+wheels in the worker cache or access to their package index. Set `UV_OFFLINE=1` to
+require the cache. A missing wheel produces an error before the test command starts.
+The serving environment and the checkout are read-only inputs to provisioning.
+
+
 `spark_update_source` exports the sealed release, its base interpreter, and
 the upstream lock. The serving runtime uses `uv sync --frozen --no-dev`.
 Activating that runtime supplies Hermes and its application dependencies.

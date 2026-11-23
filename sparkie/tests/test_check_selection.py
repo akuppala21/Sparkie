@@ -455,3 +455,11 @@ def test_missing_pytest_names_the_interpreter_and_offline_development_setup(tmp_
     assert str(clean_python) in result.stderr
     assert 'cannot find pytest' in result.stderr
     assert 'prepared development Python' in result.stderr
+    assert 'bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py' in result.stderr
+
+
+def test_development_interpreter_selects_worker_and_focused_consumers():
+    plan = select(['tools/dev-python.sh'])
+    assert plan['native_compute_workspace']
+    assert {'tests/test_check_selection.py', 'tests/test_native_integration.py'} <= set(plan['python_tests'])
+    assert not plan['broad_qualification'] and not plan['compute_power_validation']
