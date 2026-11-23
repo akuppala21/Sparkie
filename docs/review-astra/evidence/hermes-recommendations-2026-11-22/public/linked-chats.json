@@ -1,0 +1,159 @@
+[
+  {
+    "phase": "prior-anchor",
+    "arm": "prior",
+    "case": "linked",
+    "question_sha256": "171b6910d2fd5598a71d6ea377ff8b0dc384a6d33afb9fff4fa4e982e345e55b",
+    "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+    "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+    "skill_sha256": "97a1c5801a0569176173cfc2cac6a9a2ee09ad821133bfcd5573eb65a60ba5eb",
+    "renderer_sha256": "e3014b177dce704142c23b7a4ab1b28440eca19867e6d6f1e3ce9171d3fdf17d",
+    "reader_sha256": "341a74bd1c8f2c1970333f9ca5af3d53cf3a2711c9f3671aa987fcf5f92e8852",
+    "seconds_to_first_text": 49.302,
+    "seconds_to_final": 184.306,
+    "model_requests": 7,
+    "tool_results": [
+      "read_file",
+      "terminal",
+      "web_extract",
+      "execute_code",
+      "read_file",
+      "execute_code",
+      "terminal",
+      "execute_code"
+    ],
+    "returned_sections": [],
+    "answer_sha256": "0a0bd3fc8efc2bb36767f79985b07b89619229e236671ea2875d5be7f20c91cb",
+    "answer": "Verified against both the live 3.13 source and the official docs page. Here's the answer.\n\nNo — do not pass raw straight to it.\n\nEvidence\n- The 3.13 doc entry states the input type: \"string must be a str.\"\n  https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus\n- The 3.13 implementation (urllib/parse.py) does:\n      string = string.replace('+', ' ')\n  using the str literal '+', so a bytes input blows up before unquote() is even reached.\n- I ran it on this host (Python 3.13):\n      unquote_plus(b'A+B%2BC')  ->  TypeError: a bytes-like object is required, not 'str'\n\nNote the contrast: unquote() accepts bytes, but unquote_plus() does not. That's the trap here.\n\nOne line to ship\n    from urllib.parse import unquote_plus\n    ...\n    result = unquote_plus(raw.decode(\"ascii\"))\n\nraw is documented as ASCII-only, so decode(\"ascii\") is safe and explicit. (raw.decode() with the default utf-8 also works for ASCII-only input; I cross-checked it gives the same result.)\n\nExact text your test should expect\n    'A B+C'\n\nWhy that exact string, not 'A B C':\n- The literal + becomes a space (form decoding): A + B -> A B\n- The %2B is a percent-encoded plus, so it becomes a literal + : ... B %2B C -> B + C\n- Net: \"A B+C\"\n\nSo your test:\n    assert unquote_plus(raw.decode(\"ascii\")) == \"A B+C\"\n\nIf you actually want bytes back (matching the input type), use unquote_to_bytes after replacing plus with space, e.g. unquote_to_bytes(raw.replace(b'+', b' ')) -> b'A B+C', since unquote_to_bytes() accepts str or bytes and returns bytes. But if the handler wants a text form value, the decode-then-unquote_plus line above is the right one.\n"
+  },
+  {
+    "phase": "anchored",
+    "arm": "reader",
+    "case": "linked",
+    "question_sha256": "171b6910d2fd5598a71d6ea377ff8b0dc384a6d33afb9fff4fa4e982e345e55b",
+    "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+    "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+    "skill_sha256": "97a1c5801a0569176173cfc2cac6a9a2ee09ad821133bfcd5573eb65a60ba5eb",
+    "renderer_sha256": "e3014b177dce704142c23b7a4ab1b28440eca19867e6d6f1e3ce9171d3fdf17d",
+    "reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "seconds_to_first_text": 24.095,
+    "seconds_to_final": 161.909,
+    "model_requests": 6,
+    "tool_results": [
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal"
+    ],
+    "returned_sections": [],
+    "answer_sha256": "bbf17a7b2232eca681d7eedef42c99c2a0256d9a920d3935d989ddec02d2b60e",
+    "answer": "Short answer: no — don't pass the bytes straight in. Here's the evidence and the line to ship.\n\nWhat the API entry says\nhttps://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus\nExact text from the page:\n  \"Like unquote(), but also replace plus signs with spaces, as required for unquoting HTML form values. string must be a str.\"\nThat last sentence is the load-bearing one: unquote_plus requires a str, unlike unquote, whose \"Changed in version 3.9: string parameter supports bytes and str\" note does not carry over to it.\n\nWhat Python 3.13 actually does with bytes\nI ran it on Python 3.13.18:\n  unquote_plus(b'A+B%2BC')\n  -> TypeError: a bytes-like object is required, not 'str'\nIt fails at the first line of the function (string = string.replace('+', ' ')), because a bytes object rejects a str '+' argument. So passing raw straight in is not just discouraged, it raises.\n\nWhat one line to ship\nDecode the ASCII bytes to a str, then unquote:\n  unquote_plus(raw.decode(\"ascii\"))\nSince the value is guaranteed ASCII-only, \"ascii\" is the tightest, correct choice — it also raises UnicodeDecodeError if a stray non-ASCII byte ever sneaks in, which is usually what you want for form data. \"utf-8\" or \"latin-1\" give the same result for this input, but \"ascii\" matches your stated contract.\n\nWhat the test should expect\nFor raw = b'A+B%2BC', the result is the 5-character string:\n  'A B+C'\nReasoning: the leading '+' becomes a space (A + ' ' + B), and '%2B' is percent-decoded to chr(0x2B), which is a literal '+', followed by 'C'. I verified this by running it — every decode variant produced repr 'A B+C'.\n\nSo your test:\n  assert unquote_plus(raw.decode(\"ascii\")) == 'A B+C'\n\nOne nuance for the test: it must be a str comparison, not bytes. If anything downstream still wants bytes, that's a separate step (e.g. .encode()), but the function itself hands back a str.\n"
+  },
+  {
+    "phase": "anchored",
+    "arm": "renderer",
+    "case": "linked",
+    "question_sha256": "171b6910d2fd5598a71d6ea377ff8b0dc384a6d33afb9fff4fa4e982e345e55b",
+    "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+    "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+    "skill_sha256": "bf0eb73ca30506eb71ca77bde50eea5d804acbd56a00f59e6809aa9a58cba669",
+    "renderer_sha256": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba",
+    "reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "seconds_to_first_text": 25.774,
+    "seconds_to_final": 96.99,
+    "model_requests": 7,
+    "tool_results": [
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal",
+      "terminal"
+    ],
+    "returned_sections": [],
+    "answer_sha256": "356bcaed832fd0c6cbc84a7eb33a5b44af448c6524f9fe8e85c3e932b5d0a3c7",
+    "answer": "Here's the answer:\n\n**Can you pass `raw` (bytes) directly? No.**\n\nThe 3.13 docs state:\n\n> `urllib.parse.unquote_plus(string, encoding='utf-8', errors='replace')`\n> Like `unquote()`, but also replace plus signs with spaces, as required for unquoting HTML form values.\n> **string must be a str.**\n> Source: https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus\n\nThe implementation confirms why:\n\n```python\ndef unquote_plus(string, encoding='utf-8', errors='replace'):\n    string = string.replace('+', ' ')   # str literals -> bytes.replace(str) -> TypeError\n    return unquote(string, encoding, errors)\n```\n\nPassing `b'A+B%2BC'` raises:\n```\nTypeError: a bytes-like object is required, not 'str'\n```\nbecause `bytes.replace('+', ' ')` demands bytes arguments.\n\n**One-liner to ship:**\n\n```python\nunquote_plus(raw.decode('ascii'))\n```\n\nSince your queue value is guaranteed ASCII-only bytes, `decode('ascii')` is safe and lossless. (You could also write `unquote(raw.replace(b'+', b' '))`, which skips the decode entirely and returns the same result, but it bypasses the API you said you plan to use.)\n\n**Exact test expectation for `raw = b'A+B%2BC':`**\n\n```\n'A B+C'\n```\n\nThe `+` (literal, form-encoded space) becomes a space, and `%2B` (percent-escaped plus) becomes a literal `+`. Result is the 5-character string `A B+C`.\n"
+  },
+  {
+    "phase": "linked-treatment",
+    "arm": "guided",
+    "case": "linked",
+    "question_sha256": "171b6910d2fd5598a71d6ea377ff8b0dc384a6d33afb9fff4fa4e982e345e55b",
+    "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+    "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+    "skill_sha256": "772e4f6e7f35ceb23140e9c1e53b7c5a8dc1a653c490315990cc7502f0aeee2b",
+    "renderer_sha256": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba",
+    "reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "seconds_to_first_text": 73.164,
+    "seconds_to_final": 81.664,
+    "model_requests": 7,
+    "tool_results": [
+      "terminal",
+      "skill_view",
+      "terminal",
+      "terminal",
+      "read_file",
+      "terminal",
+      "terminal"
+    ],
+    "returned_sections": [
+      {
+        "source": "https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus",
+        "sha256": "0753ee80af0694cff5fb8b959059e79f0648933f8ed4719405680d887f115109",
+        "section": {
+          "status": "found",
+          "basis": "definition",
+          "line_ranges": [
+            [
+              248,
+              251
+            ]
+          ]
+        }
+      }
+    ],
+    "answer_sha256": "bdacc520ee96f4e9ba6c81074da6035082907d44436057b33ec72d0414ebdebe",
+    "answer": "No — don't pass `raw` straight in. In Python 3.13, `urllib.parse.unquote_plus` requires a `str`, and its docs state: \"string must be a str.\" (https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus). The 3.13 implementation does `string = string.replace('+', ' ')` with a str literal, so bytes fail on that line.\n\nI confirmed on Python 3.13.18:\n\n- `unquote_plus(b'A+B%2BC')` → `TypeError: a bytes-like object is required, not 'str'` (from `urllib/parse.py:838` in `unquote_plus`)\n- `unquote_plus(b'A+B%2BC'.decode('ascii'))` → `'A B+C'`\n\nOne line to ship:\n\n    unquote_plus(raw.decode('ascii'))\n\nI'd use `.decode('ascii')` since you said the value is ASCII-only — it will raise if a non-ASCII byte ever slips in, which is a cheap guard. `.decode()` (UTF-8) works too for pure ASCII; the only difference is what happens on a bad byte.\n\nExact text your test should expect:\n\n    A B+C\n\nBreakdown: `A` stays, `+` becomes a space, `B` stays, `%2B` (hex 0x2B = '+') becomes a literal `+`, `C` stays.\n\nCaveat: this relies on `raw` being a real bytes object as described. If the queue ever hands you a `str` instead, decoding would fail — but per your premise it's bytes, so the line above is correct.\n"
+  },
+  {
+    "phase": "linked-treatment",
+    "arm": "guided",
+    "case": "unrelated",
+    "question_sha256": "d0a3c29efe311c41d140478fbe6bd7c20509d168fec70bf9d0fb09bb540f2d04",
+    "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+    "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+    "skill_sha256": "772e4f6e7f35ceb23140e9c1e53b7c5a8dc1a653c490315990cc7502f0aeee2b",
+    "renderer_sha256": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba",
+    "reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "seconds_to_first_text": 22.814,
+    "seconds_to_final": 28.644,
+    "model_requests": 3,
+    "tool_results": [
+      "terminal",
+      "read_file"
+    ],
+    "returned_sections": [
+      {
+        "source": "https://docs.docker.com/engine/containers/resource_constraints/#--memory-swap-details",
+        "sha256": "324e5440e300cc4a20b2abe5bd6aa2353275e386cebde34d48db1712d798dc31",
+        "section": {
+          "status": "found",
+          "basis": "heading",
+          "line_ranges": [
+            [
+              46,
+              56
+            ]
+          ]
+        }
+      }
+    ],
+    "answer_sha256": "aaa92b77d0730c16fd5fdf0255eabf195223e88bf2818337bddd2b1a5665f773",
+    "answer": "No, it does not. The current flags `--memory=2g --memory-swap=0` do NOT prevent swap.\n\nFrom the section you linked:\n\n  \"If --memory-swap is set to 0, the setting is ignored, and the value is treated as unset.\"\n\n  \"If --memory-swap is unset, and --memory is set, the container can use as much swap as the --memory setting, if the host has swap memory configured.\"\n\nSince your host has swap enabled and `--memory-swap=0` is treated as unset, the container gets up to 2 GiB of swap (equal to the `--memory` value). Total addressable memory: 4 GiB (2 GiB RAM + 2 GiB swap).\n\nWhat to ship instead:\n\n  --memory=2g --memory-swap=2g\n\nThe docs are explicit on that combination:\n\n  \"If --memory-swap is set to the same value as --memory, and --memory is set to a positive integer, the container doesn't have access to swap.\"\n\n  \"If --memory and --memory-swap are set to the same value, this prevents containers from using any swap. This is because --memory-swap is the amount of combined memory and swap that can be used, while --memory is only the amount of physical memory that can be used.\"\n\nSo `--memory-swap` is a *total* (RAM + swap) ceiling, not a swap-only cap. Setting it equal to `--memory` makes the swap allowance zero.\n\nSource: https://docs.docker.com/engine/containers/resource_constraints/#--memory-swap-details\n"
+  }
+]

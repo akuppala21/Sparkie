@@ -1,0 +1,26 @@
+{
+  "host": "Spark 2",
+  "scope": "Two cached pre-pinned CPU-only containers, no network, no published ports, tmpfs database storage, no image pulls",
+  "pg_11_22": {
+    "transaction_add": ["25001", "ALTER TYPE ... ADD cannot run inside a transaction block"],
+    "transaction_update_after_failed_add": ["25P02", "current transaction is aborted, commands ignored until end of transaction block"],
+    "standalone_add": "00000",
+    "later_transaction_update": "00000",
+    "repeat_plain_add": ["42710", "enum label \"held\" already exists"],
+    "final_rows": ["held", "shipped"],
+    "final_enum": ["new", "shipped", "held"]
+  },
+  "pg_12_22": {
+    "transaction_add": "00000",
+    "same_transaction_update": ["55P04", "unsafe use of new value \"held\" of enum type order_state"],
+    "hint": "New enum values must be committed before they can be used.",
+    "standalone_add": "00000",
+    "later_transaction_update": "00000",
+    "repeat_plain_add": ["42710", "enum label \"held\" already exists"],
+    "final_rows": ["held", "shipped"],
+    "final_enum": ["new", "shipped", "held"]
+  },
+  "remaining_replay_containers": 0,
+  "persistent_volumes_created": 0,
+  "custom_networks_created": 0
+}

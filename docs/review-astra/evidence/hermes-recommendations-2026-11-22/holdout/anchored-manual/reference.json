@@ -1,0 +1,27 @@
+{
+  "url": "https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus",
+  "page_sha256": "0753ee80af0694cff5fb8b959059e79f0648933f8ed4719405680d887f115109",
+  "verified_utc": "2026-11-23T03:30:20.748429+00:00",
+  "selected": {
+    "lines": [
+      839,
+      842
+    ],
+    "text": "Like unquote(), but also replace plus signs with spaces, as required for unquoting HTML form values. string must be a str. Example: unquote_plus('/El+Ni%C3%B1o/') yields '/El Niño/'."
+  },
+  "neighbor": {
+    "fragment": "urllib.parse.unquote",
+    "lines": [
+      826,
+      826
+    ],
+    "text": "string may be either a str or a bytes object."
+  },
+  "independent_behavior_check": {
+    "interpreter": "3.12.7",
+    "input": "b'A+B%2BC'",
+    "direct_call": "TypeError",
+    "ascii_decoded_argument_result": "A B+C",
+    "neighbor_unquote_result": "A+B+C"
+  }
+}

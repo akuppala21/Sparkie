@@ -1,0 +1,121 @@
+{
+  "scope": "One-file experimental CPU candidate. Independent local-model evaluation is separate.",
+  "base_manifest_sha256": "41035655a5e0d0d026eb413470a0022a4cb111785c9c58a9d73114453af5847f",
+  "base_source_table_sha256": "837d78484f62ee7a59d911c99fd56ee8df8dc7d0b7753c874dc87145a1a2d1e7",
+  "tag": "20261122-linkedmanual",
+  "manifest_sha256": "34725fba9e46c348caf0e3e261ececc46681aa64d3d573b754789793509c1cf4",
+  "source_table_sha256": "a3825f581f574bbd528d59595ae06ccf7ab9b8905add57d57ce358abaacbdf98",
+  "source_file_count": 258,
+  "source_byte_matches_with_base": 257,
+  "extension_delta": {
+    "sparkie/skills/local-recipe-review/SKILL.md": {
+      "before": "bf0eb73ca30506eb71ca77bde50eea5d804acbd56a00f59e6809aa9a58cba669",
+      "after": "772e4f6e7f35ceb23140e9c1e53b7c5a8dc1a653c490315990cc7502f0aeee2b"
+    }
+  },
+  "native_patches": [
+    {
+      "patch": "extension/deploy/patches/hermes-sealed-web-restore.patch",
+      "sha256": "608e5b2d1fb94409f5785f21500099b750db21f7ca5e565951cbd6de08ae5a88",
+      "upstream_files": {
+        "hermes_cli/web_routers/ops.py": "dd3a0bb0fdd6c0ddca5446dac6559981226b32ab4b98daef7b4f9be68ebcbe45",
+        "hermes_cli/web_routers/transfer.py": "62f06fb49042a39b7c4dc310385de1c878b38c697f6cb9cc2ecf258ddc439d09"
+      },
+      "patched_files": {
+        "hermes_cli/web_routers/ops.py": "ed23180cf1a530c0ac3a2303ffa10240e032badf9c2d10cee563b30e259b0f50",
+        "hermes_cli/web_routers/transfer.py": "ca395adf94e70d5f879cc724b87c35020f08e6840a58ca374c1290dabc81c0bd"
+      }
+    },
+    {
+      "patch": "extension/deploy/patches/hermes-sandbox-skill-path.patch",
+      "sha256": "ea6118f4d9f92a08e9ffcb9db9d3044c44c2a185aafbff99de31e6e7cdad9c4f",
+      "upstream_files": {
+        "agent/skill_commands.py": "e3014b177dce704142c23b7a4ab1b28440eca19867e6d6f1e3ce9171d3fdf17d"
+      },
+      "patched_files": {
+        "agent/skill_commands.py": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba"
+      }
+    }
+  ],
+  "renderer_sha256": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba",
+  "owner_soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+  "reader_sha256": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+  "build_wall_seconds": 12.08,
+  "selected": {
+    "python_tests": [
+      "tests/test_energy_integration.py",
+      "tests/test_forum_reader.py",
+      "tests/test_github_readme.py",
+      "tests/test_manual_reader.py",
+      "tests/test_native_config.py",
+      "tests/test_native_integration.py",
+      "tests/test_research_claims.py"
+    ],
+    "javascript_syntax": false,
+    "desktop_phone_browser": false,
+    "compact_local_behavior": true,
+    "native_execution_isolation": false,
+    "native_compute_workspace": false,
+    "enrolled_service_lifecycle": false,
+    "native_research": true,
+    "disposable_workload_stop": false,
+    "private_broker_stop": false,
+    "native_shared_sessions": false,
+    "compute_power_validation": false,
+    "native_candidate": false,
+    "broad_qualification": false,
+    "reasons": [
+      "sparkie/skills/local-recipe-review/SKILL.md: original-source readers, fleet measurements and native research skill discovery"
+    ]
+  },
+  "affected": {
+    "passed": 121,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "summary": "121 passed, 1 warning in 9.01s",
+    "wall_seconds": 15.81
+  },
+  "protected_profile": {
+    "uid": 1000,
+    "package_manifest": "34725fba9e46c348caf0e3e261ececc46681aa64d3d573b754789793509c1cf4",
+    "protected_reader": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "protected_skill": "772e4f6e7f35ceb23140e9c1e53b7c5a8dc1a653c490315990cc7502f0aeee2b",
+    "terminal_backend": "spark_compute",
+    "auto_loaded": [
+      "local-recipe-review"
+    ],
+    "slash_directory": "/home/sandbox/.hermes/skills/local-recipe-review",
+    "startup_prompt_sha256": "26fd315bb04105ff8b228fffe04addb0d4c1b0a063d317b989d57a3b1fa6ce8b",
+    "ssh_sync_destination": "/home/sandbox/.hermes/skills/local-recipe-review/scripts/read_manual.py"
+  },
+  "guidance_roster": {
+    "first_install_roster": [
+      "SOUL.md",
+      "skills/local-recipe-review/SKILL.md",
+      "skills/local-recipe-review/scripts/read_forum.py",
+      "skills/local-recipe-review/scripts/read_github_readme.py",
+      "skills/local-recipe-review/scripts/read_manual.py",
+      "skills/maintain-sparkie/SKILL.md",
+      "skills/one-spark-serving-results/SKILL.md",
+      "skills/one-spark-serving-results/scripts/measure_cache.py"
+    ]
+  },
+  "owner_smoke": {
+    "passed": true,
+    "registered_fleet_tool": true,
+    "telegram_handler_factories": 1,
+    "memory_guard_and_feedback": true,
+    "unauthenticated": 401,
+    "wrong_digest": 403,
+    "exact_digest": 200,
+    "replay": 403,
+    "inert_dispatches": 1,
+    "seconds": 1.951
+  },
+  "profile_and_owner_wall_seconds": 4.53,
+  "cpu_limit": 2,
+  "network": "none",
+  "model_requests": 0,
+  "remaining_cpu_fixture_container_ids": []
+}

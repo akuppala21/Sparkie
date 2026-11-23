@@ -1,0 +1,13 @@
+{
+  "source_revision": "a74b839c8b888411ee1208e1e13ca53fafe20f43",
+  "environment": "Spark 2 CPU, isolated network-disabled container, Hermes from the pinned owner package",
+  "modules": [
+    "test_skill_terminal_paths.py",
+    "test_manual_reader.py",
+    "test_check_selection.py",
+    "test_native_config.py"
+  ],
+  "passed": 98,
+  "seconds": 5.82,
+  "live_install": false
+}

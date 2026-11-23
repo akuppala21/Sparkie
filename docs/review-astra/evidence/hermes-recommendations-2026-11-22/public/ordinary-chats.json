@@ -1,0 +1,164 @@
+{
+  "runner": "Spark 2",
+  "inputs": {
+    "sealed_manifest": "9b55894f361a60e89bc13375a020315a458a50343f4d972e42072adaf1846b85",
+    "files_in_each_arm": 255,
+    "changed": [
+      "SOUL.md"
+    ],
+    "matched_reader": "341a74bd1c8f2c1970333f9ca5af3d53cf3a2711c9f3671aa987fcf5f92e8852",
+    "soul": {
+      "baseline": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+      "candidate": "6261086241d4ee3c124f020244eb3d91bed665c4ab0b18e6ee149f7cac1aee79"
+    }
+  },
+  "questions": {
+    "decision": "Our upgrade still has stock PostgreSQL 11 and 12 clusters. The migration runner wraps each file in BEGIN and COMMIT unless we opt that file out. An existing order_state enum needs a new 'held' value, then we need to update some orders to use it. Can I put both statements in one normal migration file? What would you put in the rollout plan for both versions?",
+    "unseen": "Our shared release branch picked up a topic before QA signed off. The merge was made on the topic branch, then release fast-forwarded to it. The merge commit is 4f1cc0a78. Its parents in order are bd90ee817 (topic just before the merge) and 8852c7b9b (release just before the fast-forward). Release now also has a later fix to an unrelated file that we need to keep. My release checkout is clean and current. What should we run to back the topic out now without rewriting shared history, and how do we bring that same topic back unchanged after QA?",
+    "simple": "A batch has 73 jobs and 28 have finished. How many are left?"
+  },
+  "attempts": [
+    {
+      "arm": "baseline",
+      "case": "decision",
+      "exit": 137,
+      "completed": null,
+      "visible_seconds": null,
+      "first_recorded_interim_seconds": 115.744,
+      "observed_returned_tools": 5,
+      "turn_seconds": null,
+      "wall_seconds": 480.0,
+      "native_model_calls": null,
+      "observed_requests": 5,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 91050,
+        "generation_tokens_histogram_count": 5,
+        "generation_tokens_histogram_sum": 16124
+      },
+      "top_level_tools_in_completed_trace": [],
+      "cleanup_remaining": [],
+      "answer_sha256": null,
+      "trace_before_interrupt": {
+        "first_interim_seconds": 115.744,
+        "observed_tool_results": 5,
+        "final_answer": false
+      }
+    },
+    {
+      "arm": "candidate",
+      "case": "decision",
+      "exit": 0,
+      "completed": true,
+      "visible_seconds": 144.841,
+      "first_recorded_interim_seconds": null,
+      "observed_returned_tools": 5,
+      "turn_seconds": 158.18,
+      "wall_seconds": 163.68,
+      "native_model_calls": 4,
+      "observed_requests": 4,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 59374,
+        "generation_tokens_histogram_count": 4,
+        "generation_tokens_histogram_sum": 6139
+      },
+      "top_level_tools_in_completed_trace": [
+        "web_search",
+        "web_search",
+        "terminal",
+        "terminal",
+        "terminal"
+      ],
+      "cleanup_remaining": [],
+      "answer_sha256": "3a4315b529d667ced4ab96aceca9bd1efd78c750f95a672f0b2c1abc124943e7",
+      "answer": "Short answer: no, one normal file won't work on either version — for different reasons.\n\n**PG 11** — the ADD VALUE statement itself rejects the transaction:\n\n> \"ALTER TYPE ... ADD VALUE (the form that adds a new value to an enum type) cannot be executed inside a transaction block.\"\n> — https://www.postgresql.org/docs/11/sql-altertype.html\n\nYour runner wraps the file in BEGIN/COMMIT, so the ADD VALUE errors before the UPDATE even runs.\n\n**PG 12** — the ADD VALUE now runs inside a transaction, but the new value isn't usable until after commit:\n\n> \"If ALTER TYPE ... ADD VALUE (the form that adds a new value to an enum type) is executed inside a transaction block, the new value cannot be used until after the transaction has been committed.\"\n> — https://www.postgresql.org/docs/12/sql-altertype.html\n\nSo the ADD VALUE passes, but your UPDATE referencing 'held' in the same transaction fails with an invalid enum value. The PG 12 release notes spell out the intent: \"Now it can be called in a later transaction, so long as the new enumerated value is not referenced until after it is committed.\" (https://www.postgresql.org/docs/release/12.0/)\n\n**Rollout plan (same two files, both versions):**\n\nFile 1 — opt out of the BEGIN/COMMIT wrapper (runs autocommit):\n```sql\nALTER TYPE order_state ADD VALUE 'held';\n```\n\nFile 2 — normal transactional file:\n```sql\nUPDATE orders\nSET order_state = 'held'\nWHERE <your predicate>;\n```\n\nWhy this is the minimal course that works on both:\n\n- File 1 in autocommit satisfies PG 11's hard requirement and is perfectly valid on PG 12. Once that file's single statement commits, 'held' is a first-class enum member visible to all subsequent transactions.\n- File 2 is a plain DML update inside a transaction. The value is already committed, so both versions accept it. If the UPDATE fails, the transaction rolls back and you can re-run without re-adding the value (ADD VALUE is idempotent in the sense that you just skip the file on retry; the enum already has it).\n\nThe only precondition: your runner's opt-out mechanism for File 1 must actually omit both the BEGIN and the COMMIT so the statement executes in autocommit mode. If the wrapper can be configured to emit just one side, that's the bug to watch for.\n"
+    },
+    {
+      "arm": "candidate",
+      "case": "unseen",
+      "exit": 0,
+      "completed": true,
+      "visible_seconds": 101.616,
+      "first_recorded_interim_seconds": null,
+      "observed_returned_tools": 0,
+      "turn_seconds": 111.871,
+      "wall_seconds": 116.0,
+      "native_model_calls": 1,
+      "observed_requests": 1,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 10925,
+        "generation_tokens_histogram_count": 1,
+        "generation_tokens_histogram_sum": 4035
+      },
+      "top_level_tools_in_completed_trace": [],
+      "cleanup_remaining": [],
+      "answer_sha256": "55abf8666db55973458458e66d8b4c21357cdd7660ff64f5dda3aea4ab85a666",
+      "answer": "## Back the topic out\n\n```\ngit revert -m 2 4f1cc0a78\n```\n\n**Why `-m 2`:** The merge was made *on the topic branch* with release merged in, so the parent order is:\n\n| Position | SHA | Role |\n|----------|-----|------|\n| 1st | `bd90ee817` | topic (the branch the merge was run on) |\n| 2nd | `8852c7b9b` | release (the branch that was merged in) |\n\n`git revert -m 2` computes the diff between the merge commit and its **second parent** (release) and applies the inverse. That removes exactly the topic's contribution while leaving release's own state (including your later fix to the unrelated file) intact. It's a new forward commit, so no shared history is rewritten — just a normal push afterward.\n\n## Bring the topic back after QA\n\n```\ngit revert <sha-of-the-revert-commit>\n```\n\nReverting the revert restores the topic's changes byte-for-byte. Because the topic is unchanged, this is a clean restore with no conflicts expected.\n\n## Why not just re-merge the topic branch later?\n\nThe original merge commit `4f1cc0a78` is already an ancestor of release (via the fast-forward). A plain `git merge <topic>` afterward will report **\"Already up to date\"** and do nothing. The revert-of-revert is the standard way to re-introduce the same changes without fighting that.\n\n## One caveat\n\nIf the topic later gains new commits and you want to bring in the *updated* version rather than the original, the sequence becomes:\n\n1. `git revert <sha-of-the-revert-commit>` — restores the original topic state\n2. `git merge <topic>` — now pulls in the new commits on top (the original merge is already \"done,\" so only the delta applies)\n\nBut for the \"unchanged\" case you described, a single revert-of-revert is all you need.\n"
+    },
+    {
+      "arm": "baseline",
+      "case": "unseen",
+      "exit": 0,
+      "completed": true,
+      "visible_seconds": 181.691,
+      "first_recorded_interim_seconds": null,
+      "observed_returned_tools": 0,
+      "turn_seconds": 194.705,
+      "wall_seconds": 198.87,
+      "native_model_calls": 1,
+      "observed_requests": 1,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 10782,
+        "generation_tokens_histogram_count": 1,
+        "generation_tokens_histogram_sum": 6816
+      },
+      "top_level_tools_in_completed_trace": [],
+      "cleanup_remaining": [],
+      "answer_sha256": "4574249d7e6e3436eef8e14004fe0f12c5496f188bcb14d28beaff5285dccb61",
+      "answer": "The merge was authored *on the topic branch*, so its parent order is:\n\n  parent 1 (bd90ee817) = topic, just before the merge\n  parent 2 (8852c7b9b) = release, just before the fast-forward\n\nTo back out the topic but keep the release line, you keep parent 2 and undo parent 1. With the later fix already on top of release:\n\n  git revert -m 2 4f1cc0a78\n\nWhy -m 2: `git revert -m N` keeps the Nth parent and reverts the other side. `git diff 8852c7b9b..4f1cc0a78` is exactly the topic's changes (what the merge added on top of the release line), so `-m 2` removes those and leaves the release line alone. This is a new commit, not a history rewrite: 4f1cc0a78, bd90ee817 and 8852c7b9b all stay, and the later fix stays on top. (If the merge had been made on release instead of topic, the topic would have been parent 2 and you'd use -m 1 — but here the merge was made on topic, so it's -m 2.)\n\nBring the topic back unchanged after QA:\n\n  git revert <the merge-revert commit you just made>\n\nReverting the revert re-applies the identical topic diff, byte-for-byte. Since the only thing that landed after the revert is an unrelated file and no new topic work, this applies cleanly. The merge-revert commit is a normal single-parent commit, so a plain `git revert` (no -m) is correct.\n\nWhat NOT to do: a plain `git merge bd90ee817` to bring it back. The original topic tip is already an ancestor of release (through 4f1cc0a78), so git would say \"Already up to date\" and change nothing. The revert-of-revert is the faithful bring-back; only if new commits were added to the topic after QA would you instead merge the updated topic tip (the revert-of-revert brings back only the original topic diff).\n\nSafety checks before pushing:\n\n  git status && git log --oneline -4          # confirm clean, on release\n  git show <revert-commit>                    # topic files revert to release-line state\n  git diff 8852c7b9b..HEAD                     # should show ONLY the unrelated fix\n\nIf `git diff 8852c7b9b..HEAD` shows nothing but the unrelated file, the topic is fully backed out and QA's fix is intact.\n\nCommit the back-out with a clear message, e.g. \"Revert topic before QA (keep release line)\", so the later revert-of-revert is self-documenting.\n"
+    },
+    {
+      "arm": "baseline",
+      "case": "simple",
+      "exit": 0,
+      "completed": true,
+      "visible_seconds": 7.523,
+      "first_recorded_interim_seconds": null,
+      "observed_returned_tools": 0,
+      "turn_seconds": 8.113,
+      "wall_seconds": 12.29,
+      "native_model_calls": 1,
+      "observed_requests": 1,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 10663,
+        "generation_tokens_histogram_count": 1,
+        "generation_tokens_histogram_sum": 68
+      },
+      "top_level_tools_in_completed_trace": [],
+      "cleanup_remaining": [],
+      "answer_sha256": "776d8f71fb2a42cafd794a2439d02791e2df6b170735fa6a3b0cf0bd29f9c50a",
+      "answer": "45 jobs are left (73 total, 28 finished).\n"
+    },
+    {
+      "arm": "candidate",
+      "case": "simple",
+      "exit": 0,
+      "completed": true,
+      "visible_seconds": 7.455,
+      "first_recorded_interim_seconds": null,
+      "observed_returned_tools": 0,
+      "turn_seconds": 7.625,
+      "wall_seconds": 11.95,
+      "native_model_calls": 1,
+      "observed_requests": 1,
+      "sglang": {
+        "prompt_tokens_histogram_sum": 10806,
+        "generation_tokens_histogram_count": 1,
+        "generation_tokens_histogram_sum": 45
+      },
+      "top_level_tools_in_completed_trace": [],
+      "cleanup_remaining": [],
+      "answer_sha256": "ae923c5916480c5f8257756f7f7159ac3c4420327e4998ef48e7d5ce53d3c9a1",
+      "answer": "45 jobs are left.\n"
+    }
+  ]
+}

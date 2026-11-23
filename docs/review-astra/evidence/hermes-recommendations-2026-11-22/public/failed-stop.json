@@ -1,0 +1,58 @@
+{
+  "compact_exit": 1,
+  "case": "failed_stop",
+  "agent_model_requests": 3,
+  "failed_check": "receipt_read_once",
+  "native_message_roles": [
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant"
+  ],
+  "tools": [
+    {
+      "position": 1,
+      "name": "read_file",
+      "arguments": {
+        "path": "/workspace/failed_stop.json"
+      }
+    },
+    {
+      "position": 3,
+      "name": "read_file",
+      "arguments": {
+        "path": "/workspace/failed_stop.json"
+      }
+    }
+  ],
+  "first_result": {
+    "truncated": false,
+    "total_lines": 26,
+    "operation": "stop_workload",
+    "target": "spark3",
+    "state": "failed",
+    "outcome": "failed",
+    "observed_workload_state": "running",
+    "dispatch_count": 1,
+    "repeated_delivery_state": "failed"
+  },
+  "second_result": "[hermes note: this result is byte-identical to the read_file result earlier this turn (tool_call_id [first call ID]). Refer to that result; it has not changed. Args: {\"path\":\"/workspace/failed_stop.json\"}]\n\n[Tool loop warning: idempotent_no_progress_warning; count=2; read_file returned the same result 2 times. Use the result already provided or change the query instead of repeating it unchanged.]",
+  "final": {
+    "receipt_id": "07c144650cac4e11a8d23370588cf592",
+    "state": "failed",
+    "stopped": false,
+    "next_step": "The recorded stop operation on Spark 3 (container aaaa...) failed: its state is 'failed' and the observed workload state is 'running', so the workload has not stopped. Before considering another stop, review the current workload state and failure cause, then re-request the stop with the applicable resource checks and fresh confirmation."
+  },
+  "checks": {
+    "exact_result_shape": true,
+    "matches_recorded_outcome": true,
+    "receipt_read_once": false,
+    "no_memory_write": true,
+    "completed": true,
+    "native_skill_loaded": true,
+    "native_soul_loaded": true,
+    "actual_generation_profile_captured": true
+  }
+}

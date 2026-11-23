@@ -1,0 +1,1 @@
+Our Python 3.13 form handler gets an ASCII-only bytes value from the queue, for example raw = b'A+B%2BC'. Please check the API entry we plan to use: https://docs.python.org/3.13/library/urllib.parse.html#urllib.parse.unquote_plus. Can we pass raw straight to that function? What one line should we ship, and what exact text should our test expect for this input?

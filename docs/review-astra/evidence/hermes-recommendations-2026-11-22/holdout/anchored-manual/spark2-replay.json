@@ -1,0 +1,13 @@
+{
+  "host": "Spark 2",
+  "runtime": "Cached native Hermes sandbox image a561d383d4cf",
+  "python": "3.13.18 (main, Nov 5 2026, 09:50:38) [GCC 14.2.0]",
+  "isolation": "CPU-only ephemeral docker run --rm with read-only filesystem, network disabled, no host mounts, no GPU and no image pull",
+  "raw": "b'A+B%2BC'",
+  "unquote_plus(raw)": {
+    "exception": "TypeError",
+    "message": "a bytes-like object is required, not 'str'"
+  },
+  "unquote_plus(raw.decode('ascii'))": "A B+C",
+  "unquote(raw)": "A+B+C"
+}

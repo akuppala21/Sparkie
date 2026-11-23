@@ -1,0 +1,47 @@
+{
+  "ordinary_sessions": 11,
+  "all_ordinary_sandboxes_clean": true,
+  "supervisor_cleanup": {
+    "unit_stopped": true,
+    "container_absent": true,
+    "port_free": true,
+    "unit_file_absent": true
+  },
+  "samples": [
+    {
+      "utc": 1795406412.6770883,
+      "available_gib": 117.91571044921875,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795406415.738012,
+      "available_gib": 117.90917587280273,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795406418.7931917,
+      "available_gib": 117.91434478759766,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    }
+  ],
+  "fleet_observed_at": "2026-11-23T04:00:35.140Z",
+  "fleet_states": {
+    "spark1": "online",
+    "spark2": "online",
+    "spark3": "off",
+    "spark4": "off"
+  },
+  "spark2_containers": 0,
+  "idle_minutes": 30,
+  "spark2_power_managed": true,
+  "manual_power_off_requested": false
+}

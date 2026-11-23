@@ -1,0 +1,15 @@
+{
+  "original_frozen_fixture": "Local Mac with Apple Git 2.50.1. The original fixture-result.json is unchanged.",
+  "independent_replay_host": "Spark 2",
+  "git_version": "git version 2.43.0",
+  "merge": "4f1cc0a7898fb0a144c5479aa0cbc604a23f551a",
+  "parents": [
+    "bd90ee817f5167cf17d4f2ce80f6793bdeae8912",
+    "8852c7b9bb4c57a5d7f605fa2a024fd3d133ea2d"
+  ],
+  "later_fix_retained": true,
+  "unchanged_topic_remerge_was_noop": true,
+  "restored_exact_original_tree": true,
+  "rollback_tree_files": ["base.txt", "later-release-fix.txt", "release-only.txt"],
+  "temporary_repository_removed": true
+}

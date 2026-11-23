@@ -1,0 +1,52 @@
+{
+  "package": "41035655a5e0d0d026eb413470a0022a4cb111785c9c58a9d73114453af5847f",
+  "renderer": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba",
+  "reader": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+  "model_requests": 0,
+  "docker": {
+    "startup": {
+      "paths": [
+        "/root/.hermes/skills/local-recipe-review"
+      ],
+      "prompt_sha256": "adb2fc88bfdafe170fc2a8cf4d839e81347270e5691260340e421d5f3ab1410c"
+    },
+    "slash": {
+      "paths": [
+        "/root/.hermes/skills/local-recipe-review"
+      ],
+      "prompt_sha256": "c13ef6403911bfd49d2b3d620f72c69b1a966d19747246ca47aced04987d1dc3"
+    },
+    "reader": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "network": "none",
+    "image": "sha256:a561d383d4cf554cd98ca528a450574f86e0b3dcd9496d5b9b0fbd09482c6dd3",
+    "gpu_requested": false,
+    "cleanup_verified": true,
+    "remaining_ids": [],
+    "seconds": 3.354
+  },
+  "ssh": {
+    "startup": {
+      "paths": [
+        "/home/sandbox/.hermes/skills/local-recipe-review"
+      ],
+      "prompt_sha256": "1a7a55ef97508e732314f871b4c2310e8645e732cc225f16505bede77c72d4b4"
+    },
+    "slash": {
+      "paths": [
+        "/home/sandbox/.hermes/skills/local-recipe-review"
+      ],
+      "prompt_sha256": "0316c3d5b8ae73c8b1c89481bd568d28b6ac0f0616242872ee8e782a77bb1ee5"
+    },
+    "reader": "e5d4cbc6a4ec9bc00483e291f283cc91e222693f6758b07dbe4477fc607014cf",
+    "executed_help": true,
+    "gpu_requested": false,
+    "image": "sha256:c268cfef5714cf58129c5b55b1da3871847a097f6f4e2a95e28546e099819414",
+    "bind_host": "127.0.0.1",
+    "user": "sandbox",
+    "host_mounts": [],
+    "container_removed": true,
+    "fixture_volumes_removed": true,
+    "elapsed_seconds": 1.946
+  },
+  "private_fixture_directory_removed": true
+}

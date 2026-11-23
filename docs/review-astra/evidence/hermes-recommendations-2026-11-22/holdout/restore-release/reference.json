@@ -1,0 +1,45 @@
+{
+  "verified_utc": "2026-11-23T03:19:18.532100+00:00",
+  "sources": [
+    {
+      "source": "https://github.com/git/git/blob/v2.51.0/Documentation/git-revert.adoc",
+      "sha256": "63cd3400c56f2c55e61ac2d6048e72c0b700071caabe8d9b337a37d8b180b5fd",
+      "passages": [
+        {
+          "lines": [
+            17,
+            23
+          ],
+          "text": "Given one or more existing commits, revert the changes that the\nrelated patches introduce, and record some new commits that record\nthem.  This requires your working tree to be clean (no modifications\nfrom the HEAD commit).\n\nNote: 'git revert' is used to record some new commits to reverse the\neffect of some earlier commits (often only a faulty one).  If you want to"
+        },
+        {
+          "lines": [
+            50,
+            61
+          ],
+          "text": "-m parent-number::\n--mainline parent-number::\n\tUsually you cannot revert a merge because you do not know which\n\tside of the merge should be considered the mainline.  This\n\toption specifies the parent number (starting from 1) of\n\tthe mainline and allows revert to reverse the change\n\trelative to the specified parent.\n+\nReverting a merge commit declares that you will never want the tree changes\nbrought in by the merge.  As a result, later merges will only bring in tree\nchanges introduced by commits that are not ancestors of the previously\nreverted merge.  This may or may not be what you want."
+        }
+      ]
+    },
+    {
+      "source": "https://github.com/git/git/blob/v2.51.0/Documentation/howto/revert-a-faulty-merge.adoc",
+      "sha256": "fa45375bca469a8d9b756ce142b66572a2630540bd89e19b40c29560e7b158d9",
+      "passages": [
+        {
+          "lines": [
+            87,
+            94
+          ],
+          "text": "where Y is the revert of W.  Such a \"revert of the revert\" can be done\nwith:\n\n    $ git revert W\n\nThis history would (ignoring possible conflicts between what W and W..Y\nchanged) be equivalent to not having W or Y at all in the history:\n"
+        },
+        {
+          "lines": [
+            182,
+            185
+          ],
+          "text": "the answer is: \"oops, I really shouldn't have merged it, because it wasn't\nready yet, and I really need to undo _all_ of the merge\"). So then you\nreally should revert the merge, but when you want to re-do the merge, you\nnow need to do it by reverting the revert."
+        }
+      ]
+    }
+  ]
+}

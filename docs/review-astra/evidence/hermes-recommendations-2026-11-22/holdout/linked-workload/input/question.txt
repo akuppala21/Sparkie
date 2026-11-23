@@ -1,0 +1,3 @@
+A batch container on a compute Spark should have a 2 GiB RAM limit and no swap. The Linux host has swap enabled and supports Docker's memory and swap limits. Our launcher passes --memory=2g --memory-swap=0. Looking at the Docker Engine entry below, does that already do what we want? If not, what exact flags should we ship, and how much swap could the old flags allow?
+
+https://docs.docker.com/engine/containers/resource_constraints/#--memory-swap-details

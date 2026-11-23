@@ -1,0 +1,7 @@
+{
+  "input/question.txt": "22c2a96ec3b47093dfbea539c0b5d124c4718d030aee671327b2484dd8f951d5",
+  "input/inputs.json": "5a54ab09f8f1bdcbd971f6f28517ce20859ac725c1e08f91cdf730c385cdbe3d",
+  "reference.json": "cb63273ae321eb56c153b2488f694c7183b2e056e7ca59f43b04d2e0bac6e132",
+  "rubric.md": "87d831272f86eb940af45648939a44b8d2d65ad25c6cdd9a1341f5391465e339",
+  "fixture-result.json": "4dd94cac06eb9f81f0850818a371635836670dab963d3d02b8641c85c5236201"
+}

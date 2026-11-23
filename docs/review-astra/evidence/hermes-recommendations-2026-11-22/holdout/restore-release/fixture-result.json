@@ -1,0 +1,27 @@
+{
+  "git_version": "git version 2.50.1 (Apple Git-155)",
+  "parent_1_topic": "bd90ee817f5167cf17d4f2ce80f6793bdeae8912",
+  "parent_2_release": "8852c7b9bb4c57a5d7f605fa2a024fd3d133ea2d",
+  "merge": "4f1cc0a7898fb0a144c5479aa0cbc604a23f551a",
+  "later_release_commit": "5f820d9342b49b835724cbe53f277cc0ab9b1d45",
+  "rollback": "e2bda4a1e6817aa5cb6e51151783ef40243600a9",
+  "restore": "c45efc73bbf633f7778d1bf9f557ea703bcd2757",
+  "tree_before_rollback": [
+    "base.txt",
+    "later-release-fix.txt",
+    "release-only.txt",
+    "topic-only.txt"
+  ],
+  "tree_after_revert_mainline_2": [
+    "base.txt",
+    "later-release-fix.txt",
+    "release-only.txt"
+  ],
+  "unchanged_topic_merge_left_head_at_rollback": true,
+  "tree_after_revert_rollback": [
+    "base.txt",
+    "later-release-fix.txt",
+    "release-only.txt",
+    "topic-only.txt"
+  ]
+}
