@@ -1,0 +1,14 @@
+{
+  "reason": "Reject an inapplicable flat or single-operation targeted skill patch before staging, using the native matcher; keep approval-time revalidation and native multi-operation batches.",
+  "patch_sha256": "877ef343dd46488cef3f1d76d1e7150b483a2ba43f24c735d42ccbc532378c47",
+  "files": {
+    "tools/skill_manager_tool.py": {
+      "before_sha256": "ddfa4167226aa1662d00489853ba13894b13c27f09e75cdb24befdb833427905",
+      "after_sha256": "0eb39b51d41f5863e7149df015ac6868eab5b11cbf2e14f71765dcbfceaa41a2"
+    },
+    "tools/skill_manager_batch.py": {
+      "before_sha256": "a5fd36ae5790216f47832f21b48e61dc3dd6785d6eef9965de0bff90e5259870",
+      "after_sha256": "e8be39f23bdf33042ef79776cdf014999bffe5f1ec790befeaad0fea246ef185"
+    }
+  }
+}

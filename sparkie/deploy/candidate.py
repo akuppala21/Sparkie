@@ -186,6 +186,9 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     notice_patch = apply_native_patch(destination / "hermes", destination / "extension",
                                       Path("deploy/patches/hermes-remote-terminal-notice.patch"),
                                       ("agent/message_sanitization.py",))
+    skill_stage_patch = apply_native_patch(destination / "hermes", destination / "extension",
+        Path("deploy/patches/hermes-skill-stage-applicability.patch"),
+        ("tools/skill_manager_tool.py", "tools/skill_manager_batch.py"))
     shutil.copytree(webapp, destination / "webapp")
     shutil.copytree(dashboard, destination / "dashboard")
     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
@@ -235,7 +238,8 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
-        "native_patches": [restore_guard, memory_patch, skill_path_patch, attachment_patch, interrupt_patch, notice_patch],
+        "native_patches": [restore_guard, memory_patch, skill_path_patch, attachment_patch, interrupt_patch, notice_patch,
+                           skill_stage_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

@@ -1,0 +1,24 @@
+{
+    "B": {
+        "action": "batch",
+        "operations": [
+            {
+                "name": "local-recipe-review",
+                "action": "patch",
+                "old_string": "If the requested record is absent and your available tools cannot read it, answer in the requested format now. Leave its identity and outcome unknown and ask for the record or a permitted read.",
+                "new_string": "If the requested record is absent and your available tools cannot read it, answer in the requested format now. Leave its identity and outcome unknown and ask for the record or a permitted read. For JSON receipts, emit a literal null for receipt_id when its ID is unknown, not an empty string; use null for any other identity field only when it is likewise unknown."
+            }
+        ]
+    },
+    "C": {
+        "action": "batch",
+        "operations": [
+            {
+                "name": "local-recipe-review",
+                "action": "patch",
+                "old_string": "Copy the returned `stop_receipt` values. Its `stopped:null` means the\nstop was not verified.",
+                "new_string": "Copy the returned `stop_receipt` values. Its `stopped:null` means the\nstop was not verified.\nFor a plain-text receipt read from a saved change record, answer the recorded\nobservation, not the live target: copy the record's operation id into\n`receipt_id` and mirror `state`. When the saved record carries a definitive\nobserved workload state, set `stopped` to the value that state implies at that\nobservation (`false` while running, `true` when stopped); keep it `null` only\nwhen that observation is genuinely missing or inconclusive. Reading the record\nis sufficient; do not add a live check. Say the receipt reflects that recorded\nobservation, not the present state, and that a failed stop needs a fresh read-\nonly workload review plus the applicable resource checks and confirmation\nbefore another stop."
+            }
+        ]
+    }
+}

@@ -69,6 +69,8 @@ def selection(paths):
             tests.update({'test_forum_reader.py', 'test_github_readme.py', 'test_research_claims.py', 'test_native_config.py'})
             if path in {'skills/local-recipe-review/scripts/read_manual.py', 'skills/local-recipe-review/SKILL.md'}:
                 tests.add('test_manual_reader.py')
+            if path == 'skills/local-recipe-review/SKILL.md':
+                tests.add('test_native_skill_staging.py')
             if path == 'skills/one-spark-serving-results/SKILL.md':
                 tests.add('test_cache_measurement.py')
             research = behavior = True
@@ -162,6 +164,12 @@ def selection(paths):
             tests.update(THEME)
             panel = browser = True
             reasons.append(original + ': staged theme, native discovery and owner theme preferences')
+        elif path in ('deploy/patches/hermes-skill-stage-applicability.patch',
+                      'deploy/patches/hermes-skill-stage-applicability.json',
+                      'tests/fixtures/native_skill_stage_proposals.json', 'tests/test_native_skill_staging.py'):
+            tests.update({'test_native_skill_staging.py', 'test_deployment.py'})
+            candidate = behavior = True
+            reasons.append(original + ': native skill staging, approval replay and sealed patch provenance')
         elif path in ('deploy/patches/hermes-sandbox-skill-path.patch', 'deploy/patches/hermes-sandbox-skill-path.json',
                       'tests/test_skill_terminal_paths.py'):
             tests.update({'test_skill_terminal_paths.py', 'test_native_config.py', 'test_native_restore_guard.py',
@@ -295,7 +303,7 @@ def selection(paths):
         elif path.startswith('deploy/'):
             tests.update(DEPLOY)
             if path == 'deploy/candidate.py':
-                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py', 'test_remote_terminal_interrupt.py'})
+                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py', 'test_remote_terminal_interrupt.py', 'test_native_skill_staging.py'})
             services = True
             if path == 'deploy/stage.py':
                 tests.update(THEME)

@@ -305,6 +305,20 @@ def test_root_routing_patch_keeps_browser_and_auth_checks_without_hardware_runs(
     assert not plan['compact_local_behavior'] and not plan['broad_qualification']
 
 
+def test_skill_staging_patch_selects_native_regressions_and_packaging():
+    for path in ('deploy/patches/hermes-skill-stage-applicability.patch',
+                 'deploy/patches/hermes-skill-stage-applicability.json',
+                 'tests/fixtures/native_skill_stage_proposals.json'):
+        plan = select([path])
+        assert set(plan['python_tests']) == {'tests/test_native_skill_staging.py', 'tests/test_deployment.py',
+                                             'tests/test_native_integration.py', 'tests/test_energy_integration.py'}
+        assert plan['native_candidate'] and plan['compact_local_behavior']
+        assert not plan['broad_qualification']
+    packaging = select(['deploy/candidate.py'])
+    assert {'tests/test_native_skill_staging.py', 'tests/test_promote.py'} <= set(packaging['python_tests'])
+    assert 'tests/test_native_skill_staging.py' in select(['skills/local-recipe-review/SKILL.md'])['python_tests']
+
+
 def test_restore_patch_and_its_digest_select_the_packaged_owner_routes():
     for suffix in ('patch', 'json'):
         plan = select(['deploy/patches/hermes-sealed-web-restore.' + suffix])

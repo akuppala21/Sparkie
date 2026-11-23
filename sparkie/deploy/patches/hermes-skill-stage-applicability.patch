@@ -1,0 +1,64 @@
+--- a/tools/skill_manager_tool.py
++++ b/tools/skill_manager_tool.py
+@@ -667,6 +667,38 @@
+ # Set while replaying an approved staged skill write so skill_manage() does not re-gate it.
+ _skill_gate_bypass: _ctxvars.ContextVar[bool] = _ctxvars.ContextVar(
+     "skill_gate_bypass", default=False)
++
++
++def _single_patch_staging_error(payload, wa):
++    """Check an independent targeted patch; ordered batches retain native atomic replay."""
++    ops = payload.get("operations", [payload])
++    if len(ops) != 1:
++        return None
++    op = ops[0]
++    if op["action"] != "patch" or op.get("content"):
++        return None
++    if error := _op_shape_error("patch", op):
++        return error
++    name = op.get("name") or payload.get("name")
++    directory, error = _locate_for_write(name, "patch")
++    if error:
++        return error["error"]
++    label = op.get("file_path") or "SKILL.md"
++    target, error = _resolve_supporting_file(directory, label)
++    if error:
++        return error["error"]
++    if not target.is_file():
++        return f"Cannot read {label} in skill '{name}': target must be a regular file."
++    try:
++        original = target.read_text(encoding="utf-8-sig")
++    except (OSError, UnicodeError):
++        return f"Cannot read {label} in skill '{name}'."
++    folded, error = wa._fold_patch(original, op["old_string"], op["new_string"], op.get("replace_all"))
++    if error:
++        return f"Cannot patch {label} in skill '{name}': {error}. View this skill and copy its current text."
++    if error := _validate_content_size(folded, label=label):
++        return error
++    return None if op.get("file_path") else _validate_frontmatter(folded)
+ 
+ 
+ def _run_write_gate(build_staging):
+@@ -683,6 +715,8 @@
+     if decision.blocked:
+         return tool_error(decision.message, success=False)
+     payload, gist = build_staging(wa)
++    if error := _single_patch_staging_error(payload, wa):
++        return json.dumps({**_err(error), "failed_index": 0}, ensure_ascii=False)
+     record = wa.stage_write(wa.SKILLS, payload, summary=gist, origin=wa.current_origin())
+     return json.dumps({"success": True, "staged": True, "pending_id": record["id"],
+                        "gist": gist, "message": decision.message}, ensure_ascii=False)
+--- a/tools/skill_manager_batch.py
++++ b/tools/skill_manager_batch.py
+@@ -246,7 +246,10 @@
+         def _staging(wa):
+             acts = ", ".join(op["action"] for op in operations)
+             gist = f"batch({len(operations)} ops: {acts}) on {', '.join(sorted(set(names)))}"
+-            return {"action": "batch", "operations": operations}, gist
++            payload = {"action": "batch", "operations": operations}
++            if len(operations) == 1 and not operations[0].get("name") and default_name:
++                payload["operations"] = [dict(operations[0], name=default_name)]
++            return payload, gist
+         staged = _smt._run_write_gate(_staging)
+         if staged is not None:
+             return staged
