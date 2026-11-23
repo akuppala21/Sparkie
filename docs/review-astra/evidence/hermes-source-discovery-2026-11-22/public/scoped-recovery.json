@@ -1,0 +1,62 @@
+{
+  "manifest": "be1dbdc0bd1e14c82018a0281aba027fea1824af064fc6bcfb2d3c4798408ec2",
+  "scope": "Independent fresh Hermes conversations reading disposable serialized OperationStore records. The attempted broker tool was unavailable in the lost-acknowledgement case. This fixture did not change a real workload.",
+  "cases": [
+    {
+      "case": "failed_stop",
+      "row_id": "c2e6e1dbb2ae42be821cdd9772510293",
+      "reported": {
+        "receipt_id": "c2e6e1dbb2ae42be821cdd9772510293",
+        "state": "failed",
+        "stopped": false,
+        "next_step": "The recorded stop on Spark 3 failed and the workload was still observed running (dispatch_count 1). Do a fresh read-only check of the workload state on Spark 3 before considering another stop; only if it is still running, proceed with a new stop using the applicable resource checks and the owner's exact confirmation."
+      },
+      "read_count": 1,
+      "initial_fixture_dispatches": 1,
+      "seconds": 207.232,
+      "model_calls": 4,
+      "tools": [
+        "read_file",
+        "skill_view"
+      ],
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      }
+    },
+    {
+      "case": "lost_acknowledgement",
+      "row_id": "988d380d727d448e9af0098015e97b57",
+      "reported": {
+        "receipt_id": "988d380d727d448e9af0098015e97b57",
+        "state": "uncertain",
+        "stopped": null,
+        "next_step": "Re-check the same recorded change ID 988d380d727d448e9af0098015e97b57 for a live determination; the stop was dispatched once but no acknowledgement was received, so the request stays held and a fresh confirmation or a separate workload observation cannot override the hold."
+      },
+      "read_count": 1,
+      "initial_fixture_dispatches": 1,
+      "seconds": 58.371,
+      "model_calls": 3,
+      "tools": [
+        "read_file",
+        "spark_check_change"
+      ],
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "runner": "Spark 2 native terminal image on CPU",
+  "reader_sha256": "4b7c6feb8743b96939ab738f8f49e5d9e0680050496bf0c75757e97e89f3660e",
+  "separate_flag_syntax": {
+    "arguments": [
+      "--find",
+      "--restart"
+    ],
+    "exit": 2,
+    "message": "argument --find: expected one argument"
+  },
+  "native_equals_syntax": {
+    "argument": "--find=--memory-swap",
+    "exit": 0,
+    "source": "https://docs.docker.com/engine/containers/resource_constraints/#--memory-swap-details",
+    "publisher_sha256": "324e5440e300cc4a20b2abe5bd6aa2353275e386cebde34d48db1712d798dc31",
+    "section": {
+      "status": "found",
+      "basis": "heading",
+      "line_ranges": [
+        [
+          46,
+          56
+        ]
+      ]
+    },
+    "hits": 8
+  },
+  "dns_failure_with_network_disabled": {
+    "exit": 1,
+    "response": {
+      "input": 1,
+      "error": "DNS lookup failed for the manual publisher."
+    }
+  },
+  "automatic_retries_added": 0,
+  "separate_java_publisher_probe": {
+    "source": "https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/file/Files.html#move%28java.nio.file.Path%2Cjava.nio.file.Path%2Cjava.nio.file.CopyOption...%29",
+    "raw_sha256": "94adfa9ac2a5b8300a877d9e044dce89a8b8b11fee168f19393caf40b21edd20",
+    "section": {
+      "status": "found",
+      "basis": "element",
+      "line_ranges": [
+        [
+          595,
+          627
+        ]
+      ]
+    },
+    "matches": [
+      {
+        "term": "all other options",
+        "hits": 1,
+        "passages": [
+          {
+            "line": 603,
+            "anchor": "move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption...)",
+            "context_lines": [
+              603,
+              603
+            ],
+            "excerpt": "ATOMIC_MOVE The move is performed as an atomic file system operation and all other options are ignored. If the target file exists then it is implementation specific if the existing file is replaced or this method fails by throwing an IOException. If the move cannot be performed as an atomic file system operation then AtomicMoveNotSupportedException is thrown. This can arise, for example, when the target location is on a different FileStore and would requir",
+            "clipped": true
+          }
+        ]
+      },
+      {
+        "term": "implementation specific",
+        "hits": 2,
+        "passages": [
+          {
+            "line": 603,
+            "anchor": "move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption...)",
+            "context_lines": [
+              603,
+              603
+            ],
+            "excerpt": "is performed as an atomic file system operation and all other options are ignored. If the target file exists then it is implementation specific if the existing file is replaced or this method fails by throwing an IOException. If the move cannot be performed as an atomic file system operation then AtomicMoveNotSupportedException is thrown. This can arise, for example, when the target location is on a different FileStore and would require that the file be co",
+            "clipped": true
+          },
+          {
+            "line": 604,
+            "anchor": "move(java.nio.file.Path,java.nio.file.Path,java.nio.file.CopyOption...)",
+            "context_lines": [
+              604,
+              605
+            ],
+            "excerpt": "An implementation of this interface may support additional implementation specific options. Moving a file will copy the last-modified-time to the target file if supported by both source and target file stores. Copying of file timestamps may result in precision loss. An implementation may also attempt to copy other file attributes but is not required to fail if the file attributes cannot be copied. When the move is performed as a non-atomic operation, and a",
+            "clipped": true
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "scope": "Four isolated, link-free owner questions, two questions in each arm, first answers. Same model and tooling; experimental source-discovery instructions changed. Independent grades were frozen prior to arm mapping.",
+  "questions": {
+    "worker-restart": "One long-running standalone Docker worker on a compute Spark has --restart=on-failure:3. It sometimes exits cleanly to recycle. We need it to restart after that and after a Docker daemon restart, but an operator's deliberate stop for maintenance must survive even a daemon restart. Which restart policy should we put in the launcher, and would always be equivalent?",
+    "atomic-publish": "Our Java 21 service publishes a manifest with Files.move(tmp, current, ATOMIC_MOVE, REPLACE_EXISTING). current already exists and readers must always see a complete old or new manifest. tmp is created beside current, but we support several filesystem providers. Does that call guarantee replacement on every provider, and what should we do if the provider refuses it?"
+  },
+  "turns": [
+    {
+      "arm": "baseline",
+      "case": "worker-restart",
+      "answer_sha256": "f2caa7bee29aa051bcb0566e50edb97794ae29d6643b5770124f66edd894d2e8",
+      "turn_seconds": 191.282,
+      "visible_seconds": 90.017,
+      "native_model_calls": 4,
+      "observed_returned_tools": 3,
+      "decision": "correct",
+      "publisher_consulted": true
+    },
+    {
+      "arm": "candidate",
+      "case": "worker-restart",
+      "answer_sha256": "be953cca77033c2f531373666ba208b9360d9f29257ed762532265c7ad2515e7",
+      "turn_seconds": 156.355,
+      "visible_seconds": 139.981,
+      "native_model_calls": 3,
+      "observed_returned_tools": 3,
+      "decision": "correct",
+      "publisher_consulted": true
+    },
+    {
+      "arm": "candidate",
+      "case": "atomic-publish",
+      "answer_sha256": "eedf55c33c3acbd6f79ae62816d6834840b003a49a4f6016629507e9401521b9",
+      "turn_seconds": 345.503,
+      "visible_seconds": 128.546,
+      "native_model_calls": 3,
+      "observed_returned_tools": 5,
+      "decision": "incorrect",
+      "publisher_consulted": true
+    },
+    {
+      "arm": "baseline",
+      "case": "atomic-publish",
+      "answer_sha256": "a6e6588933aa77b52dbd73d6bbd2de391639e1adf2cb058e2cc8b503f4341691",
+      "turn_seconds": 247.942,
+      "visible_seconds": 216.522,
+      "native_model_calls": 4,
+      "observed_returned_tools": 3,
+      "decision": "incorrect",
+      "publisher_consulted": true
+    }
+  ],
+  "interpretation": "Both versions answered the Docker case correctly. Both found the applicable Java rule but recommended an unsupported fallback. The research instruction alone did not close this gap."
+}

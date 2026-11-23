@@ -1,0 +1,85 @@
+{
+  "broker_trials": [
+    {
+      "tested_path": "checked",
+      "final": {
+        "plain_text": "Recorded state: uncertain\nStop container bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb on Spark 3. Keep its files.\nThe result is not known. Check it before trying another change.\nRecovery: Keep this request. Do not retry or replace it while its outcome is unknown. Another attempt at this same change is blocked, even if you ask to override the hold. Check result reads the same request again. A separate observation of workload state does not complete this operation.\nRequest: e35550c834e34cee8faf07e8001d2085"
+      },
+      "true_state": "uncertain",
+      "true_outcome": "unknown",
+      "matching_id_was_observed": true,
+      "new_dispatches": 0,
+      "initial_inert_dispatches": 1,
+      "socket_removed": true,
+      "actual_inference_requests": 1,
+      "seconds": 14.765
+    },
+    {
+      "tested_path": "structured",
+      "final": {
+        "receipt_id": "1417867d062f49debd8f94b0180b53ed",
+        "state": "uncertain",
+        "stopped": false,
+        "next_step": "Outcome still unknown. Keep request 1417867d062f49debd8f94b0180b53ed and check it again; do not retry or replace while the result is unknown."
+      },
+      "true_state": "uncertain",
+      "true_outcome": "unknown",
+      "matching_id_was_observed": true,
+      "new_dispatches": 0,
+      "initial_inert_dispatches": 1,
+      "socket_removed": true,
+      "actual_inference_requests": 2,
+      "seconds": 20.707
+    },
+    {
+      "tested_path": "typed",
+      "final": {
+        "receipt_id": "557f3eaca7ed4fd58d9d784a667af049",
+        "state": "uncertain",
+        "stopped": null,
+        "next_step": "Keep this request. Do not retry or replace it while its outcome is unknown. Another attempt at this same change is blocked, even if you ask to override the hold. Check result reads the same request again. A separate observation of workload state does not complete this operation."
+      },
+      "true_state": "uncertain",
+      "true_outcome": "unknown",
+      "matching_id_was_observed": true,
+      "new_dispatches": 0,
+      "initial_inert_dispatches": 1,
+      "socket_removed": true,
+      "actual_inference_requests": 1,
+      "seconds": 30.416
+    }
+  ],
+  "final_typed_path": "Native Hermes cli using real local private broker and store. Telegram and cli covered by CPU middleware tests. Runtime resolved the full browser to tui and sidebar to tool; these carry the typed data through the model. End-to-end live web and Telegram transport accuracy were not tested.",
+  "preceding_candidate": "96880f38",
+  "preceding_compact_cases": 9,
+  "preceding_compact_failures": [
+    "unknown_preference"
+  ],
+  "final_recall": {
+    "answer": {
+      "ip": null
+    },
+    "native_seconds": 15.534,
+    "model_requests": 1,
+    "same_bytes": true,
+    "memory_before_after_sha256": {
+      "MEMORY.md": "c2fdf1545b949e03dd9b8eeba84ba2b1b6e2622b4a3f4167ea9c336d8b54dc55"
+    }
+  },
+  "degraded_missing_reader": {
+    "earlier_budget_seconds": 450,
+    "earlier_grace_seconds": 30,
+    "earlier_returned_answer": false,
+    "revised_budget_seconds": 120,
+    "revised_grace_seconds": 30,
+    "revised_returned_answer": false
+  },
+  "writer_crash_replay": {
+    "runner": "Spark 2",
+    "script_sha256": "afc34095f2a977a546f46afdc2aded1e76cd70a919b40c690e4dc78627581398",
+    "writer_exit": 23,
+    "reader_acquired_lock": true,
+    "visible": "new ",
+    "old_or_new": false
+  }
+}

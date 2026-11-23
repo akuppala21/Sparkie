@@ -1,0 +1,57 @@
+{
+  "candidate": "a47216a1992fcbf704557d721a252064456fd863b5991478a520b1be0f44135f",
+  "source_table": "062d0cbd0cefdf8b84dc6952e9e1e450d50eac83a41f9e26269ba7f8a8e8d044",
+  "runtime": "Hermes v0.23.2; selected one-Spark Huihui; sealed development candidate on Spark 2.",
+  "source_delta_vs_checked_format": {
+    "sparkie/SOUL.md": {
+      "before": "5897503fa31a4175d8d13af0c9214cbb5ce16cfc67a098d32d7667905e431255",
+      "after": "ab8395b111527754af7f7514cb962c1260856b523ca55e08c3e08bd2d24085bc"
+    },
+    "sparkie/src/sparkie_sparks/recovery_replies.py": {
+      "before": "f8c1cc2065c844ce03dff6597ce5641a985315ea205135d9d7a410c69a967c2a",
+      "after": "0692149aa7ce90854bc702cbe405e4322d15ffd8a401c267243a35882350c21b"
+    },
+    "sparkie/src/sparkie_sparks/proposals.py": {
+      "before": "6d840a612ce5c807be57589dd8df99df12cde3355b1a335bfa089d175eee6bb6",
+      "after": "9fc1f1c1765353a348908293124cc6bcc1c0b7c683b4cb9098c0bd25c4a7d6d2"
+    },
+    "sparkie/tests/test_recovery_replies.py": {
+      "before": "127b91a153fd1d01d0183decd5696b4ecd337e03f4d4434fd0aa810076d5f42e",
+      "after": "f35a175a08873694f6b6186a6b2a2bc60b82cc118eb2175b712d8d1f1f70b849"
+    },
+    "sparkie/docs/operation-recovery.md": {
+      "before": "7069b4fdbafd69509d3d191efb0df30d1c91c430db41e98d55d0a0b7963cabfa",
+      "after": "85de4752e6054bcdf0cb6a1ac5f9f90d32a239f29be991c2d7473a92aeb49842"
+    },
+    "sparkie/tests/test_proposal_reconciliation.py": {
+      "before": "45e745e5ebddb9b2816ef5032f9dc9f4a4cbbf5e246a86edd58056442f374bde",
+      "after": "16ef51c1e546ef8cb945902def29dab2cabc536fc9cfe3b1b251ad530350805c"
+    }
+  },
+  "runner": "Compute Spark 2; offline CPU container with read-only systemd binaries and no host systemd control socket",
+  "selected_python_modules": 38,
+  "unique_pytest_tests": 564,
+  "additional_passing_subtests": 5,
+  "junit_cases_including_subtests": 564,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "pytest_wall_seconds": 62.86,
+  "build_wall_seconds": 8.82,
+  "junit_sha256": "720e1f506b85f81b325b488ea3742fc883bbb9aaf328d4c9981c07e5a185d71f",
+  "owner_gate": {
+    "passed": true,
+    "unauthenticated": 401,
+    "wrong_digest": 403,
+    "exact_digest": 200,
+    "replay": 403,
+    "inert_dispatches": 1
+  },
+  "portable_projection": {
+    "commit": "adf8cfe",
+    "focused_tests": 174,
+    "pytest_seconds": 6.37,
+    "scope": "Owner-neutral public sources in the test image; actual checkout and recovery inputs differed only as documented in the release report."
+  },
+  "qualified_for_live_install": false
+}

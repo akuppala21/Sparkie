@@ -1,0 +1,65 @@
+{
+  "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "framework": "Hermes v0.23.2",
+  "fixture": "Reintroduced a previously observed selector bug in an isolated copy. The application used its normal code-editing tools. Research and grading inputs were outside its workspace. The deployed selector already contains the working behavior.",
+  "first": {
+    "manifest": "c13497a9ebad573ee6bc2fcd77d2ba7d6d18514e167d836a0f36e6dd3d24e4ce",
+    "question": "In this Sparkie checkout, editing a native skill\u2019s instructions gives me a docs-only check plan. I saw it with sparkie/skills/desk-assistant/steps.md. Can you reproduce that, find the cause, and fix it in the checkout? Run the relevant checks, keep the existing tests intact, and tell me what you verified and what still needs qualification. Leave the change for review; do not install anything.",
+    "native_seconds": 330.814,
+    "model_calls": 23,
+    "maintenance_skill_body_read": false,
+    "visible_files": 73,
+    "unchanged_original_test_files": 72,
+    "source_files_changed": [
+      "sparkie/tools/checks.py"
+    ],
+    "patch_sha256": "3a9379dbcff464a668d37a1b3f5f6596b374311444fdd389407dc7ebaf63a895",
+    "independent_normal_cli": {
+      "reported": false,
+      "unseen_skill_entry": false,
+      "unseen_nested_instructions": false,
+      "ordinary_docs": true,
+      "global_instructions": true,
+      "research_specialization": true,
+      "energy_caller": true,
+      "unrelated_unknown": true,
+      "similar_directory_name": true,
+      "mixed_files": false
+    },
+    "original_pytest_before": "1 failed, 38 passed in 0.05s",
+    "original_pytest_after": "39 passed in 0.04s",
+    "sandbox_cleanup_confirmed": true,
+    "scope": "The agent reproduced the visible problem and ran 36 selector functions directly. Independent pytest ran in a qualified test interpreter outside its sandbox. Its answer incorrectly described a test module as missing after a relative-path failure. The independent replay selected two of twelve expected checks in three skill-only cases and eight of twelve in the mixed case."
+  },
+  "new_fast_regression": {
+    "module": "sparkie/tests/test_check_selection.py",
+    "case": "test_general_skill_edits_keep_the_runtime_prompt_consumers",
+    "original_model_patch": "1 failed in 0.04s",
+    "working_selector_module": "37 passed in 0.04s",
+    "recorded_on": "Spark 2",
+    "outside_model_trials": true
+  },
+  "feedback": {
+    "manifest": "edc2d8f77ed7a9a39c4965cc33ce88e06662e4718d8270be7eae8b10408997f7",
+    "owner_question": "I tried your patch. Editing sparkie/skills/desk-assistant/steps.md now turns on the behavior check, but its Python test list is still much shorter than for an equivalent instruction under sparkie/prompts/. Can you reproduce that discrepancy and fix your change in this checkout? Keep the existing tests intact, run the relevant checks, and tell me what you verified and what still needs qualification. Leave the patch for review without installing anything.",
+    "feedback_inputs": "Fresh private checkout of Sparkie\u2019s own first patch, one residual symptom, working offline pytest and revised native skill discovery. The independent grader and ten cases stayed unchanged.",
+    "maintenance_skill_opened_first": true,
+    "model_requests_started": 24,
+    "model_final_answer_delivered": false,
+    "wall_seconds": 480,
+    "original_cases_preserved": true,
+    "new_regression_added_in_existing_test_module": true,
+    "original_byte_identical_test_file_rule_passed": false,
+    "normal_cli_plans_matching": 10,
+    "normal_cli_plans_exercised": 10,
+    "pytest_run_by_model": "40 passed in 0.02s",
+    "pytest_independent": "40 passed in 0.05s",
+    "integration_check": "One module could not collect because the fixture lacked the application package.",
+    "additional_path_limits": [
+      "A Python script and a YAML reference in generic skill trees and a SKILL.md outside the skills tree differed from the original selector."
+    ],
+    "complete_patch_sha256": "0a8cf90de82707d48f8c17c1652aa70e242f27970012b8ed574b22658e39f648",
+    "model_authored_test_patch_sha256": "e0dfdaa4d993c241f115a1dd1bbfc447eda05702b1ec3c89bbe4c40654a402d2",
+    "sandbox_cleanup_confirmed": true
+  }
+}

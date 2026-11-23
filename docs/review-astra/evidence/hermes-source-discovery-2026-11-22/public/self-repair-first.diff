@@ -1,0 +1,13 @@
+--- a/sparkie/tools/checks.py
++++ b/sparkie/tools/checks.py
+@@ -70,6 +70,10 @@
+         elif path == 'tools/check_research_evidence.py':
+             tests.add('test_research_claims.py')
+             reasons.append(original + ': developer-only quote and arithmetic utility; not loaded in agent conversations')
++        elif path.startswith('skills/') and path.endswith('.md'):
++            tests.add('test_native_integration.py')
++            behavior = True
++            reasons.append(original + ': native skill instruction file; verify skill discovery and runtime behavior')
+         elif Path(path).name in ('SOUL.md', 'AGENTS.md', 'USER.md', 'MEMORY.md') or path.startswith('prompts/'):
+             tests.update(FLEET | ENERGY)
+             behavior = True

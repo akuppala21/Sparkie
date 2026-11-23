@@ -1,0 +1,16 @@
+{
+  "observed_at": "2026-11-23T05:35:29.709Z",
+  "host": "online",
+  "compute_states": {
+    "spark2": "online",
+    "spark3": "off",
+    "spark4": "off"
+  },
+  "spark2_running_container_count": 0,
+  "model_port_returned": true,
+  "gpu_empty_samples": 3,
+  "completed_ordinary_cleanup_checks": 15,
+  "owner_idle_policy_minutes": 30,
+  "worker_needed_for": [],
+  "manual_power_off_requested": false
+}
