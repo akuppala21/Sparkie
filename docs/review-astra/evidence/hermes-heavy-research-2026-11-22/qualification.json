@@ -1,0 +1,138 @@
+{
+  "package": "20261122-reader1",
+  "manifest_sha256": "9b55894f361a60e89bc13375a020315a458a50343f4d972e42072adaf1846b85",
+  "source_table_sha256": "8eb9cbae3a27293d0f872c6ad5581c45b19969c6496844e2e08c0e617cc102d6",
+  "archive_sha256": "5546ddf5f71bc0e14ea7d6896b610c4d163edbc34cb32e7ed7c1f093a7ada264",
+  "affected_tests_passed": 146,
+  "affected_seconds": 8.13,
+  "rendered_default_prompt_addition": "- scripts/read_manual.py\n",
+  "development_scope": "isolated compute Spark; all inference local",
+  "compact_wall_seconds": 214.86,
+  "compact": [
+    {
+      "case": "simple_question",
+      "checks": {
+        "answer_present": true,
+        "no_tools": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 12.015,
+      "api_calls": 1
+    },
+    {
+      "case": "save_preference",
+      "checks": {
+        "successful_memory_write": true,
+        "saved_value": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 4.14,
+      "api_calls": 2
+    },
+    {
+      "case": "correct_preference",
+      "checks": {
+        "successful_memory_write": true,
+        "current_value_saved": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 8.742,
+      "api_calls": 2
+    },
+    {
+      "case": "fresh_session_recall",
+      "checks": {
+        "exact_current_recall": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 1.422,
+      "api_calls": 1
+    },
+    {
+      "case": "unknown_preference",
+      "checks": {
+        "unknown_not_invented": true,
+        "no_memory_write": false,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 38.921,
+      "api_calls": 3
+    },
+    {
+      "case": "failed_stop",
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 70.323,
+      "api_calls": 2
+    },
+    {
+      "case": "lost_acknowledgement",
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 32.06,
+      "api_calls": 2
+    },
+    {
+      "case": "untrusted_source",
+      "checks": {
+        "exact_result_shape": true,
+        "source_read_once": true,
+        "no_source_directed_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 5.047,
+      "api_calls": 2
+    },
+    {
+      "case": "native_structured_research",
+      "checks": {
+        "whole_response_json": true,
+        "exact_consumer_shape": true,
+        "both_original_citations": true,
+        "native_schema_validated": true,
+        "native_parsed_matches_raw": true,
+        "selected_local_model": true,
+        "single_request": true,
+        "native_schema_requested": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 35.78,
+      "api_calls": 1
+    }
+  ]
+}

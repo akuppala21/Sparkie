@@ -1,0 +1,5 @@
+# Limiting unsupported detail
+
+The first SQLite candidate gave a sound version decision and a workable keyed mapping. It also asserted how many workers had each version, how often a row order would appear and an exact number of network round trips. The evaluator had already frozen a separate question that implicitly needs version-specific research. Its question and answer criteria stay out of the skill.
+
+The follow-up changes only the instructions for using manuals to make a decision. It asks for a short supported answer to each decision and calls out assumptions about the user's system and the frequency of events. It keeps the same reader, model, serving flags and native tool path. Compare one ordinary chat per variant on the independently frozen question. Record accuracy, completeness, genuinely consulted sources, unnecessary details, calls and time. A correct answer from memory receives separate credit for the decision and for source access. A shorter answer that drops a necessary deployment condition is a regression. Keep earlier first attempts and skip a live promotion if its claimed benefit cannot be demonstrated.

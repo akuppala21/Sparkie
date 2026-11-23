@@ -1,0 +1,33 @@
+[
+  {
+    "id": "research9-7.76-flag",
+    "versions": [
+      "7.76.0"
+    ],
+    "answer_sha256": "2eb6b54768157c35b985bc910e815dd5fab46b645d7d6e1a10fbb5e4f5ab7929",
+    "printed": "curl --fail-with-body -sS -o reply.json \"$URL\"",
+    "shell": "curl --fail-with-body -sS -o reply.json \"$URL\"",
+    "substitution": "URL variable provided in environment"
+  },
+  {
+    "id": "research9-7.75-portable",
+    "versions": [
+      "7.75.0"
+    ],
+    "answer_sha256": "2eb6b54768157c35b985bc910e815dd5fab46b645d7d6e1a10fbb5e4f5ab7929",
+    "printed": "http_code=$(curl -sS -o reply.json -w '%{http_code}' \"$URL\")\n[ \"$http_code\" -ge 400 ] && exit 1",
+    "shell": "http_code=$(curl -sS -o reply.json -w '%{http_code}' \"$URL\")\n[ \"$http_code\" -ge 400 ] && exit 1",
+    "substitution": "URL variable provided in environment"
+  },
+  {
+    "id": "research9-optional-5xx",
+    "versions": [
+      "7.75.0",
+      "7.76.0"
+    ],
+    "answer_sha256": "2eb6b54768157c35b985bc910e815dd5fab46b645d7d6e1a10fbb5e4f5ab7929",
+    "printed": "http_code=$(curl -sS -o reply.json -w '%{http_code}' \"$URL\")\ncase \"$http_code\" in\n  5*) exit 1 ;;\nesac",
+    "shell": "http_code=$(curl -sS -o reply.json -w '%{http_code}' \"$URL\")\ncase \"$http_code\" in\n  5*) exit 1 ;;\nesac",
+    "substitution": "URL variable provided in environment"
+  }
+]

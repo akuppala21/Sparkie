@@ -1,0 +1,113 @@
+{
+  "libraries": {
+    "bs4": false,
+    "lxml": false,
+    "html5lib": false,
+    "html.parser": true
+  },
+  "pages": [
+    {
+      "source": "https://curl.se/ch/7.76.0.html",
+      "sha256": "1922607ba76c3f0011456fa0d3a3f014778fb520b95fd0226d6490aca8c680af",
+      "bytes": 21880,
+      "lines": 150,
+      "hits": {
+        "curl: add --fail-with-body": 1,
+        "CVE-2021-22876": 1
+      },
+      "release_passage": {
+        "line": 13,
+        "anchor": "",
+        "context_lines": [
+          13,
+          13
+        ],
+        "excerpt": "curl: add --fail-with-body",
+        "clipped": false
+      },
+      "bugfix_list_start_tags": 130,
+      "bugfix_list_end_tags": 0,
+      "baseline_failure": {
+        "error": "The manual exceeds the supported HTML nesting depth.",
+        "raw_line": 312,
+        "open_stack_depth": 128,
+        "open_tags": {
+          "html": 1,
+          "body": 1,
+          "div": 2,
+          "p": 3,
+          "ul": 1,
+          "li": 120
+        }
+      }
+    },
+    {
+      "source": "https://curl.se/docs/manpage.html",
+      "sha256": "837fc45a4f94627d8a54d2f2997d93fbfdcffedab75e8782f087bd03f7aa37ac",
+      "bytes": 467205,
+      "lines": 3136,
+      "hits": {
+        "also to return error 22": 1
+      }
+    },
+    {
+      "source": "https://docs.python.org/3.13/library/tarfile.html",
+      "sha256": "dcf9066a08e6859c1b6342c3b8d0038e93b1b39cb2eb513e8dcb68dea56bda55",
+      "bytes": 189904,
+      "lines": 526,
+      "hits": {
+        "denial-of-service": 1,
+        "disk": 2,
+        "extraction_filter": 9
+      }
+    },
+    {
+      "source": "https://docs.python.org/3.14/library/tarfile.html",
+      "sha256": "e4e9f1cd13017fde4ca40c17e950aad70ce981967bd1304e5de744d7301e3a70",
+      "bytes": 197383,
+      "lines": 547,
+      "hits": {
+        "denial-of-service": 1,
+        "disk": 2,
+        "extraction_filter": 7
+      }
+    },
+    {
+      "source": "https://www.sqlite.org/releaselog/3_34_1.html",
+      "sha256": "97cc44ea9b3751d0107f9b3bd9afaceabe2221682a0f6d6896d146069642966f",
+      "bytes": 8237,
+      "lines": 49,
+      "hits": {
+        "3.34.1": 2
+      }
+    },
+    {
+      "source": "https://www.sqlite.org/releaselog/3_35_0.html",
+      "sha256": "44c8304719b5c9c487c85515870109f256a39352158a9b9796f4bcfc0d9b5516",
+      "bytes": 8635,
+      "lines": 47,
+      "hits": {
+        "RETURNING": 1
+      }
+    },
+    {
+      "source": "https://www.sqlite.org/lang_returning.html",
+      "sha256": "517687dc4be298407a237416ae1e505fd6e52bb1d01fddaae826bc8b6e25e916",
+      "bytes": 315421,
+      "lines": 80,
+      "hits": {
+        "arbitrary order": 1
+      }
+    }
+  ],
+  "tagged_option_source": {
+    "url": "https://raw.githubusercontent.com/curl/curl/curl-7_76_0/docs/cmdline-opts/fail-with-body.d",
+    "sha256": "1796764bac150a4a401ea021e02e33c5d113e864562539b44e380f71ccb8bd57",
+    "lines": {
+      "Long: fail-with-body": 1,
+      "Added: 7.76.0": 5,
+      "also to return error 22.": 13
+    }
+  },
+  "reader_sha256": "cac6bd2f62f9b36ad7ef98b449d24e1707f52445e901d38396243c9bff8a4bcd"
+}

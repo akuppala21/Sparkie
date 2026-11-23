@@ -1,0 +1,26 @@
+.....................                                                    [100%]
+21 passed in 0.02s
+[
+  {
+    "source": "https://docs.python.org/3.13/library/tarfile.html",
+    "bytes": 189904,
+    "raw_sha256": "dcf9066a08e6859c1b6342c3b8d0038e93b1b39cb2eb513e8dcb68dea56bda55",
+    "lines": 526,
+    "hits": {
+      "denial-of-service": 1,
+      "disk": 2,
+      "extraction_filter": 9
+    }
+  },
+  {
+    "source": "https://docs.python.org/3.14/library/tarfile.html",
+    "bytes": 197383,
+    "raw_sha256": "e4e9f1cd13017fde4ca40c17e950aad70ce981967bd1304e5de744d7301e3a70",
+    "lines": 547,
+    "hits": {
+      "denial-of-service": 1,
+      "disk": 2,
+      "extraction_filter": 7
+    }
+  }
+]

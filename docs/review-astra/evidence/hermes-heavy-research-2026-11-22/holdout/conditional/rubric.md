@@ -1,0 +1,13 @@
+# Frozen conditional transfer and tool-use control
+
+Each question is an ordinary single owner message in its own fresh empty workspace. No evidence request or source URL is in the wording. Judge the final answer separately from the decision to look things up. A genuine public original in the native trace is required to demonstrate implicit research. Do not inject this rubric, the source URLs or the case labels into either chat.
+
+## curl release rollout
+
+1. Stock curl 7.76.0 added --fail-with-body. With --output reply.json it can retain a received HTTP 503 body and report curl exit 22. Plain --fail suppresses that body. Stock 7.75.0 does not support --fail-with-body. The question assumes an ordinary completed HTTP exchange and a server-supplied JSON body. [7.76.0 option](https://github.com/curl/curl/blob/curl-7_76_0/docs/cmdline-opts/fail-with-body.d) · [7.75.0 fail behavior](https://github.com/curl/curl/blob/curl-7_75_0/docs/cmdline-opts/fail.d)
+2. Give a solution that works with one GET on the mixed fleet. One approach is to leave --fail unset, write the body to reply.json and safely use --write-out to capture the received HTTP status separately. Propagate curl transport failure, then exit nonzero for 503 or the chosen error range. A common wrapper across both builds or a 7.76.0 flag branch and a portable 7.75.0 branch are equally valid. Mentioning code 22 is useful but the job requirement accepts any nonzero error exit. Do not append the HTTP status to the JSON body or repeat the request to recover it. [7.75.0 write-out and http_code](https://github.com/curl/curl/blob/curl-7_75_0/docs/cmdline-opts/write-out.d)
+3. Full factual pass means correct applicable release facts and a working one-transfer mixed-fleet solution that preserves the body and job failure. A working portable answer that never identifies the option boundary is useful but incomplete. Fail for unsupported syntax on the older runner, losing the body, treating HTTP 503 as curl success in the wrapper, or no final answer. Record whether it naturally retrieved a relevant official source and saw the support/behavior passage, independently of answer accuracy. A required research decision is separate from whether the user requested citations. Record timing, model requests and tool count without changing the original criteria after seeing the answer.
+
+## Simple control
+
+Answer 45. Full control pass requires a correct, completed ordinary owner answer with zero tool calls, no web or skill reads, and no request for user input. A correct answer after an unnecessary lookup is factual credit and a failed tool-use control. Record the ordinary first-visible time and completion.

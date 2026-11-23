@@ -1,0 +1,510 @@
+{
+  "scope": "Independent, CPU-only, loopback HTTP evaluator. Fresh output directory per case.",
+  "commands_sha256": "1aa8ce90ef88c6f1454ce84ccbc1e6d91fa711c4cad59c9a702bbc0f6b9179f7",
+  "builds": {
+    "7.75.0": {
+      "version": "curl 7.75.0 (aarch64-unknown-linux-gnu) libcurl/7.75.0 librtmp/2.3\nRelease-Date: 2021-02-03\nProtocols: file http mqtt rtmp \nFeatures: alt-svc AsynchDNS Largefile UnixSockets",
+      "binary_sha256": "65c111063d221d8693aa72473cc48a8272c9037d02182518a76af577db55b3da"
+    },
+    "7.76.0": {
+      "version": "curl 7.76.0 (aarch64-unknown-linux-gnu) libcurl/7.76.0 librtmp/2.3\nRelease-Date: 2021-03-31\nProtocols: file http mqtt rtmp \nFeatures: alt-svc AsynchDNS Largefile UnixSockets",
+      "binary_sha256": "512c5dba2f4ee4127dca01e29675b165e824dcba62b288b3d0dec9ac8e2a3262"
+    }
+  },
+  "cases": [
+    {
+      "id": "control-default",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "control-default",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-default",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "control-default",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-fail",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "control-fail",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 22,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": null,
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": false,
+      "stdout": "",
+      "stderr": "curl: (22) The requested URL returned error: 503\n",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-fail",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "control-fail",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 22,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": null,
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": false,
+      "stdout": "",
+      "stderr": "curl: (22) The requested URL returned error: 503\n",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-fail-with-body",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 2,
+      "requests": [],
+      "saved_body": null,
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": false,
+      "stdout": "",
+      "stderr": "curl: option --fail-with-body: is unknown\ncurl: try 'curl --help' for more information\n",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-fail-with-body",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 2,
+      "requests": [],
+      "saved_body": null,
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": false,
+      "stdout": "",
+      "stderr": "curl: option --fail-with-body: is unknown\ncurl: try 'curl --help' for more information\n",
+      "meets_job_contract": false
+    },
+    {
+      "id": "control-fail-with-body",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "control-fail-with-body",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 22,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "curl: (22) The requested URL returned error: 503\n",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research7-portable",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "research7-portable",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research7-portable",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "research7-portable",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research7-versioned",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research7-versioned",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 22,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "curl: (22) The requested URL returned error: 503\n",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-portable",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-portable",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-portable",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-portable",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-versioned",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\n  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n100    33  100    33    0     0  33000      0 --:--:-- --:--:-- --:--:-- 33000\n",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-versioned",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 22,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\n  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n100    43  100    43    0     0  43000      0 --:--:-- --:--:-- --:--:-- 43000\ncurl: (22) The requested URL returned error: 503\n",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-optional-503-only",
+      "version": "7.75.0",
+      "http_status": 200,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "research8-optional-503-only",
+      "version": "7.75.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    },
+    {
+      "id": "research8-optional-503-only",
+      "version": "7.76.0",
+      "http_status": 200,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/200"
+        }
+      ],
+      "saved_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "expected_body": "{\"result\":\"accepted\",\"code\":200}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": false
+    },
+    {
+      "id": "research8-optional-503-only",
+      "version": "7.76.0",
+      "http_status": 503,
+      "shell_exit": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/503"
+        }
+      ],
+      "saved_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "expected_body": "{\"error\":\"partner-unavailable\",\"code\":503}\n",
+      "body_exact": true,
+      "stdout": "",
+      "stderr": "",
+      "meets_job_contract": true
+    }
+  ]
+}

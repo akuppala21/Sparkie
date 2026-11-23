@@ -1,0 +1,7 @@
+{
+  "curl/question.txt": "a96009dc674adf0548708d07c54a134ca63e93821c3cf22c48d58eca3694e4f5",
+  "curl/inputs.json": "d0f5c2058e5fc8bdff09706b01fca87575dc1b228ce28fcdffe65c5270241ae9",
+  "simple/question.txt": "7163e6373783c5b3c9fe434deeb4fa698414f9ae274c254a251fc98886f494d7",
+  "simple/inputs.json": "f6db536bd1cf213db2dd82ba56ca159f4d5ae6c6f64b58f0310d1944136a6d54",
+  "rubric.md": "64600b6b73e6151e1a1c03e6f512cdad8373b1492d402dd7d68d71ac5bb2e018"
+}

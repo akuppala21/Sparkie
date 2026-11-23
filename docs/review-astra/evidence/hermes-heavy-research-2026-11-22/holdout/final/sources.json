@@ -1,0 +1,20 @@
+{
+  "verified_utc": "2026-11-23T00:10:21.177441+00:00",
+  "originals": [
+    {
+      "url": "https://raw.githubusercontent.com/systemd/systemd/v249/man/systemd.timer.xml",
+      "sha256": "26768904f9a16ee15986906037e88264dbd51a8f7f260380d68a523e98317747",
+      "bytes": 20670
+    },
+    {
+      "url": "https://raw.githubusercontent.com/systemd/systemd/v249/man/systemd.time.xml",
+      "sha256": "46c1367562572ac223fb8626aa95e6dc48f948d27c2a11f7438d825f3f758f66",
+      "bytes": 15700
+    },
+    {
+      "url": "https://raw.githubusercontent.com/systemd/systemd/v249/man/systemctl.xml",
+      "sha256": "c818915324198fcf59f38ac7f18ea2d4335777ccfe301d250ecb332c6a45b87a",
+      "bytes": 127566
+    }
+  ]
+}

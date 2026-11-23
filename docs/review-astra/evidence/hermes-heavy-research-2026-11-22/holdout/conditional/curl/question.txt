@@ -1,0 +1,1 @@
+Our shell job uses curl to make one GET and save the response to reply.json. The runners have stock curl 7.75.0 or 7.76.0. Support needs the partner's JSON body when it sends HTTP 503, and the job must still exit nonzero. What should I ship for these two versions?

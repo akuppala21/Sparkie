@@ -1,0 +1,20 @@
+{
+  "verified_utc": "2026-11-22T23:35:15.754761+00:00",
+  "originals": [
+    {
+      "url": "https://www.sqlite.org/releaselog/3_35_0.html",
+      "sha256": "44c8304719b5c9c487c85515870109f256a39352158a9b9796f4bcfc0d9b5516",
+      "bytes": 8635
+    },
+    {
+      "url": "https://www.sqlite.org/lang_returning.html",
+      "sha256": "517687dc4be298407a237416ae1e505fd6e52bb1d01fddaae826bc8b6e25e916",
+      "bytes": 315421
+    },
+    {
+      "url": "https://www.sqlite.org/releaselog/3_34_1.html",
+      "sha256": "97cc44ea9b3751d0107f9b3bd9afaceabe2221682a0f6d6896d146069642966f",
+      "bytes": 8237
+    }
+  ]
+}
