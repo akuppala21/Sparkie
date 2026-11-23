@@ -367,6 +367,30 @@ def changed_paths(base):
     return paths
 
 
+class PytestOutcome:
+    """Report the native pytest summary alongside the selector's target paths."""
+
+    def __init__(self):
+        self.started = 0
+        self.selected = None
+        self.reporter = None
+
+    def pytest_runtest_logstart(self):
+        self.started += 1
+
+    def pytest_sessionfinish(self, session):
+        self.selected = session.testscollected
+        self.reporter = session.config.pluginmanager.get_plugin('terminalreporter')
+
+    def result(self):
+        summary = None
+        if self.reporter is not None:
+            parts, _ = self.reporter.build_summary_stats_line()
+            summary = ', '.join(text for text, _ in parts)
+        return {'selected_items': self.selected, 'item_starts': self.started,
+                'native_summary': summary}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--paths', nargs='+', help='Explicit changed paths, including renamed/deleted files.')
@@ -378,8 +402,21 @@ def main():
     except (OSError, subprocess.CalledProcessError):
         parser.error('Could not inspect changes. Provide --paths or a valid Git baseline.')
     print(json.dumps(plan, indent=2), flush=True)
-    if args.run_python and plan['python_tests']:
-        code = subprocess.call([sys.executable, '-m', 'pytest', *plan['python_tests']], cwd=ROOT)
+    if not args.run_python:
+        return 0
+    final = {'remaining_check_groups': [name for name in GROUPS if plan[name]], 'release_qualified': False}
+    code = 0
+    if plan['python_tests']:
+        # Preserve python -m pytest's checkout import path and the caller's native options.
+        os.chdir(ROOT)
+        sys.path.insert(0, str(ROOT))
+        outcome = PytestOutcome()
+        if importlib.util.find_spec('pytest') is None:
+            code = 1
+        else:
+            import pytest
+            code = pytest.main(list(plan['python_tests']), plugins=[outcome])
+        final['pytest'] = {'target_path_count': len(plan['python_tests']), 'exit_code': int(code), **outcome.result()}
         if code:
             missing = [module for module in ('pytest', 'hermes_cli')
                        if importlib.util.find_spec(module) is None]
@@ -392,11 +429,8 @@ def main():
                     print("In a private worker with the extracted release, run "
                           "bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py "
                           "with the same selector arguments.", file=sys.stderr)
-            return code
-    if args.run_python:
-        remaining = [name for name in GROUPS if plan[name]]
-        print(json.dumps({'remaining_check_groups': remaining, 'release_qualified': False}))
-    return 0
+    print(json.dumps(final))
+    return code
 
 
 if __name__ == '__main__':

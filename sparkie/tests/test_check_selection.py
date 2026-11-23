@@ -1,9 +1,11 @@
 from pathlib import Path
 import json
+import os
 import runpy
 import shutil
 import subprocess
 import sys
+from xml.etree import ElementTree
 
 import pytest
 
@@ -423,16 +425,33 @@ def test_nested_regressions_reach_pytest_and_broad_collection_honors_ignores(tmp
             f"from pathlib import Path\ndef test_smoke():\n    Path('{name}.ran').touch()\n")
     (tests / 'conftest.py').write_text("collect_ignore = ['excluded_test.py']\n")
     (tests / 'excluded_test.py').write_text("raise RuntimeError('excluded module was imported')\n")
-    (component / 'report_test.py').write_text("def test_red():\n    assert False, 'nested-repro'\n")
+    (component / 'report_test.py').write_text(
+        "def test_red():\n    assert False, 'nested-repro'\n"
+        "def test_passing_control():\n    pass\n")
 
-    def run(path):
+    caller_xml = root / 'caller.xml'
+
+    def run(path, options=''):
+        env = dict(os.environ, PYTEST_ADDOPTS=f'{options} --junitxml=caller.xml')
         return subprocess.run([sys.executable, 'tools/checks.py', '--paths', path, '--run-python'],
-                              cwd=root, text=True, capture_output=True, timeout=30)
+                              cwd=root, env=env, text=True, capture_output=True, timeout=30)
+
+    def outcomes(result):
+        return json.loads(result.stdout.splitlines()[-1])['pytest']
 
     focused = run('tests/behavior/report_test.py')
     assert focused.returncode == 1 and 'AssertionError: nested-repro' in focused.stdout
     assert json.JSONDecoder().raw_decode(focused.stdout)[0]['compact_local_behavior']
     assert not (root / 'test_energy.py.ran').exists()
+    assert outcomes(focused) == {'target_path_count': 4, 'selected_items': 5, 'item_starts': 5,
+                                 'exit_code': 1, 'native_summary': '1 failed, 4 passed'}
+    assert len(ElementTree.parse(caller_xml).findall('.//failure')) == 1
+
+    filtered = run('tests/behavior/report_test.py', '-qq -k passing_control')
+    assert filtered.returncode == 0
+    assert outcomes(filtered) == {'target_path_count': 4, 'selected_items': 1, 'item_starts': 1,
+                                  'exit_code': 0, 'native_summary': '1 passed, 4 deselected'}
+    assert [case.get('name') for case in ElementTree.parse(caller_xml).iter('testcase')] == ['test_passing_control']
 
     broad = run('src/new_feature.py')
     assert broad.returncode == 1 and 'AssertionError: nested-repro' in broad.stdout

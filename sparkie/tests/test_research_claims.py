@@ -82,6 +82,32 @@ def test_quoted_ranges_remain_available_when_arithmetic_is_unavailable():
     assert checker.check(sheet, sources)['comparisons'][0]['unmatched']
 
 
+@pytest.mark.parametrize('quote', [
+    'Throughput: 12 seconds after setup took 8 items/s.',
+    'Throughput: 12 items/s/worker.',
+    'Throughput: 12 items/s per worker.',
+    'Throughput: 12\nitems/s refers to a different row.',
+])
+def test_a_different_measurements_unit_cannot_authorize_arithmetic(quote):
+    sources, sheet = pair()
+    row = sheet['claims'][0]
+    sources[0] = (sources[0][0], sources[0][1].replace(row['quote'], quote))
+    row['quote'] = quote
+    result = checker.check(sheet, sources)
+    assert result['claims'][0]['quote'] == quote
+    comparison = result['comparisons'][0]
+    assert comparison['unmatched'] and 'left_divided_by_right' not in comparison
+
+
+def test_prefixed_currency_amounts_are_still_comparable():
+    sources, sheet = pair()
+    for i, row in enumerate(sheet['claims']):
+        original = row['quote']
+        row.update(quote='Price: $' + row['value'] + '.', unit='$', metric='Price')
+        sources[i] = (sources[i][0], sources[i][1].replace(original, row['quote']))
+    assert checker.check(sheet, sources)['comparisons'][0]['left_divided_by_right'] == '1.5'
+
+
 def test_refuses_silently_omitted_source():
     sources, sheet = pair()
     sheet['claims'].pop()

@@ -42,12 +42,18 @@ def literal(value, body, field):
         raise ValueError(f'{field} must be an exact, nonempty excerpt from its source.')
 
 
-def scalar_in_quote(value, quote):
+def scalar_in_quote(value, quote, *, unit=None):
     if not isinstance(value, str) or len(value) > 32 or not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', value):
         return False
     token = r'(?<![\w.+-])(?<!\d,)' + re.escape(value) + r'(?!\w|\.\d|,\d)'
     for match in re.finditer(token, quote):
         before, after = quote[:match.start()], quote[match.end():]
+        if unit is not None:
+            # A unit elsewhere in the same source may belong to a different measurement.
+            suffix = r'^[^\S\n]*' + re.escape(unit) + r'(?![\w/%*^·]|[.-]\w|\s+per\s+\w)'
+            currency_prefix = unit in ('$', '€', '£', '¥') and before.rstrip(' \t').endswith(unit)
+            if not currency_prefix and not re.match(suffix, after):
+                continue
         if (not re.search(r'(?:\d\s*(?:[-–—]|\bto)|[~≈<>≤≥])\s*$', before)
                 and not re.match(r'^\s*(?:[-–—]|to\b)\s*\d', after)):
             return True
@@ -98,6 +104,8 @@ def check(sheet, sources):
         reasons = []
         if any(row['kind'] != 'measured' or 'value' not in row for row in (left, right)):
             reasons.append('Two measured scalar values are required.')
+        elif any(not scalar_in_quote(row['value'], row['quote'], unit=row['unit']) for row in (left, right)):
+            reasons.append('The result quote must show each scalar with its stated unit before calculating a ratio.')
         for key in ('metric', 'unit', *CONDITIONS):
             if not left.get(key) or left.get(key) != right.get(key):
                 reasons.append(f'{key} is missing or differs.')
