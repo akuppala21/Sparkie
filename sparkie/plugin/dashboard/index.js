@@ -294,7 +294,7 @@
     const periods = data?.periods || data?.months || [];
     const activeSelection = data?.selected || data?.month || "";
     const chosenRate = rate === "custom" ? customRate : rate;
-    const amount = chosenRate.trim() && /^\d+(\.\d{1,6})?$/.test(chosenRate) && Number(chosenRate) <= 10 ? Number(chosenRate) : null;
+    const amount = /^(?:\d+|\d*\.\d{1,6})$/.test(chosenRate) && Number(chosenRate) <= 10 ? Number(chosenRate) : null;
     const money = value => "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
     return h(Card, { style: { marginBottom: "1rem" }, role: "region", "aria-label": "Electricity" },
       h(CardHeader, null,

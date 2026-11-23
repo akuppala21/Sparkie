@@ -144,9 +144,14 @@ try {
   await page.getByLabel("Electricity month").selectOption(historical);
   await page.getByText("0.020 kWh recorded", { exact: true }).waitFor();
   await electricity.getByLabel("Electricity rate", { exact: true }).selectOption("custom");
-  await electricity.getByLabel("Custom electricity rate", { exact: true }).fill("0.456789");
+  const customRate = electricity.getByLabel("Custom electricity rate", { exact: true });
+  await customRate.fill(".25");
+  assert.equal(await customRate.evaluate(input => input.validity.valid), true);
+  await electricity.getByText("$0.005 estimated cost", { exact: true }).waitFor({ timeout: 3000 });
+  assert.equal(await electricity.getByRole("alert").count(), 0);
+  await customRate.fill("0.456789");
   await electricity.getByText("$0.009136 estimated cost", { exact: true }).waitFor();
-  assert.equal(await electricity.getByLabel("Custom electricity rate", { exact: true }).inputValue(), "0.456789");
+  assert.equal(await customRate.inputValue(), "0.456789");
   assert.deepEqual(rateWrites, [], "Custom estimates never send writes");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Phone rate controls must not overflow");
   report.checks.push("Phone custom rate recalculates immediately with six-decimal precision and no writes");
