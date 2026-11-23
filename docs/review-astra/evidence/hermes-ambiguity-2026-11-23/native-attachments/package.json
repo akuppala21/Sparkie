@@ -1,0 +1,67 @@
+{
+  "manifest_sha256": "a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903",
+  "source_manifest_sha256": "f9c9f3810155588803a7325e4c2a331f2f8ed05a0f9813282345d4df09ddbd4d",
+  "source_files": 261,
+  "hermes_module_sha256": "3ecf8b9c7385569eda9e9e4900e8dae7f84e34fadcc7379a2cf66c5c975705a7",
+  "patches": [
+    {
+      "patch": "extension/deploy/patches/hermes-sealed-web-restore.patch",
+      "sha256": "608e5b2d1fb94409f5785f21500099b750db21f7ca5e565951cbd6de08ae5a88",
+      "upstream_files": {
+        "hermes_cli/web_routers/ops.py": "dd3a0bb0fdd6c0ddca5446dac6559981226b32ab4b98daef7b4f9be68ebcbe45",
+        "hermes_cli/web_routers/transfer.py": "62f06fb49042a39b7c4dc310385de1c878b38c697f6cb9cc2ecf258ddc439d09"
+      },
+      "patched_files": {
+        "hermes_cli/web_routers/ops.py": "ed23180cf1a530c0ac3a2303ffa10240e032badf9c2d10cee563b30e259b0f50",
+        "hermes_cli/web_routers/transfer.py": "ca395adf94e70d5f879cc724b87c35020f08e6840a58ca374c1290dabc81c0bd"
+      }
+    },
+    {
+      "patch": "extension/deploy/patches/hermes-sandbox-skill-path.patch",
+      "sha256": "ea6118f4d9f92a08e9ffcb9db9d3044c44c2a185aafbff99de31e6e7cdad9c4f",
+      "upstream_files": {
+        "agent/skill_commands.py": "e3014b177dce704142c23b7a4ab1b28440eca19867e6d6f1e3ce9171d3fdf17d"
+      },
+      "patched_files": {
+        "agent/skill_commands.py": "3251e9f1ee8b545003d562403891f06d0fc73f1559003fb88f0ff6692ae42eba"
+      }
+    },
+    {
+      "patch": "extension/deploy/patches/hermes-attachment-tool-path.patch",
+      "sha256": "05fb4904c3ecedb634d8a2889d539d2e0aac6b898e154272f169e1951464829c",
+      "upstream_files": {
+        "agent/context_references.py": "6d3065ff7fb6cd0054bce015f941da4e34719bb58e0cd269afe38e19fb485a20"
+      },
+      "patched_files": {
+        "agent/context_references.py": "3ecf8b9c7385569eda9e9e4900e8dae7f84e34fadcc7379a2cf66c5c975705a7"
+      }
+    }
+  ],
+  "source_delta": {
+    "sparkie/deploy/candidate.py": {
+      "before": "929ef5932684cd057b4c368ff8a1e00e34c92b2478be54ccd46b6c730715f2c1",
+      "after": "68d5dfae6330203f913cb96fcd490c6f02cc3f02263a1e11f2dcb999f3d9f085"
+    },
+    "sparkie/tests/test_deployment.py": {
+      "before": "ff2d1b4dbeaa1016b1aea5bf7069ab6fbc65db02fd541382db02aebef925ceca",
+      "after": "f694d5d539ebdd682116c5c54cac998e1511ca42830bd9c86902d9bce9d5824f"
+    },
+    "sparkie/tools/checks.py": {
+      "before": "76760f75878590bf8ddc3014fd1790a9717b998398f72c69cb2b744fd7256de2",
+      "after": "46eba530ef1e448db988157f6d0c20503ad8d927690ac1ac4d34bd2e73d97ad0"
+    },
+    "sparkie/tests/test_attachment_tool_paths.py": {
+      "before": null,
+      "after": "7dbf3250ca21f6c500981b84236b13821e986d83a59e170943df53720590e2f0"
+    },
+    "sparkie/deploy/patches/hermes-attachment-tool-path.patch": {
+      "before": null,
+      "after": "05fb4904c3ecedb634d8a2889d539d2e0aac6b898e154272f169e1951464829c"
+    },
+    "sparkie/deploy/patches/hermes-attachment-tool-path.json": {
+      "before": null,
+      "after": "31a9eb6357860c1e3f8473068590e4885bb7ee1b482f7bcaca31c42521db58a4"
+    }
+  },
+  "python_test_modules_selected": 64
+}

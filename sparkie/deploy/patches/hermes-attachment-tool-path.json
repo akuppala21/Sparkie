@@ -1,0 +1,9 @@
+{
+  "patch_sha256": "05fb4904c3ecedb634d8a2889d539d2e0aac6b898e154272f169e1951464829c",
+  "files": {
+    "agent/context_references.py": {
+      "before_sha256": "6d3065ff7fb6cd0054bce015f941da4e34719bb58e0cd269afe38e19fb485a20",
+      "after_sha256": "3ecf8b9c7385569eda9e9e4900e8dae7f84e34fadcc7379a2cf66c5c975705a7"
+    }
+  }
+}

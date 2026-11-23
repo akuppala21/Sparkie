@@ -1,0 +1,15 @@
+--- a/agent/context_references.py
++++ b/agent/context_references.py
+@@ -417,7 +417,11 @@
+         # block alone carries the message (same shape as the binary path) — a warning
+         # would duplicate it in "--- Context Warnings ---".
+         return None, _oversized_text_reference_block(ref, path, text_tokens)
+-    return None, f"📄 {ref.raw} ({text_tokens} tokens)\n```{lang}\n{text}\n```"
++    visible_path = _agent_visible_path(path)
++    tool_path = ""
++    if visible_path != str(path):
++        tool_path = f"\nFile tools use {json.dumps(visible_path, ensure_ascii=False)}."
++    return None, f"📄 {ref.raw} ({text_tokens} tokens){tool_path}\n```{lang}\n{text}\n```"
+ 
+ 
+ def _run_quiet(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:

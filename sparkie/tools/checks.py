@@ -152,6 +152,11 @@ def selection(paths):
                           'test_deployment.py', 'test_sandbox_provider.py'})
             candidate = compute = research = behavior = True
             reasons.append(original + ': packaged native skill footer and compute workspace paths')
+        elif path in ('deploy/patches/hermes-attachment-tool-path.patch', 'deploy/patches/hermes-attachment-tool-path.json',
+                      'tests/test_attachment_tool_paths.py'):
+            tests.update({'test_attachment_tool_paths.py', 'test_deployment.py', 'test_sandbox_provider.py'})
+            candidate = browser = compute = behavior = True
+            reasons.append(original + ': uploaded text, isolated file reads and native profile boundaries')
         elif path in ('deploy/patches/hermes-sealed-web-restore.patch',
                       'deploy/patches/hermes-sealed-web-restore.json', 'tests/test_native_restore_guard.py'):
             tests.update({'test_native_restore_guard.py', 'test_owner_login.py', 'test_deployment.py',
@@ -256,7 +261,7 @@ def selection(paths):
         elif path.startswith('deploy/'):
             tests.update(DEPLOY)
             if path == 'deploy/candidate.py':
-                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py'})
+                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py'})
             services = True
             if path == 'deploy/stage.py':
                 tests.update(THEME)

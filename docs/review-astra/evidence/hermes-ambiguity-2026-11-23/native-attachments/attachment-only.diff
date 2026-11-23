@@ -1,0 +1,145 @@
+--- a/sparkie/deploy/candidate.py
++++ b/sparkie/deploy/candidate.py
+@@ -158,6 +158,9 @@
+     skill_path_patch = apply_native_patch(destination / "hermes", destination / "extension",
+                                          Path("deploy/patches/hermes-sandbox-skill-path.patch"),
+                                          ("agent/skill_commands.py",))
++    attachment_patch = apply_native_patch(destination / "hermes", destination / "extension",
++                                          Path("deploy/patches/hermes-attachment-tool-path.patch"),
++                                          ("agent/context_references.py",))
+     shutil.copytree(webapp, destination / "webapp")
+     shutil.copytree(dashboard, destination / "dashboard")
+     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
+@@ -204,7 +207,7 @@
+         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
+         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
+         "build_tools": {"uv": uv_pin},
+-        "native_patches": [restore_guard, skill_path_patch],
++        "native_patches": [restore_guard, skill_path_patch, attachment_patch],
+         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
+                     "base_python_sha256": sha(Path(python).resolve()),
+                     'base_root': str(base_root),
+--- a/sparkie/tests/test_deployment.py
++++ b/sparkie/tests/test_deployment.py
+@@ -80,6 +80,7 @@
+ @pytest.mark.parametrize(('patch_name', 'targets'), [
+     ('hermes-sealed-web-restore.patch', {'hermes_cli/web_routers/ops.py', 'hermes_cli/web_routers/transfer.py'}),
+     ('hermes-sandbox-skill-path.patch', {'agent/skill_commands.py'}),
++    ('hermes-attachment-tool-path.patch', {'agent/context_references.py'}),
+ ])
+ def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_name, targets):
+     root, candidate, _ = prepared
+@@ -88,6 +89,7 @@
+     assert [record["patch"] for record in records] == [
+         "extension/deploy/patches/hermes-sealed-web-restore.patch",
+         "extension/deploy/patches/hermes-sandbox-skill-path.patch",
++        "extension/deploy/patches/hermes-attachment-tool-path.patch",
+     ]
+     applied, = [record for record in records if Path(record["patch"]).name == patch_name]
+     assert set(applied["patched_files"]) == targets
+--- a/sparkie/tools/checks.py
++++ b/sparkie/tools/checks.py
+@@ -151,6 +151,11 @@
+                           'test_deployment.py', 'test_sandbox_provider.py'})
+             candidate = compute = research = behavior = True
+             reasons.append(original + ': packaged native skill footer and compute workspace paths')
++        elif path in ('deploy/patches/hermes-attachment-tool-path.patch', 'deploy/patches/hermes-attachment-tool-path.json',
++                      'tests/test_attachment_tool_paths.py'):
++            tests.update({'test_attachment_tool_paths.py', 'test_deployment.py', 'test_sandbox_provider.py'})
++            candidate = browser = compute = behavior = True
++            reasons.append(original + ': uploaded text, isolated file reads and native profile boundaries')
+         elif path in ('deploy/patches/hermes-sealed-web-restore.patch',
+                       'deploy/patches/hermes-sealed-web-restore.json', 'tests/test_native_restore_guard.py'):
+             tests.update({'test_native_restore_guard.py', 'test_owner_login.py', 'test_deployment.py',
+@@ -253,7 +258,7 @@
+         elif path.startswith('deploy/'):
+             tests.update(DEPLOY)
+             if path == 'deploy/candidate.py':
+-                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py'})
++                tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py'})
+             services = True
+             if path == 'deploy/stage.py':
+                 tests.update(THEME)
+--- /dev/null
++++ b/sparkie/tests/test_attachment_tool_paths.py
+@@ -0,0 +1,50 @@
++"""Check the actual model input produced by the pinned native @file expansion."""
++import json
++
++from agent.context_references import preprocess_context_references
++from agent.terminal_env_registry import register_provider
++
++from sparkie_sparks.sandbox_provider import SparkComputeProvider
++
++
++def test_inline_attachment_identifies_the_compute_tool_path(tmp_path, monkeypatch):
++    home = tmp_path / 'owner' / '.hermes'
++    monkeypatch.setenv('HERMES_HOME', str(home))
++    monkeypatch.setenv('TERMINAL_ENV', 'spark_compute')
++    register_provider(SparkComputeProvider(), scope=str(home))
++    attachment = home / 'attachments' / 'notes and plans.txt'
++    attachment.parent.mkdir(parents=True)
++    attachment.write_text('first\nsecond\nthird\n')
++    prompt = 'Summarize @file:".hermes/attachments/notes and plans.txt":2-2'
++
++    result = preprocess_context_references(prompt, cwd=home.parent, context_length=64000)
++    expected = SparkComputeProvider.cache_path_base + '/attachments/' + attachment.name
++    assert result.original_message == prompt
++    assert result.message.startswith(prompt)
++    assert f'File tools use {json.dumps(expected)}.' in result.message
++    assert '\nsecond\n' in result.message
++    assert 'first' not in result.message and 'third' not in result.message
++
++    monkeypatch.setenv('TERMINAL_ENV', 'local')
++    local = preprocess_context_references(prompt, cwd=home.parent, context_length=64000)
++    assert 'File tools use' not in local.message
++    assert '\nsecond\n' in local.message
++
++
++def test_unmounted_file_and_other_profile_keep_their_boundaries(tmp_path, monkeypatch):
++    home = tmp_path / 'owner'
++    workspace = tmp_path / 'project'
++    other = tmp_path / 'another-profile' / 'attachments' / 'private.txt'
++    monkeypatch.setenv('HERMES_HOME', str(home))
++    monkeypatch.setenv('TERMINAL_ENV', 'spark_compute')
++    register_provider(SparkComputeProvider(), scope=str(home))
++    workspace.mkdir()
++    (workspace / 'notes.txt').write_text('project memo')
++    other.parent.mkdir(parents=True)
++    other.write_text('other profile memo')
++
++    result = preprocess_context_references(f'@file:notes.txt @file:{other}', cwd=workspace, context_length=64000)
++    assert 'project memo' in result.message
++    assert 'other profile memo' not in result.message
++    assert any('outside the allowed workspace' in warning for warning in result.warnings)
++    assert 'File tools use' not in result.message
+--- /dev/null
++++ b/sparkie/deploy/patches/hermes-attachment-tool-path.patch
+@@ -0,0 +1,15 @@
++--- a/agent/context_references.py
+++++ b/agent/context_references.py
++@@ -417,7 +417,11 @@
++         # block alone carries the message (same shape as the binary path) — a warning
++         # would duplicate it in "--- Context Warnings ---".
++         return None, _oversized_text_reference_block(ref, path, text_tokens)
++-    return None, f"📄 {ref.raw} ({text_tokens} tokens)\n```{lang}\n{text}\n```"
+++    visible_path = _agent_visible_path(path)
+++    tool_path = ""
+++    if visible_path != str(path):
+++        tool_path = f"\nFile tools use {json.dumps(visible_path, ensure_ascii=False)}."
+++    return None, f"📄 {ref.raw} ({text_tokens} tokens){tool_path}\n```{lang}\n{text}\n```"
++ 
++ 
++ def _run_quiet(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
+--- /dev/null
++++ b/sparkie/deploy/patches/hermes-attachment-tool-path.json
+@@ -0,0 +1,9 @@
++{
++  "patch_sha256": "05fb4904c3ecedb634d8a2889d539d2e0aac6b898e154272f169e1951464829c",
++  "files": {
++    "agent/context_references.py": {
++      "before_sha256": "6d3065ff7fb6cd0054bce015f941da4e34719bb58e0cd269afe38e19fb485a20",
++      "after_sha256": "3ecf8b9c7385569eda9e9e4900e8dae7f84e34fadcc7379a2cf66c5c975705a7"
++    }
++  }
++}

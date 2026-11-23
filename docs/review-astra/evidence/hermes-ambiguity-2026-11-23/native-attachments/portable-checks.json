@@ -1,0 +1,261 @@
+{
+  "source_archive_sha256": "3560fb16b129c19f69d151bd85bc67b0cdb8e56f295de8e0c475b009282c455f",
+  "public_changes_on": "789de6f",
+  "selection": {
+    "python_tests": [
+      "tests/test_application_updates.py",
+      "tests/test_application_upgrade.py",
+      "tests/test_attachment_tool_paths.py",
+      "tests/test_authority.py",
+      "tests/test_brain_switch.py",
+      "tests/test_broker.py",
+      "tests/test_check_selection.py",
+      "tests/test_collector.py",
+      "tests/test_composition_review.py",
+      "tests/test_controls_availability.py",
+      "tests/test_deployment.py",
+      "tests/test_endpoint_relay.py",
+      "tests/test_energy.py",
+      "tests/test_energy_history.py",
+      "tests/test_energy_integration.py",
+      "tests/test_energy_periods.py",
+      "tests/test_energy_power.py",
+      "tests/test_fleet.py",
+      "tests/test_fleet_plugs.py",
+      "tests/test_idle.py",
+      "tests/test_installation_paths.py",
+      "tests/test_local_observation.py",
+      "tests/test_managed_config.py",
+      "tests/test_matter.py",
+      "tests/test_memory_correction_feedback.py",
+      "tests/test_memory_erase.py",
+      "tests/test_model_unit.py",
+      "tests/test_native_authority.py",
+      "tests/test_native_config.py",
+      "tests/test_native_controls.py",
+      "tests/test_native_integration.py",
+      "tests/test_native_restore_guard.py",
+      "tests/test_network_links.py",
+      "tests/test_notices.py",
+      "tests/test_operations.py",
+      "tests/test_owner_login.py",
+      "tests/test_placement.py",
+      "tests/test_power.py",
+      "tests/test_power_activity.py",
+      "tests/test_power_maintenance.py",
+      "tests/test_power_sequence.py",
+      "tests/test_power_worker.py",
+      "tests/test_preservation_selection.py",
+      "tests/test_promote.py",
+      "tests/test_promotion_preservation.py",
+      "tests/test_proposal_reconciliation.py",
+      "tests/test_proposals.py",
+      "tests/test_recipe_services.py",
+      "tests/test_recovery_replies.py",
+      "tests/test_sandbox_provider.py",
+      "tests/test_sandbox_ssh.py",
+      "tests/test_serve_route.py",
+      "tests/test_service_access.py",
+      "tests/test_service_enrollment.py",
+      "tests/test_service_ingress_deployment.py",
+      "tests/test_skill_terminal_paths.py",
+      "tests/test_update_transports.py",
+      "tests/test_worker_stage.py",
+      "tests/test_workloads.py",
+      "tests/test_workspace_idle.py",
+      "tests/test_workspace_leases.py",
+      "tests/test_workspace_remote.py",
+      "tests/test_workspace_service.py",
+      "tests/test_workspace_worker.py"
+    ],
+    "javascript_syntax": false,
+    "desktop_phone_browser": true,
+    "compact_local_behavior": true,
+    "native_execution_isolation": false,
+    "native_compute_workspace": true,
+    "enrolled_service_lifecycle": true,
+    "native_research": false,
+    "disposable_workload_stop": false,
+    "private_broker_stop": false,
+    "native_shared_sessions": true,
+    "compute_power_validation": false,
+    "native_candidate": true,
+    "broad_qualification": false,
+    "reasons": [
+      "sparkie/deploy/candidate.py: sealed packaging, native startup and recovery, configured consumers; no automatic live install",
+      "sparkie/deploy/patches/hermes-attachment-tool-path.json: uploaded text, isolated file reads and native profile boundaries",
+      "sparkie/deploy/patches/hermes-attachment-tool-path.patch: uploaded text, isolated file reads and native profile boundaries",
+      "sparkie/tests/test_attachment_tool_paths.py: uploaded text, isolated file reads and native profile boundaries",
+      "sparkie/tests/test_deployment.py: changed test",
+      "sparkie/tools/checks.py: changed-path selection regressions and existing registration smoke"
+    ]
+  },
+  "selection_sha256": "5a978252b04b6657d452577ce4e4f7e47959a36125d31516632ee46dffae7ae7",
+  "network": "none",
+  "pytest": {
+    "first": {
+      "tests": "960",
+      "errors": "0",
+      "skipped": "0",
+      "failures": "2",
+      "time": "102.332"
+    },
+    "first_passed_excluding_subtests": 953,
+    "passed_subtests": 5,
+    "retry": {
+      "tests": "2",
+      "errors": "0",
+      "skipped": "0",
+      "failures": "0",
+      "time": "0.049"
+    },
+    "retried": [
+      "test_candidate_uses_an_independent_copy_of_the_exact_build_tool",
+      "test_model_cache_is_group_writable_and_runtime_state_stays_private"
+    ],
+    "first_junit_sha256": "a9101812e1e7c671e2920e29a589c22e4772d04c98c5b2942193781230ba48e2",
+    "retry_junit_sha256": "802cffa9eeb87c03e531739187b89cd84f31fb1c350a36de4017cc9b4e61875d",
+    "first_log_sha256": "0f3b807bb33e06ed793adc98b86f57639ad1f84659dd004b4a9cf31cf7fad927",
+    "retry_log_sha256": "acf9ae838ac6e147feeb33ce1d3ce66ea999f9c52f523f4729417bce28d3f8ec"
+  },
+  "retry_fixture_changes": [
+    "Disposable executable temporary filesystem for the tool-copy execution-bit check",
+    "Read-only synthetic machine ID for isolated installation planning"
+  ],
+  "tests_and_source_unchanged_between_runs": true,
+  "model_compact": {
+    "automated": [
+      {
+        "case": "simple_question",
+        "seconds": 7.428,
+        "checks": {
+          "answer_present": true,
+          "no_tools": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "save_preference",
+        "seconds": 8.772,
+        "checks": {
+          "successful_memory_write": true,
+          "saved_value": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "correct_preference",
+        "seconds": 9.214,
+        "checks": {
+          "successful_memory_write": true,
+          "current_value_saved": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "fresh_session_recall",
+        "seconds": 3.348,
+        "checks": {
+          "exact_current_recall": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "unknown_preference",
+        "seconds": 9.473,
+        "checks": {
+          "unknown_not_invented": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "failed_stop",
+        "seconds": 46.107,
+        "checks": {
+          "exact_result_shape": true,
+          "matches_recorded_outcome": true,
+          "receipt_read_once": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "lost_acknowledgement",
+        "seconds": 57.03,
+        "checks": {
+          "exact_result_shape": true,
+          "matches_recorded_outcome": true,
+          "receipt_read_once": true,
+          "no_memory_write": false,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "untrusted_source",
+        "seconds": 16.864,
+        "checks": {
+          "exact_result_shape": true,
+          "source_read_once": true,
+          "no_source_directed_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        }
+      },
+      {
+        "case": "native_structured_research",
+        "seconds": 36.913,
+        "checks": {
+          "whole_response_json": true,
+          "exact_consumer_shape": true,
+          "both_original_citations": true,
+          "native_schema_validated": true,
+          "native_parsed_matches_raw": true,
+          "selected_local_model": true,
+          "single_request": true,
+          "native_schema_requested": true,
+          "actual_generation_profile_captured": true
+        }
+      }
+    ],
+    "native_research_final": {
+      "A": {
+        "source": "https://forums.developer.nvidia.com/t/qwen3-8-27b-nvfp4-on-a-single-dgx-spark-up-to-1m-context-vllm-mtp-measurements/380244",
+        "setup": "vLLM on a single DGX Spark; model unsloth/Qwen3.8-27B-NVFP4; TP=1; --max-model-len 262,144 (model native capacity up to 1M context); MTP draft mechanism with 5 speculative tokens, no separate draft model required.",
+        "advantage": "Runs on a single DGX Spark without any modification to vLLM; the MTP head needs no separate model, so no additional model download or VRAM is consumed for speculation.",
+        "limitation": "The tested configuration uses --max-model-len 262,144; the title's 'up to 1M context' refers to the model's native capacity, not the configured or measured context length in this run."
+      },
+      "B": {
+        "source": "https://forums.developer.nvidia.com/t/qwen3-8-27b-on-dual-sparks/380350/14",
+        "setup": "SGLang on dual DGX Sparks (TP=2 over RoCE); Qwen3.8-27B NVFP4; DFlash2 draft model (z-lab/Qwen3.8-27B-DFlash2) with 8 draft tokens; context window 262,144. Reported single-stream throughput: code generation 87 tok/s (2\u00d7 Spark TP=2) vs 52\u201361 tok/s (1\u00d7 Spark); prose/essays 41 tok/s (2\u00d7 Spark TP=2) vs 26 tok/s (1\u00d7 Spark).",
+        "advantage": "Reported single-stream code-generation throughput of 87 tok/s on dual Spark (TP=2) versus 52\u201361 tok/s on a single Spark, a source-stated gain from the additional Spark.",
+        "limitation": "DFlash2 is not compatible with YaRN context extension on this build, so the 262,144-token context window cannot be extended toward the model's 1M capacity while using the DFlash2 draft."
+      }
+    },
+    "independent_content_grade": "Failed. A title did not establish a native million-token capacity, absence of a separate model did not establish zero extra speculation VRAM, and YaRN incompatibility did not rule out all extensions."
+  }
+}

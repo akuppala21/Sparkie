@@ -158,6 +158,9 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     skill_path_patch = apply_native_patch(destination / "hermes", destination / "extension",
                                          Path("deploy/patches/hermes-sandbox-skill-path.patch"),
                                          ("agent/skill_commands.py",))
+    attachment_patch = apply_native_patch(destination / "hermes", destination / "extension",
+                                          Path("deploy/patches/hermes-attachment-tool-path.patch"),
+                                          ("agent/context_references.py",))
     shutil.copytree(webapp, destination / "webapp")
     shutil.copytree(dashboard, destination / "dashboard")
     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
@@ -204,7 +207,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
-        "native_patches": [restore_guard, skill_path_patch],
+        "native_patches": [restore_guard, skill_path_patch, attachment_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

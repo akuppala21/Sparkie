@@ -1,0 +1,446 @@
+{
+  "baseline_manifest": "134744d03fec47a3041e8e6455a2b12c4ee85278dc7213661806dbd71431d58c",
+  "candidate_manifest": "a5abe1534540c53d29d99cf41e656487e86f8babc6fb077a226f1037daa67903",
+  "earlier_intent_candidate_manifest": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+  "sandbox_image": "sha256:c268cfef5714cf58129c5b55b1da3871847a097f6f4e2a95e28546e099819414",
+  "cases": {
+    "energy_baseline": {
+      "browser": {
+        "http": [
+          {
+            "path": "/api/chat/file-upload",
+            "status": 200
+          }
+        ],
+        "rpc": [
+          {
+            "method": "file.attach",
+            "stagedUpload": true,
+            "reference": false,
+            "typedMarker": false
+          },
+          {
+            "method": "prompt.submit",
+            "stagedUpload": false,
+            "reference": true,
+            "typedMarker": false
+          }
+        ],
+        "rendered": true
+      },
+      "model_wire": [
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-d93b1f4220b69beb-exhibit-check.txt",
+          "tool_path": ".hermes/attachments/web-d93b1f4220b69beb-exhibit-check.txt",
+          "explicit_tool_path": false,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": false,
+          "native_tool_results": []
+        },
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-d93b1f4220b69beb-exhibit-check.txt",
+          "tool_path": ".hermes/attachments/web-d93b1f4220b69beb-exhibit-check.txt",
+          "explicit_tool_path": false,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": false,
+          "native_tool_results": [
+            {
+              "content": "",
+              "total_lines": 0,
+              "file_size": 0,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "error": "File not found: .hermes/attachments/web-d93b1f4220b69beb-exhibit-check.txt",
+              "not_found": true
+            },
+            {
+              "content": "",
+              "total_lines": 0,
+              "file_size": 0,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "error": "File not found: /tmp/secondary-profile/attachments/private-scope-note.txt",
+              "not_found": true
+            }
+          ]
+        }
+      ],
+      "allocation": [
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        },
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        }
+      ],
+      "one_use_link_removed": true
+    },
+    "attachment_repair": {
+      "browser": {
+        "http": [
+          {
+            "path": "/api/chat/file-upload",
+            "status": 200
+          }
+        ],
+        "rpc": [
+          {
+            "method": "file.attach",
+            "stagedUpload": true,
+            "reference": false,
+            "typedMarker": false
+          },
+          {
+            "method": "prompt.submit",
+            "stagedUpload": false,
+            "reference": true,
+            "typedMarker": false
+          }
+        ],
+        "rendered": true
+      },
+      "model_wire": [
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-42df05d9e77b8602-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-42df05d9e77b8602-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": false,
+          "native_tool_results": []
+        },
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-42df05d9e77b8602-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-42df05d9e77b8602-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": true,
+          "native_tool_results": [
+            {
+              "content": "1|EVIDENCE-MALLOW-7249",
+              "total_lines": 1,
+              "file_size": 21,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "not_found": false
+            },
+            {
+              "content": "",
+              "total_lines": 0,
+              "file_size": 0,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "error": "File not found: /tmp/secondary-profile/attachments/private-scope-note.txt",
+              "not_found": true
+            }
+          ]
+        }
+      ],
+      "allocation": [
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        },
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        }
+      ],
+      "one_use_link_removed": true
+    },
+    "phone": {
+      "browser": {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "http": [
+          {
+            "path": "/api/chat/file-upload",
+            "status": 200
+          }
+        ],
+        "rpc": [
+          {
+            "method": "file.attach",
+            "stagedUpload": true,
+            "reference": false,
+            "typedMarker": false
+          },
+          {
+            "method": "prompt.submit",
+            "stagedUpload": false,
+            "reference": true,
+            "typedMarker": false
+          }
+        ],
+        "rendered": true,
+        "bodyWidth": 390
+      },
+      "model_wire": [
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-17733c130dc2f390-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-17733c130dc2f390-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": false,
+          "native_tool_results": []
+        },
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-17733c130dc2f390-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-17733c130dc2f390-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": true,
+          "native_tool_results": [
+            {
+              "content": "1|EVIDENCE-MALLOW-7249",
+              "total_lines": 1,
+              "file_size": 21,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "not_found": false
+            },
+            {
+              "content": "",
+              "total_lines": 0,
+              "file_size": 0,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "error": "File not found: /tmp/secondary-profile/attachments/private-scope-note.txt",
+              "not_found": true
+            }
+          ]
+        }
+      ],
+      "allocation": [
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        },
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        }
+      ],
+      "one_use_link_removed": true
+    },
+    "desktop": {
+      "browser": {
+        "viewport": {
+          "width": 1280,
+          "height": 850
+        },
+        "http": [
+          {
+            "path": "/api/chat/file-upload",
+            "status": 200
+          }
+        ],
+        "rpc": [
+          {
+            "method": "file.attach",
+            "stagedUpload": true,
+            "reference": false,
+            "typedMarker": false
+          },
+          {
+            "method": "prompt.submit",
+            "stagedUpload": false,
+            "reference": true,
+            "typedMarker": false
+          }
+        ],
+        "rendered": true,
+        "bodyWidth": 1280
+      },
+      "model_wire": [
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-28ae5d80c430de83-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-28ae5d80c430de83-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": false,
+          "native_tool_results": []
+        },
+        {
+          "inline": true,
+          "raw_ref": ".hermes/attachments/web-28ae5d80c430de83-exhibit-check.txt",
+          "tool_path": "/home/sandbox/.hermes/attachments/web-28ae5d80c430de83-exhibit-check.txt",
+          "explicit_tool_path": true,
+          "other_profile_withheld": true,
+          "other_profile_warning": true,
+          "marker_in_tool_result": true,
+          "native_tool_results": [
+            {
+              "content": "1|EVIDENCE-MALLOW-7249",
+              "total_lines": 1,
+              "file_size": 21,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "not_found": false
+            },
+            {
+              "content": "",
+              "total_lines": 0,
+              "file_size": 0,
+              "truncated": false,
+              "is_binary": false,
+              "is_image": false,
+              "error": "File not found: /tmp/secondary-profile/attachments/private-scope-note.txt",
+              "not_found": true
+            }
+          ]
+        }
+      ],
+      "allocation": [
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        },
+        {
+          "allocated": true,
+          "user": "sandbox",
+          "backend": "spark_compute"
+        }
+      ],
+      "one_use_link_removed": true
+    }
+  },
+  "earlier_direct_reader_comparison": {
+    "browser": {
+      "http": [
+        {
+          "path": "/api/chat/file-upload",
+          "status": 200
+        }
+      ],
+      "rpc": [
+        {
+          "method": "file.attach",
+          "stagedUpload": true,
+          "reference": false,
+          "typedMarker": false
+        },
+        {
+          "method": "prompt.submit",
+          "stagedUpload": false,
+          "reference": true,
+          "typedMarker": false
+        }
+      ],
+      "rendered": true
+    },
+    "model_wire": {
+      "inline": true,
+      "reference": true,
+      "context": true,
+      "staged": [
+        {
+          "remote_path": "/home/sandbox/.hermes/attachments/web-2571669c3e247456-exhibit-check.txt",
+          "matches": true,
+          "name": "web-2571669c3e247456-exhibit-check.txt"
+        }
+      ],
+      "question": "What is the exhibit check?",
+      "prompt_ref_equals_remote": false,
+      "prompt_names_remote_path": false,
+      "submitted_file_ref": ".hermes/attachments/web-2571669c3e247456-exhibit-check.txt",
+      "reference_kind": "other",
+      "remote_reader_rc": 0
+    },
+    "native_reader": {
+      "backend": "spark_compute",
+      "uid": "12001",
+      "target": "/home/sandbox/.hermes/attachments/web-2571669c3e247456-exhibit-check.txt",
+      "literal_ref_error": "File not found: .hermes/attachments/web-2571669c3e247456-exhibit-check.txt",
+      "literal_ref_content": "",
+      "content": "1|EVIDENCE-MALLOW-7249",
+      "error": null,
+      "size": 21,
+      "gateway_cannot_read_remote_path": true
+    }
+  },
+  "telegram_on_earlier_candidate": [
+    {
+      "file": "memo.txt",
+      "admitted": true,
+      "download_calls": 1,
+      "bytes": 20,
+      "inline": true,
+      "marker_in_event": true,
+      "caption_preserved": true,
+      "cached_bytes": true,
+      "remote_directory": "/home/sandbox/.hermes/cache/documents"
+    },
+    {
+      "file": "command.txt",
+      "admitted": true,
+      "download_calls": 1,
+      "bytes": 21,
+      "inline": false,
+      "marker_in_event": false,
+      "caption_preserved": true,
+      "cached_bytes": true,
+      "remote_directory": "/home/sandbox/.hermes/cache/documents"
+    },
+    {
+      "file": "big.txt",
+      "admitted": true,
+      "download_calls": 1,
+      "bytes": 102401,
+      "inline": false,
+      "marker_in_event": false,
+      "caption_preserved": true,
+      "cached_bytes": true,
+      "remote_directory": "/home/sandbox/.hermes/cache/documents"
+    },
+    {
+      "file": "invalid.txt",
+      "admitted": true,
+      "download_calls": 1,
+      "bytes": 2,
+      "inline": false,
+      "marker_in_event": false,
+      "caption_preserved": true,
+      "cached_bytes": true,
+      "remote_directory": "/home/sandbox/.hermes/cache/documents"
+    },
+    {
+      "file": "denied.txt",
+      "admitted": false,
+      "download_calls": 0
+    }
+  ],
+  "fixture_containers_remaining": [],
+  "remaining_one_use_links": []
+}

@@ -80,6 +80,7 @@ print(json.dumps({'version':stamp['baseVersion'],'update_refused':True}))
 @pytest.mark.parametrize(('patch_name', 'targets'), [
     ('hermes-sealed-web-restore.patch', {'hermes_cli/web_routers/ops.py', 'hermes_cli/web_routers/transfer.py'}),
     ('hermes-sandbox-skill-path.patch', {'agent/skill_commands.py'}),
+    ('hermes-attachment-tool-path.patch', {'agent/context_references.py'}),
 ])
 def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_name, targets):
     root, candidate, _ = prepared
@@ -88,6 +89,7 @@ def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_nam
     assert [record["patch"] for record in records] == [
         "extension/deploy/patches/hermes-sealed-web-restore.patch",
         "extension/deploy/patches/hermes-sandbox-skill-path.patch",
+        "extension/deploy/patches/hermes-attachment-tool-path.patch",
     ]
     applied, = [record for record in records if Path(record["patch"]).name == patch_name]
     assert set(applied["patched_files"]) == targets
