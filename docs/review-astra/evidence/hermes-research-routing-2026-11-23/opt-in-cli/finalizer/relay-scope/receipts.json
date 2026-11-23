@@ -1,0 +1,156 @@
+{
+  "cases": {
+    "batch-output": {
+      "normal": {
+        "frozen_file_sha256": "138f9e9fa5ea751ff97a1799c5f7aa887a65b4003b3fb47da5c1fca03855db53",
+        "canonical_outgoing_body_sha256": "4646a7f5d58ddfe959d7b56c51d6de0fcb522b793533305f8219d2a6c2bf4a73",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": true,
+          "thinking": true,
+          "reasoning_effort": "low"
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      },
+      "relay": {
+        "frozen_file_sha256": "138f9e9fa5ea751ff97a1799c5f7aa887a65b4003b3fb47da5c1fca03855db53",
+        "canonical_outgoing_body_sha256": "febb1d9ff619bb4a80e5b816297a0d5930668b451c0d6a9176e9c50314ec2cdf",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": false,
+          "reasoning_effort": "low",
+          "thinking": false
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      }
+    },
+    "serial-check": {
+      "normal": {
+        "frozen_file_sha256": "4c32f84cfe1684e587cf1883d31a215cd2ff57743f1274f75e1ae500346d5b5c",
+        "canonical_outgoing_body_sha256": "2862de5a4511c3d222be69fc7871990925486effb51f8e9caf9300da59711f86",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": true,
+          "thinking": true,
+          "reasoning_effort": "low"
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      },
+      "relay": {
+        "frozen_file_sha256": "4c32f84cfe1684e587cf1883d31a215cd2ff57743f1274f75e1ae500346d5b5c",
+        "canonical_outgoing_body_sha256": "81c9d3414fdf14d0ceebd3dedca6ef11a8546806148867b589bb85be567e74b6",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": false,
+          "reasoning_effort": "low",
+          "thinking": false
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      }
+    },
+    "running-worker": {
+      "normal": {
+        "frozen_file_sha256": "6915092a3b13e2d007e19c7a7bd1d917419a3b76c05ddf55aeec93e8ee48d6aa",
+        "canonical_outgoing_body_sha256": "edd30d549265b7eb87aefc8e1db3e69db3f5b436d0de0fadd0dac11611368e63",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": true,
+          "thinking": true,
+          "reasoning_effort": "low"
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      },
+      "relay": {
+        "frozen_file_sha256": "6915092a3b13e2d007e19c7a7bd1d917419a3b76c05ddf55aeec93e8ee48d6aa",
+        "canonical_outgoing_body_sha256": "bdaaf2cb1202b4e8854702b16336f2ecb84fe55bda86ed032b3ef8e21ce831f9",
+        "matches_expected_body": true,
+        "sdk_sends": 1,
+        "provider_requests": 0,
+        "connected_sockets": 0,
+        "blocked_socket_attempts": 4,
+        "template_options": {
+          "enable_thinking": false,
+          "reasoning_effort": "low",
+          "thinking": false
+        },
+        "wire_reasoning_effort": "low",
+        "reasoning_after": {
+          "enabled": true,
+          "effort": "low"
+        }
+      }
+    }
+  },
+  "ordinary_and_auxiliary_controls_identical_in_both_arms": [
+    {
+      "label": "primary-before",
+      "body_sha256": "f39ccd7702743143bf279cf5238cfbaf8584b68ec186edc191c630fc98a50977",
+      "thinking_options": {
+        "enable_thinking": true,
+        "thinking": true,
+        "reasoning_effort": "low"
+      },
+      "wire_effort": "low"
+    },
+    {
+      "label": "title-generation",
+      "body_sha256": "f39ccd7702743143bf279cf5238cfbaf8584b68ec186edc191c630fc98a50977",
+      "thinking_options": {
+        "enable_thinking": true,
+        "thinking": true,
+        "reasoning_effort": "low"
+      },
+      "wire_effort": "low"
+    },
+    {
+      "label": "primary-after",
+      "body_sha256": "f39ccd7702743143bf279cf5238cfbaf8584b68ec186edc191c630fc98a50977",
+      "thinking_options": {
+        "enable_thinking": true,
+        "thinking": true,
+        "reasoning_effort": "low"
+      },
+      "wire_effort": "low"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "scope": "Retirement of the matched developer-environment repair trial before later qualification work.",
+  "fleet_observed_at": "2026-11-23T09:20:59.829Z",
+  "worker_idle_policy_minutes": 30,
+  "states": {
+    "spark1": "online",
+    "spark2": "online",
+    "spark3": "off",
+    "spark4": "off"
+  },
+  "worker_active_reservations": [],
+  "worker_running_containers": 0,
+  "post_stop_samples": [
+    {
+      "utc": 1795425635.9334226,
+      "available_gib": 117.59909439086914,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795425638.9889317,
+      "available_gib": 117.61067962646484,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    },
+    {
+      "utc": 1795425642.0453386,
+      "available_gib": 117.60373306274414,
+      "model_absent": true,
+      "port_free": true,
+      "owned_sandboxes_absent": true,
+      "gpu_pids": []
+    }
+  ],
+  "original_receipt_sha256": {
+    "final-check.json": "b02f89743c666796224624a45661cfe79614a49cb77fc2882fa0e990e931ef40",
+    "fleet-after.json": "854c264e90530f9839513f60eac1b1a370ed9d000ae4e848af53c91012f46a69"
+  }
+}

@@ -1,0 +1,21 @@
+# Matched nested-test self-repair replay
+
+**The offline developer runtime worked. The native model identified the selector defect and left zero changed files.** The same hidden grader returned 1 of 8 for both the original and replayed workspaces. The one passing case was the unrelated documentation control. [Full tool evidence, file inventory and all eight outcomes](results.json)
+
+| Measure | Original sandbox | Locked developer sandbox |
+| --- | --- | --- |
+| Native turn limit | 390 s plus 15 s termination | Same |
+| Outcome | 405.0 s, exit 137, no final answer | 405.0 s, exit 137, no final answer |
+| Local model requests | 16 | 10, including auxiliary traffic |
+| Resulting files | One temporary configuration file, no selector edit | All 271 checkout files unchanged |
+| Hidden correctness | 1/8 | 1/8 |
+
+The same native dashboard agent factory received the byte-identical owner question and the same seeded public checkout. The sealed application, source, selected local Huihui checkpoint, SGLang/DFlash2 configuration and sampling were held fixed. The private Docker environment put the locked Python 3.14.10 development environment first on the ordinary terminal `PATH` and mounted the corresponding Hermes source and runtime read-only. The existing checkout instructions and legacy command alias remained usable. The eight-case observer and the correct reference implementation remained outside the model's sandbox. A fresh model process served the replay. Each arm contains one stochastic turn. [Original case](../hermes-ambiguity-2026-11-23/public/nested-native-repair.json) · [Locked environment](../hermes-offline-developer-tests-2026-11-23/results.md)
+
+Before reservation, native module inspection located pytest 9.1.1 and pytest-asyncio 1.4.0 in the dev environment, alongside pinned Hermes and FastAPI. With no ambient `PYTHONPATH`, the ordinary `python3 tools/checks.py --paths tools/checks.py --run-python` selected 46 tests and passed in 1.96 seconds. Running `python3 -m pytest -q tests/components/test_reports.py` directly reached the deliberately failing assertion. The independent observer reproduced the prior baseline 1/8 and correct reference 8/8 before inference. An initial CPU-only attempt using inline `python3 -c` encountered the normal smart-approval path. The successful preflight used standard module inspection and supplied project commands. No approval override was set. [CPU checks and reference outcomes](preflight.json)
+
+The model loaded the native maintenance skill and read the selector, the nested regression and existing selection tests. It correctly identified the top-level `glob('test_*.py')` used by the broad path. Its first broad trigger did not request broad qualification. It then obtained a genuinely broad plan with 75 module paths and verified that the nested test was absent. It tried to run the broad suite before editing. The returned terminal output stopped after the start banner. The last persisted assistant message requested that broad run again with a 300-second tool timeout. No result from that last tool call or completed final response was recorded. No dependency installation error appears in the captured terminal actions. The checkout inventory compares added, deleted and modified files, executable bits and symlinks. The report identifies the generated metadata exclusions.
+
+After the native run, the independent observer confirmed that explicit nested prefix/suffix, root suffix, an existing specialized test group, both broad cases and Git-discovered nested changes all still missed their red test. The documentation-only path behaved correctly. A new nonroot, network-disabled CPU container reran the ordinary selector against the resulting workspace (46 passed in 1.96 seconds) and directly ran the planted test (one expected failure in 0.01 seconds). The provider drained and the exercise's one native container was removed. No source patch exists to promote. [Frozen observer source](../hermes-ambiguity-2026-11-23/public/nested_pytest_replay.py)
+
+The worker was released after the repair trial. Three subsequent observations found no model process or study sandbox and a reusable inference port. The fleet then showed Spark 1 online and no workload or power reservation on Spark 2. [Handback observations](handback.json)

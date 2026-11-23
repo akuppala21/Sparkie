@@ -1,0 +1,250 @@
+{
+  "checkout": {
+    "files": 271,
+    "inventory_sha256": "1af6a98dc03b7ce44897a3e1586c399975600bf3d71aa412a2f0426f78ebc9a3"
+  },
+  "hermes_docker_image": "sha256:a561d383d4cf554cd98ca528a450574f86e0b3dcd9496d5b9b0fbd09482c6dd3",
+  "network": "none",
+  "native_terminal_python": "/opt/sparkie-dev/20261123-attachment1/bin/python3",
+  "python_version": "Python 3.14.10",
+  "pytest": "pytest 9.1.1",
+  "pytest_asyncio": "asyncio-1.4.0",
+  "module_origins": {
+    "pytest": "/opt/sparkie-dev/20261123-attachment1/lib/python3.14/site-packages/pytest/__init__.py",
+    "pytest_asyncio": "/opt/sparkie-dev/20261123-attachment1/lib/python3.14/site-packages/pytest_asyncio/__init__.py",
+    "fastapi": "/opt/sparkie/releases/20261123-attachment1/hermes/.venv/lib/python3.14/site-packages/fastapi/__init__.py",
+    "hermes_cli": "/opt/sparkie/releases/20261123-attachment1/hermes/hermes_cli/__init__.py"
+  },
+  "ambient_pythonpath": "",
+  "old_documented_alias_imports": true,
+  "plain_standard_run": {
+    "argv": [
+      "python3",
+      "tools/checks.py",
+      "--paths",
+      "tools/checks.py",
+      "--run-python"
+    ],
+    "returncode": 0,
+    "pytest_summary": [
+      "46 passed in 1.96s"
+    ]
+  },
+  "reported_test": {
+    "argv": [
+      "python3",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/components/test_reports.py"
+    ],
+    "returncode": 1,
+    "assertion_present": true
+  },
+  "cleanup_verified": true,
+  "real_provider_calls": 0,
+  "private_grader": {
+    "frozen_observer_sha256": "c29e1a681e82a0023fbdd5aeea6653579c4e70557ef3f256b6c34d60e8c3c724",
+    "baseline_matches_previous_exactly": true,
+    "baseline_passing": 1,
+    "reference_matches_previous_exactly": true,
+    "reference_passing": 8,
+    "cases": 8,
+    "question_sha256": "ef96c9911c301309a84d49f13823f57dd62daadabdc0ea78fe6c925687a2718a",
+    "frozen_sha256": "c161dce1fb137e7d0e2bc442a0bbe556def761527c9dd54911f0b420f5a5a35a",
+    "seeded_source_sha256": "5b13b0388f7b06c6c93c850cde690525eae3917009169a2b8c6dfa753c5ed7f7",
+    "tested_driver_sha256": "79836e4240ca6de2eeb18b7776b878c6439a3c1935d589b86149bae51af29e7d",
+    "dev_environment_sha256": "f5650ee5724d25e47dbcb3598e3d55dee2bfa9e35b642857be384c93939deb74"
+  },
+  "baseline_observations": {
+    "nested_prefix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "nested_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "suffix_at_root": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "preexisting_behavior_group": {
+      "exit": 0,
+      "broad": false,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "broad": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "broad_suffix": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "discovered": {
+      "exit": 0,
+      "broad": true,
+      "selected": [
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": false,
+      "met_requirement": false
+    },
+    "unrelated": {
+      "exit": 0,
+      "broad": false,
+      "selected": [],
+      "behavior": false,
+      "red_test_executed": false,
+      "met_requirement": true
+    }
+  },
+  "reference_observations": {
+    "nested_prefix": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "nested_suffix": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/formatting/render_test.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "suffix_at_root": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/render_test.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "preexisting_behavior_group": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/behavior/test_output.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "broad": {
+      "exit": 1,
+      "broad": true,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "broad_suffix": {
+      "exit": 1,
+      "broad": true,
+      "selected": [
+        "tests/formatting/render_test.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py",
+        "tests/test_sandbox_cleanup.py"
+      ],
+      "behavior": true,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "discovered": {
+      "exit": 1,
+      "broad": false,
+      "selected": [
+        "tests/components/test_reports.py",
+        "tests/test_energy_integration.py",
+        "tests/test_native_integration.py"
+      ],
+      "behavior": false,
+      "red_test_executed": true,
+      "met_requirement": true
+    },
+    "unrelated": {
+      "exit": 0,
+      "broad": false,
+      "selected": [],
+      "behavior": false,
+      "red_test_executed": false,
+      "met_requirement": true
+    }
+  }
+}

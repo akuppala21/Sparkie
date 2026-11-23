@@ -1,0 +1,5 @@
+version = 1
+[[components]]
+kind = "sparkie_local_summary_test"
+enabled = true
+[components.config]
