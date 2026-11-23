@@ -1,0 +1,60 @@
+name: Hermes portable release checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Hermes release commit, tag or development branch to test
+        required: true
+        type: string
+        default: codex/hermes-research-update
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    if: github.event.repository.visibility == 'public'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - name: Read the Hermes revision
+        id: hermes
+        run: |
+          commit=$(jq -er '.commit | select(test("^[0-9a-f]{40}$"))' sparkie/upstream.lock.json)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.hermes.outputs.commit }}
+          path: upstream-hermes
+          persist-credentials: false
+      - name: Prepare the locked Python test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool=sparkie/deploy/build-tools.json
+          version=$(jq -er .uv.version "$tool")
+          platform=$(jq -er .uv.platform "$tool")
+          archive="$RUNNER_TEMP/uv.tar.gz"
+          curl -fsSL --retry 2 "https://github.com/astral-sh/uv/releases/download/$version/uv-$platform.tar.gz" -o "$archive"
+          tar -xOzf "$archive" "uv-$platform/uv" > "$RUNNER_TEMP/uv"
+          echo "$(jq -er .uv.sha256 "$tool")  $RUNNER_TEMP/uv" | sha256sum --check
+          chmod 700 "$RUNNER_TEMP/uv"
+          "$RUNNER_TEMP/uv" sync --project upstream-hermes --frozen --only-group dev --no-install-project --no-build --python 3.14.10
+      - name: Check portable fleet, electricity, research and recovery behavior
+        working-directory: sparkie
+        run: |
+          "$GITHUB_WORKSPACE/upstream-hermes/.venv/bin/python" -m pytest -q \
+            tests/test_authority.py tests/test_operations.py tests/test_fleet.py \
+            tests/test_energy.py tests/test_energy_history.py tests/test_energy_periods.py tests/test_energy_power.py \
+            tests/test_forum_reader.py tests/test_github_readme.py tests/test_manual_reader.py tests/test_research_claims.py \
+            tests/test_placement.py tests/test_serve_route.py tests/test_application_upgrade.py
