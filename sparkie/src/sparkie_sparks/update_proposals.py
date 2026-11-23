@@ -3,6 +3,10 @@
 Uses the native task's already enrolled SSH environment. Model arguments cannot
 choose a host, credential, host destination or activation command.
 """
+from collections import OrderedDict
+from contextvars import ContextVar
+from functools import partial
+from threading import Lock
 import hashlib
 import errno
 import json
@@ -16,6 +20,7 @@ import subprocess
 import tempfile
 import time
 import tarfile
+import zipfile
 
 from .application_updates import digest, reviewed
 
@@ -41,8 +46,13 @@ finally:
 with os.fdopen(fd, 'rb') as source:
  s = os.fstat(source.fileno())
  assert stat.S_ISREG(s.st_mode) and 0 < s.st_size <= int(sys.argv[2])
- while chunk := source.read(1024 * 1024):
+ remaining = s.st_size
+ while remaining:
+  chunk = source.read(min(remaining, 1024 * 1024))
+  assert chunk
+  remaining -= len(chunk)
   sys.stdout.buffer.write(chunk)
+ assert not source.read(1) and os.fstat(fd).st_size == s.st_size
 '''
 
 
@@ -248,7 +258,125 @@ def source_tool(args, **kwargs):
             'message':'The installed build inputs could not be exported to the compute workspace. No live change was made.'})
 
 
+def save_review_files(environment, expected, cache):
+    """Receive and verify both fixed worker files before publishing one download."""
+    with tempfile.TemporaryDirectory() as work:
+        copies = {}
+        for field, name in (('patch', 'repair.patch.txt'), ('checks', 'checks.txt')):
+            copy = Path(work) / name
+            fetch(environment, '/workspace/sparkie-review/' + name, copy, 1024 * 1024)
+            data = copy.read_bytes()
+            if hashlib.sha256(data).hexdigest() != expected[field]:
+                raise ValueError(f'The {field} file changed. Check its SHA-256.')
+            copies[field] = data
+    # Publish one complete ZIP after both transfers pass. Only these two
+    # file names and bytes enter it. The native cache owns access and expiry.
+    with tempfile.TemporaryDirectory(prefix='.review-', dir=cache) as work:
+        bundle = Path(work) / 'review.zip'
+        with bundle.open('xb') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            with zipfile.ZipFile(stream, 'w') as archive:
+                for field, name in (('patch', 'repair.patch'), ('checks', 'checks.txt')):
+                    archive.writestr(zipfile.ZipInfo(name), copies[field])
+            stream.flush()
+            os.fsync(stream.fileno())
+        with bundle.open('rb') as stream:
+            identity = hashlib.file_digest(stream, 'sha256').hexdigest()
+        target = cache / ('sparkie-review-' + identity + '.zip')
+        os.replace(bundle, target)
+    return {'available': True, 'file': str(target), 'sha256': identity, 'members': ['repair.patch', 'checks.txt'],
+            'patch_sha256': expected['patch'], 'checks_sha256': expected['checks']}
+
+
+def retain_review(args, *, attachments=None, **kwargs):
+    """Keep the exact patch and check results in the active native chat profile."""
+    from .proposals import context
+    from .sandbox_provider import LeasedSandboxSSH
+    from gateway.media_policy import media_delivery_strict
+    from gateway.platforms.base import get_document_cache_dir
+    from hermes_constants import get_hermes_home, get_process_hermes_home, hermes_home_key
+    from tools.terminal_tool import _resolve_container_task_id
+    from tools.terminal_tool_lifecycle import get_active_env
+    from tools.hosted_tool_policy import host_feature_enabled
+
+    if (not isinstance(args, dict) or set(args) != {'patch', 'checks'} or
+            not all(isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) for value in args.values())):
+        return json.dumps({'available': False, 'message': 'Give the SHA-256 of the patch and checks files.'})
+    try:
+        route = context()
+        if (not host_feature_enabled('media_delivery') or media_delivery_strict() or
+                hermes_home_key(get_hermes_home()) != hermes_home_key(get_process_hermes_home())):
+            raise PermissionError
+        if route['platform'] == 'telegram':
+            from .controls import configured
+            binding = configured().binding()
+            if (route['chat_type'] not in ('private', 'dm') or route['actor_id'] != str(binding.telegram_user)
+                    or route['chat_id'] != str(binding.telegram_chat)):
+                raise PermissionError
+        elif route['platform'] not in ('web', 'webapp', 'cli'):
+            raise PermissionError
+        task_id = kwargs.get('task_id')
+        if not isinstance(task_id, str) or not task_id.strip() or task_id == 'default':
+            raise PermissionError
+        environment = get_active_env(task_id)
+        if (not isinstance(environment, LeasedSandboxSSH) or
+                environment.lease.request.task_id != _resolve_container_task_id(task_id)):
+            return json.dumps({'available': False, 'message': 'Use the active enrolled compute workspace for this repair.'})
+        receipt = save_review_files(environment, args, get_document_cache_dir())
+        if attachments is not None:
+            attachments.saved(receipt['file'])
+        return json.dumps(receipt)
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError):
+        return json.dumps({'available': False, 'message': 'The review files could not be saved from the current owner workspace.'})
+
+
+class ReviewAttachments:
+    """Deliver files saved by this profile's handler in the same native turn."""
+    def __init__(self):
+        self.turn = ContextVar('sparkie_repair_review_turn', default=None)
+        self.files = OrderedDict()
+        self.lock = Lock()
+
+    def executing(self, tool_name, next_call, session_id='', turn_id='', **_):
+        if tool_name != 'spark_retain_repair_review' or not (session_id and turn_id):
+            return next_call()
+        token = self.turn.set((session_id, turn_id))
+        try:
+            return next_call()
+        finally:
+            self.turn.reset(token)
+
+    def saved(self, path):
+        key = self.turn.get()
+        if key is not None:
+            with self.lock:
+                self.files.setdefault(key, {})[path] = None
+                self.files.move_to_end(key)
+                if len(self.files) > 128:
+                    self.files.popitem(last=False)
+
+    def attach(self, response_text, session_id='', turn_id='', **_):
+        with self.lock:
+            paths = self.files.pop((session_id, turn_id), ())
+        if paths:
+            # Start outside model-supplied Markdown fences. Hermes owns media
+            # resolution, authenticated downloads and delivery on messaging.
+            tags = '\n'.join('MEDIA:' + path for path in paths)
+            if not (response_text == tags or response_text.startswith(tags + '\n')):
+                return tags + '\n\n' + response_text
+
+
 def register(ctx):
+    attachments = ReviewAttachments()
+    ctx.register_middleware('tool_execution', attachments.executing)
+    ctx.register_hook('transform_llm_output', attachments.attach)
+    ctx.register_tool(name='spark_retain_repair_review', toolset='sparks', schema={
+        'name': 'spark_retain_repair_review',
+        'description': 'Save /workspace/sparkie-review/repair.patch.txt and checks.txt from the current enrolled compute workspace. Hermes attaches the verified ZIP to this reply. Give the owner the archive digest and actual member names. No update is proposed or installed.',
+        'parameters': {'type': 'object', 'properties': {
+            key: {'type': 'string', 'pattern': '^[a-f0-9]{64}$'} for key in ('patch', 'checks')},
+            'required': ['patch', 'checks'], 'additionalProperties': False}},
+        handler=partial(retain_review, attachments=attachments), description='Save a repair review for owner download')
     ctx.register_tool(name='spark_update_source', toolset='sparks', schema={
         'name':'spark_update_source',
         'description':'Copy the installed sealed application and its build interpreter into this private compute workspace to prepare an update. Excludes conversations, credentials, model weights and runtime state. This cannot change the live application.',

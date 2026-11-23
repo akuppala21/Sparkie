@@ -1,6 +1,6 @@
 ---
 name: maintain-sparkie
-version: 1.0.7
+version: 1.0.9
 description: Diagnose and repair Sparkie in a private checkout, verify its affected callers, or prepare a compatible application update for exact owner review.
 ---
 
@@ -38,7 +38,9 @@ requires the sealed predecessor and steps 3–7.
    under /workspace alongside the checkout.
 
    ```sh
-   TMPDIR=/workspace bash tools/dev-python.sh "$baseline" tools/checks.py --paths path/to/changed.py --run-affected "$baseline"
+   set -o pipefail
+   mkdir -p /workspace/sparkie-review
+   TMPDIR=/workspace bash tools/dev-python.sh "$baseline" tools/checks.py --paths path/to/changed.py --run-affected "$baseline" 2>&1 | tee /workspace/sparkie-review/checks.txt
    ```
 
    Read the final JSON for pytest's actual counts, the browser outcome and log
@@ -48,7 +50,16 @@ requires the sealed predecessor and steps 3–7.
    For a review-only repair, inspect the final diff and send the owner the result
    as soon as the reproduction and affected checks have outcomes. Include the
    observed before/after behavior, affected callers, files changed, tests that
-   ran and any gap. Link the patch or give its path in the checkout.
+   ran and any gap. In an enrolled workspace, save the complete reviewed diff
+   as `/workspace/sparkie-review/repair.patch.txt` and the actual check output
+   and browser results as `/workspace/sparkie-review/checks.txt`. Use the
+   recorded browser report alongside the captured command output. Include
+   intended additions when exporting a diff. Pass the SHA-256 of each file to
+   `spark_retain_repair_review`. Hermes attaches the saved ZIP to this reply.
+   Give the archive digest and the member names returned by the tool.
+   The native document cache survives worker retirement and
+   follows Hermes’s media retention. If retention is unavailable or a file
+   exceeds 1 MiB, identify the gap and give the existing checkout path.
    If a check cannot collect, verify its path and the missing dependency once.
    Run any independent checks that still work. Name the blocked check and what
    it needs in the same reply. A partial result is useful. Stop there for a review.
@@ -69,7 +80,7 @@ requires the sealed predecessor and steps 3–7.
 5. Write a JSON review containing `diff`, `checks`, `interruption`, and `rollback`.
    Include what changed, actual/reused/skipped evidence and remaining limits.
    Make the actual diff and test receipts inspectable through native artifacts;
-   a sentence claiming checks passed is not evidence. Do not invent a receipt.
+   use the saved review file and its digest from step 2. Identify any outstanding check.
    Create the output directory under `/workspace`.
    Use `deploy/upgrade.py prepare --candidate <new> --baseline <exported-baseline>
    --details <review.json> --destination <workspace-output>` to create the sealed

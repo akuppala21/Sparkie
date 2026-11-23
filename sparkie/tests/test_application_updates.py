@@ -264,3 +264,69 @@ def test_complete_large_review_crosses_real_private_socket(rig, tmp_path, letter
             assert remote.accept_update(owner,row['id'],row['digest'])['state'] == 'succeeded'
         finally:
             server.shutdown(); thread.join(2)
+
+
+def test_saved_repair_review_is_exact_complete_and_atomic(tmp_path, monkeypatch):
+    import zipfile
+    from sparkie_sparks import update_proposals
+
+    contents = {'repair.patch.txt': b'diff --git a/old b/new\n+new\n',
+                'checks.txt': b'One passed.\nTwo blocked.\n'}
+    expected = {field: hashlib.sha256(contents[name]).hexdigest() for field, name in
+                [('patch', 'repair.patch.txt'), ('checks', 'checks.txt')]}
+    def transfer(environment, source, destination, limit):
+        assert Path(source).parent.as_posix() == '/workspace/sparkie-review'
+        assert limit == 1024 * 1024
+        destination.write_bytes(contents[Path(source).name])
+
+    monkeypatch.setattr(update_proposals, 'fetch', transfer)
+    with pytest.raises(ValueError, match='checks'):
+        update_proposals.save_review_files(None, {**expected, 'checks': '0' * 64}, tmp_path)
+    assert not list(tmp_path.iterdir())
+
+    def publication_failure(*args):
+        raise OSError('test publication failure')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(update_proposals.os, 'replace', publication_failure)
+        with pytest.raises(OSError, match='publication'):
+            update_proposals.save_review_files(None, expected, tmp_path)
+    assert not list(tmp_path.iterdir())
+
+    result = update_proposals.save_review_files(None, expected, tmp_path)
+    archive = Path(result['file'])
+    assert list(tmp_path.iterdir()) == [archive]
+    assert archive.stat().st_mode & 0o777 == 0o600
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == result['sha256']
+    assert result['patch_sha256'] == expected['patch'] and result['checks_sha256'] == expected['checks']
+    with zipfile.ZipFile(archive) as bundle:
+        assert sorted(bundle.namelist()) == ['checks.txt', 'repair.patch']
+        assert bundle.read('repair.patch') == contents['repair.patch.txt']
+        assert bundle.read('checks.txt') == contents['checks.txt']
+    assert update_proposals.save_review_files(None, expected, tmp_path) == result
+    assert list(tmp_path.iterdir()) == [archive]
+
+
+def test_hermes_attaches_only_reviews_saved_by_this_handler_in_this_turn():
+    from sparkie_sparks.update_proposals import ReviewAttachments
+
+    attachments = ReviewAttachments()
+    path = '/profile/cache/documents/sparkie-review-' + '1' * 64 + '.zip'
+    final = 'Downloadable copy:\n' + path
+    def save():
+        attachments.saved(path)
+        return 'real tool result'
+
+    def dispatch(name, run, session='owner', turn='one'):
+        return attachments.executing(name, run, session_id=session, turn_id=turn)
+
+    dispatch('spark_retain_repair_review', lambda: final)
+    dispatch('other_tool', save)
+    dispatch('spark_retain_repair_review', save, turn='')
+    assert attachments.attach(final, 'owner', 'one') is None
+    assert dispatch('spark_retain_repair_review', save) == 'real tool result'
+    dispatch('spark_retain_repair_review', save)
+    assert attachments.attach(final, 'other', 'one') is None
+    assert attachments.attach(final, 'owner', 'two') is None
+    assert attachments.attach(final, 'owner', 'one') == 'MEDIA:' + path + '\n\n' + final
+    assert attachments.attach(final, 'owner', 'one') is None
