@@ -24,10 +24,10 @@ class ManualError(ValueError):
 class Manual(HTMLParser):
     """Keep visible text blocks and the nearest enclosing block's HTML anchor."""
 
-    boundaries = set("p div section article h1 h2 h3 h4 h5 h6 li dt dd pre tr br".split())
+    boundaries = set("p div section article h1 h2 h3 h4 h5 h6 li dt dd pre table thead tbody tfoot tr br".split())
     ignored = set("head nav aside footer script style noscript svg template".split())
     headings = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
-    section_tags = {"div", "section", "article", "pre", "li", "dt", "dd", "p"}
+    section_tags = {"div", "section", "article", "pre", "li", "dt", "dd", "p", "table", "tr"}
     closes_paragraph = set(("address article aside blockquote details div dl fieldset figcaption figure footer form "
                             "h1 h2 h3 h4 h5 h6 header hgroup hr main menu nav ol p pre search section table ul").split())
     paragraph_scope = {"button", "table", "td", "th", "html", "template", "applet", "caption", "object", "marquee"}
@@ -36,6 +36,10 @@ class Manual(HTMLParser):
         "html", "applet", "pre", "caption", "table", "td", "th", "marquee", "object",
     }
     void = set("area base br col embed hr img input link meta param source track wbr".split())
+    table_parents = {
+        "td": {"tr"}, "th": {"tr"}, "tr": {"table", "thead", "tbody", "tfoot"},
+        "thead": {"table"}, "tbody": {"table"}, "tfoot": {"table"},
+    }
 
     def __init__(self, fragment=None):
         super().__init__()
@@ -92,6 +96,16 @@ class Manual(HTMLParser):
         attrs = dict(attrs)
         if self.pre_depth is None and (tag in self.boundaries or tag in self.ignored):
             self.flush()
+        if self.pre_depth is None and tag in self.table_parents:
+            # HTML permits these end tags to be omitted. Keep each sibling in its
+            # own row or group, including when the previous cell was hidden.
+            for i in range(len(self.stack) - 1, -1, -1):
+                open_tag = self.stack[i][0]
+                if open_tag in self.table_parents[tag]:
+                    self.pop_elements(i + 1)
+                    break
+                if open_tag == "table" or open_tag in self.ignored:
+                    break
         if self.fragment and tag in self.closes_paragraph:
             # HTML closes an open p before these block starts, even without </p>.
             for i in range(len(self.stack) - 1, -1, -1):
@@ -162,8 +176,15 @@ class Manual(HTMLParser):
             self.stack.append((tag, anchor, hidden, selected))
         elif tag == "br" and not hidden:
             self.parts.append("\n" if self.pre_depth is not None else " ")
-        if tag in {"th", "td"} and not hidden:
-            self.parts.append(" ")
+        if tag in {"th", "td"} and not hidden and self.pre_depth is None:
+            self.parts.append(" | ")
+            for name in ("colspan", "rowspan"):
+                span = (attrs.get(name) or "").strip()
+                if span and span != "1":
+                    # Preserve a merged cell's scope without manufacturing values
+                    # for subsequent rows. Display only a bounded numeric attribute.
+                    value = span if re.fullmatch(r"[0-9]{1,5}", span) else "?"
+                    self.parts.append(f"[{name}={value}] ")
 
     def pop_elements(self, index):
         if self.heading_level and index <= self.heading_parent_depth:
@@ -240,7 +261,7 @@ def passages(lines, terms, code_ranges=(), search_ranges=None):
                     if not code and (next_anchor != anchor or end + 1 in code_starts):
                         break
                     end += 1
-                    text += ("\n" if code else " ") + following
+                    text += "\n" + following
                 partial_block = code is not None and (i > code[0] or end + 1 < code[1])
                 excerpts.append({"line": i + 1, "anchor": anchor, "context_lines": [i + 1, end + 1],
                                  "excerpt": text[:460], "clipped": left > 0 or len(text) > 460 or partial_block})

@@ -309,3 +309,35 @@ def test_heading_in_section_header_includes_its_body_and_excludes_the_next_secti
     assert result["section"]["line_ranges"] == [[1, 3]]
     assert result["matches"][0]["hits"] == 1
     assert result["matches"][0]["passages"][0]["excerpt"] == "Rule inside."
+
+
+def test_compact_table_preserves_empty_cells_and_keeps_linked_row_separate(monkeypatch, tmp_path):
+    raw = ("<table><thead><tr><th>Mode<th>Idle<th>Busy<tbody>"
+           "<tr id='solo'><th>Solo<td><td>42<tr><th>Pair<td>81<td>99</table>")
+    result = linked_page(raw, "solo", "Solo", monkeypatch, tmp_path)
+    assert Path(result["text"]).read_text().splitlines() == [
+        "| Mode | Idle | Busy", "| Solo | | 42", "| Pair | 81 | 99",
+    ]
+    assert result["section"]["line_ranges"] == [[2, 2]]
+    assert result["matches"][0]["passages"][0]["excerpt"] == "| Solo | | 42"
+
+
+def test_long_table_with_omitted_ends_preserves_visible_siblings(monkeypatch, tmp_path):
+    raw = ("<table id='readings'><tbody><tr><td hidden>private<td>First"
+           + "<tr><td>Recorded<td>0" * (reader.MAX_DEPTH + 1)
+           + "<tfoot><tr><td>Done</table><p>Recorded elsewhere</p>")
+    result = linked_page(raw, "readings", "Recorded", monkeypatch, tmp_path)
+    lines = Path(result["text"]).read_text().splitlines()
+    assert lines[0] == "| First" and lines[-2:] == ["| Done", "Recorded elsewhere"]
+    assert result["matches"][0]["hits"] == reader.MAX_DEPTH + 1
+    assert result["section"]["line_ranges"] == [[1, len(lines) - 1]]
+
+
+def test_merged_cells_keep_their_scope_and_separate_rows_in_excerpt(monkeypatch, tmp_path):
+    raw = ("<table id='prices'><tr><th>Group<th colspan='2'>Rates"
+           "<tr><td rowspan='0'>Plan<td>10<td>20<tr><td>30<td>40</table>")
+    result = linked_page(raw, "prices", "Rates", monkeypatch, tmp_path)
+    excerpt = result["matches"][0]["passages"][0]["excerpt"]
+    assert excerpt.splitlines() == [
+        "| Group | [colspan=2] Rates", "| [rowspan=0] Plan | 10 | 20", "| 30 | 40",
+    ]
