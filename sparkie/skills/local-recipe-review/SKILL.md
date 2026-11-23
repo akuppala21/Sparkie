@@ -58,6 +58,7 @@ allocated CPU servers and prompt-cache comparisons as well as GPU serving.
    bundled helper in the native terminal as your first lookup:
    `python3 ~/.hermes/skills/local-recipe-review/scripts/read_github_readme.py 'OWNER/REPO' --ref 'TAG-OR-COMMIT'`.
    Pass the requested version exactly. Omit `--ref` for the default branch.
+   If the GitHub owner is unknown, use the same reader with `--search 'PROJECT'` and match the repository before reading it.
    Open the returned `file` with native `read_file` and cite the returned
    `source`. Use the immutable blob link when the exact revision matters.
    If versioned documentation leaves an answer open, pass `--path 'path/to/file'`

@@ -99,6 +99,34 @@ def test_invalid_source_path_never_reaches_the_network(tmp_path, monkeypatch, na
     assert not calls and not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize('names,partial', [(['a/tool', 'b/tool'], False), ([], False), ([], True)])
+def test_repository_search_keeps_matches_and_incomplete_status(monkeypatch, names, partial):
+    calls = mock_api(monkeypatch, {'items': [{'full_name': name} for name in names],
+                                   'total_count': len(names), 'incomplete_results': partial})
+    assert reader.search_repositories('tool') == {'repositories': names, 'total_count': len(names),
+                                                  'incomplete_results': partial}
+    assert len(calls) == 1 and not calls[0].get_header('Authorization')
+    assert calls[0].full_url == 'https://api.github.com/search/repositories?q=tool+in%3Aname&per_page=5'
+
+
+@pytest.mark.parametrize('payload', [
+    {'message': 'API rate limit exceeded'},
+    {'total_count': 2, 'items': [], 'incomplete_results': False},
+    {'total_count': 1, 'items': [{'full_name': 'https://example.org/o/p'}], 'incomplete_results': False},
+])
+def test_invalid_search_response_is_never_a_clean_empty_result(monkeypatch, payload):
+    mock_api(monkeypatch, payload)
+    with pytest.raises(ValueError):
+        reader.search_repositories('tool')
+
+
+def test_repository_search_sends_only_a_project_name(monkeypatch):
+    calls = mock_api(monkeypatch, {})
+    with pytest.raises(ValueError):
+        reader.search_repositories('project owner:somebody')
+    assert not calls
+
+
 @pytest.mark.parametrize('metadata', [
     [METADATA],
     METADATA | {'path': 'another.ts', 'html_url': 'https://github.com/example/tool/blob/v2/src/test.ts'},

@@ -17,6 +17,38 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def github_json(url):
+    request = Request(url, headers={'Accept': 'application/vnd.github+json',
+                                    'User-Agent': 'Sparkie-public-readme', 'X-GitHub-Api-Version': '2022-11-28'})
+    with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=15) as response:
+        if response.headers.get_content_type() != 'application/json':
+            raise ValueError('GitHub did not return JSON metadata.')
+        raw = response.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError('GitHub metadata exceeds the download limit.')
+    return json.loads(raw)
+
+
+def search_repositories(project):
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', project) or project in ('.', '..'):
+        raise ValueError('Expected one public repository name.')
+    query = urlencode({'q': project + ' in:name', 'per_page': 5})
+    data = github_json('https://api.github.com/search/repositories?' + query)
+    if (not isinstance(data, dict) or not isinstance(data.get('items'), list)
+            or type(data.get('total_count')) is not int or data['total_count'] < len(data['items'])
+            or not isinstance(data.get('incomplete_results'), bool) or len(data['items']) > 5
+            or (data['total_count'] and not data['items'] and not data['incomplete_results'])):
+        raise ValueError('GitHub did not supply repository search results.')
+    names = []
+    for item in data['items']:
+        name = item.get('full_name') if isinstance(item, dict) else None
+        if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', name)
+                or name.split('/')[1] in ('.', '..')):
+            raise ValueError('GitHub returned an invalid repository name.')
+        names.append(name)
+    return {'repositories': names, 'total_count': data['total_count'], 'incomplete_results': data['incomplete_results']}
+
+
 def save_readme(repository, ref, directory, *, path=None):
     if not re.fullmatch(r'[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+', repository) or repository.split('/')[1] in ('.', '..'):
         raise ValueError('Expected a public GitHub repository in OWNER/REPO form.')
@@ -30,15 +62,7 @@ def save_readme(repository, ref, directory, *, path=None):
             raise ValueError('Expected a file path relative to the repository root.')
         route = '/contents/' + quote(path, safe='/')
     url = api + route + ('?' + urlencode({'ref': ref}) if ref else '')
-    request = Request(url, headers={'Accept': 'application/vnd.github+json',
-                                    'User-Agent': 'Sparkie-public-readme', 'X-GitHub-Api-Version': '2022-11-28'})
-    with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=15) as response:
-        if response.headers.get_content_type() != 'application/json':
-            raise ValueError('GitHub did not return file metadata.')
-        raw = response.read(2 * 1024 * 1024 + 1)
-    if len(raw) > 2 * 1024 * 1024:
-        raise ValueError('File metadata exceeds the download limit.')
-    data = json.loads(raw)
+    data = github_json(url)
     if (not isinstance(data, dict) or data.get('type') != 'file' or data.get('encoding') != 'base64'
             or not isinstance(data.get('content'), str) or not isinstance(data.get('html_url'), str)):
         raise ValueError('GitHub did not supply a complete text file.')
@@ -63,18 +87,26 @@ def save_readme(repository, ref, directory, *, path=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('repository')
+    choice = parser.add_mutually_exclusive_group(required=True)
+    choice.add_argument('repository', nargs='?', help='Public repository in OWNER/REPO form.')
+    choice.add_argument('--search', metavar='PROJECT', help='Look up a public project name when its GitHub owner is unknown.')
     parser.add_argument('--ref')
     parser.add_argument('--path', help='Read this repository-relative source or test file instead of the README.')
     args = parser.parse_args()
+    if args.search is not None and (args.ref is not None or args.path is not None):
+        parser.error('--ref and --path apply to a repository file read.')
+    operation = 'search GitHub repositories' if args.search is not None else 'read GitHub file'
     try:
-        result = save_readme(args.repository, args.ref, '/workspace', path=args.path)
+        if args.search is not None:
+            result = search_repositories(args.search)
+        else:
+            result = save_readme(args.repository, args.ref, '/workspace', path=args.path)
     except HTTPError as exc:
         exc.close()
-        print(f'Could not read GitHub file: HTTP {exc.code} ({exc.reason}).', file=sys.stderr)
+        print(f'Could not {operation}: HTTP {exc.code} ({exc.reason}).', file=sys.stderr)
         return 1
     except (ValueError, OSError, URLError) as exc:
-        print(f'Could not read GitHub file: {exc}', file=sys.stderr)
+        print(f'Could not {operation}: {exc}', file=sys.stderr)
         return 1
     print(json.dumps(result))
     return 0
