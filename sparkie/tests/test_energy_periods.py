@@ -100,3 +100,12 @@ def test_invalid_rate_does_not_create_storage(tmp_path, value):
 def test_bad_or_future_period_is_refused(period, selected):
     with pytest.raises(ValueError):
         read_energy(period=period, selected=selected, now='2026-11-19T00:00:00Z')
+
+
+@pytest.mark.parametrize('field', ['selected', 'month'])
+def test_current_period_requires_an_omitted_selector(tmp_path, field):
+    missing_database = tmp_path / 'missing.sqlite'
+    now = '2026-11-19T12:00:00Z'
+    assert read_energy(path=missing_database, now=now)['selected'] == '2026-11'
+    with pytest.raises(ValueError, match='Choose a valid'):
+        read_energy(path=missing_database, now=now, **{field: ''})

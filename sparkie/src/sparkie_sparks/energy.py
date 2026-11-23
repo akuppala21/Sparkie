@@ -112,7 +112,8 @@ def read_energy(*, path=None, month=None, period='month', selected=None, rate=No
     if period not in ('day', 'week', 'month', 'year') or month is not None and (period != 'month' or selected is not None and selected != month):
         raise ValueError('Choose one electricity period.')
     current = _key(period, now)
-    selected = selected or month or current
+    if selected is None:
+        selected = month if month is not None else current
     start, end = _period(selected, now, period)
     current_month = _key('month', now)
     unavailable = {'available': False, 'month': selected if period == 'month' else current_month, 'months': [current_month],

@@ -1,0 +1,221 @@
+{
+  "candidate_sha256": "134744d03fec47a3041e8e6455a2b12c4ee85278dc7213661806dbd71431d58c",
+  "source_changes": {
+    "sparkie/src/sparkie_sparks/energy.py": {
+      "intent1": "14cd87f592919156eb8e5e2c3adcd87e86117b5f37bbb8ab52f2a0804d1e7ad0",
+      "workspace_and_tested": "c69e7f39992b615dce1b9ba26bdde4023355960c09c2831e369a8df79900324e"
+    },
+    "sparkie/tests/test_energy_periods.py": {
+      "intent1": "4eb89e1a030a620ee5db19e1a12a7fcdcd0d0f5b3423c930d0e22b3ab9a9e72a",
+      "workspace_and_tested": "25b2c28fd5a83f90b33b555d1d0baf7b1b812c899ab0ba92d0dc478c7b452db6"
+    }
+  },
+  "extension_source_overlays": 0,
+  "affected_testcases": 78,
+  "pytest_seconds": 4.235,
+  "consumer_observations": {
+    "day_omitted": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-11-22",
+      "http_selected": "2026-11-22"
+    },
+    "day_explicit_current": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-11-22",
+      "http_selected": "2026-11-22"
+    },
+    "day_empty": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "day_history": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025-02-12",
+      "http_selected": "2025-02-12"
+    },
+    "week_omitted": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-W47",
+      "http_selected": "2026-W47"
+    },
+    "week_explicit_current": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-W47",
+      "http_selected": "2026-W47"
+    },
+    "week_empty": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "week_history": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025-W07",
+      "http_selected": "2025-W07"
+    },
+    "month_omitted": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-11",
+      "http_selected": "2026-11"
+    },
+    "month_explicit_current": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026-11",
+      "http_selected": "2026-11"
+    },
+    "month_empty": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "month_history": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025-02",
+      "http_selected": "2025-02"
+    },
+    "year_omitted": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026",
+      "http_selected": "2026"
+    },
+    "year_explicit_current": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2026",
+      "http_selected": "2026"
+    },
+    "year_empty": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "year_history": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025",
+      "http_selected": "2025"
+    },
+    "legacy_empty": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "legacy_valid": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025-02",
+      "http_selected": "2025-02"
+    },
+    "matching_alias": {
+      "native": true,
+      "web": true,
+      "http_status": 200,
+      "tool_selected": "2025-02",
+      "http_selected": "2025-02"
+    },
+    "conflicting_alias": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "conflicting_period": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "invalid_actual_date": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "space_is_not_omission": {
+      "native": true,
+      "web": true,
+      "http_status": 400,
+      "tool_selected": null,
+      "http_selected": null
+    },
+    "database_unchanged": {
+      "native_and_web": true
+    }
+  },
+  "browser": {
+    "scope": "Native Hermes login, read-only electricity estimates, and desktop/phone Sparks panel. Electricity uses explicit test readings; no rate writes, fleet mutations or live settings.",
+    "checks": [
+      "Unauthenticated fleet and energy reads refused by native Hermes",
+      "Day, ISO week, month and year selectors use their own recorded history inside the same card",
+      "Historical estimated cost recalculates immediately without API calls or writes and preserves rate across periods",
+      "Amount-only preset estimates price any recorded period without a Save button, rate history or persisted rate",
+      "Native username/password login reaches the Sparks tab",
+      "Authenticated fleet and electricity APIs return observations",
+      "Historical month selection changes the measured total inside the electricity card",
+      "Physical network readings show link state/speed without guessing a cable peer",
+      "Explicit workload fixture opens details; supporting services have a separate group",
+      "Phone custom rate recalculates immediately with six-decimal precision and no writes",
+      "Home opens the read-only Recipes page with selected and previous trial records at desktop and phone widths",
+      "390px phone layout fits; refresh and month selection remain usable"
+    ],
+    "energy_queries": [
+      "?period=month&profile=default",
+      "?period=month&profile=default",
+      "?period=month&selected=2026-10&profile=default",
+      "?period=day&profile=default",
+      "?period=day&selected=2026-10-15&profile=default",
+      "?period=week&profile=default",
+      "?period=week&selected=2026-W42&profile=default",
+      "?period=year&profile=default",
+      "?period=year&selected=2025&profile=default",
+      "?period=month&profile=default",
+      "?period=month&selected=2026-10&profile=default",
+      "?period=day&profile=default",
+      "?period=month&profile=default",
+      "?period=month&selected=2026-10&profile=default",
+      "?period=month&selected=2026-10&profile=default",
+      "?period=month&selected=2026-10&profile=default",
+      "?period=month&selected=2026-11&profile=default",
+      "?period=month&selected=2026-10&profile=default"
+    ],
+    "passed": true
+  },
+  "scope": "Isolated, authenticated native Hermes dashboard with synthetic meter history. Compute Spark 2. No live deployment or power changes."
+}

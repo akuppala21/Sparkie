@@ -1,0 +1,7 @@
+# Handling an empty electricity period
+
+The electricity dashboard and native tool accepted an empty calendar selector as a request for the current period. An invalid request could therefore display a plausible energy or cost figure. The correction uses the default period only when the selector is omitted. An explicitly empty period now gives the dashboard an HTTP 400 and the native tool an unavailable response with the validation message. Selecting historical periods and changing the rate continue to use the existing meter data.
+
+The sealed electricity-only candidate passed 78 selected Python tests, 24 checks through its registered tool, HTTP interface and meter database, and 12 browser checks. Chromium exercised the actual authenticated Hermes dashboard at 1440 × 960 and 390 × 844 using synthetic readings. The two new regressions failed against the original code. No source overlay or live install was used. [Results and tested source hashes](qualification.json)
+
+Sparkie also repaired this real defect in an isolated checkout. An independent replay verified its complete proposed patch. Its owner report incorrectly described the native tool as returning HTTP 400 and named the wrong handler path. For the published product correction we selected the smaller, separately reviewed patch and verified it against the same external cases. [Results and tested source hashes](qualification.json)
