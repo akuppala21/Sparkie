@@ -98,6 +98,14 @@ which the independent replay ran. These are targeted checks for changes to the
 brain or its instructions. Ordinary dashboard and electricity edits keep their
 existing selection.
 
+For a focused replay in the reserved compute test environment, run
+`python tests/behavior/native_acceptance.py --case failed_stop --out <fresh-directory>`
+from the extension root. Repeat `--case` to combine ordinary chat cases. A recall
+case first saves and corrects the test preference in the isolated profile. The
+receipt lists the cases selected and the cases actually completed. Add
+`--prepare-only` to inspect that selection without calling the model. A single
+replay diagnoses a failure. Qualification still uses the complete compact evaluation.
+
 ## Use the Sparks efficiently
 
 Run application tests on Sparks 2–4 during development. Start with one compute Spark for a

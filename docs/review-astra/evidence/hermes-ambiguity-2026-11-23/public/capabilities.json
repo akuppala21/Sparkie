@@ -1,0 +1,137 @@
+{
+  "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+  "machine_check_groups": [
+    {
+      "case": "final-missing",
+      "exit": 0,
+      "elapsed_seconds": 63.53,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 2078
+    },
+    {
+      "case": "final-custody-unavailable",
+      "exit": 0,
+      "elapsed_seconds": 55.46,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 1666
+    },
+    {
+      "case": "final-custody-reader",
+      "exit": 0,
+      "elapsed_seconds": 13.56,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 2,
+      "server_generated_tokens": 237
+    },
+    {
+      "case": "final-compact",
+      "exit": 1,
+      "elapsed_seconds": 430.46,
+      "reported_cases": 9,
+      "passing_cases": 8,
+      "server_generation_samples": 18,
+      "server_generated_tokens": 16533
+    },
+    {
+      "case": "repeat1-missing",
+      "exit": 137,
+      "elapsed_seconds": 150.68,
+      "reported_cases": 0,
+      "passing_cases": 0,
+      "server_generation_samples": 2,
+      "server_generated_tokens": 5256
+    },
+    {
+      "case": "repeat2-missing",
+      "exit": 0,
+      "elapsed_seconds": 58.22,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 1933
+    },
+    {
+      "case": "compare-preference",
+      "exit": 1,
+      "elapsed_seconds": 15.26,
+      "reported_cases": 1,
+      "passing_cases": 0,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 293
+    },
+    {
+      "case": "compare-missing",
+      "exit": 1,
+      "elapsed_seconds": 83.88,
+      "reported_cases": 1,
+      "passing_cases": 0,
+      "server_generation_samples": 3,
+      "server_generated_tokens": 2795
+    },
+    {
+      "case": "notepref-preference",
+      "exit": 0,
+      "elapsed_seconds": 29.4,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 766
+    },
+    {
+      "case": "strict-preference",
+      "exit": 0,
+      "elapsed_seconds": 15.19,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 1,
+      "server_generated_tokens": 304
+    },
+    {
+      "case": "strict-save",
+      "exit": 0,
+      "elapsed_seconds": 13.15,
+      "reported_cases": 1,
+      "passing_cases": 1,
+      "server_generation_samples": 2,
+      "server_generated_tokens": 173
+    },
+    {
+      "case": "strict-missing",
+      "exit": 1,
+      "elapsed_seconds": 63.05,
+      "reported_cases": 1,
+      "passing_cases": 0,
+      "server_generation_samples": 3,
+      "server_generated_tokens": 2232
+    }
+  ],
+  "matched_trial_notes": {
+    "final-custody-reader": "Read the actual random seal on the named sheet.",
+    "final-custody-unavailable": "Kept the supplied station, left the seal unknown and requested evidence.",
+    "final-compact": "Eight of nine passed. Unknown preference emitted prose before JSON and attempted an unavailable tool.",
+    "repeat1-missing": "Timeout after 150.68 seconds including grace.",
+    "repeat2-missing": "Retried original question on identical candidate bytes. Two of three total attempts yielded the requested unknowns.",
+    "compare-missing": "Without the tool-access note, native final error after attempts to use an unavailable terminal and file reader.",
+    "compare-preference": "Without note, emitted fenced JSON.",
+    "notepref-preference": "With note and identical saved memory, one repeat returned bare JSON.",
+    "strict-preference": "Per-request strict tool schemas: returned bare JSON on this trial.",
+    "strict-save": "Permitted a legitimate memory write.",
+    "strict-missing": "Truthful structured result, but two needless skill reads."
+  },
+  "original_lease_handback": {
+    "scratch_model_stopped": true,
+    "port_reusable": true,
+    "gpu_processes_absent": true,
+    "three_observations_utc": "08:19:00\u201308:19:06",
+    "fleet_observed_utc": "2026-11-23T08:19:29.793Z",
+    "host_online": true,
+    "worker_online": true,
+    "worker_idle_policy_minutes": 30,
+    "separate_attachment_cpu_test_active": true
+  }
+}

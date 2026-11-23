@@ -1,0 +1,1 @@
+19:20 incident note. Dune and Larch both retried yesterday. Dune uploads videos for editors; Larch uploads archive copies. Editors must keep receiving new videos. Pausing archive uploads also needs a retention decision from the archive owner; none has been recorded. The log has no per-job retry counts or business-impact assessment.

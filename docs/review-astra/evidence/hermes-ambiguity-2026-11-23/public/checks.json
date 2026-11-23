@@ -1,0 +1,94 @@
+{
+  "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+  "source_table": "69ed74a400f5ceb55b221b4539d438aac9efe716807d1b5989d2797fe4721e4a",
+  "changed_paths": [
+    "sparkie/SOUL.md",
+    "sparkie/plugin/__init__.py",
+    "sparkie/skills/local-recipe-review/SKILL.md",
+    "sparkie/skills/local-recipe-review/references/source-reading.md",
+    "sparkie/skills/maintain-sparkie/SKILL.md",
+    "sparkie/src/sparkie_sparks/turn_capabilities.py",
+    "sparkie/tests/behavior/native_acceptance.py",
+    "sparkie/tests/behavior/native_profile.py",
+    "sparkie/tests/test_check_selection.py",
+    "sparkie/tests/test_native_config.py",
+    "sparkie/tests/test_turn_capabilities.py",
+    "sparkie/tools/checks.py"
+  ],
+  "selected_test_modules": 58,
+  "broad_qualification": false,
+  "assembled_python_checks": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "951",
+    "time": "88.559"
+  },
+  "owner_gate": {
+    "unauthenticated": 401,
+    "wrong_digest": 403,
+    "exact_digest": 200,
+    "replay": 403,
+    "inert_dispatches": 1
+  },
+  "public_source_initial": {
+    "errors": "0",
+    "failures": "6",
+    "skipped": "1",
+    "tests": "951",
+    "time": "52.390"
+  },
+  "public_source_retry": {
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "7",
+    "time": "0.162"
+  },
+  "public_source_unique_tests": 946,
+  "retry_cases": [
+    {
+      "module": "tests.test_application_updates",
+      "case": "test_corrupt_transfer_never_creates_offer",
+      "first": "failure",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_application_updates",
+      "case": "test_existing_partial_or_corrupt_offer_is_not_reported_usable",
+      "first": "failure",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_application_updates",
+      "case": "test_review_transfer_verifies_bytes_and_never_overwrites",
+      "first": "failure",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_application_upgrade.ApplicationUpgrade",
+      "case": "test_real_unix_peer_can_only_inspect_as_the_authorized_controller_pid",
+      "first": "skipped",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_application_upgrade.ApplicationUpgrade",
+      "case": "test_recovery_availability_requires_lock_and_intact_recorded_releases",
+      "first": "failure",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_power_activity",
+      "case": "test_only_own_probe_session_and_verified_native_baseline_can_be_ignored",
+      "first": "failure",
+      "retry": "pass"
+    },
+    {
+      "module": "tests.test_service_ingress_deployment",
+      "case": "test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit",
+      "first": "failure",
+      "retry": "pass"
+    }
+  ],
+  "counting": "The 951 JUnit checks counted 946 unique pytest tests and five subtests. The seven retried tests had no subtests."
+}

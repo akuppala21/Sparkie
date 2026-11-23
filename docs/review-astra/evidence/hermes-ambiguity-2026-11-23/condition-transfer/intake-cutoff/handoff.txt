@@ -1,0 +1,1 @@
+Shift handoff policy credits a handoff when the duty officer receives it. The cutoff was 18:00 local on Friday. The outgoing operator saved their submission at 17:56 Friday. The archive row was written at 18:04 Friday. This export contains the submission and archive write times.

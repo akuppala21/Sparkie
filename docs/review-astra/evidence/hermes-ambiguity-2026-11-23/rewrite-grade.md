@@ -1,0 +1,1 @@
+The owner needs brief, pasteable copy. Preserve 18 invited, 12 replies, 8 opt-ins and the undecided rollout date. Check for newly asserted facts or commitments, unnecessary questions and tool use. This case and grade were frozen before either candidate saw it.

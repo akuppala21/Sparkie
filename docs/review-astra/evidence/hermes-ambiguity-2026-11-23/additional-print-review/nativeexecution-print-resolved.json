@@ -1,0 +1,30 @@
+{
+  "exit": 0,
+  "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+  "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+  "first_text_s": 19.681,
+  "elapsed_s": 23.541,
+  "wire_requests": 3,
+  "tools": [
+    {
+      "name": "terminal",
+      "arguments": "{\"command\": \"pwd && ls -la\"}"
+    },
+    {
+      "name": "read_file",
+      "arguments": "{\"path\": \"/workspace/brief.txt\"}"
+    },
+    {
+      "name": "read_file",
+      "arguments": "{\"path\": \"/workspace/quotes.txt\"}"
+    }
+  ],
+  "native_execution_guidance_verified": true,
+  "source_files": [
+    "brief.txt",
+    "quotes.txt"
+  ],
+  "private_receipt_sha256": "0a9f584e1d1d7200ab2e17d3a22a24fa1f597c6e2d6235458c182ab9ab1335b3",
+  "leftover_sandboxes": []
+}

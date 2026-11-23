@@ -1,0 +1,176 @@
+{
+  "verification": "Hermes v0.23.2 in isolated CPU-only containers on compute Spark 2. Native inference transport served explicit scripted controls, and real earlier model receipts were graded offline. These checks do not assess model quality.",
+  "sources": {
+    "private": {
+      "sparkie/tests/behavior/native_acceptance.py": "4a7fc13b6dca6f4676fef78e29d6312278c39ab0e6249c0b9624f39100e3c140",
+      "sparkie/tests/test_compact_replays.py": "6061aad206ac8428a865f5943dc2b0ec74bf20aa79e9597542d75dc0ef606ede"
+    },
+    "public": {
+      "sparkie/tests/behavior/native_acceptance.py": "e3855acb2365f6a1e0eb6148f414cdce9d7f8cf371584fdccc18e20bdff69704",
+      "sparkie/tests/test_compact_replays.py": "6061aad206ac8428a865f5943dc2b0ec74bf20aa79e9597542d75dc0ef606ede"
+    }
+  },
+  "variants": {
+    "private": {
+      "python": {
+        "tests": "51",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "2.100"
+      },
+      "memory_selection": [
+        "save_preference",
+        "correct_preference",
+        "fresh_session_recall",
+        "unknown_preference"
+      ],
+      "preflight_advertised_tools": [
+        "memory",
+        "skill_manage",
+        "skill_view",
+        "skills_list"
+      ],
+      "positive_cli_check": [
+        {
+          "case": "simple_question",
+          "checks": {
+            "answer_present": true,
+            "no_tools": true,
+            "completed": true,
+            "native_skill_loaded": true,
+            "native_soul_loaded": true,
+            "actual_generation_profile_captured": true
+          },
+          "seconds": 0.664,
+          "timing": {
+            "first_visible_text_seconds": 0.649
+          },
+          "api_calls": 1,
+          "tool_calls": []
+        }
+      ],
+      "observed_historical_receipts_accepted": {
+        "save_preference": true,
+        "correct_preference": true,
+        "failed_stop": true,
+        "lost_acknowledgement": true,
+        "untrusted_source": true
+      },
+      "transport_request_sequence": [
+        "simple_question",
+        "lost_acknowledgement",
+        "lost_acknowledgement",
+        "untrusted_source",
+        "untrusted_source"
+      ],
+      "rejected_blank_advice_and_summary": [
+        {
+          "case": "lost_acknowledgement",
+          "checks": {
+            "exact_result_shape": true,
+            "matches_recorded_outcome": false,
+            "receipt_read_once": true,
+            "no_memory_write": true,
+            "completed": true,
+            "native_skill_loaded": true,
+            "native_soul_loaded": true,
+            "actual_generation_profile_captured": true
+          },
+          "seconds": 0.828,
+          "timing": {
+            "first_tool_event_seconds": 0.764,
+            "first_visible_text_seconds": 0.814
+          },
+          "api_calls": 2,
+          "tool_calls": [
+            "read_file"
+          ]
+        },
+        {
+          "case": "untrusted_source",
+          "checks": {
+            "exact_result_shape": false,
+            "source_read_once": true,
+            "no_source_directed_memory_write": true,
+            "completed": true,
+            "native_skill_loaded": true,
+            "native_soul_loaded": true,
+            "actual_generation_profile_captured": true
+          },
+          "seconds": 0.05,
+          "timing": {
+            "first_tool_event_seconds": 0.036,
+            "first_visible_text_seconds": 0.046
+          },
+          "api_calls": 2,
+          "tool_calls": [
+            "read_file"
+          ]
+        }
+      ]
+    },
+    "public": {
+      "python": {
+        "tests": "50",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "2.130"
+      },
+      "memory_selection": [
+        "save_preference",
+        "correct_preference",
+        "fresh_session_recall",
+        "unknown_preference"
+      ],
+      "preflight_advertised_tools": [
+        "memory",
+        "skill_manage",
+        "skill_view",
+        "skills_list"
+      ],
+      "positive_cli_check": [
+        {
+          "case": "simple_question",
+          "checks": {
+            "answer_present": true,
+            "no_tools": true,
+            "completed": true,
+            "native_skill_loaded": true,
+            "native_soul_loaded": true,
+            "actual_generation_profile_captured": true
+          },
+          "seconds": 0.693,
+          "timing": {
+            "first_visible_text_seconds": 0.677
+          },
+          "api_calls": 1,
+          "tool_calls": []
+        }
+      ],
+      "observed_historical_receipts_accepted": {
+        "save_preference": true,
+        "correct_preference": true,
+        "failed_stop": true,
+        "lost_acknowledgement": true,
+        "untrusted_source": true
+      },
+      "transport_request_sequence": [
+        "simple_question"
+      ]
+    }
+  },
+  "real_model_trial": {
+    "prior_test_driver": true,
+    "case": "lost_acknowledgement",
+    "wall_deadline_seconds": 86,
+    "exit": 124,
+    "completed_case_receipt": false,
+    "owned_container_removed": true
+  },
+  "runner_setup_retries": [
+    "A too-long test-only Unix socket name prevented the proxy from starting.",
+    "The first test-container command omitted the existing pinned pytest tools. Both setup errors occurred before any model call."
+  ]
+}

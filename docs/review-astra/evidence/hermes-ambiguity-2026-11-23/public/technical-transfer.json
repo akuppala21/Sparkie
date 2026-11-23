@@ -1,0 +1,110 @@
+{
+  "manifest": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+  "control_skill_sha256": "7cae8d697ccb5d4f39ab3c1195aedeef077a8ddde1d0e3f8c8e7137038788180",
+  "experimental_profile_skill_sha256": "b6bc79d97c39285efb08ad1ed88b7c4127bfda85e3fedf971db1151b618364f3",
+  "method": "One isolated profile-file change; sealed model, package, global instructions, reference, tools and sampling identical. The PostgreSQL control was the original exact recorded run. A different reviewer froze the worker-TLS question before the experimental author saw it. Single stochastic attempt per cell.",
+  "result": "Both complete answers failed in each arm. Public-source research did not establish which library a private running process had loaded. No promotion of this experimental profile.",
+  "upstream_interface": "A Spark 2 CPU probe confirmed that registering pre_verify did not call it for an ordinary no-edit answer. Qualifying workspace edits could trigger a bounded continuation. Native /review was tested independently as an explicit opt-in.",
+  "cases": [
+    {
+      "case": "pg-active-limit/control",
+      "question": "I'm updating an incident note for our west PostgreSQL 16 primary. The support bundle shows one field from pg_settings for max_connections: boot_val = 100. I can't give you a database connection. Can I write that west is currently using 100? What's the smallest check that would settle it?\n\nMy notes from the PostgreSQL 16 pg_settings reference: boot_val is what PostgreSQL assumes on startup unless the parameter was set another way. The setting column reports its current value. The same view also has pending_restart for a config change that will need a restart, and sourcefile for the configuration filename where applicable. Source: https://www.postgresql.org/docs/16/view-pg-settings.html\n",
+      "answer": "No. `boot_val` is the compiled-in startup default; it does not report what the server is actually running. The current value lives in the `setting` column of the same row. For `max_connections` specifically, the value can differ from `boot_val` if anyone set it via `postgresql.conf`, `ALTER SYSTEM` (written to `postgresql.auto.conf`), or a postmaster command-line flag.\n\nYou can safely write \"west is currently using 100\" only after confirming nothing overrides that default.\n\nSmallest check without a live connection, on the west primary host:\n\n1. `grep -i max_connections postgresql.auto.conf` in the data directory. `ALTER SYSTEM` writes here, and it takes precedence over `postgresql.conf`.\n2. `grep -i max_connections postgresql.conf` in the data directory (or wherever `data_directory` points).\n3. Check the postmaster command line: `ps -ef | grep postmaster` for a `-c max_connections=` flag.\n\nIf all three come back empty, the current value equals `boot_val` (100) and you can state it. If any of them set a different value, use that value instead.\n\nThe `pending_restart` and `sourcefile` columns you noted are relevant only after you can query the view: `pending_restart` would tell you whether a change to `max_connections` is queued but not yet applied, and `sourcefile` would name which file supplied the active value. Neither is available to you right now without a connection.",
+      "answer_sha256": "63aef65805f83a173c68d613a312c8d9559b19e8e3b27591011cc9a89bbf9278",
+      "grade": "Fail. Correctly said the startup default does not prove the live value. Wrongly claimed two file greps and a process listing prove it. They miss includes and unapplied changes. An authorized live SHOW max_connections on west is decisive.",
+      "wall_seconds": 43.457,
+      "first_text_seconds": 34.083,
+      "provider_calls": 1,
+      "tool_calls": [],
+      "native_usage": {
+        "session_input_tokens": 10221,
+        "session_output_tokens": 1349,
+        "session_prompt_tokens": 10221,
+        "session_completion_tokens": 1349
+      },
+      "all_skills_attested": true,
+      "first_system_text_tokens": [
+        2937
+      ],
+      "long_reference_in_tool_result": false
+    },
+    {
+      "case": "pg-active-limit/experimental",
+      "question": "I'm updating an incident note for our west PostgreSQL 16 primary. The support bundle shows one field from pg_settings for max_connections: boot_val = 100. I can't give you a database connection. Can I write that west is currently using 100? What's the smallest check that would settle it?\n\nMy notes from the PostgreSQL 16 pg_settings reference: boot_val is what PostgreSQL assumes on startup unless the parameter was set another way. The setting column reports its current value. The same view also has pending_restart for a config change that will need a restart, and sourcefile for the configuration filename where applicable. Source: https://www.postgresql.org/docs/16/view-pg-settings.html\n",
+      "answer": "No — `boot_val = 100` alone doesn't settle it. `boot_val` is the built-in fallback; the value PostgreSQL is actually running with is in the `setting` column of the same row. `boot_val` only equals `setting` when nothing overrode the default.\n\nSmallest check: read the `setting` column from the `max_connections` row in that same `pg_settings` dump. It's the current value, full stop. If the support bundle captured the whole row (not just one column), you already have it.\n\nTwo corroborating fields on that row make the note more defensible:\n\n- `source` — if it says `default`, the parameter was never overridden, so `setting` necessarily equals `boot_val` and you can write \"currently 100\" with confidence. If it says `file`, `command line`, etc., then `setting` is the value that matters and it may differ from 100.\n- `pending_restart` — if true, `setting` is still the live value, but a different value is staged in the config file and will take effect on the next restart. Worth a footnote in the incident note so nobody is surprised.\n\nSo: grab `setting`, `source`, and `pending_restart` from that one row. `setting` answers the question; the other two tell you whether \"100\" is stable or about to change.",
+      "answer_sha256": "8c4257f6cbef9f5c28a6bb7220c0a917ae67901d5888a35e8c267de040ee417c",
+      "grade": "Fail. Removed unsafe file-grep advice but treated an undated archive as proof of present state and claimed equality with the default implies no override. An explicit setting can equal the default.",
+      "wall_seconds": 56.17,
+      "first_text_seconds": 47.721,
+      "provider_calls": 1,
+      "tool_calls": [],
+      "native_usage": {
+        "session_input_tokens": 10249,
+        "session_output_tokens": 1819,
+        "session_prompt_tokens": 10249,
+        "session_completion_tokens": 1819
+      },
+      "all_skills_attested": true,
+      "first_system_text_tokens": [
+        2965
+      ],
+      "long_reference_in_tool_result": false
+    },
+    {
+      "case": "worker-tls/control",
+      "question": "I'm filling in the TLS inventory for a long-running CPython 3.12 billing worker. Its outbound connection uses the standard-library ssl module. A colleague ran /usr/bin/openssl version in the diagnostics sidecar and got OpenSSL 3.0.15. Both images came from the same base-image family. Can I record 3.0.15 as the library backing TLS in that running worker? What's the smallest observation that would settle the entry? I can't give you access to the process.\n",
+      "answer": "Short answer: no, don't record 3.0.15 as settled. Put it on the entry as \"3.0.15 reported via sidecar openssl CLI, unconfirmed for the worker\" (or \"3.0.x, exact version unconfirmed\") until you have the one observation below.\n\nWhy the sidecar read doesn't settle it\n- Different container. The sidecar's `openssl` is the sidecar image's CLI binary. \"Same base-image family\" is not the same image — patch levels drift inside a family, so the worker's libssl could be 3.0.14, 3.0.15, 3.0.16, etc.\n- CLI vs library. `openssl version` reports the CLI's own link. The worker's TLS is backed by the libssl.so/libcrypto.so the CPython process is linked to. They normally track, but that's not a logical guarantee.\n- Load-time binding. A running process is bound to whatever libssl was in its filesystem when it started. Even the correct image only settles it if the worker actually launched from that image's filesystem and its libssl hasn't been overlaid or hot-upgraded since.\n\nSmallest observation that settles it (no process access needed)\n- Exec into the worker's own runtime and run the worker's own interpreter:\n\n      python3 -c \"import ssl; print(ssl.OPENSSL_VERSION)\"\n\n  This prints the version of libcrypto the interpreter is actually linked to — i.e. the library backing TLS in that worker. If the worker runs under a specific venv/interpreter, use that one, not the base python. `ssl.OPENSSL_VERSION` is exactly the \"what OpenSSL backs this process\" value; add `ssl.OPENSSL_VERSION_NUMBER` if you want the numeric form too. This doesn't touch the running process — it just runs the worker's python in the worker's runtime.\n\nIf you can't even exec into the worker container\n- Take the worker container's exact image reference (with digest) from the orchestrator, e.g.\n      kubectl get pod <pod> -o jsonpath='{.spec.containers[?(@.name==\"worker\")].image}'\n- Confirm the worker launched from that image's filesystem and its libssl wasn't overlaid or upgraded in place since start.\n- Then that image's libssl version is the settled value — read it by `openssl version` in a throwaway container from that same digest, or from the image's package manifest. (Running the CLI in a same-digest container is decisive for a normally-started worker; the only residual assumption is no libssl overlay on the running container.)\n\nGround truth, only if you later get process access\n- Grep `libssl` in `/proc/<pid>/maps` to see the exact .so (and version path) the running process actually loaded. That's the ultimate check, but you don't have it now.\n\nSo the one-line settlement: record `ssl.OPENSSL_VERSION` from the worker's own interpreter on the entry. Until you have that (or a same-digest image plus no-overlay confirmation), keep the entry unconfirmed — the sidecar's 3.0.15 is consistent with it, just not proof of it.",
+      "answer_sha256": "3c6f6e04d981eac83a16e1754873b42d1ac19697e101640b3ae25c2d1a4696f1",
+      "grade": "Fail. Correctly rejected a sidecar CLI as proof and named ssl.OPENSSL_VERSION. Proposed a fresh second interpreter, a same-image CLI/package manifest, or a maps pathname as decisive for the already-running worker. Those do not establish the exact version that process loaded. Also permitted recording unverified 3.0.x.",
+      "wall_seconds": 153.155,
+      "first_text_seconds": 143.164,
+      "provider_calls": 1,
+      "tool_calls": [],
+      "native_usage": {
+        "session_input_tokens": 10180,
+        "session_output_tokens": 4741,
+        "session_prompt_tokens": 10180,
+        "session_completion_tokens": 4741
+      },
+      "all_skills_attested": true,
+      "first_system_text_tokens": [
+        2938
+      ],
+      "long_reference_in_tool_result": false
+    },
+    {
+      "case": "worker-tls/experimental",
+      "question": "I'm filling in the TLS inventory for a long-running CPython 3.12 billing worker. Its outbound connection uses the standard-library ssl module. A colleague ran /usr/bin/openssl version in the diagnostics sidecar and got OpenSSL 3.0.15. Both images came from the same base-image family. Can I record 3.0.15 as the library backing TLS in that running worker? What's the smallest observation that would settle the entry? I can't give you access to the process.\n",
+      "answer": "Short answer: No — don't record 3.0.15 on the strength of that sidecar read alone. It's a reasonable prior, not a settled value.\n\nWhy the sidecar read doesn't settle it\nThe `/usr/bin/openssl version` in the sidecar reports the OpenSSL that *that CLI binary* links to at runtime. It's a proxy for the worker's TLS library only if the worker's Python process loads the same libssl.so. \"Same base-image family\" does not establish that. The worker's TLS is backed by the libssl/libcrypto that its *Python process* loads, resolved by that process's own linker chain: the interpreter binary's RPATH/RUNPATH, then LD_LIBRARY_PATH, then the ld.so cache. Each of these can point at a different .so than the sidecar's CLI:\n- a different image tag (family != identical build)\n- a vendored/bundled OpenSSL baked into the interpreter's RPATH (e.g. /opt, /usr/local/ssl)\n- a runtime LD_LIBRARY_PATH set by the entrypoint or a conda env\n- a conda/pyenv Python carrying its own OpenSSL\n- a statically linked OpenSSL build\n- a newer/patched libssl.so.3 present in the worker image but not the sidecar's\n\nSmallest observation that settles the entry\nThe OpenSSL version the worker's own runtime reports for its *loaded* library. In the worker's environment (the exact worker image + the same entrypoint/env, so any LD_LIBRARY_PATH or conda activate is reproduced):\n\n    python3.12 -c \"import ssl; print(ssl.OPENSSL_VERSION, ssl.OPENSSL_VERSION_NUMBER)\"\n\nBoth of those are reads of the loaded libcrypto, not the build-time headers:\n- ssl.OPENSSL_VERSION        = OpenSSL_version(OPENSSL_VERSION)   [string, from the running libcrypto]\n- ssl.OPENSSL_VERSION_NUMBER = OpenSSL_version_num()             [number, from the running libcrypto]\n\nCPython's Modules/_ssl.c sets exactly these and even comments it: \"SSLeay() gives us the version of the library linked against, which could be different from the headers version.\" So that one-liner is the loaded-library read — i.e., the actual library backing TLS in that process.\n\nIf it prints OpenSSL 3.0.15, record 3.0.15. Otherwise, record what it prints. You do not need access to the long-running process to get this: run a fresh container of the exact worker image with the same env, or read it from the worker's startup/health log if the framework emits the version.\n\nUseful cross-check for the inventory\nssl.OPENSSL_API_VERSION_INFO (alias ssl._OPENSSL_API_VERSION) is the *build-time* header version. If the runtime ssl.OPENSSL_VERSION differs from it, the process's loaded .so differs from what Python was compiled against — flag that on the entry rather than assuming they match.\n\nIf you truly can't run anything in the worker env\nThe next-smallest settling observation is to prove both sides read the same file:\n\n    ldd <worker's python3.12>  | grep -E 'libssl|libcrypto'\n    ldd /usr/bin/openssl       | grep -E 'libssl|libcrypto'\n\nand confirm both resolve to the same libssl.so/libcrypto.so path *and* the same build; that path's version is then the answer. But the one-liner is the smallest, and it observes the worker's actual runtime choice instead of an image-level inference.\n\nBottom line: treat 3.0.15 as unverified until the in-worker ssl read says so.\n\nSources:\n- CPython Modules/_ssl.c (where ssl.OPENSSL_VERSION / _NUMBER are set from OpenSSL_version / OpenSSL_version_num): https://github.com/python/cpython/blob/main/Modules/_ssl.c\n- Python ssl docs: https://docs.python.org/3/library/ssl.html",
+      "answer_sha256": "0cd0726e3be236cc8347eeaab97273a2c0c67fab85cbd4166ef6f5c84e6a2c25",
+      "grade": "Fail. Named the appropriate ssl attribute, but said a new container and matching environment could establish the existing worker value. Proposed running ldd on the interpreter and sidecar CLI, mixed RPATH and RUNPATH ordering, and named a nonexistent CPython 3.12 ssl.OPENSSL_API_VERSION_INFO alias. Its source was the current CPython main branch. An observation from the existing process, or a trustworthy record tied to its current instance, settles the value; otherwise it remains unknown.",
+      "wall_seconds": 319.021,
+      "first_text_seconds": 162.048,
+      "provider_calls": 4,
+      "tool_calls": [
+        "web_search",
+        "web_search",
+        "web_search",
+        "terminal",
+        "terminal"
+      ],
+      "native_usage": {
+        "session_input_tokens": 17406,
+        "session_output_tokens": 10319,
+        "session_prompt_tokens": 60862,
+        "session_completion_tokens": 10319
+      },
+      "all_skills_attested": true,
+      "first_system_text_tokens": [
+        2966
+      ],
+      "long_reference_in_tool_result": false
+    }
+  ],
+  "sources": [
+    "https://docs.python.org/3.12/library/ssl.html#ssl.OPENSSL_VERSION",
+    "https://github.com/python/cpython/blob/3.12/Lib/ssl.py",
+    "https://man7.org/linux/man-pages/man8/ld.so.8.html",
+    "https://www.postgresql.org/docs/16/view-pg-settings.html"
+  ]
+}

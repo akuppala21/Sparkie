@@ -1,0 +1,300 @@
+{
+  "ambiguity": {
+    "draft": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Turn this into something I can paste into our team chat. “The demo moved from Tuesday to Thursday. The room and start time stay the same.”\n",
+      "answer": "Here's a ready-to-paste version:\n\n> Heads up: our demo has moved from Tuesday to Thursday. Same room, same start time — just a two-day shift. Everything else stays as planned.\n\nIf you want it shorter:\n\n> Demo moved from Tuesday to Thursday. Room and start time unchanged.\n\nWant me to add a specific date or time so there's no ambiguity?",
+      "first_text_s": 10.757,
+      "elapsed_s": 13.266,
+      "wire_requests": 1,
+      "native_execution_guidance_verified": null,
+      "source_files": [],
+      "private_receipt_sha256": "e8c8250614f67f38499d048df670b7c87b1004aeb363df511bd782192f5f3292",
+      "exit": 0,
+      "tools_called": [],
+      "sandboxes_absent_after": true
+    },
+    "print-resolved": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Reserve Run Cedar.\n\nReasoning:\n- Brief requires: minimum 240 archival prints, delivered by August 12, and the lowest total invoice that meets that signed minimum.\n- Cedar: 240 prints, ready Aug 12, $864.\n- Birch: 300 prints, ready Aug 12, $900.\n\nBoth meet the 240-print minimum and the Aug 12 delivery date, both use the approved paper, and both include delivery. Cedar is the lower invoice ($864 vs $900), so it is the correct choice under the brief.\n\nNext action: book Run Cedar before the booking window closes (the quote notes booking is final). You'll walk into the exhibition with exactly the 240 the brief signed for and $36 saved versus Birch.",
+      "first_text_s": 23.452,
+      "elapsed_s": 28.155,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "b324209b740325d59deb937e6cdf67bf301de849f9cb6a243d3831287b12cbb1",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    },
+    "print-unresolved": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Both runs meet the brief's hard requirements: at least 240 archival prints, delivered by August 12, approved paper, delivery included. The choice comes down to the organizer's undecided priority:\n\n- Minimize the total invoice: Run Cedar — 240 prints, $864 total ($3.60 each).\n- Prioritize extra copies for walk-ins: Run Birch — 300 prints (60 extras), $900 total ($3.00 each). The 60 extra copies cost only $36 in total, and Birch is actually cheaper per print.\n\nRecommendation: book Birch, unless the organizer is firmly set on minimizing the invoice. For $36 more you get 60 extra walk-in copies at a lower unit price, so Cedar only wins if the $36 saving matters more than the 60 copies.\n\nNext step: confirm which priority the organizer picks, then book immediately — booking is final.",
+      "first_text_s": 39.447,
+      "elapsed_s": 44.791,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "2bd7928bcb56467df3f929ff7e1d5a4ee97695790c7a81221177762e7b4e98b4",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    },
+    "two-targets": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "The retry was noisy yesterday. Which upload job should I pause? I attached the note from the shift.\n",
+      "answer": "From the shift note, pause **Larch** (the archive-copy uploads) and keep **Dune** (the video uploads for editors) running.\n\nDeciding evidence:\n- Editors must keep receiving new videos, so Dune has a hard, live requirement — pausing it would break that.\n- Larch uploads archive copies, the lower-obligation job, so it is the one that can absorb the pause.\n\nCondition that changes the interpretation (open gate):\n- Pausing archive uploads requires a retention decision from the archive owner, and none has been recorded yet. So Larch is the job to pause, but you should get/record that retention decision before or alongside the pause — otherwise you're pausing archive uploads without the owner sign-off the note says is required.\n\nCaveat from the log:\n- It has no per-job retry counts or business-impact assessment, so the note tells us which job *should* hold up (Dune) by business impact, not which job was noisier by volume. The answer rests on the requirement structure, not on measured retry counts.\n\nNext step: get the archive owner's retention decision recorded, then pause Larch. If you'd rather confirm the actual current retry activity first, I'd need a live read of the job logs — say the word and point me at where they are.",
+      "first_text_s": 30.455,
+      "elapsed_s": 39.144,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "shift.txt"
+      ],
+      "private_receipt_sha256": "c4c19e049a8ecf9fb6435e914a0b6db67b57e0c03669f0ce0eff7674e45d193e",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    }
+  },
+  "draftright": {
+    "draft": {
+      "candidate": "c5f434482242ec6b441a8d4b136e15f15cd052ba5b2bb56da85b945781e1439e",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Turn this into something I can paste into our team chat. “The demo moved from Tuesday to Thursday. The room and start time stay the same.”\n",
+      "answer": "Here you go, ready to paste:\n\n---\nHey team — quick update on the demo: it's moving from Tuesday to Thursday this week. Same room, same start time. Everything else stays as is.\n---\n\nWant a shorter one-liner, or something more formal with the actual date/room filled in?",
+      "first_text_s": 10.481,
+      "elapsed_s": 13.107,
+      "wire_requests": 1,
+      "native_execution_guidance_verified": null,
+      "source_files": [],
+      "private_receipt_sha256": "45f0ad407cc018feac808cf296273db62ec3e87cc8c86c0da54402407c0f654f",
+      "exit": 0,
+      "tools_called": [],
+      "sandboxes_absent_after": true
+    },
+    "rewrite-transfer": {
+      "candidate": "c5f434482242ec6b441a8d4b136e15f15cd052ba5b2bb56da85b945781e1439e",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Make this short enough to paste into our partner update. The pilot invited 18 sites. Twelve replied, eight opted in, and we haven’t set a rollout date.\n",
+      "answer": "Pilot update: 18 sites invited, 12 responded, 8 opted in. Rollout date not yet set.",
+      "first_text_s": 9.268,
+      "elapsed_s": 9.781,
+      "wire_requests": 1,
+      "native_execution_guidance_verified": null,
+      "source_files": [],
+      "private_receipt_sha256": "2a68dae64f4464f17f929ea6a126b157d563b0316cee5f656ea3c085598e203f",
+      "exit": 0,
+      "tools_called": [],
+      "sandboxes_absent_after": true
+    }
+  },
+  "draftleft": {
+    "rewrite-transfer": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Make this short enough to paste into our partner update. The pilot invited 18 sites. Twelve replied, eight opted in, and we haven’t set a rollout date.\n",
+      "answer": "Pilot: 18 sites invited, 12 responded, 8 opted in. Rollout date not yet set.",
+      "first_text_s": 8.481,
+      "elapsed_s": 8.987,
+      "wire_requests": 1,
+      "native_execution_guidance_verified": null,
+      "source_files": [],
+      "private_receipt_sha256": "dcfcec6ab194f66e5ae80c0dac11048df844224ad1b22dc6d518df6d7bc1d783",
+      "exit": 0,
+      "tools_called": [],
+      "sandboxes_absent_after": true
+    }
+  },
+  "matchleft": {
+    "intake-cutoff": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Can I mark this handoff as received on time? I need a line for the incident report.\n",
+      "answer": "Sourced from /workspace/handoff.txt (the export you're referring to).\n\nShort answer: No — don't mark it \"received on time\" from this export.\n\nWhy:\n- The policy credits the handoff at the moment the duty officer RECEIVES it. Cutoff was 18:00 local Friday.\n- The export carries only two timestamps: the outgoing operator's submission saved at 17:56, and the archive row written at 18:04.\n- 17:56 is the outgoing side's save, not the duty officer's receipt, so it can't support \"on time\" under the policy.\n- The archive write — the only received-side timestamp in the export — is 18:04, four minutes past the 18:00 cutoff.\n- Crucially, the export does not contain the actual duty-officer receipt time, which is the one timestamp the policy turns on.\n\nThe one condition that flips it to \"on time\": if the duty officer's receipt is recorded somewhere else at 18:00 or earlier (i.e., between 17:56 and 18:00). That timestamp isn't in this export, so the export alone can't establish it.\n\nReady line for the incident report:\n\nShift handoff not marked on time: policy credits receipt at the 18:00 local Friday cutoff; export shows outgoing submission saved 17:56 and archive write 18:04 (4 min after cutoff). Export lacks a distinct duty-officer receipt timestamp, so on-time status is not established; treat as late unless a separate receipt record <=18:00 is produced.\n\nIf you have the receipt/acknowledgement log that records when the duty officer actually accepted it, send it over and I'll settle the 17:56 vs 18:04 question definitively.",
+      "first_text_s": 164.096,
+      "elapsed_s": 173.066,
+      "wire_requests": 13,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "handoff.txt"
+      ],
+      "private_receipt_sha256": "db1f9608eb92f47d33589b4bc8ee38d299b822a2cb9733fd60df522842ba602c",
+      "exit": 0,
+      "tools_called": [
+        "tool_search",
+        "tool_describe",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_call",
+        "tool_describe",
+        "tool_call",
+        "search_files",
+        "search_files",
+        "terminal",
+        "search_files",
+        "terminal",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    }
+  },
+  "matchright": {
+    "intake-cutoff": {
+      "candidate": "11a1fe87e870ab095f50a45c2b47a6a485c38f8a957d92e794772a1d985ec634",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Can I mark this handoff as received on time? I need a line for the incident report.\n",
+      "answer": "Short answer: I can't certify \"on time\" yet — that claim only holds if the handoff's *actual received timestamp* falls at or before the *on-time cutoff*, and I don't have either value in front of me.\n\nWhat decides it (the two facts I need):\n1. The received timestamp from the handoff/delivery record — the observed value on the target, not the time it was scheduled or estimated.\n2. The cutoff that defines \"on time\" for this handoff (the SLA/deadline that governs it).\n\nWhat would settle it: the handoff record showing the received stamp, plus the policy line that sets the on-time cutoff for this handoff. Give me both (or point me at the record) and I'll confirm or correct the line.\n\nDrop-in line for the incident report, honest and conditional until you supply the two values:\n\n  Handoff received <RECEIVED_TS>; on time — received at/before the <CUTOFF_TS> cutoff.\n  (pending confirmation if <RECEIVED_TS> is after <CUTOFF_TS>)\n\nIf you tell me the received time and the cutoff, I'll return it as a single definitive line with the verdict.",
+      "first_text_s": 49.693,
+      "elapsed_s": 56.954,
+      "wire_requests": 1,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "handoff.txt"
+      ],
+      "private_receipt_sha256": "534c0259801161fe77ac592699ef563faeca499e3ba594deb9a3c189671ddead",
+      "exit": 0,
+      "tools_called": [],
+      "sandboxes_absent_after": true
+    },
+    "print-guarantee": {
+      "candidate": "11a1fe87e870ab095f50a45c2b47a6a485c38f8a957d92e794772a1d985ec634",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Reserve Run Cedar.\n\nThe brief's signed minimum is 240 archival prints, delivered by August 12. Both runs clear that on the paper and delivery, so the tiebreaker the brief sets is the lowest total invoice.\n\n- Cedar: 240 prints, delivered by Aug 12, $864 — meets the minimum exactly\n- Birch: 300 prints, delivered by Aug 12, $900 — meets it, but $36 more\n\nCedar satisfies every stated requirement at the lower invoice, so it's the run to reserve. Note booking is final, so confirm the August 12 delivery date on the invoice before you lock it in.",
+      "first_text_s": 13.955,
+      "elapsed_s": 17.606,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "ae88e9770acc19a0620d66e998eee0c6cae906e5e69504b5ca08bad9acc9aaed",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    },
+    "print-resolved": {
+      "candidate": "11a1fe87e870ab095f50a45c2b47a6a485c38f8a957d92e794772a1d985ec634",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Reserve Run Cedar.\n\nThe brief's deciding requirements: at least 240 archival prints, delivered by August 12 (the show opens August 13), and the lowest total invoice among options that meet the signed minimum.\n\n- Cedar: 240 prints, ready August 12, $864 — meets the minimum exactly, lowest invoice.\n- Birch: 300 prints, ready August 12, $900 — also compliant, but $36 more.\n\nBoth use the approved paper and include delivery, so the price difference is the deciding factor: Cedar at $864.\n\nOne thing to weigh before booking: the brief says the minimum is 240 and Cedar delivers exactly that, so there's zero slack. Since booking is final, if there's any risk of demand exceeding 240 (e.g., last-minute sales or a damaged print), Birch's 60 extra prints for $36 is cheap insurance. But strictly per the brief, Cedar is the answer.",
+      "first_text_s": 22.677,
+      "elapsed_s": 28.113,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": null,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "9fbb27ac3afd481b407dc7f597d2a78a3cf2443f86f97f16ebd8e1b7227478cd",
+      "exit": 0,
+      "tools_called": [
+        "search_files",
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    }
+  },
+  "unavailablefile": {
+    "missing-file": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "I need the page count for the Finch jacket proof. Please check /workspace/production-slip.txt so I can finish the packing slip.\n",
+      "answer": "The page count isn't in there — /workspace/production-slip.txt doesn't exist, and /workspace/ is completely empty (no slip, no other files, and no mention of \"Finch\" anywhere under /workspace).\n\nSo I can't establish the Finch jacket proof page count from that path. A few ways forward:\n\n1. The slip may be at a different path — if you know the real location (or the proof file itself, e.g. a PDF/IDML export of the jacket), point me to it and I'll pull the count directly.\n2. If you have it open, just tell me the number and I'll finish the packing slip off.\n\nWhich is it, or where is the actual file?",
+      "first_text_s": 22.848,
+      "elapsed_s": 28.087,
+      "wire_requests": 4,
+      "native_execution_guidance_verified": null,
+      "source_files": [],
+      "private_receipt_sha256": "7a31d739342295ebd53b0bee69a07dce796f007470fc675b5b9d4d5a635745f3",
+      "exit": 0,
+      "tools_called": [
+        "read_file",
+        "search_files",
+        "search_files",
+        "terminal",
+        "search_files"
+      ],
+      "sandboxes_absent_after": true
+    }
+  },
+  "nativeexecution": {
+    "print-guarantee": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Reserve **Run Cedar**.\n\nDeciding evidence (from your brief and quotes):\n- Brief requires a minimum of 240 archival prints, delivered by Aug 12, and says to pick the lowest total invoice that meets the signed minimum.\n- Cedar: 240 archival prints, guaranteed delivery by Aug 12, $864 total.\n- Birch: 300 archival prints, guaranteed delivery by Aug 12, $900 total.\n- Both use the approved paper and include delivery, so both satisfy the paper/delivery/deadline conditions.\n\nCedar meets the signed minimum (240 = 240) at the lower invoice ($864 vs $900). Birch only gives 60 extra prints for $36 more, which the brief doesn't ask for.\n\nNext action: Book Cedar (the 240-print run) and confirm delivery by August 12 — the quotes note booking is final, so lock it in before you switch to Birch.",
+      "first_text_s": 9.802,
+      "elapsed_s": 30.026,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": true,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "49ad6134a68533218f876b16c7d2f9f247cc1d235c40067c6516019e16620a8e",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    },
+    "print-resolved": {
+      "candidate": "2b4593440bd6f2647b2979a4cf78ae594e94ee6e0ad79de6a0b071583b955e26",
+      "local_model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+      "question": "Which print run should I reserve for the exhibition? I attached the brief and the two quotes.\n",
+      "answer": "Reserve Run Cedar: 240 archival prints, ready August 12, $864 total.\n\nWhy:\n- The brief's signed minimum is 240 prints delivered by August 12, and it asks for the lowest total invoice that meets that minimum.\n- Cedar delivers exactly 240 on time for $864; Birch delivers 300 on time for $900.\n- Both use the approved paper and include delivery, so price is the only differentiator. Cedar is $36 cheaper and the 60 extra Birch prints aren't required.\n\nNote the quotes say booking is final, so lock Cedar before the August 12 readiness date if you want to be safe.",
+      "first_text_s": 19.681,
+      "elapsed_s": 23.541,
+      "wire_requests": 3,
+      "native_execution_guidance_verified": true,
+      "source_files": [
+        "brief.txt",
+        "quotes.txt"
+      ],
+      "private_receipt_sha256": "0a9f584e1d1d7200ab2e17d3a22a24fa1f597c6e2d6235458c182ab9ab1335b3",
+      "exit": 0,
+      "tools_called": [
+        "terminal",
+        "read_file",
+        "read_file"
+      ],
+      "sandboxes_absent_after": true
+    }
+  }
+}

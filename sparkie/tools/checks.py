@@ -205,6 +205,8 @@ def selection(paths):
             browser = syntax = True
             reasons.append(original + ': browser validation itself changed')
         elif path.startswith('tests/behavior/'):
+            if path == 'tests/behavior/native_acceptance.py':
+                tests.add('test_compact_replays.py')
             tests.update(ADAPTERS | {'test_sandbox_cleanup.py'})
             behavior = True
             reasons.append(original + ': compact behavior evaluation changed')
