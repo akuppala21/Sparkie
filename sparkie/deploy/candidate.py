@@ -92,26 +92,42 @@ def apply_native_patch(native, extension, patch_path, targets):
             "upstream_files": before, "patched_files": after}
 
 
-def files(root):
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if any(part in {"__pycache__", ".git"} for part in relative.parts):
-            continue
-        if path.is_file() and not path.is_symlink() and relative != Path("candidate.json"):
-            yield relative.as_posix(), path
+def inventory(root, *, release=False):
+    """Hash regular files and literal symlink targets without following directory links."""
+    regular, links = {}, {}
 
+    def visit(directory):
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                name = path.relative_to(root).as_posix()
+                if entry.name == ".git":
+                    raise ValueError("A candidate must be a sealed source tree")
+                if release and name == "candidate.json":
+                    if not entry.is_file(follow_symlinks=False):
+                        raise ValueError("The candidate manifest must be a regular file")
+                    continue
+                if entry.is_symlink():
+                    links[name] = os.readlink(path)
+                elif entry.is_dir(follow_symlinks=False):
+                    visit(path)
+                elif entry.is_file(follow_symlinks=False):
+                    regular[name] = sha(path)
+                else:
+                    raise ValueError(f"Unsupported file type in the sealed runtime: {name}")
 
-def symlinks(root):
-    return {p.relative_to(root).as_posix(): os.readlink(p) for p in sorted(root.rglob("*"))
-            if p.is_symlink() and "__pycache__" not in p.parts and ".git" not in p.parts}
+    visit(root)
+    return dict(sorted(regular.items())), dict(sorted(links.items()))
 
 
 def verify(root):
     root = Path(root).resolve(strict=True)
-    manifest = json.loads((root / "candidate.json").read_text())
+    manifest_path = root / "candidate.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("The candidate manifest must be a regular file")
+    manifest = json.loads(manifest_path.read_text())
     expected = manifest["files"]
-    actual = {name: sha(path) for name, path in files(root)}
-    if actual != expected or symlinks(root) != manifest["symlinks"]:
+    if inventory(root, release=True) != (expected, manifest["symlinks"]):
         raise ValueError("Candidate files changed; build and qualify a new candidate")
     if "build_tools" in manifest:
         pin = json.loads((root / "extension/deploy/build-tools.json").read_text())["uv"]
@@ -121,11 +137,8 @@ def verify(root):
     if sha(manifest["runtime"]["base_python"]) != manifest["runtime"]["base_python_sha256"]:
         raise ValueError("Candidate base interpreter changed")
     base_root = Path(manifest['runtime']['base_root'])
-    if ({name: sha(path) for name, path in files(base_root)} != manifest['runtime']['base_files']
-            or symlinks(base_root) != manifest['runtime']['base_symlinks']):
+    if inventory(base_root) != (manifest['runtime']['base_files'], manifest['runtime']['base_symlinks']):
         raise ValueError('Candidate base runtime or standard library changed')
-    if (root / "hermes/.git").exists():
-        raise ValueError("A candidate must be a sealed source tree")
     return manifest
 
 
@@ -184,7 +197,8 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
             zipapp.create_archive(worker, destination / "workspace-worker.pyz", compressed=True)
     # Root-owned releases must not share writable dependency inodes with the
     # operator's uv cache when ownership is sealed after preparation.
-    build_env = {**os.environ, "UV_PYTHON_DOWNLOADS": "never", "UV_LINK_MODE": "copy"}
+    build_env = {**os.environ, "UV_PYTHON_DOWNLOADS": "never", "UV_LINK_MODE": "copy",
+                 "UV_COMPILE_BYTECODE": "false", "PYTHONDONTWRITEBYTECODE": "1"}
     command = [str(packaged_uv), "sync", "--frozen", "--python", str(python), "--no-dev"]
     for extra in lock["extras"]:
         command += ["--extra", extra]
@@ -195,7 +209,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     # PYTHONPATH. Install only the sealed extension's absolute import path
     # into this candidate's own site-packages.
     site_packages = Path(subprocess.run(
-        [str(runtime), "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        [str(runtime), "-I", "-B", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
         capture_output=True, text=True, check=True,
     ).stdout.strip())
     if not site_packages.is_relative_to(runtime.parent.parent):
@@ -204,12 +218,14 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     # The native writer supports named external stewards. Its CLI choices only
     # list upstream distributions, so call the same native write function with
     # our honest distribution name; do not impersonate Docker/Nix or fork it.
-    subprocess.run([str(runtime), "-c",
+    subprocess.run([str(runtime), "-B", "-c",
                     "from scripts.write_install_stamp import write_stamp; import sys; "
                     "write_stamp('install-stamp.json', commit=sys.argv[1], base_version=sys.argv[2], "
                     "distance=0, source='local', distribution='sparkie', update_mechanism='external')",
                     commit, lock["version"].removeprefix("v")], cwd=destination / "hermes", check=True)
     base_root = Path(python).resolve().parent.parent
+    base_files, base_links = inventory(base_root)
+    release_files, release_links = inventory(destination, release=True)
     manifest = {
         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
@@ -218,11 +234,11 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),
-                    'base_files': {name: sha(path) for name, path in files(base_root)},
-                    'base_symlinks': symlinks(base_root),
+                    'base_files': base_files,
+                    'base_symlinks': base_links,
                     "relocatable": False, "instruction": "Rebuild with uv at the final release path; do not move this virtualenv"},
-        "files": {name: sha(path) for name, path in files(destination)},
-        "symlinks": symlinks(destination),
+        "files": release_files,
+        "symlinks": release_links,
     }
     (destination / "candidate.json").write_text(json.dumps(manifest, indent=2) + "\n")
     verify(destination)

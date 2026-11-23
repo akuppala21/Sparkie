@@ -35,6 +35,40 @@ def test_candidate_uses_an_independent_copy_of_the_exact_build_tool(tmp_path, mo
     assert not (tmp_path/'another-release').exists()
 
 
+@pytest.mark.parametrize("tree,extra,kind", [
+    ("release", "site/__pycache__/finder.pyc", "file"),
+    ("base", "lib/__pycache__/startup.pyc", "file"),
+    ("base", "candidate.json", "file"),
+    ("release", "nested/.git/hooks/probe", "file"),
+    ("base", "lib/__pycache__/linked.pyc", "symlink"),
+    ("release", "unexpected-pipe", "fifo"),
+])
+def test_verifier_rejects_unlisted_runtime_entries(tmp_path, monkeypatch, tree, extra, kind):
+    monkeypatch.syspath_prepend(str(DEPLOY))
+    import candidate
+    release, base = tmp_path/"release", tmp_path/"base"
+    release.mkdir()
+    base.mkdir()
+    python = base/"python"
+    python.write_bytes(b"sealed base executable fixture")
+    digest = candidate.sha(python)
+    manifest = {"files": {}, "symlinks": {}, "runtime": {"base_root": str(base),
+                "base_python": str(python), "base_python_sha256": digest,
+                "base_files": {"python": digest}, "base_symlinks": {}}}
+    (release/"candidate.json").write_text(json.dumps(manifest))
+    assert candidate.verify(release) == manifest
+    target = (release if tree == "release" else base)/extra
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "symlink":
+        target.symlink_to(python)
+    elif kind == "fifo":
+        os.mkfifo(target)
+    else:
+        target.write_bytes(b"unexpected bytes")
+    with pytest.raises(ValueError):
+        candidate.verify(release)
+
+
 @pytest.fixture(scope="module")
 def prepared():
     location = os.environ.get("SPARKIE_TEST_CANDIDATE")

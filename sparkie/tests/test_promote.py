@@ -72,6 +72,21 @@ def test_uncertain_phase_is_retained_and_does_not_switch_route(tmp_path):
     assert result == 'old-services-restored-owner-path-needs-verification'
 
 
+def test_completed_rollback_redelivery_returns_receipt_without_restarting_services(tmp_path):
+    plan, journal, api = setup(tmp_path)
+    host = Host()
+    promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    first = promote.rollback(plan, journal, host=host, api=api)
+    receipt = (journal.directory/'operation.json').read_bytes()
+    host.events.clear()
+    writes = api.writes
+    # A later routing decision belongs to the owner, even if a response was lost.
+    api.config['Web'][serve_route.HOST] = {'Handlers': {'/': {'Path': '/later-owner-choice'}}}
+    assert promote.rollback(plan, journal, host=host, api=api) == first
+    assert not host.events and api.writes == writes
+    assert (journal.directory/'operation.json').read_bytes() == receipt
+
+
 def test_rollback_preserves_new_state_and_unrelated_routes(tmp_path):
     plan, journal, api = setup(tmp_path)
     host = Host()

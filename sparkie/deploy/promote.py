@@ -29,6 +29,7 @@ from serve_route import (ServeAPI, change, replacement, route, change_services,
 
 OLD_UNITS = ('spark-console-watchdog.timer', 'spark-console-watchdog.service', 'spark-console-api.service')
 NEW_UNITS = ('sparkie-main-brain.service', 'sparkie-fleet.service', 'hermes-gateway.service', 'sparkie-collector.timer')
+ROLLBACK_COMPLETE = 'old-services-restored-owner-path-needs-verification'
 PREVIEW_TIMER = 'sparkie-ui-observations.timer'
 PREVIEW_COLLECTOR = 'sparkie-ui-observations.service'
 LEGACY_EDITORS = (('compute2-endpoint.invalid', 'spark-portal-spark4-tunnel.service'),
@@ -514,6 +515,8 @@ def promote(plan, plan_hash, journal, *, host, api):
 
 
 def rollback(plan, journal, *, host, api):
+    if journal.data['state'] == ROLLBACK_COMPLETE:
+        return ROLLBACK_COMPLETE
     if 'old_route' not in journal.data or 'old_units' not in journal.data:
         raise ValueError('This operation did not save a predecessor; nothing is restored automatically.')
     journal.data['state'] = 'rolling-back'
@@ -556,9 +559,16 @@ def rollback(plan, journal, *, host, api):
         # captured mid-run oneshot could duplicate the prior check.
         if saved['active'] == 'active' and name != 'spark-console-watchdog.service':
             journal.step('restore-running-' + name, lambda name=name: host.start((name,), legacy=True))
-    journal.data['state'] = 'old-services-restored-owner-path-needs-verification'
+    journal.data['state'] = ROLLBACK_COMPLETE
     journal.save()
     return journal.data['state']
+
+
+def reviewed_rollback(operation, plan_hash):
+    journal = Journal(operation)
+    if journal.data['plan_sha256'] != plan_hash:
+        raise ValueError('Rollback requires this operation’s exact approved plan.')
+    return journal
 
 
 if __name__ == '__main__':
@@ -568,6 +578,13 @@ if __name__ == '__main__':
     parser.add_argument('--approved-plan-sha256', required=True)
     parser.add_argument('--operation', type=Path, required=True)
     args = parser.parse_args()
+    # A lost reply to a finished rollback needs only its protected, plan-bound receipt.
+    # Rechecking current units or acquiring the update lock could disturb a later handover.
+    if args.action == 'rollback':
+        recorded = reviewed_rollback(args.operation, args.approved_plan_sha256)
+        if recorded.data['state'] == ROLLBACK_COMPLETE:
+            print(ROLLBACK_COMPLETE)
+            raise SystemExit(0)
     plan = read_plan(args.directory, args.approved_plan_sha256)
     validate(plan, args.directory)
     protected_ancestry(args.operation.parent)
@@ -581,8 +598,6 @@ if __name__ == '__main__':
             journal = Journal(args.operation, plan_hash=args.approved_plan_sha256)
             result = promote(plan, args.approved_plan_sha256, journal, host=Host(plan), api=ServeAPI())
         else:
-            journal = Journal(args.operation)
-            if journal.data['plan_sha256'] != args.approved_plan_sha256:
-                raise ValueError('Rollback requires this operation’s exact approved plan.')
+            journal = reviewed_rollback(args.operation, args.approved_plan_sha256)
             result = rollback(plan, journal, host=Host(plan), api=ServeAPI())
     print(result)
