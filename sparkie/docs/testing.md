@@ -235,6 +235,10 @@ checks public visibility and uses one standard Ubuntu Arm runner. It has read-on
 repository permission and uploads no caches or artifacts. Results appear in the
 job log. Private repositories would need a separate zero-spend decision.
 
+The portable job includes the repair archive and the comparison parser, evidence
+validation and refusal checks. The three comparison cases that exercise native
+Hermes media or Telegram delivery run with the installed runtime on compute Sparks.
+
 ## Running checks in a prepared worker
 
 For a private checkout with an exported development release, the following
