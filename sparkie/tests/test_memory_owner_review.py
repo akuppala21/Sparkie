@@ -8,6 +8,21 @@ import pytest
 from test_native_controls import USER, rig
 
 
+@pytest.fixture
+def isolated_profile_host(monkeypatch):
+    # Serving a named profile permanently latches the real host and freezes its
+    # launch environment. Give this test its own process state and restore it on exit.
+    import hermes_constants
+    from agent import secret_scope
+    from tui_gateway import launch_profile_policy
+
+    monkeypatch.setattr(hermes_constants, '_PINNED_PROCESS_HERMES_HOME', None)
+    monkeypatch.setattr(secret_scope, '_MULTIPLEX_ACTIVE', False)
+    monkeypatch.setattr(secret_scope, '_AUTO_PINNED_HOME', None)
+    monkeypatch.setattr(launch_profile_policy, '_snapshot', None)
+    monkeypatch.setattr(launch_profile_policy, '_source_writes', {})
+
+
 def attempt(target='memory', *, operations=None):
     from tools.memory_tool import load_on_disk_store, memory_tool
     if operations is None:
@@ -296,3 +311,142 @@ def test_memory_tool_definition_matches_owner_review():
     assert set(item["properties"]["action"]["enum"]) == {"add", "patch"}
     assert set(item["required"]) == {"action", "content"}
     assert "original target" in item["properties"]["old_text"]["description"]
+
+
+def test_native_file_editor_and_upload_cannot_change_memory_or_approval_records(isolated_profile_host, rig, tmp_path, monkeypatch):
+    import os
+    from hermes_cli.web_routers.files import router as files_router
+    from hermes_constants import get_process_hermes_home
+
+    client = rig["client"]
+    client.app.include_router(files_router)
+    home = get_process_hermes_home()
+    store = home / "memories" / "USER.md"
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text("Original fact")
+    proposal = attempt()
+    journal = home / "pending" / "memory"
+    pending = journal / (proposal["pending_id"] + ".json")
+    original = pending.read_bytes()
+    alias = tmp_path / "linked profile entry"
+    alias.symlink_to(store)
+    project = tmp_path / "project"
+    project.mkdir()
+    notes = project / "USER.md"
+
+    def edit(path):
+        return client.post("/api/fs/write-text", json={"path": str(path), "content": "Replacement"})
+
+    assert edit(notes).status_code == 200 and notes.read_text() == "Replacement"
+    # The native editor and uploader replace an alias path atomically. A hard link
+    # outside the profile is therefore independently editable without changing the store.
+    hardlink = project / "prior-copy.md"
+    os.link(store, hardlink)
+    assert edit(hardlink).status_code == 200 and store.read_text() == "Original fact"
+    assert hardlink.read_text() == "Replacement" and not hardlink.samefile(store)
+    assert client.get("/api/fs/read-text", params={"path": str(store)}).json()["text"] == "Original fact"
+    monkeypatch.setenv("SPARKIE_FIXTURE_LAUNCH_ONLY", "launch-test-value")
+    named = home / "profiles" / "alternate"
+    named.mkdir(parents=True)
+    (named / "config.yaml").write_text("{}")
+    assert client.post("/api/fs/write-text?profile=alternate", json={"path": str(store), "content": "Other"}).status_code == 403
+    from agent.secret_scope import UnscopedSecretError, get_secret
+    from hermes_cli.web_server_profiles import _config_profile_scope
+    with pytest.raises(UnscopedSecretError):
+        get_secret("SPARKIE_FIXTURE_LAUNCH_ONLY")
+    with _config_profile_scope("alternate"):
+        assert get_secret("SPARKIE_FIXTURE_LAUNCH_ONLY") is None
+    with _config_profile_scope(None):
+        assert get_secret("SPARKIE_FIXTURE_LAUNCH_ONLY") == "launch-test-value"
+    for target in (store, alias, pending, home / "memories" / "MEMORY.md"):
+        assert edit(target).status_code == 403
+    upload = {"path": str(store), "data_url": "data:text/plain;base64,QUJD", "overwrite": True}
+    assert client.post("/api/files/upload", json=upload).status_code == 403
+    multipart = client.post("/api/files/upload-stream", data={"path": str(pending), "overwrite": "true"},
+                            files={"file": ("proposal.json", b"{}", "application/json")})
+    assert multipart.status_code == 403
+    for target in (store, journal, home / "pending", home):
+        assert client.request("DELETE", "/api/files", json={"path": str(target), "recursive": True}).status_code == 403
+    assert store.read_text() == "Original fact" and pending.read_bytes() == original
+
+
+def test_named_profile_memory_remains_behind_default_owner_review(isolated_profile_host, rig, tmp_path):
+    import io
+    import tarfile
+    from hermes_cli import profiles
+    from hermes_cli.web_routers.files import router as file_routes
+    from hermes_cli.web_routers.profiles import router as profile_routes
+    from hermes_cli.web_server_profiles import _config_profile_scope
+    from hermes_constants import get_process_hermes_home
+    from sparkie_sparks.memory_review import default_home
+
+    home = get_process_hermes_home()
+    client = rig["client"]
+    client.app.include_router(file_routes)
+    client.app.include_router(profile_routes)
+    root = home / "profiles"
+    named = root / "alternate"
+    other = root / "another"
+    for path in (named, other):
+        path.mkdir(parents=True)
+        (path / "config.yaml").write_text("{}")
+    assert client.post("/api/profiles/active", json={"name": "alternate"}).json()["active"] == "alternate"
+    with _config_profile_scope("alternate"), pytest.raises(PermissionError, match="default profile"):
+        default_home()
+
+    stores = named / "memories"
+    stores.mkdir()
+    entry = stores / "USER.md"
+    entry.write_text("Retained preference")
+    alias = tmp_path / "alias.md"
+    alias.symlink_to(entry)
+    journal = named / "pending" / "memory"
+    journal.mkdir(parents=True)
+    held = journal / "held.decision"
+    held.write_text("Recorded decision")
+    for source in ("default", "alternate", "another"):
+        for target in (entry, stores / "MEMORY.md", alias, held, root / "future" / "memories" / "USER.md"):
+            response = client.post("/api/fs/write-text", params={"profile": source},
+                                   json={"path": str(target), "content": "changed"})
+            assert response.status_code == 403 and "default owner profile" in response.json()["detail"], (source, target, response.text)
+    for directory in (named, root, journal):
+        assert client.request("DELETE", "/api/files", json={"path": str(directory), "recursive": True}).status_code == 403
+    project = named / "workspace"
+    project.mkdir()
+    assert client.post("/api/fs/write-text", json={"path": str(project / "USER.md"), "content": "project"}).status_code == 200
+    assert client.delete("/api/profiles/alternate").status_code == 400
+    assert entry.read_text() == "Retained preference" and held.read_text() == "Recorded decision"
+
+    export_alias = named / "export-note.md"
+    export_alias.symlink_to(entry)
+    archive_out = str(tmp_path / "export.tar.gz")
+    response = client.post("/api/profiles/alternate/export", json={
+        "output": archive_out, "extra_files": {"export-note.md": "unreviewed edit"}})
+    assert response.status_code == 400 and entry.read_text() == "Retained preference"
+    response = client.post("/api/profiles/alternate/export", json={
+        "output": archive_out, "extra_files": {"ordinary-note.md": "snapshot"}})
+    assert response.status_code == 200
+
+    archive = tmp_path / "fixture.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for rel, content in (("config.yaml", b"{}"), ("memories/USER.md", b"incoming preference")):
+            info = tarfile.TarInfo("fixture/" + rel)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    with pytest.raises(ValueError, match="default owner profile"):
+        profiles.import_profile(str(archive), name="imported")
+    with pytest.raises(ValueError, match="default owner profile"):
+        profiles.create_profile("cloned", clone_from="alternate", clone_config=True, no_alias=True)
+    assert not (root / "cloned").exists() and not (root / "imported").exists()
+
+    empty = tmp_path / "empty.tar.gz"
+    with tarfile.open(empty, "w:gz") as tar:
+        data = b"{}"
+        info = tarfile.TarInfo("blank/config.yaml")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    imported = profiles.import_profile(str(empty), name="blank")
+    assert (imported / "config.yaml").is_file()
+    assert client.delete("/api/profiles/blank").status_code == 200
+    renamed = profiles.rename_profile("alternate", "renamed")
+    assert (renamed / "memories" / "USER.md").read_text() == "Retained preference"

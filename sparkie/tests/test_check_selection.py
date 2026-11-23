@@ -105,10 +105,13 @@ def test_cache_measurement_changes_select_the_benchmark_and_ordinary_agent():
         assert not plan['compute_power_validation'] and not plan['broad_qualification']
 
 
-def test_memory_feedback_and_cleanup_changes_include_native_consumers():
-    memory = select(['src/sparkie_sparks/memory_controls.py'])
+@pytest.mark.parametrize('memory_path', ['memory_controls.py', 'memory_paths.py'])
+def test_memory_feedback_and_cleanup_changes_include_native_consumers(memory_path):
+    memory = select(['src/sparkie_sparks/' + memory_path])
+    assert not memory['broad_qualification']
     assert 'tests/test_memory_correction_feedback.py' in memory['python_tests']
     assert memory['compact_local_behavior'] and memory['native_shared_sessions']
+    assert memory['sparks_panel'] and memory['other_desktop_phone_browser']
     for path in ('tests/sandbox_cleanup.py', 'tests/native_docker_fixture.py'):
         cleanup = select([path])
         assert 'tests/test_sandbox_cleanup.py' in cleanup['python_tests']

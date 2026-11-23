@@ -171,7 +171,8 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     memory_patch = apply_native_patch(destination / "hermes", destination / "extension",
         Path("deploy/patches/hermes-memory-owner-review.patch"),
         ("tools/memory_tool.py", "tools/write_approval.py", "hermes_cli/write_approval_commands.py",
-         "agent/learning_mutations.py", "hermes_cli/main_agent_cmds.py", "hermes_cli/web_routers/ops.py"))
+         "agent/learning_mutations.py", "hermes_cli/main_agent_cmds.py", "hermes_cli/web_routers/ops.py",
+         "hermes_cli/web_routers/files.py", "hermes_cli/profiles.py"))
     skill_path_patch = apply_native_patch(destination / "hermes", destination / "extension",
                                          Path("deploy/patches/hermes-sandbox-skill-path.patch"),
                                          ("agent/skill_commands.py",))

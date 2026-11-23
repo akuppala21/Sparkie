@@ -9,7 +9,7 @@ const output = process.env.SPARKIE_BROWSER_OUTPUT;
 if (!base || !output || !process.env.SPARKIE_TEST_LOGIN || !process.env.SPARKIE_TEST_CHROME) throw new Error("Missing isolated browser test configuration");
 const login = JSON.parse(await readFile(process.env.SPARKIE_TEST_LOGIN, "utf8"));
 await mkdir(output, { recursive: true });
-const report = { scope: "Native Hermes login, read-only electricity estimates, and desktop/phone Sparks panel. Electricity uses explicit test readings; no rate writes, fleet mutations or live settings.", checks: [] };
+const report = { scope: "Native Hermes login, synthetic owner memory review, electricity estimates and desktop/phone fleet controls with fixture data.", checks: [] };
 const unauthenticated = await request.newContext({ baseURL: base });
 const browser = await chromium.launch({ executablePath: process.env.SPARKIE_TEST_CHROME, headless: true });
 try {
@@ -41,6 +41,16 @@ try {
   }
   const declineMetrics = page.getByRole("button", { name: "No thanks", exact: true });
   if (await declineMetrics.isVisible()) await declineMetrics.click();
+  const memorySummary = page.locator("summary").filter({ hasText: /^Memory changes$/ });
+  const memoryPanel = memorySummary.locator("..");
+  const addition = memoryPanel.locator("section").filter({ has: page.getByText("Paper proofs use A3 stock.", { exact: true }) });
+  const discarded = memoryPanel.locator("section").filter({ has: page.getByText("Draft note to discard.", { exact: true }) });
+  await memorySummary.click();
+  await addition.getByRole("button", { name: "Confirm this change" }).click();
+  await discarded.waitFor();
+  await addition.waitFor({ state: "detached" });
+  await memorySummary.click();
+  report.checks.push("Desktop owner approved the displayed memory addition");
   await page.getByLabel("Electricity month").waitFor();
   const energy = await (await page.request.get(base + "/api/plugins/sparkie-sparks/energy")).json();
   const historical = energy.months.find(month => month !== energy.month);
@@ -156,6 +166,11 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Phone rate controls must not overflow");
   report.checks.push("Phone custom rate recalculates immediately with six-decimal precision and no writes");
   await page.screenshot({ path: output + "/phone.png", fullPage: true });
+  await memorySummary.click();
+  await discarded.getByRole("button", { name: "Reject", exact: true }).click();
+  await memoryPanel.getByText("No memory changes are waiting.").waitFor();
+  await memorySummary.click();
+  report.checks.push("Phone owner rejected the separate memory proposal");
   const phoneJob = panel.getByText("fixture-job", { exact: true });
   await phoneJob.scrollIntoViewIfNeeded();
   if (!(await phoneJob.evaluate(node => node.parentElement.open))) await phoneJob.click();

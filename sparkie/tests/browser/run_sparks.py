@@ -78,7 +78,7 @@ def run(baseline, output):
                    HERMES_WEB_DIST=str(baseline / "dashboard"), HERMES_BUNDLED_PLUGINS=str(scratch / "plugins"),
                    HERMES_RUNTIME_DIR=str(scratch / "runtime"), NODE_PATH=node_path,
                    PYTHONPATH=os.pathsep.join([str(ROOT / "src"), str(baseline / "hermes")]),
-                   SPARKIE_TEST_LOGIN=str(login), SPARKIE_FLEET_SNAPSHOT=str(snapshot),
+                   SPARKIE_TEST_LOGIN=str(login), SPARKIE_TEST_MEMORY_REVIEW="1", SPARKIE_FLEET_SNAPSHOT=str(snapshot),
                    SPARKIE_ENERGY_DATABASE=str(scratch / "energy.sqlite"), SPARKIE_TEST_URL=local_url,
                    SPARKIE_TEST_CHROME=chrome, SPARKIE_BROWSER_OUTPUT=str(output))
         subprocess.run([runtime, ROOT / "tools/package_plugins.py", baseline / "hermes/plugins",
@@ -109,6 +109,9 @@ def run(baseline, output):
                 else:
                     raise SystemExit("The isolated native dashboard did not report its authentication gate.")
                 subprocess.run(["node", HERE / "sparks.mjs"], env=env, cwd=HERE, check=True, timeout=150)
+                saved = (home / "memories" / "USER.md").read_text()
+                assert saved.count("Paper proofs use A3 stock.") == 1
+                assert "Draft note to discard." not in saved
             finally:
                 server.terminate()
                 try:

@@ -30,7 +30,7 @@ store = OperationStore(fixture / 'operations.sqlite')
 
 from contextlib import closing
 from hermes_state import SessionDB
-from tools.memory_tool import load_on_disk_store
+from tools.memory_tool import load_on_disk_store, memory_tool
 from sparkie_sparks.memory_controls import ERASE_ACTION
 from sparkie_sparks.memory_erase import apply
 
@@ -70,5 +70,14 @@ else:
         controls._controls.result_view = lambda row: (
             'The container is running.' if row['intent'].get('container') == 'd' * 64
             and row['state'] in ('uncertain', 'failed') else None)
+if os.environ.get('SPARKIE_TEST_MEMORY_REVIEW') == '1':
+    samples = ('Paper proofs use A3 stock.', 'Draft note to discard.')
+    for sample in samples:
+        proposal = json.loads(memory_tool(target='user', operations=[{'action': 'add', 'content': sample}],
+                                          store=load_on_disk_store()))
+        assert proposal.get('staged') is True and proposal.get('saved') is False, proposal
+    before_review = (home / 'memories' / 'USER.md').read_text()
+    assert all(sample not in before_review for sample in samples)
+
 sys.argv = ['hermes', 'dashboard', *sys.argv[1:]]
 runpy.run_module('hermes_cli.main', run_name='__main__')

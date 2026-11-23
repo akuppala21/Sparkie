@@ -287,3 +287,92 @@
  
  
  @router.post("/api/ops/doctor")
+--- a/hermes_cli/web_routers/files.py
++++ b/hermes_cli/web_routers/files.py
+@@ -184,7 +184,7 @@
+     return None
+ 
+ 
+-def _refuse_sensitive_write(target: Path, requested: str, root: Optional[Path] = None) -> None:
++def _refuse_sensitive_write(target: Path, requested: str, root: Optional[Path] = None, *, recursive: bool = False) -> None:
+     """403 when a write/delete would land on a credential file the read side hides.
+ 
+     *target* is the resolver's (symlink-resolved) path and *requested* the client's path as sent:
+@@ -202,6 +202,9 @@
+     if not anchor.is_absolute():
+         anchor = root.expanduser() / anchor if root is not None else None
+     hops = _link_chain(anchor) if anchor is not None else []
++    from sparkie_sparks.memory_paths import file_review_refusal
++    if refusal := file_review_refusal(target, recursive=recursive):
++        raise HTTPException(status_code=403, detail=refusal)
+     if (hops is None or any(_is_sensitive_path(p) for p in (Path(requested), Path(os.path.realpath(target)), *hops))
+             or _is_local_sensitive_path(target)):
+         raise HTTPException(status_code=403, detail="Writing sensitive files is not allowed")
+@@ -1100,7 +1103,7 @@
+ @router.delete("/api/files")
+ def delete_managed_file(payload: ManagedFileDelete, request: Request):
+     policy, target, display_path = _resolve_managed_path(payload.path, request)
+-    _refuse_sensitive_write(target, payload.path, policy.locked_root)
++    _refuse_sensitive_write(target, payload.path, policy.locked_root, recursive=payload.recursive)
+     if policy.locked_root is not None and target == policy.locked_root:
+         raise HTTPException(status_code=400, detail="Cannot delete the managed files root")
+     if target.parent == target:
+--- a/hermes_cli/profiles.py
++++ b/hermes_cli/profiles.py
+@@ -1378,6 +1378,8 @@
+             # unless a gateway still tearing the deleted profile down holds its gateway.lock in it.
+             if not wait_profile_unowned(profile_dir, timeout=0):
+                 raise FileExistsError(f"Cannot create profile '{canon}': a running gateway still owns {profile_dir}")
++            from sparkie_sparks.memory_paths import require_empty_profile_memory
++            require_empty_profile_memory(profile_dir)
+             shutil.rmtree(profile_dir)
+         else:
+             # A live marker-less dir is invisible to ``profile list`` but may still hold user
+@@ -1413,6 +1415,9 @@
+             if stripped:
+                 logger.info("profile %s: cloned without messaging channels %s", canon, stripped)
+         finish_profile_layout(staging, no_skills=no_skills, clone_all=clone_all, description=description, soul=soul)
++        if source_dir is not None:
++            from sparkie_sparks.memory_paths import require_empty_profile_memory
++            require_empty_profile_memory(staging)
+         os.rename(staging, profile_dir)
+     except BaseException:
+         discard_unpublished_vault_key(clone_key)
+@@ -1704,6 +1709,8 @@
+     if canon == "default":
+         raise ValueError("Cannot delete the default profile (~/.hermes).\nTo remove everything, use: hermes uninstall")
+     canon, profile_dir = _existing_profile_dir(canon)
++    from sparkie_sparks.memory_paths import require_empty_profile_memory
++    require_empty_profile_memory(profile_dir)
+     gw_running = _check_gateway_running(profile_dir)
+     wrapper_path = _find_our_wrapper(canon)
+     _print_delete_summary(canon, profile_dir, gw_running, wrapper_path)
+@@ -2123,6 +2130,10 @@
+     # Archive base name without extension (.tar.gz appended by the writer).
+     base = str(Path(output_path)).removesuffix(".tar.gz").removesuffix(".tgz")
+ 
++    from sparkie_sparks.memory_paths import file_review_refusal
++    if refusal := file_review_refusal(Path(base + ".tar.gz")):
++        raise ValueError(refusal)
++
+     # The default profile IS ~/.hermes (dir name ".hermes"), so both paths stage a filtered
+     # copy under a temp dir named after the canonical id: root allow-list for default,
+     # credential exclusion for named profiles.
+@@ -2141,6 +2152,8 @@
+         shutil.copytree(profile_dir, staged, symlinks=True, ignore=ignore)
+         for rel, content in (extra_files or {}).items():
+             target = staged.joinpath(*normalize_archive_parts(rel))
++            if not target.resolve().is_relative_to(staged.resolve()):
++                raise ValueError("The extra export file must stay inside the staged profile.")
+             target.parent.mkdir(parents=True, exist_ok=True)
+             target.write_text(content, encoding="utf-8")
+         _scrub_export_secrets(staged)
+@@ -2187,6 +2200,8 @@
+             extracted.rename(final_source)
+         from hermes_cli.profiles_initialization import prepare_imported_tree
+         prepare_imported_tree(final_source)
++        from sparkie_sparks.memory_paths import require_empty_profile_memory
++        require_empty_profile_memory(final_source)
+         shutil.move(str(final_source), str(profile_dir))
+     clear_named_profile_deleted(profile_dir)
+     return profile_dir

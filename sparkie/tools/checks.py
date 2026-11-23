@@ -108,11 +108,12 @@ def selection(paths):
             tests.update(POWER | COMPUTE | {'test_io_budget.py', 'test_matter.py'})
             reasons.append(original + ': bounded maintenance I/O, power evidence and workspace transport consumers')
         elif path in ('src/sparkie_sparks/memory_controls.py', 'src/sparkie_sparks/memory_erase.py',
-                       'src/sparkie_sparks/memory_review.py', 'deploy/patches/hermes-memory-owner-review.patch',
+                       'src/sparkie_sparks/memory_review.py', 'src/sparkie_sparks/memory_paths.py',
+                       'deploy/patches/hermes-memory-owner-review.patch',
                        'deploy/patches/hermes-memory-owner-review.json', 'tests/test_memory_owner_review.py'):
             tests.update(MEMORY)
-            browser = behavior = sessions = True
-            reasons.append(original + ': exact-owner erasure, native memory and searchable conversation data')
+            panel = browser = behavior = sessions = True
+            reasons.append(original + ': individual memory confirmation, protected erasure and their owner controls')
         elif path == 'src/sparkie_sparks/recovery_replies.py':
             tests.update({'test_recovery_replies.py', 'test_proposals.py',
                           'test_proposal_reconciliation.py', 'test_native_controls.py'})

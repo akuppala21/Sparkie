@@ -1,6 +1,6 @@
 {
   "reason": "Require the enrolled owner to confirm each individual memory change and retain the separate protected erasure path.",
-  "patch_sha256": "fcb1a287bf594a89f9cebbce3c494bbba1f51b9333477e0dc86cb0ee2f46c198",
+  "patch_sha256": "3ac725b86e32eff1d6c564cfb9e023789f437a53121e33cf9737712c792076a4",
   "files": {
     "tools/memory_tool.py": {
       "before_sha256": "791e3561346190d243be91714a8d8ffaeafa72a40a471fe8dc01cf778b4d4a68",
@@ -25,6 +25,14 @@
     "hermes_cli/web_routers/ops.py": {
       "before_sha256": "ed23180cf1a530c0ac3a2303ffa10240e032badf9c2d10cee563b30e259b0f50",
       "after_sha256": "c65f14fe69a25717b89ef7d08af4837ae271348b26a92b840cac5d7f837b5bd9"
+    },
+    "hermes_cli/web_routers/files.py": {
+      "before_sha256": "10fa649f5c796e378ea62fbf9775331ddace101600920bafbbb4207b0ddc8eb0",
+      "after_sha256": "a4643480343914797213fd9dfca237894f00fb8fb2cf1c5429ee503951121876"
+    },
+    "hermes_cli/profiles.py": {
+      "before_sha256": "14108f049f94479547895a1d5e864a3892046f0af78faf2997d34761e251b570",
+      "after_sha256": "b1e077ac27658c9edd7a5b67d6e4442cb4bef9a85e677e532d30bda3aca7d553"
     }
   }
 }
