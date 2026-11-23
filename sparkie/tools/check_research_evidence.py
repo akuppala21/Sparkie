@@ -42,22 +42,42 @@ def literal(value, body, field):
         raise ValueError(f'{field} must be an exact, nonempty excerpt from its source.')
 
 
-def scalar_in_quote(value, quote, *, unit=None):
+def scalar_in_quote(value, quote, *, unit=None, source=None):
     if not isinstance(value, str) or len(value) > 32 or not re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', value):
         return False
-    token = r'(?<![\w.+-])(?<!\d,)' + re.escape(value) + r'(?!\w|\.\d|,\d)'
-    for match in re.finditer(token, quote):
-        before, after = quote[:match.start()], quote[match.end():]
-        if unit is not None:
-            # A unit elsewhere in the same source may belong to a different measurement.
-            suffix = r'^[^\S\n]*' + re.escape(unit) + r'(?![\w/%*^·]|[.-]\w|\s+per\s+\w)'
-            currency_prefix = unit in ('$', '€', '£', '¥') and before.rstrip(' \t').endswith(unit)
-            if not currency_prefix and not re.match(suffix, after):
-                continue
-        if (not re.search(r'(?:\d\s*(?:[-–—]|\bto)|[~≈<>≤≥])\s*$', before)
-                and not re.match(r'^\s*(?:[-–—]|to\b)\s*\d', after)):
+    number = re.compile(r'(?<![\w.+-])(?<!\d,)' + re.escape(value) + r'(?!\w|\.\d|,\d)')
+    amounts = list(number.finditer(quote))
+    if not amounts:
+        return False
+    text = quote if source is None else source
+    # A truncated quote can hide part of a number, a range, or a unit. Check
+    # boundaries in the original while requiring the witness inside the quote.
+    leading_qualifier = r'(?:\d\s*(?:[-–—]|\bto)|[~≈<>≤≥])\s*(?:[$€£¥][ \t]*)?'
+    qualified = {m.end() for m in re.finditer(leading_qualifier + '(?=' + re.escape(value) + ')', text)}
+    range_end = re.compile(r'\s*(?:[-–—]|to\b)\s*(?:[$€£¥]\s*)?\d')
+    if unit is not None:
+        suffix = re.compile(r'[^\S\n]*' + re.escape(unit) + r'(?![\w/%*^·]|[.-]\w|\s+per\s+\w)')
+    currency_rate = re.compile(r'\s*(?:/|per\b|a\b|an\b|each\b|thousand\b|million\b|billion\b)', re.I)
+
+    def supported(offset, amount):
+        start, end = offset + amount.start(), offset + amount.end()
+        if not number.match(text, start) or start in qualified or range_end.match(text, end):
+            return False
+        if unit is None:
             return True
-    return False
+        if unit in ('$', '€', '£', '¥') and quote[:amount.start()].rstrip(' \t').endswith(unit):
+            return not currency_rate.match(text, end)
+        label = suffix.match(text, end)
+        return bool(label and label.end() <= offset + len(quote) and not range_end.match(text, label.end()))
+
+    offset = text.find(quote)
+    if offset < 0:
+        return False
+    while offset >= 0:
+        if not any(supported(offset, amount) for amount in amounts):
+            return False
+        offset = text.find(quote, offset + 1)
+    return True
 
 
 def check(sheet, sources):
@@ -88,7 +108,7 @@ def check(sheet, sources):
             for key in ('metric', 'unit'):
                 literal(row[key], body, f'Claim {i} {key}')
             value = row['value']
-            if not scalar_in_quote(value, row['quote']):
+            if not scalar_in_quote(value, row['quote'], source=body):
                 raise ValueError(f'Claim {i} value needs one standalone decimal from its result quote. '
                                  'Keep ranges as quoted text and omit the numeric fields.')
         rows.append(dict(row, reference=ref))
@@ -104,7 +124,7 @@ def check(sheet, sources):
         reasons = []
         if any(row['kind'] != 'measured' or 'value' not in row for row in (left, right)):
             reasons.append('Two measured scalar values are required.')
-        elif any(not scalar_in_quote(row['value'], row['quote'], unit=row['unit']) for row in (left, right)):
+        elif any(not scalar_in_quote(row['value'], row['quote'], unit=row['unit'], source=sources[row['source'] - 1][1]) for row in (left, right)):
             reasons.append('The result quote must show each scalar with its stated unit before calculating a ratio.')
         for key in ('metric', 'unit', *CONDITIONS):
             if not left.get(key) or left.get(key) != right.get(key):

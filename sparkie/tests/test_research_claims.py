@@ -108,6 +108,43 @@ def test_prefixed_currency_amounts_are_still_comparable():
     assert checker.check(sheet, sources)['comparisons'][0]['left_divided_by_right'] == '1.5'
 
 
+@pytest.mark.parametrize('original', ['112 items/s', '0.12 items/s', '8–12 items/s', '≈12 items/s'])
+def test_shortening_the_source_cannot_turn_a_fragment_into_a_measured_number(original):
+    sources, sheet = pair()
+    ref, body = sources[0]
+    sources[0] = ref, body.replace('12 items/s', original)
+    sheet['claims'][0]['quote'] = '12 items/s'
+    with pytest.raises(ValueError, match='standalone decimal'):
+        checker.check(sheet, sources)
+
+
+@pytest.mark.parametrize('original,comparable', [
+    ('12 items/s per worker', False),
+    ('12 items/s/worker', False),
+    ('12 items/s to 23 items/s', False),
+    ('12 items/s. Other run: 12 items/s/worker', False),
+    ('12 items/s. Repeated run: 12 items/s.', True),
+])
+def test_shortened_unit_uses_every_matching_location_in_the_original(original, comparable):
+    sources, sheet = pair()
+    ref, body = sources[0]
+    sources[0] = ref, body.replace('12 items/s', original)
+    sheet['claims'][0]['quote'] = '12 items/s'
+    result = checker.check(sheet, sources)['comparisons'][0]
+    assert ('left_divided_by_right' in result) == comparable
+
+
+@pytest.mark.parametrize('quoted_price', ['$12 per hour', '$12/day', '$12 million'])
+def test_price_unit_keeps_its_original_denominator_and_scale(quoted_price):
+    sources, sheet = pair()
+    for i, row in enumerate(sheet['claims']):
+        source_price = quoted_price if i == 0 else '$8'
+        ref, body = sources[i]
+        sources[i] = ref, body.replace(row['quote'], 'Price: ' + source_price)
+        row.update(quote='$' + row['value'], metric='Price', unit='$')
+    assert checker.check(sheet, sources)['comparisons'][0]['unmatched']
+
+
 def test_refuses_silently_omitted_source():
     sources, sheet = pair()
     sheet['claims'].pop()
