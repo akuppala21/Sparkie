@@ -1,0 +1,36 @@
+{
+  "1.6.8": {
+    "candidate": "b139be35000ad5d073114fdbdc516b975d2f018ca27f40584c8bb49107cc96dd",
+    "skill": "1.6.8",
+    "receipt_sha256": "798c5b02d57e728423dae9d8c7a9f49d35fc3c27a23898be7312067f26791c43",
+    "source_fixture_sha256": "4de9a645117e528d55705a618a8d38b22531f0e424ef951609490ff71817160d",
+    "native_structured_request_seconds": 42.409,
+    "schema_and_both_citations_passed": true,
+    "grade": "partial",
+    "supported": [
+      "A: single Spark, vLLM, TP=1, five integrated MTP tokens, no separate draft, configured 262144; the source excerpt gives no A throughput.",
+      "B: SGLang and separate DFlash2 draft with eight draft tokens; dual TP=2 over RoCE, correct four single-stream throughput cells, 262144 capacity, YaRN incompatibility on this build. The comparison of B single/dual improvements is supported."
+    ],
+    "unsupported": [
+      "A calls memory overhead lower than external-draft approaches. Avoiding a separate draft is established. The excerpt gives no comparative memory footprint.",
+      "B says longer context requires changing the draft mechanism. The source excludes YaRN with DFlash2 on this build, without ruling out all other builds or extension mechanisms."
+    ],
+    "ambiguity": "B introduces its setup as dual, then correctly reports one-Spark measurements as well. It does not explicitly say dual is mandatory. Neither row says the throughput was measured at full context."
+  },
+  "1.6.10": {
+    "candidate": "2bdcdf7716a58150e6cf8fdf9997e3953c2bca354435409736a0ad2b71a342f1",
+    "skill": "1.6.10",
+    "receipt_sha256": "28612b1034a745ae6f55594967715e247bf20b0e63639503e08a8efc48dd50b1",
+    "source_fixture_sha256": "4de9a645117e528d55705a618a8d38b22531f0e424ef951609490ff71817160d",
+    "native_structured_request_seconds": 37.888,
+    "schema_and_both_citations_passed": true,
+    "grade": "pass on this excerpt comparison",
+    "supported": [
+      "A: one Spark, vLLM, TP1, five native MTP tokens with no separate draft; the 1M title is distinguished from the configured launch length of 262144; missing throughput is explicit.",
+      "B: SGLang and the eight-token separate DFlash2 draft, TP2 over RoCE and the one-Spark alternative evidenced by its 52\u201361 and 26 measurements. Both capacities are 262144. The four attributed single-stream code and prose rate cells are reproduced and no cross-recipe winner is inferred.",
+      "The B caveat quotes the exact build-scoped YaRN limitation without predicting every possible extension mechanism. The A advantage avoids any unmeasured memory claim."
+    ],
+    "nuance": "B starts by naming the dual run, then explicitly reports both one- and two-Spark configurations and capacities. A separate draft must be available at the supplied path. The excerpt does not require a fresh download for each launch, which the answer does not explicitly claim.",
+    "scope": "One structured request with supplied excerpts. Does not establish open-ended research reliability or repair the errors in the normal SQLite, Git or PostgreSQL chats."
+  }
+}

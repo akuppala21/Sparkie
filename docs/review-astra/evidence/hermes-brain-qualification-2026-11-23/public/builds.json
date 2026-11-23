@@ -1,0 +1,62 @@
+{
+  "guidance": {
+    "candidate": "b139be35000ad5d073114fdbdc516b975d2f018ca27f40584c8bb49107cc96dd",
+    "source_table": "e05aa683808f03cddacf321ec5a1126d45b2f1bfa3796081994b1ffaf34ae0c2",
+    "pytest": {
+      "tests": "234",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "10.511"
+    },
+    "build_seconds": 8.48,
+    "pytest_container_seconds": 15.92,
+    "owner_gate": {
+      "unauthenticated": 401,
+      "wrong_digest": 403,
+      "exact_digest": 200,
+      "replay": 403,
+      "inert_dispatches": 1
+    }
+  },
+  "combined": {
+    "candidate": "882036ad14d13cab159b0ca33326aa04e841f6a322ed88c2a77f442bcd9bc106",
+    "source_table": "bd508464442723f9b03c3dcae3fc8a2206b2469e04b526c320e71d2d79af6e36",
+    "pytest": {
+      "tests": "311",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "21.112"
+    },
+    "build_seconds": 12.27,
+    "pytest_container_seconds": 28.63,
+    "owner_gate": {
+      "unauthenticated": 401,
+      "wrong_digest": 403,
+      "exact_digest": 200,
+      "replay": 403,
+      "inert_dispatches": 1
+    }
+  },
+  "refined": {
+    "candidate": "2bdcdf7716a58150e6cf8fdf9997e3953c2bca354435409736a0ad2b71a342f1",
+    "source_table": "956fe5e007dd4da1aa61f6ee2da164643316c2ce339c61cd4e324d0ce34f79b1",
+    "pytest": {
+      "tests": "311",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "20.314"
+    },
+    "build_seconds": 9.5,
+    "pytest_container_seconds": 27.14,
+    "owner_gate": {
+      "unauthenticated": 401,
+      "wrong_digest": 403,
+      "exact_digest": 200,
+      "replay": 403,
+      "inert_dispatches": 1
+    }
+  }
+}

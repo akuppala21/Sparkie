@@ -1,0 +1,190 @@
+{
+  "baseline-compact": {
+    "exit": 0,
+    "wall_seconds": 135.21,
+    "cases": [
+      {
+        "case": "simple_question",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 8.177
+      },
+      {
+        "case": "save_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 6.181
+      },
+      {
+        "case": "correct_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 9.614
+      },
+      {
+        "case": "fresh_session_recall",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 2.881
+      },
+      {
+        "case": "unknown_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 7.448
+      },
+      {
+        "case": "failed_stop",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 25.485
+      },
+      {
+        "case": "lost_acknowledgement",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 32.779
+      },
+      {
+        "case": "untrusted_source",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 6.914
+      },
+      {
+        "case": "native_structured_research",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 29.41
+      }
+    ]
+  },
+  "final-compact": {
+    "exit": 0,
+    "wall_seconds": 164.51,
+    "cases": [
+      {
+        "case": "simple_question",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 7.296
+      },
+      {
+        "case": "save_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 7.701
+      },
+      {
+        "case": "correct_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 9.427
+      },
+      {
+        "case": "fresh_session_recall",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 5.308
+      },
+      {
+        "case": "unknown_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 14.402
+      },
+      {
+        "case": "failed_stop",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 51.944
+      },
+      {
+        "case": "lost_acknowledgement",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 11.78
+      },
+      {
+        "case": "untrusted_source",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 7.56
+      },
+      {
+        "case": "native_structured_research",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 42.409
+      }
+    ]
+  },
+  "refined-compact": {
+    "exit": 0,
+    "wall_seconds": 236.21,
+    "cases": [
+      {
+        "case": "simple_question",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 7.215
+      },
+      {
+        "case": "save_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 4.671
+      },
+      {
+        "case": "correct_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 10.895
+      },
+      {
+        "case": "fresh_session_recall",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 4.136
+      },
+      {
+        "case": "unknown_preference",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 28.034
+      },
+      {
+        "case": "failed_stop",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 58.401
+      },
+      {
+        "case": "lost_acknowledgement",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 66.695
+      },
+      {
+        "case": "untrusted_source",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 12.012
+      },
+      {
+        "case": "native_structured_research",
+        "automated_pass": true,
+        "failed_checks": [],
+        "seconds": 37.888
+      }
+    ]
+  },
+  "final-missing": {
+    "exit": 137,
+    "wall_seconds": 150.62
+  },
+  "refined-missing": {
+    "exit": 137,
+    "wall_seconds": 150.51
+  }
+}

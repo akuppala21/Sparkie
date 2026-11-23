@@ -1,0 +1,103 @@
+{
+  "candidate": "882036ad14d13cab159b0ca33326aa04e841f6a322ed88c2a77f442bcd9bc106",
+  "fixture": "Native Webapp and gateway, unmodified package, private synthetic owner and local scripted provider. No live services, native model calls or public authentication.",
+  "scenarios": {
+    "standalone": {
+      "state": "uncertain",
+      "observed_calls": 1,
+      "new_dispatches": 0,
+      "scripted_provider_requests": 1,
+      "views": [
+        {
+          "viewport": [
+            1280,
+            850
+          ],
+          "bodyWidth": 1280,
+          "preamble": true,
+          "providerFallback": false,
+          "receipt": {
+            "receipt_id": "975ee94cd6c74f5a948465831167bd6a",
+            "state": "uncertain",
+            "stopped": null,
+            "next_step": "Keep this request. Do not retry or replace it while its outcome is unknown. Another attempt at this same change is blocked, even if you ask to override the hold. Check result reads the same request again. A separate observation of workload state does not complete this operation."
+          }
+        },
+        {
+          "viewport": [
+            390,
+            844
+          ],
+          "bodyWidth": 390,
+          "preamble": true,
+          "providerFallback": false,
+          "receipt": {
+            "receipt_id": "975ee94cd6c74f5a948465831167bd6a",
+            "state": "uncertain",
+            "stopped": null,
+            "next_step": "Keep this request. Do not retry or replace it while its outcome is unknown. Another attempt at this same change is blocked, even if you ask to override the hold. Check result reads the same request again. A separate observation of workload state does not complete this operation."
+          }
+        }
+      ],
+      "private_socket_removed": true
+    },
+    "mixed": {
+      "state": "uncertain",
+      "observed_calls": 1,
+      "new_dispatches": 0,
+      "scripted_provider_requests": 2,
+      "views": [
+        {
+          "viewport": [
+            1280,
+            850
+          ],
+          "bodyWidth": 1280,
+          "preamble": true,
+          "providerFallback": true,
+          "receipt": null
+        },
+        {
+          "viewport": [
+            390,
+            844
+          ],
+          "bodyWidth": 390,
+          "preamble": true,
+          "providerFallback": true,
+          "receipt": null
+        }
+      ],
+      "private_socket_removed": true
+    },
+    "custom": {
+      "state": "uncertain",
+      "observed_calls": 1,
+      "new_dispatches": 0,
+      "scripted_provider_requests": 2,
+      "views": [
+        {
+          "viewport": [
+            1280,
+            850
+          ],
+          "bodyWidth": 1280,
+          "preamble": true,
+          "providerFallback": true,
+          "receipt": null
+        },
+        {
+          "viewport": [
+            390,
+            844
+          ],
+          "bodyWidth": 390,
+          "preamble": true,
+          "providerFallback": true,
+          "receipt": null
+        }
+      ],
+      "private_socket_removed": true
+    }
+  }
+}

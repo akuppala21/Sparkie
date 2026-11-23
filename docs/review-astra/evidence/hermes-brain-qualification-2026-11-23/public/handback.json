@@ -1,0 +1,11 @@
+{
+  "observed_at": "2026-11-23T06:48:05.273Z",
+  "model_stopped": true,
+  "port_free": true,
+  "test_containers_remaining": 0,
+  "spark_2_gpu_processes_in_last_sample": 0,
+  "spark_2_running_containers": 0,
+  "spark_2_idle_minutes": 30,
+  "spark_2_eligible_for_idle": true,
+  "spark_1": "online"
+}

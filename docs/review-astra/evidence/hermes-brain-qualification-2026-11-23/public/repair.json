@@ -1,0 +1,93 @@
+{
+  "scope": "Regression deliberately reintroduced into an isolated partial checkout. The retained application selector already handles the regression.",
+  "summary": {
+    "package_sha256": "b139be35000ad5d073114fdbdc516b975d2f018ca27f40584c8bb49107cc96dd",
+    "model": "sparkie-hermes-main",
+    "seconds": 437.62,
+    "api_calls": 20,
+    "completed": true,
+    "error": null,
+    "sandbox_network": "none",
+    "model_requests": 24,
+    "original_held_out": 10,
+    "extra_cases": 5,
+    "workspace_released": true
+  },
+  "independent_replay": {
+    "changed": [
+      "sparkie/tests/test_check_selection.py",
+      "sparkie/tools/checks.py"
+    ],
+    "all_original_test_files_unchanged": false,
+    "focused": {
+      "reported": {
+        "before": false,
+        "after": true
+      },
+      "unseen_skill_entry": {
+        "before": false,
+        "after": true
+      },
+      "unseen_nested_instructions": {
+        "before": false,
+        "after": true
+      },
+      "ordinary_docs": {
+        "before": true,
+        "after": true
+      },
+      "global_instructions": {
+        "before": true,
+        "after": true
+      },
+      "research_specialization": {
+        "before": true,
+        "after": true
+      },
+      "energy_caller": {
+        "before": true,
+        "after": true
+      },
+      "unrelated_unknown": {
+        "before": true,
+        "after": true
+      },
+      "similar_directory_name": {
+        "before": true,
+        "after": true
+      },
+      "mixed_files": {
+        "before": false,
+        "after": true
+      }
+    },
+    "additional": {
+      "script": {
+        "before": false,
+        "after": false
+      },
+      "outside": {
+        "before": false,
+        "after": false
+      },
+      "reference": {
+        "before": false,
+        "after": false
+      },
+      "markdown": {
+        "before": false,
+        "after": true
+      },
+      "similar_prefix": {
+        "before": true,
+        "after": true
+      }
+    },
+    "complete_diff_sha256": "670436ca9bbcf1709292ca645065e9efe3d7608077a3c8fc7d5cba2de8d1d3b8",
+    "pytest_exit": 0,
+    "pytest_summary": [
+      "40 passed in 0.05s"
+    ]
+  },
+  "owner_reply": "Done. Here's the full report.\n\nDiscrepancy, reproduced before the fix\n- select(['sparkie/skills/desk-assistant/steps.md']) -> 2 Python tests\n  (test_native_integration.py + test_energy_integration.py via the always-on\n  adapters rule), compact_local_behavior=True.\n- select(['sparkie/prompts/<equivalent>.md']) -> 12 Python tests\n  (FLEET | ENERGY), compact_local_behavior=True.\n- So the skill instruction file was selecting 10 fewer tests than the\n  equivalent runtime prompt: test_fleet.py, test_collector.py,\n  test_local_observation.py, test_fleet_plugs.py, test_network_links.py,\n  test_energy.py, test_energy_power.py, test_energy_periods.py,\n  test_energy_history.py, test_matter.py.\n\nCause\nIn tools/checks.py the generic skills/...md branch (the one my earlier\npatch added the behavior flag to) only did tests.add('test_native_integration.py'),\nwhile the branch right below it for SOUL.md/AGENTS.md/USER.md/MEMORY.md and\nprompts/ does tests.update(FLEET | ENERGY). Same kind of runtime instruction,\ntwo different test lists.\n\nFix (working tree, not committed)\n- sparkie/tools/checks.py, one line: the generic skills/...md branch now\n  does tests.update(FLEET | ENERGY) instead of\n  tests.add('test_native_integration.py'). behavior stays True; the reason\n  text is unchanged. test_native_integration.py was already in FLEET, so\n  nothing previously selected is lost.\n- sparkie/tests/test_check_selection.py, one new test\n  (test_skill_instruction_files_select_the_same_python_tests_as_equivalent_prompts)\n  that pins skill instruction files to the exact same python_tests list as\n  equivalent prompts/ paths. All 36 pre-existing tests in that file are\n  byte-identical.\n\nVerified\n- After the fix, skills/desk-assistant/steps.md and a prompts/ instruction\n  both select the identical 12-test list, behavior=True on both. The same\n  now holds for skills/fleet/SKILL.md and skills/fleet/steps.md.\n- Neighbor regression check: I captured every plan before the edit and\n  diffed after. Only the three generic-branch paths changed; the explicit\n  skill branches (local-recipe-review SKILL.md/scripts: 7/6 tests,\n  one-spark-serving-results SKILL.md/measure_cache.py: 7/4 tests) are\n  unchanged, as are their flags.\n- Ran the tool's own entry point:\n  python3 tools/checks.py --paths sparkie/tools/checks.py\n  sparkie/tests/test_check_selection.py --run-python\n  It selected test_check_selection.py, test_preservation_selection.py plus\n  the always-on test_native_integration.py and test_energy_integration.py.\n- Ran the two environment-independent files directly:\n  python3 -m pytest tests/test_check_selection.py\n  tests/test_preservation_selection.py -> 40 passed, 0 failed (37 in\n  test_check_selection.py including the new one, 3 in\n  test_preservation_selection.py).\n\nStill needs qualification\n- test_native_integration.py and test_energy_integration.py (the two\n  registration/adapter smoke tests the plan adds for any non-empty test\n  set) did not collect in this checkout: they import sparkie_sparks and\n  hermes_cli, which live in the full tree and the pinned Hermes\n  environment, and this private checkout contains only sparkie/tools and\n  sparkie/tests. That is a missing dependency of this workspace, not a\n  regression from the change. They need a run in a compute workspace that\n  has the full extension tree and the pinned Hermes environment.\n- Non-Python check groups are unaffected by the edit (the flag plan for\n  skill md paths is identical before and after; the fix only widens the\n  python test list), but I did not re-run those browser/behavior groups\n  here since the flags didn't change.\n- I verified the mapping via selection() with explicit paths (the\n  --paths interface). changed_paths() through git diff feeds the same\n  sparkie/-prefixed paths into the same function, so the mapping is the\n  same; I did not create a real tracked edit to sparkie/\n  skills/desk-assistant/steps.md since this checkout has no skills/ tree.\n\nThe patch is left in the working tree of /workspace (git diff shows exactly\nthe two hunks above: 1 line in tools/checks.py, 1 new test in\ntest_check_selection.py). Nothing was committed or installed."
+}
