@@ -1,0 +1,84 @@
+[
+  {
+    "mode": "original",
+    "exit": 124,
+    "events": [
+      {
+        "event": "first_call",
+        "at": 1795426352.7715871,
+        "duration": 9
+      },
+      {
+        "event": "SIGINT",
+        "at": 1795426357.080935
+      },
+      {
+        "event": "terminal_result",
+        "at": 1795426357.896448,
+        "output": "CHECK_STARTED",
+        "code": 0,
+        "marker": false
+      },
+      {
+        "event": "provider_continuation_stub",
+        "at": 1795426357.8965135
+      },
+      {
+        "event": "second_tool",
+        "at": 1795426357.966576,
+        "output": "FOLLOWUP"
+      },
+      {
+        "event": "container_marker",
+        "at": 1795426361.888044,
+        "written_at": 1795426361.849467
+      }
+    ],
+    "captured_containers": 1,
+    "outer_cleanup_removed": 0,
+    "remaining_owned": 0,
+    "provider_http_requests": 0
+  },
+  {
+    "mode": "hard",
+    "exit": -9,
+    "events": [
+      {
+        "event": "first_call",
+        "at": 1795426366.0134835,
+        "duration": 9
+      }
+    ],
+    "captured_containers": 1,
+    "outer_cleanup_removed": 1,
+    "remaining_owned": 0,
+    "provider_http_requests": 0
+  },
+  {
+    "mode": "normal",
+    "exit": 0,
+    "events": [
+      {
+        "event": "first_call",
+        "at": 1795426372.3557396,
+        "duration": 1
+      },
+      {
+        "event": "terminal_result",
+        "at": 1795426374.36971,
+        "output": "CHECK_STARTED\nCHECK_COMPLETE",
+        "code": 0,
+        "marker": true
+      },
+      {
+        "event": "container_marker",
+        "at": 1795426374.3698096,
+        "written_at": 1795426373.433376
+      }
+    ],
+    "captured_containers": 1,
+    "outer_cleanup_removed": 0,
+    "remaining_owned": 0,
+    "provider_http_requests": 0
+  }
+]

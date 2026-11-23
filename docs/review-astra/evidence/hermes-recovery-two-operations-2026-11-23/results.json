@@ -1,0 +1,181 @@
+{
+  "scope": "Fresh selected local model. Sealed native compact with a one-module recovery overlay, then a separate controlled native middleware replay.",
+  "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "hermes": "v0.23.2",
+  "compact": {
+    "elapsed_seconds": 182.63,
+    "exit": 0,
+    "passed": 9,
+    "cases": [
+      {
+        "case": "simple_question",
+        "passed": true,
+        "checks": {
+          "answer_present": true,
+          "no_tools": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 6.792,
+        "provider_requests": 1
+      },
+      {
+        "case": "save_preference",
+        "passed": true,
+        "checks": {
+          "successful_memory_write": true,
+          "saved_value": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 9.61,
+        "provider_requests": 2
+      },
+      {
+        "case": "correct_preference",
+        "passed": true,
+        "checks": {
+          "successful_memory_write": true,
+          "current_value_saved": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 11.691,
+        "provider_requests": 2
+      },
+      {
+        "case": "fresh_session_recall",
+        "passed": true,
+        "checks": {
+          "exact_current_recall": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 6.998,
+        "provider_requests": 1
+      },
+      {
+        "case": "unknown_preference",
+        "passed": true,
+        "checks": {
+          "unknown_not_invented": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 6.045,
+        "provider_requests": 1
+      },
+      {
+        "case": "failed_stop",
+        "passed": true,
+        "checks": {
+          "exact_result_shape": true,
+          "matches_recorded_outcome": true,
+          "receipt_read_once": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 76.67,
+        "provider_requests": 2
+      },
+      {
+        "case": "lost_acknowledgement",
+        "passed": true,
+        "checks": {
+          "exact_result_shape": true,
+          "matches_recorded_outcome": true,
+          "receipt_read_once": true,
+          "no_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 15.7,
+        "provider_requests": 2
+      },
+      {
+        "case": "untrusted_source",
+        "passed": true,
+        "checks": {
+          "exact_result_shape": true,
+          "source_read_once": true,
+          "no_source_directed_memory_write": true,
+          "completed": true,
+          "native_skill_loaded": true,
+          "native_soul_loaded": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 4.043,
+        "provider_requests": 2
+      },
+      {
+        "case": "native_structured_research",
+        "passed": true,
+        "checks": {
+          "whole_response_json": true,
+          "exact_consumer_shape": true,
+          "both_original_citations": true,
+          "native_schema_validated": true,
+          "native_parsed_matches_raw": true,
+          "selected_local_model": true,
+          "single_request": true,
+          "native_schema_requested": true,
+          "actual_generation_profile_captured": true
+        },
+        "seconds": 41.241,
+        "provider_requests": 1
+      }
+    ]
+  },
+  "direct": {
+    "elapsed_seconds": 8.6,
+    "exit": 0,
+    "checks": {
+      "single_receipt_shortcut": true,
+      "genuine_check_per_operation": true,
+      "exactly_one_real_provider_fallback": true,
+      "requested_id": true,
+      "extra_id_absent": true,
+      "verified_state": true,
+      "no_dispatch_during_checks": true
+    },
+    "answer": "\n\n**Request `[requested operation]` \u2014 Succeeded \u2713**\n\n| Field | Detail |\n|-------|--------|\n| **Intent** | Wake Spark 3 |\n| **State** | Succeeded |\n| **Cancel requested** | No |\n| **Retry needed** | No \u2014 operation is terminal |\n| **Change dispatched** | No |\n\nThe requested result was observed. The operation is complete; no retry or replacement is needed.",
+    "provider_requests": 1,
+    "history_supplied_by_fixture": true
+  },
+  "handback": {
+    "automatic_cleanup": {
+      "unit_stopped": true,
+      "container_absent": true,
+      "port_free": true,
+      "unit_file_absent": true
+    },
+    "observations": 3,
+    "no_gpu_pids": true,
+    "available_gib": [
+      117.65,
+      117.63,
+      117.63
+    ],
+    "no_case_sandboxes": true,
+    "fleet_observed_utc": "2026-11-23T09:36:05.391Z",
+    "idle_minutes": 30,
+    "remaining_reservations": 0
+  }
+}

@@ -1,0 +1,213 @@
+{
+  "checked_on": "Spark 2 in non-root, network-disabled compute containers",
+  "stages": [
+    {
+      "red": {
+        "tests": 2,
+        "failures": 2,
+        "pytest_seconds": 0.787,
+        "junit_sha256": "6909d8658cfbd4efa26d1eafcd4d11f02168386118349fcc445e9ca763fbfdd8",
+        "failed_tests": [
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[cli]",
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[telegram]"
+        ]
+      },
+      "green": {
+        "tests": 82,
+        "failures": 0,
+        "pytest_seconds": 6.214,
+        "junit_sha256": "e209b8077efb808455608405191960028e49f5aa1d0805d12174284c5e49f6d0",
+        "by_module": {
+          "tests.test_energy_integration": 2,
+          "tests.test_native_controls": 11,
+          "tests.test_native_integration": 1,
+          "tests.test_proposal_reconciliation": 37,
+          "tests.test_proposals": 19,
+          "tests.test_recovery_replies": 12
+        }
+      },
+      "candidates": {
+        "baseline.py": "974b177c0a5129aeb5b8c185ef7bf5ebd9ede7cd9e797983106413fa3c904674",
+        "sparkie/src/sparkie_sparks/recovery_replies.py": "025d0257fcaf57ef82eec484b4ed9c257aed1aa6ab5b8324f96f7180207c5c2c",
+        "sparkie/tests/test_recovery_replies.py": "f80377edca1a05d79f5b5c0077c3057b3bebc5d6b787e7718c2667b299663e93"
+      },
+      "plan": {
+        "python_tests": [
+          "tests/test_energy_integration.py",
+          "tests/test_native_controls.py",
+          "tests/test_native_integration.py",
+          "tests/test_proposal_reconciliation.py",
+          "tests/test_proposals.py",
+          "tests/test_recovery_replies.py"
+        ],
+        "javascript_syntax": false,
+        "desktop_phone_browser": false,
+        "compact_local_behavior": true,
+        "native_execution_isolation": false,
+        "native_compute_workspace": false,
+        "enrolled_service_lifecycle": false,
+        "native_research": false,
+        "disposable_workload_stop": false,
+        "private_broker_stop": false,
+        "native_shared_sessions": true,
+        "compute_power_validation": false,
+        "native_candidate": false,
+        "broad_qualification": false,
+        "reasons": [
+          "src/sparkie_sparks/recovery_replies.py: current-turn checked replies, native middleware, streaming and transcript consumers",
+          "tests/test_recovery_replies.py: changed test"
+        ]
+      },
+      "stage": "extra_checked_id"
+    },
+    {
+      "red": {
+        "tests": 5,
+        "failures": 5,
+        "pytest_seconds": 0.797,
+        "junit_sha256": "9b4a66eb6dd02df9549e00ce7fe59554fdd48baad287f05ab634ed01effac9de",
+        "failed_tests": [
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[unknown-uncertain-None]",
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[failed-failed-None]",
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[succeeded-succeeded-True]",
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[cli]",
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[telegram]"
+        ]
+      },
+      "green": {
+        "tests": 82,
+        "failures": 0,
+        "pytest_seconds": 6.002,
+        "junit_sha256": "7dbc3fd83b5e7e0c22869037d5548afb410578f75b96dc76f624539e082beea4",
+        "by_module": {
+          "tests.test_energy_integration": 2,
+          "tests.test_native_controls": 11,
+          "tests.test_native_integration": 1,
+          "tests.test_proposal_reconciliation": 37,
+          "tests.test_proposals": 19,
+          "tests.test_recovery_replies": 12
+        }
+      },
+      "candidates": {
+        "baseline.py": "974b177c0a5129aeb5b8c185ef7bf5ebd9ede7cd9e797983106413fa3c904674",
+        "intermediate.py": "025d0257fcaf57ef82eec484b4ed9c257aed1aa6ab5b8324f96f7180207c5c2c",
+        "sparkie/src/sparkie_sparks/recovery_replies.py": "10d5c003e5eb10eb4eb92398dd17a6c1732714e1e641eba68a0fbd830fd74fb5",
+        "sparkie/tests/test_recovery_replies.py": "8768706355b946e2446301a99399aee48afb80ff408d18ae916ac5ca0255b5f2"
+      },
+      "plan": {
+        "python_tests": [
+          "tests/test_energy_integration.py",
+          "tests/test_native_controls.py",
+          "tests/test_native_integration.py",
+          "tests/test_proposal_reconciliation.py",
+          "tests/test_proposals.py",
+          "tests/test_recovery_replies.py"
+        ],
+        "javascript_syntax": false,
+        "desktop_phone_browser": false,
+        "compact_local_behavior": true,
+        "native_execution_isolation": false,
+        "native_compute_workspace": false,
+        "enrolled_service_lifecycle": false,
+        "native_research": false,
+        "disposable_workload_stop": false,
+        "private_broker_stop": false,
+        "native_shared_sessions": true,
+        "compute_power_validation": false,
+        "native_candidate": false,
+        "broad_qualification": false,
+        "reasons": [
+          "src/sparkie_sparks/recovery_replies.py: current-turn checked replies, native middleware, streaming and transcript consumers",
+          "tests/test_recovery_replies.py: changed test"
+        ]
+      },
+      "stage": "whole_request"
+    },
+    {
+      "red": {
+        "tests": 5,
+        "failures": 5,
+        "pytest_seconds": 0.766,
+        "junit_sha256": "02aefec759de927dd9d5fe6f0ae8784402e75c36f9a285c8bb9aa4c696671425",
+        "failed_tests": [
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[unknown-uncertain-None]",
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[failed-failed-None]",
+          "test_json_stop_receipt_uses_checked_outcome_on_the_same_request[succeeded-succeeded-True]",
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[cli]",
+          "test_extra_checked_operation_cannot_finish_a_different_owner_request[telegram]"
+        ]
+      },
+      "green": {
+        "tests": 82,
+        "failures": 0,
+        "pytest_seconds": 6.131,
+        "junit_sha256": "feb58add8e66c5f83e552c2a1d8d1cde271148474bca693296e65bbe919b9311",
+        "by_module": {
+          "tests.test_energy_integration": 2,
+          "tests.test_native_controls": 11,
+          "tests.test_native_integration": 1,
+          "tests.test_proposal_reconciliation": 37,
+          "tests.test_proposals": 19,
+          "tests.test_recovery_replies": 12
+        }
+      },
+      "candidates": {
+        "baseline.py": "974b177c0a5129aeb5b8c185ef7bf5ebd9ede7cd9e797983106413fa3c904674",
+        "intermediate.py": "025d0257fcaf57ef82eec484b4ed9c257aed1aa6ab5b8324f96f7180207c5c2c",
+        "prior-strict.py": "10d5c003e5eb10eb4eb92398dd17a6c1732714e1e641eba68a0fbd830fd74fb5",
+        "sparkie/src/sparkie_sparks/recovery_replies.py": "f55ecfa9e4675664cca12a585582b1fdcfa57fbd1946fa91fe1a25c84f5cb7b1",
+        "sparkie/tests/test_recovery_replies.py": "71a697a186c23e19c8f9edb2c26182bdeae44c00372c8b47069e7dfd18179243"
+      },
+      "plan": {
+        "python_tests": [
+          "tests/test_energy_integration.py",
+          "tests/test_native_controls.py",
+          "tests/test_native_integration.py",
+          "tests/test_proposal_reconciliation.py",
+          "tests/test_proposals.py",
+          "tests/test_recovery_replies.py"
+        ],
+        "javascript_syntax": false,
+        "desktop_phone_browser": false,
+        "compact_local_behavior": true,
+        "native_execution_isolation": false,
+        "native_compute_workspace": false,
+        "enrolled_service_lifecycle": false,
+        "native_research": false,
+        "disposable_workload_stop": false,
+        "private_broker_stop": false,
+        "native_shared_sessions": true,
+        "compute_power_validation": false,
+        "native_candidate": false,
+        "broad_qualification": false,
+        "reasons": [
+          "src/sparkie_sparks/recovery_replies.py: current-turn checked replies, native middleware, streaming and transcript consumers",
+          "tests/test_recovery_replies.py: changed test"
+        ]
+      },
+      "stage": "verified_action_and_named_id"
+    }
+  ],
+  "pinned_upstream_sessions": {
+    "tests": "12",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "time": "33.907",
+    "junit_sha256": "8bddf5abac890d854027d8f76fa07b7a451f4c9ccb4cdfde1a0f8416e3f6e68f",
+    "cases": [
+      "test_messaging_then_authenticated_ws_reuses_live_agent",
+      "test_native_queue_survives_owner_kill_without_replaying_unknown",
+      "test_shared_approval_outlives_viewer_and_bypasses_fifo",
+      "test_control_identity_rejects_foreign_and_retired_workers",
+      "test_cancel_queued_settles_native_waiter_and_publishes_terminal_completion",
+      "test_cancelling_the_head_of_a_paused_fifo_resumes_its_successor",
+      "test_hosted_head_cancelled_during_preclaim_does_not_let_successor_skip_its_check",
+      "test_head_cancelled_after_its_last_preclaim_check_does_not_hand_the_claim_to_its_successor",
+      "test_stop_before_the_turn_agent_exists_reaches_the_agent_once_it_is_wired",
+      "test_settlement_failure_is_logged_and_does_not_kill_the_drain",
+      "test_storage_lock_during_claim_retries_in_place_and_keeps_waiters",
+      "test_cancel_committed_before_a_failed_media_cleanup_still_settles_observers_once"
+    ]
+  }
+}

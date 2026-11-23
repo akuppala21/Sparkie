@@ -1,0 +1,152 @@
+{
+  "historical": {
+    "watchdog": "timeout --signal=INT --kill-after=15s 390s",
+    "runner_wall_seconds": 405.0,
+    "messages": {
+      "first_terminal_requested": {
+        "timestamp": 1795425496.5412116,
+        "arguments": {
+          "command": "cd /workspace/sparkie && echo \"===== BEFORE FIX: unclassified path -> broad trigger =====\" && python3 tools/checks.py --paths src/sparkie_sparks/new_module.py 2>&1 | python3 -c \"import sys, json; p=json.load(sys.stdin); print('broad_qualification:', p['broad_qualification']); print('has component test:', 'tests/components/test_reports.py' in p['python_tests']); print('num python_tests:', len(p['python_tests'])); print('sample:', p['python_tests'][:3])\"\necho \"===== BEFORE FIX: run-python on that broad plan (should falsely succeed) =====\"\npython3 tools/checks.py --paths src/sparkie_sparks/new_module.py --run-python >/tmp/before_run.txt 2>&1; echo \"exit_code=$?\"\necho \"--- tail of run output ---\"; tail -5 /tmp/before_run.txt"
+        }
+      },
+      "first_tool_result": {
+        "timestamp": 1795425552.986326,
+        "receipt": {
+          "output": "===== BEFORE FIX: unclassified path -> broad trigger =====\nbroad_qualification: True\nhas component test: False\nnum python_tests: 75\nsample: ['tests/test_application_updates.py', 'tests/test_application_upgrade.py', 'tests/test_attachment_tool_paths.py']\n===== BEFORE FIX: run-python on that broad plan (should falsely succeed) =====",
+          "exit_code": 0,
+          "error": null,
+          "approval": "Command was flagged (script execution via -e/-c flag) and auto-approved by smart approval."
+        }
+      },
+      "second_terminal_requested": {
+        "timestamp": 1795425567.5096762,
+        "arguments": {
+          "command": "cd /workspace/sparkie && python3 tools/checks.py --paths src/sparkie_sparks/new_module.py --run-python >/tmp/before_run.txt 2>&1; echo \"exit_code=$?\"; echo \"--- last 8 lines ---\"; tail -8 /tmp/before_run.txt; echo \"--- component test mentioned? ---\"; grep -c \"test_reports\" /tmp/before_run.txt || true",
+          "timeout": 300
+        }
+      }
+    },
+    "events": [
+      {
+        "unix_time": 1795425505.1618516,
+        "action": "exec_create",
+        "command": "broad-1"
+      },
+      {
+        "unix_time": 1795425505.1623023,
+        "action": "exec_start",
+        "command": "broad-1"
+      },
+      {
+        "unix_time": 1795425567.5606136,
+        "action": "exec_create",
+        "command": "broad-2"
+      },
+      {
+        "unix_time": 1795425567.56118,
+        "action": "exec_start",
+        "command": "broad-2"
+      },
+      {
+        "unix_time": 1795425567.97148,
+        "action": "kill"
+      },
+      {
+        "unix_time": 1795425567.97159,
+        "action": "exec_die",
+        "command": "broad-2",
+        "exit": 137
+      },
+      {
+        "unix_time": 1795425567.9717686,
+        "action": "exec_die",
+        "command": "broad-1",
+        "exit": 137
+      },
+      {
+        "unix_time": 1795425568.0819058,
+        "action": "die",
+        "exit": 137
+      },
+      {
+        "unix_time": 1795425568.1126359,
+        "action": "destroy"
+      }
+    ],
+    "pytest_cache": {
+      "lastfailed_mtime": 1795425558.2083704,
+      "failures": [
+        "tests/test_application_updates.py::test_review_transfer_verifies_bytes_and_never_overwrites",
+        "tests/test_application_updates.py::test_corrupt_transfer_never_creates_offer",
+        "tests/test_application_updates.py::test_existing_partial_or_corrupt_offer_is_not_reported_usable",
+        "tests/test_broker.py::test_real_broker_process_stops_cleanly_and_retains_pending_requests_after_restart",
+        "tests/test_composition_review.py::test_optional_power_config_starts_wake_only_without_hardware_access",
+        "tests/test_deployment.py::test_candidate_uses_an_independent_copy_of_the_exact_build_tool",
+        "tests/test_installation_paths.py::test_environment_file_is_not_silently_ignored",
+        "tests/test_installation_paths.py::test_model_cache_is_group_writable_and_runtime_state_stays_private",
+        "tests/test_power_activity.py::test_only_own_probe_session_and_verified_native_baseline_can_be_ignored",
+        "tests/test_service_ingress_deployment.py::test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit"
+      ],
+      "nodeids": 1104
+    },
+    "events_source": "Observed directly in Docker events for the exact trial container. The bounded daemon history had rotated before bulk export. Times below transcribe the first read."
+  },
+  "safe_cpu_replay": {
+    "native_timeout": 180,
+    "checkout": {
+      "files": 271,
+      "inventory_sha256": "1af6a98dc03b7ce44897a3e1586c399975600bf3d71aa412a2f0426f78ebc9a3"
+    },
+    "seconds": 54.18,
+    "native_result": {
+      "output": "===== plan =====\n{\n  \"python_tests\": [\n    \"tests/test_application_updates.py\",\n    \"tests/test_application_upgrade.py\",\n    \"tests/test_attachment_tool_paths.py\",\n    \"tests/test_authority.py\",\n===== BEFORE RUN =====\nexit_code=1\n--- tail of run output ---\nFAILED tests/test_installation_paths.py::test_environment_file_is_not_silently_ignored\nFAILED tests/test_installation_paths.py::test_model_cache_is_group_writable_and_runtime_state_stays_private\nFAILED tests/test_power_activity.py::test_only_own_probe_session_and_verified_native_baseline_can_be_ignored\nFAILED tests/test_service_ingress_deployment.py::test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit\n================= 10 failed, 1083 passed, 11 skipped in 49.29s =================",
+      "exit_code": 0,
+      "error": null,
+      "cwd": "/workspace/sparkie",
+      "hint": "exit_code 0 here is the status of the last pipeline command (tail/head/cat/...), NOT of the command before the pipe \u2014 and the output contains failure indicators. Treat this run as FAILED until proven otherwise: re-run the command WITHOUT the pipe (output is auto-truncated and the full text is saved to a file, so piping through tail/head is never needed) to get the real exit code."
+    },
+    "read_existing_log": {
+      "output": "SKIPPED [3] tests/test_deployment.py:80: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:105: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:117: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:153: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:170: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:179: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nSKIPPED [1] tests/test_deployment.py:209: Prepare a compute-Spark candidate and set SPARKIE_TEST_CANDIDATE\nFAILED tests/test_application_updates.py::test_review_transfer_verifies_bytes_and_never_overwrites\nFAILED tests/test_application_updates.py::test_corrupt_transfer_never_creates_offer\nFAILED tests/test_application_updates.py::test_existing_partial_or_corrupt_offer_is_not_reported_usable\nFAILED tests/test_broker.py::test_real_broker_process_stops_cleanly_and_retains_pending_requests_after_restart\nFAILED tests/test_composition_review.py::test_optional_power_config_starts_wake_only_without_hardware_access\nFAILED tests/test_deployment.py::test_candidate_uses_an_independent_copy_of_the_exact_build_tool\nFAILED tests/test_installation_paths.py::test_environment_file_is_not_silently_ignored\nFAILED tests/test_installation_paths.py::test_model_cache_is_group_writable_and_runtime_state_stays_private\nFAILED tests/test_power_activity.py::test_only_own_probe_session_and_verified_native_baseline_can_be_ignored\nFAILED tests/test_service_ingress_deployment.py::test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit\n================= 10 failed, 1083 passed, 11 skipped in 49.29s =================",
+      "exit_code": 0,
+      "error": null
+    },
+    "cleanup_verified": true,
+    "provider_requests": 0
+  },
+  "short_original": {
+    "client_own_pgrp": true,
+    "shell_spawned_at": 1795426184.7599313,
+    "result": {
+      "output": "HISTORICAL_BANNER",
+      "exit_code": 0,
+      "error": null
+    },
+    "tool_returned_at": 1795426190.9163103,
+    "cli_returncode": 0,
+    "marker_at_return": false,
+    "marker_completed_at": 1795426195.8033073,
+    "signal_at": [
+      1795426190.2650437
+    ],
+    "model_requests": 0,
+    "cleanup_verified": true
+  },
+  "short_foreground_only": {
+    "client_own_pgrp": true,
+    "shell_spawned_at": 1795426231.1129391,
+    "result": {
+      "output": "HISTORICAL_BANNER\nFINAL_MARKER",
+      "exit_code": 0,
+      "error": null
+    },
+    "tool_returned_at": 1795426242.9301064,
+    "cli_returncode": 0,
+    "marker_at_return": true,
+    "marker_completed_at": 1795426242.1621406,
+    "signal_at": [
+      1795426236.567215
+    ],
+    "model_requests": 0,
+    "cleanup_verified": true
+  }
+}

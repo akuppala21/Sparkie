@@ -39,6 +39,12 @@ reply without another inference call. The owner sees the recorded state,
 recovery advice and original request ID. Text in a transcript cannot supply
 a receipt. This option has no confirmation or dispatch authority.
 
+A short request such as `Check <ID>` or `Check <ID> and <ID>` can return
+the checked status directly. Named IDs must match the records exactly, and a
+stop request must match a verified stop operation. A question about “that
+request”, a mistyped ID, or a question with additional work goes through
+ordinary Hermes chat with the tool data.
+
 Every matching workload stop check returns a `stop_receipt` with the saved
 ID, state, nullable `stopped` value and the recorded recovery advice. Only
 a successful stop proves the exact workload was observed stopped. A failed

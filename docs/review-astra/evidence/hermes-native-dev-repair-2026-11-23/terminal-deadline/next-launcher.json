@@ -1,0 +1,9 @@
+{
+  "base_sha256": "a1a39fd7dc94abfe3cd3e9894d1a8ecb3b3b90020508ed8af6fbca9068fa2db1",
+  "corrected_launcher_sha256": "a3869c8e33bd59ceeeed7030b516d14d818d96160df025164f0ed1df2e29d47c",
+  "deadline_wrapper_sha256": "3e1e251574a61bb11e9dea5e285a998b164cb0ea4c0a5030de3764652981275a",
+  "replace_once": "timeout --signal=INT --kill-after=15s 390s",
+  "replacement": "sh \"$PWD/run-before-deadline.sh\" 390s",
+  "only_change_to_launcher": true,
+  "model_run_started": false
+}

@@ -77,7 +77,7 @@ def test_session_turn_call_id_and_actual_tool_bind_receipts(rig):
     controls, *_ = rig
     row = uncertain(controls)
     args = {'operation': row['id'], 'final_reply': True}
-    req = turn('Check this request', [('spark_check_change', args, 'call')])
+    req = turn('Check request ' + row['id'], [('spark_check_change', args, 'call')])
     replies = RecoveryReplies()
     normal = lambda: 'continue normally'
     def arrange(session, turn_id):
@@ -126,6 +126,12 @@ def test_json_stop_receipt_uses_checked_outcome_on_the_same_request(rig, observe
                              api_mode='chat_completions', model='local', platform=platform)
     for platform in ('cli', 'telegram'):
         assert json.loads(answer(prompt + fields, platform).choices[0].message.content) == expected
+        with_target = prompt.replace(row['id'], row['id'] + ' to stop the workload on Spark 2')
+        assert json.loads(answer(with_target + fields, platform).choices[0].message.content) == expected
+        assert answer(with_target.replace('Spark 2', 'Spark 3') + fields, platform) == 'native answer'
+        assert answer('Explain electricity too. ' + prompt + fields, platform) == 'native answer'
+        assert answer(prompt + fields.replace('state, stopped', 'state, state, stopped'), platform) == 'native answer'
+        assert answer(prompt + fields + '}}}).', platform) == 'native answer'
     from gateway.session_policy import SURFACES
     web = SURFACES['gui']
     short = f"Check stop request {row['id']} as JSON with receipt_id, state, stopped and next_step."
@@ -158,6 +164,43 @@ def test_checked_receipt_excludes_unavailable_mismatched_and_nonstop_operations(
     mismatched = {'id': '0' * 32, 'intent': {'action': 'stop_workload'}, 'state': 'succeeded'}
     monkeypatch.setattr(controls, 'proposal_check', lambda **_: mismatched)
     assert json.loads(proposals.check_tool(args)) == missing and not effects
+
+
+@pytest.mark.parametrize('platform', ['cli', 'telegram'])
+def test_extra_checked_operation_cannot_finish_a_different_owner_request(rig, platform):
+    controls, effects, *_ = rig
+    replies = RecoveryReplies()
+    ids = {'session_id': 'owner', 'turn_id': 'status'}
+    calls = []
+    operations = []
+    for key in ('first', 'second'):
+        row = uncertain(controls, request_key=key)
+        args = {'operation': row['id'], 'final_reply': True}
+        result = replies.checked('spark_check_change', args, lambda: proposals.check_tool(args),
+                                 tool_call_id=key, **ids)
+        assert json.loads(result)['request']['state'] == 'succeeded'
+        operations.append(row['id'])
+        calls.append(('spark_check_change', args, key))
+
+    def answer(prompt, history):
+        return replies.reply(turn(prompt, history), lambda: 'continue in Hermes',
+                             api_mode='chat_completions', model='local', platform=platform, **ids)
+
+    first, second = operations
+    for prompt in ('Check ' + first, 'Check ' + second.upper(), 'Check that request'):
+        assert answer(prompt, calls) == 'continue in Hermes'
+    assert answer('Check ' + second.upper(), calls[:1]) == 'continue in Hermes'
+    assert first in answer('Check ' + first.upper(), calls[:1]).choices[0].message.content
+    assert answer('Check that request', calls[:1]) == 'continue in Hermes'
+    # Both genuine records are wake operations. The owner's wording cannot
+    # turn either of them into a stop receipt.
+    for prompt in ('Check stop request ' + first, 'Retry the stop request ' + first + '?'):
+        assert answer(prompt, calls[:1]) == 'continue in Hermes'
+    for prompt in ('Check ' + first[:-1], f'Check {first} and {second[:-1]}',
+                   f'Check {first} and explain what a kWh is', 'Show that receipt and restart it'):
+        assert answer(prompt, calls[:1]) == 'continue in Hermes'
+    both = answer(f'Check {first} and {second}', calls).choices[0].message.content
+    assert first in both and second in both and not effects
 
 
 def test_all_explicit_requests_are_required_and_mixed_work_continues(rig):

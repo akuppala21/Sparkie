@@ -11,15 +11,27 @@ from .controls import result_text
 
 OPERATION = re.compile(r'(?<![a-zA-Z0-9])[a-f0-9]{32}(?![a-zA-Z0-9])')
 READ_TOOLS = {'tool_search', 'tool_describe', 'spark_change_status', 'spark_check_change'}
-JSON_FIELDS = re.compile(r'\bjson\b\s*(?:(?:with|containing)\s+)?(?:(?:the|these)\s+)?(?:(?:fields|keys)\s*)?[:{(]?\s*(.+?)\s*[.})]*\s*$', re.I | re.S)
+JSON_FIELDS = re.compile(r'\bjson\s+(?:(?:with|containing)\s+)?(?:(?:the|these)\s+)?'
+                         r'(?:(?:fields|keys)\s*:?\s+)?([a-z_ ,]+)\.?\s*$', re.I)
 
 
-# Native Webapp shares the GUI transport with desktop. A whole, explicit receipt
-# request can finish there without relying on model classification of other tasks.
-WEB_RECEIPT_PREFIX = re.compile(
+ID = r'[0-9a-f]{32}'
+ID_LIST = rf'{ID}(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+){ID})*'
+# Only short receipt requests can skip the final model round. All other
+# wording stays in Hermes, including compound instructions and mistyped IDs.
+PLAIN_RECEIPT = re.compile(
+    rf'(?:please\s+)?(?:'
+    rf'(?:check|show|get|return)\s+(?:(?:(?:the|my)\s+)?(?:stop\s+)?(?:requests?|receipts?)\s+)?{ID_LIST}'
+    rf'|still\s+waiting\s+for\s+{ID}'
+    rf'|(?:can\s+you\s+)?(?:repeat|retry)\s+(?:the\s+)?stop\s+request\s+{ID})[.?]?', re.I)
+JSON_RECEIPT_PREFIX = re.compile(
     r'(?:please\s+)?(?:check|show|get|return)\s+(?:the\s+)?(?:stop\s+)?(?:request|receipt)\s+'
     r'[a-f0-9]{32}\s+as', re.I,
 )
+LOST_ACK_PREFIX = re.compile(
+    rf'(?:we|i) lost the acknowledg(?:e)?ment for my request {ID}'
+    r'(?: to stop the workload on Spark (?P<spark>[1-4]))?\. (?:please )?check that same request\. '
+    r'did it stop\? i need the result for my log as', re.I)
 
 
 @dataclass(frozen=True)
@@ -29,6 +41,8 @@ class Checked:
     final: bool
     can_finish: bool
     stop_receipt: dict | None
+    spark: str | None
+    is_stop: bool
 
 
 def _turn_rows(messages):
@@ -73,17 +87,22 @@ class RecoveryReplies:
                 return result
             can_finish = False
             stop_receipt = None
+            spark = None
+            is_stop = False
             if body['available'] is True:
                 row = body['request']
                 if row['id'] != operation:
                     return result
+                intent = row.get('intent', {})
+                spark = intent.get('spark')
+                is_stop = intent.get('action') == 'stop_workload'
                 text = 'Recorded state: ' + row['state'] + '\n' + result_text(row)
                 if row['state'] == 'succeeded':
                     text += '\nThis check establishes the observed result only. It does not diagnose an interruption.'
                 # A failed or unsent attempt can require a fresh state review
                 # and draft. Preserve that work even if the model asked to finish.
                 can_finish = row['state'] in ('uncertain', 'dispatching', 'succeeded')
-                if args.get('reply_format') == 'stop_receipt_json' and row.get('intent', {}).get('action') == 'stop_workload':
+                if args.get('reply_format') == 'stop_receipt_json' and is_stop:
                     stop_receipt = body.get('stop_receipt')
             elif body['available'] is False:
                 text = 'Could not verify the result of request ' + operation + '. Keep the original request. No change was sent.'
@@ -95,7 +114,7 @@ class RecoveryReplies:
         with self.lock:
             checks = self.turns.setdefault(key, {})
             checks[tool_call_id] = Checked(operation, text, args.get('final_reply') is True or stop_receipt is not None,
-                                           can_finish, stop_receipt)
+                                           can_finish, stop_receipt, spark, is_stop)
             self.turns.move_to_end(key)
             if len(self.turns) > 128:
                 self.turns.popitem(last=False)
@@ -122,8 +141,6 @@ class RecoveryReplies:
         if not trailing.issubset(checks) or not any(call in trailing and item.final for call, item in checks.items()):
             return next_call()
         # A later correction, parallel work or another listed operation must not be lost.
-        # A mixed natural-language request with no second tool still relies on the model
-        # leaving final_reply off. The option is not an intent classifier.
         user = rows[0].get('content')
         if not isinstance(user, str):
             return next_call()
@@ -138,8 +155,10 @@ class RecoveryReplies:
             return next_call()
         receipts = {checks[row['tool_call_id']].operation: checks[row['tool_call_id']]
                     for row in rows if row.get('role') == 'tool' and row.get('tool_call_id') in checks}
-        requested = set(OPERATION.findall(user))
-        if not requested.issubset(receipts):
+        requested = set(OPERATION.findall(user.lower()))
+        # An extra checked record is genuine but may answer a different
+        # question. Leave ambiguous selections to the ordinary conversation.
+        if not requested or requested != receipts.keys():
             return next_call()
         if re.search(r'\bjson\b', user, re.IGNORECASE):
             # Only honor the named single-receipt option for the owner's exact
@@ -151,16 +170,20 @@ class RecoveryReplies:
             fields = JSON_FIELDS.search(user)
             if not item.stop_receipt or not fields:
                 return next_call()
-            if platform == 'desktop' and (
-                    not WEB_RECEIPT_PREFIX.fullmatch(user[:fields.start()].strip())
-                    or not re.fullmatch(r'[a-zA-Z_ ,]+', fields[1])):
-                return next_call()
-            names = re.findall(r'\w+', fields[1])
-            if {name for name in names if name.lower() != 'and'} != item.stop_receipt.keys():
+            prefix = ' '.join(user[:fields.start()].split())
+            if not JSON_RECEIPT_PREFIX.fullmatch(prefix):
+                recovery = LOST_ACK_PREFIX.fullmatch(prefix) if platform != 'desktop' else None
+                if not recovery or recovery['spark'] and item.spark != 'spark' + recovery['spark']:
+                    return next_call()
+            names = [name for name in re.findall(r'\w+', fields[1]) if name.lower() != 'and']
+            if len(names) != len(item.stop_receipt) or set(names) != item.stop_receipt.keys():
                 return next_call()
             content = json.dumps(item.stop_receipt)
         else:
-            if platform == 'desktop' or not all(item.can_finish for item in receipts.values()) or any(item.stop_receipt for item in receipts.values()):
+            if (platform == 'desktop' or not PLAIN_RECEIPT.fullmatch(user.strip())
+                    or not all(item.can_finish for item in receipts.values()) or any(item.stop_receipt for item in receipts.values())):
+                return next_call()
+            if re.search(r'\bstop\b', user, re.I) and not all(item.is_stop for item in receipts.values()):
                 return next_call()
             content = '\n\n'.join(item.text for item in receipts.values())
         from openai.types.chat import ChatCompletion

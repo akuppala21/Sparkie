@@ -1,0 +1,120 @@
+{
+  "sha256": "f55ecfa9e4675664cca12a585582b1fdcfa57fbd1946fa91fe1a25c84f5cb7b1",
+  "cases": [
+    {
+      "case": "plain-exact",
+      "expected": "direct",
+      "actual": "direct"
+    },
+    {
+      "case": "plain-short",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-long",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-extra-broken",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-compound",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-wrong-id",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-mismatch-spark",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-named-stop-vs-wake",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-repeat-stop-vs-wake",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "plain-pronoun-wrong-prior",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-simple",
+      "expected": "direct",
+      "actual": "direct"
+    },
+    {
+      "case": "json-ack",
+      "expected": "direct",
+      "actual": "direct"
+    },
+    {
+      "case": "json-mismatched-spark",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-weird-spark",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-compound-prefix",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-compound-suffix",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-wrong-id",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-malformed-id",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-wake-actual",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-extra-operation",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-wrong-field",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-duplicate-field",
+      "expected": "native",
+      "actual": "native"
+    },
+    {
+      "case": "json-junk-punctuation",
+      "expected": "native",
+      "actual": "native"
+    }
+  ]
+}
