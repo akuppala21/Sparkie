@@ -3,15 +3,13 @@
 #   mark   runs none of it: after a passing suite on a push to main, it checks the lock the suite wrote, commits it on
 #          top of the tested commit and pushes that commit as the tag tested/<first 12 hex of the tested tree>.
 #          It never pushes to main.
-name: Full run
+name: Legacy full run (manual)
 
-# Development checks run on GitHub until the owner says compute Sparks are available.
-# Final release qualification stays on GitHub. No nightly schedule until it is ready.
-# Manual dispatch remains available; no nightly schedule is enabled yet.
+# This is the former Node application's release workflow. The Hermes candidate
+# is checked on compute Sparks. Do not run this unrelated suite on a Hermes push.
+# Retain manual legacy maintenance; no hosted schedule is enabled.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # A newer final release push to the same branch cancels the older run.

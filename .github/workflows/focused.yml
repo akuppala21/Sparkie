@@ -1,6 +1,6 @@
-# Development checks run here until the owner says compute Sparks are available.
-# These results never mark a release as fully tested.
-name: Focused checks
+# Manual maintenance for the former Node application. Hermes development checks
+# run on compute Sparks; these results cannot qualify the replacement.
+name: Legacy focused checks (manual)
 on:
   workflow_dispatch:
     inputs:
