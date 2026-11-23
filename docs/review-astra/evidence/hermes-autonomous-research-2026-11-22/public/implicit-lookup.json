@@ -1,0 +1,24 @@
+[
+  {
+    "arm": "control",
+    "elapsed_seconds": 233.487,
+    "first_visible_seconds": 116.074,
+    "tools": 7,
+    "wire_attempts": 5,
+    "source": "official CPython release source at both versions",
+    "decision_correct": true,
+    "named_tool_invocations": 0,
+    "answer_sha256": "1a7d4b570f36757ac59100fc92a01b08161805dfcab3219bfb92d79420278c11"
+  },
+  {
+    "arm": "named",
+    "elapsed_seconds": 144.682,
+    "first_visible_seconds": 91.996,
+    "tools": 6,
+    "wire_attempts": 6,
+    "source": "official CPython release source at both versions",
+    "decision_correct": true,
+    "named_tool_invocations": 0,
+    "answer_sha256": "a78f0e6edcc6099f94b80b4e0595d9417792d709955927b28b27afbae4943a13"
+  }
+]

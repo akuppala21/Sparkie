@@ -1,0 +1,36 @@
+{
+  "final_observations": 3,
+  "model_stopped": true,
+  "model_container_absent": true,
+  "listener_free": true,
+  "test_sandboxes_remaining": 0,
+  "gpu_processes_in_final_checks": [
+    0,
+    0,
+    0
+  ],
+  "ordinary_turn_status": [
+    {
+      "case": "ordinary/runs/reader/code",
+      "status": 0,
+      "remaining": []
+    },
+    {
+      "case": "old-reader/runs/prior/code",
+      "status": 0,
+      "remaining": []
+    },
+    {
+      "case": "named-pair/runs/control/implicit",
+      "status": 0,
+      "remaining": []
+    },
+    {
+      "case": "named-pair/runs/named/implicit",
+      "status": 0,
+      "remaining": []
+    }
+  ],
+  "compact_exit": 0,
+  "smoke_exit": 0
+}

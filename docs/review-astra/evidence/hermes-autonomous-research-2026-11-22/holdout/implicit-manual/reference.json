@@ -1,0 +1,73 @@
+{
+  "verified_utc": "2026-11-23T02:47:05.827708+00:00",
+  "sources": [
+    {
+      "url": "https://docs.python.org/3.13/library/gzip.html",
+      "page_sha256": "f2344c620a8ae34628c553f9d24baf8c7346345bb4afe398ad5349f05646d6f7",
+      "passages": [
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            379,
+            380
+          ],
+          "text": "gzip.compress(data, compresslevel=9, *, mtime=None)"
+        },
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            381,
+            383
+          ],
+          "text": "Compress the data, returning a bytes object containing the compressed data. compresslevel and mtime have the same meaning as in the GzipFile constructor above."
+        },
+        {
+          "anchor": "gzip.GzipFile",
+          "source_html_lines": [
+            289,
+            292
+          ],
+          "text": "The optional mtime argument is the timestamp requested by gzip. The time is in Unix format, i.e., seconds since 00:00:00 UTC, January 1, 1970. If mtime is omitted or None, the current time is used. Use mtime = 0 to generate a compressed stream that does not depend on creation time."
+        },
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            388,
+            388
+          ],
+          "text": "Changed in version 3.8: Added the mtime parameter for reproducible output."
+        }
+      ]
+    },
+    {
+      "url": "https://docs.python.org/3.14/library/gzip.html",
+      "page_sha256": "e4204ecf0c9547ceeb37575e8083bb5e40e4e39a50ea9c7193dce1238651b67d",
+      "passages": [
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            403,
+            404
+          ],
+          "text": "gzip.compress(data, compresslevel=9, *, mtime=0)"
+        },
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            405,
+            408
+          ],
+          "text": "Compress the data, returning a bytes object containing the compressed data. compresslevel and mtime have the same meaning as in the GzipFile constructor above, but mtime defaults to 0 for reproducible output."
+        },
+        {
+          "anchor": "gzip.compress",
+          "source_html_lines": [
+            427,
+            429
+          ],
+          "text": "Changed in version 3.14: The mtime parameter now defaults to 0 for reproducible output. For the previous behaviour of using the current time, pass None to mtime."
+        }
+      ]
+    }
+  ]
+}

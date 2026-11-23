@@ -1,0 +1,1 @@
+Use the bundled manual reader to find the prime-number example under “else Clauses on Loops” in the Python 3.13 tutorial. Give me the example as a standalone Python script and show me what running it prints.

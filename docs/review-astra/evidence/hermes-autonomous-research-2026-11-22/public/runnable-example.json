@@ -1,0 +1,22 @@
+[
+  {
+    "reader": "prior",
+    "seconds": 61.538,
+    "first_visible_seconds": 48.217,
+    "completed_model_requests": 11,
+    "client_send_attempts": 12,
+    "tool_receipts": 11,
+    "answer_sha256": "eeadcc579d5f6169c0ddede68220e0b3197745a0b1fb2b500b87b918838663c1",
+    "correct_script_and_stdout": true
+  },
+  {
+    "reader": "revised",
+    "seconds": 61.762,
+    "first_visible_seconds": 10.153,
+    "completed_model_requests": 7,
+    "client_send_attempts": 8,
+    "tool_receipts": 7,
+    "answer_sha256": "b5f3290ba58fca255530715cb56a2bb084bbcfc0dfcf5182ede18294a22b821b",
+    "correct_script_and_stdout": true
+  }
+]

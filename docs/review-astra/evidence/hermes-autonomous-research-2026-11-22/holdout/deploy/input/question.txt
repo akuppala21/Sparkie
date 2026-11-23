@@ -1,0 +1,1 @@
+Our upgrade still has stock PostgreSQL 11 and 12 clusters. The migration runner wraps each file in BEGIN and COMMIT unless we opt that file out. An existing order_state enum needs a new 'held' value, then we need to update some orders to use it. Can I put both statements in one normal migration file? What would you put in the rollout plan for both versions?

@@ -1,0 +1,20 @@
+{
+  "verified_utc": "2026-11-23T01:44:13.447070+00:00",
+  "primary": [
+    {
+      "url": "https://www.postgresql.org/docs/11/sql-altertype.html",
+      "sha256": "f343f3a9fa544706d94f4f4bb6f4aec802e652416dfc0d92ca3c25163ce4d223",
+      "bytes": 23962
+    },
+    {
+      "url": "https://www.postgresql.org/docs/12/sql-altertype.html",
+      "sha256": "b5f4f5c92a38e0deeccc5ab21b957d3c119c0f1bcc21ca2f21c8d2a44390e495",
+      "bytes": 24035
+    },
+    {
+      "url": "https://www.postgresql.org/docs/12/release-12.html",
+      "sha256": "172544eefb668c897474077dbe84d61d723ca23083e0f720e4c83e78f6094c50",
+      "bytes": 140876
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Our cache key is a hash of the bytes from gzip.compress(payload). We have one CPython 3.13 worker and one 3.14 worker. Each reruns identical input on different days with its own build and settings unchanged. Which worker's key can change just because time passed, and what one call should we use on both to remove that cause?

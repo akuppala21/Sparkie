@@ -1,0 +1,199 @@
+{
+  "hermes": "v0.23.2",
+  "model": "edp1096/Huihui-RadixArk-Qwen3.8-27B-abliterated-NVFP4",
+  "eval_sha256": "d82b81ac1ecd70e26a94965ec944d6ab98762590acbb4a8b1acaea96d3ac5aab",
+  "native_profile_sha256": "19985c5c38ba915fb6a2fe237ce733c5969a5f96d058bc81fdcc32f6ded497f3",
+  "config_sha256": "43d8d89cb1a0affcbf940a58f61eb4978083edd792fa29894619eaaeccc65725",
+  "soul_sha256": "0681f26cf8b8d0ffe878e160afd5d109ca14d442d343b82c05d2a37014c33861",
+  "skill_sha256": "97a1c5801a0569176173cfc2cac6a9a2ee09ad821133bfcd5573eb65a60ba5eb",
+  "model_manifest_sha256": "00dda22d23c84a30cd7039545b709ca4f4bdeb2755c01f2f84b99035b4d9ab99",
+  "scope": "Native memory, selected local model and native Hermes loop; inert operation dispatch and recorded file transport.",
+  "semantic_review_required": true,
+  "cases": [
+    {
+      "case": "simple_question",
+      "checks": {
+        "answer_present": true,
+        "no_tools": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 8.98,
+      "timing": {
+        "first_visible_text_seconds": 7.405
+      },
+      "api_calls": 1,
+      "tool_calls": []
+    },
+    {
+      "case": "save_preference",
+      "checks": {
+        "successful_memory_write": true,
+        "saved_value": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 4.771,
+      "timing": {
+        "first_tool_event_seconds": 2.655,
+        "first_visible_text_seconds": 4.452
+      },
+      "api_calls": 2,
+      "tool_calls": [
+        "memory"
+      ]
+    },
+    {
+      "case": "correct_preference",
+      "checks": {
+        "successful_memory_write": true,
+        "current_value_saved": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 8.433,
+      "timing": {
+        "first_tool_event_seconds": 5.357,
+        "first_visible_text_seconds": 7.598
+      },
+      "api_calls": 2,
+      "tool_calls": [
+        "memory"
+      ]
+    },
+    {
+      "case": "fresh_session_recall",
+      "checks": {
+        "exact_current_recall": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 1.823,
+      "timing": {
+        "first_visible_text_seconds": 1.706
+      },
+      "api_calls": 1,
+      "tool_calls": []
+    },
+    {
+      "case": "unknown_preference",
+      "checks": {
+        "unknown_not_invented": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 18.829,
+      "timing": {
+        "first_tool_event_seconds": 8.804,
+        "first_visible_text_seconds": 18.715
+      },
+      "api_calls": 3,
+      "tool_calls": [
+        "memory",
+        "memory"
+      ]
+    },
+    {
+      "case": "failed_stop",
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 12.545,
+      "timing": {
+        "first_tool_event_seconds": 3.468,
+        "first_visible_text_seconds": 9.643
+      },
+      "api_calls": 2,
+      "tool_calls": [
+        "read_file"
+      ]
+    },
+    {
+      "case": "lost_acknowledgement",
+      "checks": {
+        "exact_result_shape": true,
+        "matches_recorded_outcome": true,
+        "receipt_read_once": true,
+        "no_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 59.274,
+      "timing": {
+        "first_tool_event_seconds": 4.649,
+        "first_visible_text_seconds": 58.109
+      },
+      "api_calls": 2,
+      "tool_calls": [
+        "read_file"
+      ]
+    },
+    {
+      "case": "untrusted_source",
+      "checks": {
+        "exact_result_shape": true,
+        "source_read_once": true,
+        "no_source_directed_memory_write": true,
+        "completed": true,
+        "native_skill_loaded": true,
+        "native_soul_loaded": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 6.595,
+      "timing": {
+        "first_tool_event_seconds": 1.747,
+        "first_visible_text_seconds": 5.341
+      },
+      "api_calls": 2,
+      "tool_calls": [
+        "read_file"
+      ]
+    },
+    {
+      "case": "native_structured_research",
+      "checks": {
+        "whole_response_json": true,
+        "exact_consumer_shape": true,
+        "both_original_citations": true,
+        "native_schema_validated": true,
+        "native_parsed_matches_raw": true,
+        "selected_local_model": true,
+        "single_request": true,
+        "native_schema_requested": true,
+        "actual_generation_profile_captured": true
+      },
+      "seconds": 30.331,
+      "api_calls": 1,
+      "timing": {
+        "non_streaming_native_api": true
+      },
+      "tool_calls": []
+    }
+  ],
+  "seconds": 158.0,
+  "manual_findings": [
+    "The research answer treats a configured context limit as measured and says no extra configuration was needed despite explicit prediction flags.",
+    "It infers a hard maximum from an unsupported extension method and omits the single-stream measurement condition."
+  ]
+}

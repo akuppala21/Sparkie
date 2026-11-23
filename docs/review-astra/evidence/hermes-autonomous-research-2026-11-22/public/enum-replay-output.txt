@@ -1,0 +1,8 @@
+docker.io/library/postgres:11.22-bullseye
+PostgreSQL 11.22 (Debian 11.22-1.pgdg110+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit
+Rebuild committed. Existing unused archived label disappeared: {new,shipped,held}
+Standalone addition and later scoped update retained labels and other rows: {new,shipped,archived,held}|held,new
+docker.io/library/postgres:12.22-bookworm
+PostgreSQL 12.22 (Debian 12.22-1.pgdg120+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14) 12.2.0, 64-bit
+Rebuild committed. Existing unused archived label disappeared: {new,shipped,held}
+Standalone addition and later scoped update retained labels and other rows: {new,shipped,archived,held}|held,new

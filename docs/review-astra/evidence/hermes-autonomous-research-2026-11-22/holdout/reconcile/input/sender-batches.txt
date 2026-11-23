@@ -1,0 +1,6 @@
+Cedar caption sender | CC-17 | Fri 16:10 | HTTP 201 means stored
+11:00 production E001–E080 inclusive | 80 successful
+12:15 production E061–E090 inclusive | 30 successful | repeated sends allowed after client timeout
+13:30 production E091–E100 inclusive | 10 successful
+14:05 calibration CAL-1, CAL-2, CAL-3 | 3 successful
+Dashboard total at export: 123 successful deliveries.

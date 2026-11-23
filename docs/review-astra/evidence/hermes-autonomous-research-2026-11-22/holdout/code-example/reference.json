@@ -1,0 +1,8 @@
+{
+  "url": "https://docs.python.org/3.13/tutorial/controlflow.html#else-clauses-on-loops",
+  "verified_utc": "2026-11-23T02:43:23.725026+00:00",
+  "page_sha256": "b985d14cc9c7b109996d54c17e32b3f214c5e4cd0e9020de060f12ed0413bd49",
+  "block_sha256": "428bab3991ae4bc874b8c12cce6f6ce5527db551822db478b81076c60bc21711",
+  "script_sha256": "caf04ac9ef25a6b8687951683c1a5c8ea070f91ea8c85a5b7fde993f8ff36b64",
+  "expected_stdout_sha256": "1b6e43b80958337171fc5041d1ff42a7ec28bbabc5a06feddd14245f57587b95"
+}
