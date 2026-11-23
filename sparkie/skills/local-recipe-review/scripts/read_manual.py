@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 MAX_BYTES = 4 * 1024 * 1024
 MAX_DEPTH = 128
+MAX_LINES = 65_536
 
 
 class ManualError(ValueError):
@@ -27,7 +28,7 @@ class Manual(HTMLParser):
     ignored = set("head nav aside footer script style noscript svg template".split())
     list_containers = {"ul", "ol", "menu"}
     list_scope_boundaries = list_containers | ignored | {
-        "html", "applet", "caption", "table", "td", "th", "marquee", "object",
+        "html", "applet", "pre", "caption", "table", "td", "th", "marquee", "object",
     }
     void = set("area base br col embed hr img input link meta param source track wbr".split())
 
@@ -36,16 +37,41 @@ class Manual(HTMLParser):
         self.stack = []
         self.parts = []
         self.lines = []
+        self.pre_depth = None
+        self.code_ranges = []
 
     def flush(self):
-        value = " ".join("".join(self.parts).split())
-        if value:
-            anchor = self.stack[-1][1] if self.stack else ""
-            self.lines.append((anchor, value))
+        raw = "".join(self.parts)
         self.parts.clear()
+        if not raw:
+            return
+        if self.pre_depth is not None:
+            # Preserve physical lines, including indentation and internal blank lines.
+            # Check the count before splitting untrusted input into Python objects.
+            value = raw.replace("\r\n", "\n").replace("\r", "\n").removesuffix("\n")
+            count = value.count("\n") + 1
+            first = len(self.lines)
+            if first + count > MAX_LINES:
+                raise ManualError("The manual exceeds the supported number of text lines.")
+            anchor = self.stack[self.pre_depth][1]
+            self.lines.extend((anchor, line) for line in value.split("\n"))
+            self.code_ranges.append((first, first + count))
+        else:
+            value = " ".join(raw.split())
+            if value:
+                if len(self.lines) >= MAX_LINES:
+                    raise ManualError("The manual exceeds the supported number of text lines.")
+                anchor = self.stack[-1][1] if self.stack else ""
+                self.lines.append((anchor, value))
+
+    def code_line_break(self):
+        # Some highlighters wrap each line in a div instead of writing an LF.
+        if self.parts and not self.parts[-1].endswith(("\r", "\n")):
+            self.parts.append("\n")
 
     def handle_starttag(self, tag, attrs):
-        if tag in self.boundaries or tag in self.ignored:
+        attrs = dict(attrs)
+        if self.pre_depth is None and (tag in self.boundaries or tag in self.ignored):
             self.flush()
         if tag == "li":
             # An li end tag may be omitted before its next sibling. A nested
@@ -57,27 +83,37 @@ class Manual(HTMLParser):
                 if open_tag == "li":
                     del self.stack[index:]
                     break
+        hidden = ((bool(self.stack) and self.stack[-1][2]) or tag in self.ignored
+                  or "hidden" in attrs or attrs.get("aria-hidden") == "true")
+        if self.pre_depth is not None and not hidden and tag in self.boundaries and tag != "br":
+            self.code_line_break()
         if tag not in self.void:
             if len(self.stack) >= MAX_DEPTH:
                 raise ManualError("The manual exceeds the supported HTML nesting depth.")
-            attrs = dict(attrs)
-            _, anchor, hidden = self.stack[-1] if self.stack else ("", "", False)
+            anchor = self.stack[-1][1] if self.stack else ""
             element_id = attrs.get("id") or ""
             if (tag in self.boundaries and 0 < len(element_id) <= 200 and element_id.isprintable()
                     and not any(c.isspace() for c in element_id)):
                 anchor = element_id
-            self.stack.append((tag, anchor,
-                               hidden or tag in self.ignored or "hidden" in attrs or attrs.get("aria-hidden") == "true"))
-        elif tag == "br":
-            self.parts.append(" ")
-        if tag in {"th", "td"}:
+            if tag == "pre" and self.pre_depth is None:
+                self.pre_depth = len(self.stack)
+            self.stack.append((tag, anchor, hidden))
+        elif tag == "br" and not hidden:
+            self.parts.append("\n" if self.pre_depth is not None else " ")
+        if tag in {"th", "td"} and not hidden:
             self.parts.append(" ")
 
     def handle_endtag(self, tag):
-        if tag in self.boundaries or tag in self.ignored or tag in self.list_containers:
-            self.flush()
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i][0] == tag:
+                if self.pre_depth is not None:
+                    if i <= self.pre_depth:
+                        self.flush()
+                        self.pre_depth = None
+                    elif tag in self.boundaries and not self.stack[i][2]:
+                        self.code_line_break()
+                elif tag in self.boundaries or tag in self.ignored or tag in self.list_containers:
+                    self.flush()
                 del self.stack[i:]
                 break
 
@@ -109,7 +145,8 @@ def public_target(url):
     return urlunsplit(parsed._replace(fragment="")), f"{host}:443:{pinned}"
 
 
-def passages(lines, terms):
+def passages(lines, terms, code_ranges=()):
+    code_starts = {start for start, _ in code_ranges}
     found = []
     for term in terms:
         pattern = re.compile(re.escape(term), re.IGNORECASE)
@@ -125,14 +162,17 @@ def passages(lines, terms):
             left = max(0, match.start() - 120)
             text = line[left:]
             end = i
-            while anchor and len(text) < 460 and end + 1 < min(len(lines), i + 3):
+            code = next((span for span in code_ranges if span[0] <= i < span[1]), None)
+            limit = min(code[1] if code else len(lines), i + 3)
+            while (code or anchor) and len(text) < 460 and end + 1 < limit:
                 next_anchor, following = lines[end + 1]
-                if next_anchor != anchor:
+                if not code and (next_anchor != anchor or end + 1 in code_starts):
                     break
                 end += 1
-                text += " " + following
+                text += ("\n" if code else " ") + following
+            partial_block = code is not None and (i > code[0] or end + 1 < code[1])
             excerpts.append({"line": i + 1, "anchor": anchor, "context_lines": [i + 1, end + 1],
-                             "excerpt": text[:460], "clipped": left > 0 or len(text) > 460})
+                             "excerpt": text[:460], "clipped": left > 0 or len(text) > 460 or partial_block})
         found.append({"term": term, "hits": hits, "passages": excerpts})
     return found
 
@@ -168,7 +208,7 @@ def read_page(url, terms, directory):
     plain = directory / "passages.txt"
     plain.write_text("\n".join(line for _, line in manual.lines) + "\n", encoding="utf-8")
     return {"source": source, "raw_sha256": hashlib.sha256(data).hexdigest(), "original": str(raw),
-            "text": str(plain), "lines": len(manual.lines), "matches": passages(manual.lines, terms)}
+            "text": str(plain), "lines": len(manual.lines), "matches": passages(manual.lines, terms, manual.code_ranges)}
 
 
 def main():

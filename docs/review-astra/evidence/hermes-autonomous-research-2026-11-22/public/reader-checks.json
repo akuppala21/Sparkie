@@ -1,0 +1,29 @@
+{
+  "publisher": {
+    "publisher": "https://docs.python.org/3.13/howto/logging-cookbook.html",
+    "html_sha256": "4b71644ddbd059c001150097739fc57092217faeaed13d9b2987bf57ef45aae0",
+    "block_sha256": "fe99764d0635ff4444cc8dd9732280356b7821b254f1f40db5cf5f823f1f4f1e",
+    "first_line": 881,
+    "lines": 104,
+    "original_parses_as_python": true,
+    "previous_exact": false,
+    "revised_exact": true
+  },
+  "inputs": {
+    "skills/local-recipe-review/scripts/read_manual.py": "341a74bd1c8f2c1970333f9ca5af3d53cf3a2711c9f3671aa987fcf5f92e8852",
+    "tests/test_manual_reader.py": "4f2fc7792365f9b0fd76e96fec2aa96db926d97454f1254934f8ef8646abe1b5"
+  },
+  "timing": [
+    "29 passed in 0.02s",
+    "110 passed, 1 warning in 7.11s"
+  ],
+  "selected": [
+    "tests/test_energy_integration.py",
+    "tests/test_forum_reader.py",
+    "tests/test_github_readme.py",
+    "tests/test_manual_reader.py",
+    "tests/test_native_config.py",
+    "tests/test_native_integration.py",
+    "tests/test_research_claims.py"
+  ]
+}

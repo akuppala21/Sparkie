@@ -146,3 +146,36 @@ def test_nested_list_stays_in_outer_item_and_hidden_sibling_ends(list_tag):
 def test_really_nested_lists_still_hit_the_depth_limit():
     with pytest.raises(reader.ManualError, match="nesting depth"):
         reader.Manual().feed("<ul><li>item" * (reader.MAX_DEPTH + 1))
+
+
+def test_code_example_keeps_executable_layout_and_citable_lines():
+    doc = reader.Manual()
+    doc.feed('<section id="example"><p>Example   follows.</p><pre><code>'
+             '<span>if</span> ready:\r\n\t# check before reporting\r\n'
+             '\treport(&quot;ok&quot;)<br>\tfinish()<span hidden>bad<br>data</span>\n\n'
+             'done()\n</code></pre><p>Only on   success.</p></section>')
+    assert doc.lines == [("example", line) for line in [
+        "Example follows.", "if ready:", "\t# check before reporting",
+        '\treport("ok")', "\tfinish()", "", "done()", "Only on success."]]
+    hit = reader.passages(doc.lines, ["check before reporting"], doc.code_ranges)[0]["passages"][0]
+    assert hit["context_lines"] == [3, 5]
+    assert hit["excerpt"] == '\t# check before reporting\n\treport("ok")\n\tfinish()'
+    assert hit["clipped"]
+
+
+def test_adjacent_unanchored_code_blocks_keep_separate_lines():
+    doc = reader.Manual()
+    doc.feed("<pre><div>a()</div><div>  b()</div>\n</pre><pre>c()</pre><p>Next.</p>")
+    # A literal LF following a line wrapper is kept, including a trailing blank line.
+    assert doc.lines == [("", "a()"), ("", "  b()"), ("", ""), ("", "c()"), ("", "Next.")]
+    hit = reader.passages(doc.lines, ["a()"], doc.code_ranges)[0]["passages"][0]
+    assert hit["excerpt"] == "a()\n  b()\n" and not hit["clipped"]
+
+
+def test_preformatted_line_limit_is_cumulative_and_checked_before_expansion(monkeypatch):
+    monkeypatch.setattr(reader, "MAX_LINES", 4)
+    doc = reader.Manual()
+    doc.feed("<p>Intro</p><pre>a\nb\nc</pre>")
+    with pytest.raises(reader.ManualError, match="number of text lines"):
+        doc.feed("<pre>" + "\n" * 10_000 + "</pre>")
+    assert len(doc.lines) == 4

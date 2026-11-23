@@ -1,0 +1,130 @@
+{
+  "reader1-decision": {
+    "first_attempt": true,
+    "whole_answer": "fail",
+    "process_exit": 137,
+    "model_requests": 9,
+    "tool_receipts_in_last_request": 8,
+    "turn_seconds": null,
+    "first_visible_seconds": null,
+    "wall_seconds": 480.0,
+    "question_sha256": "e5ac359344702d898beca264254baacf9f6ba1c62d8f04c3edfdf855ef58b811",
+    "fixture_containers_after": 0
+  },
+  "reader1-transfer": {
+    "first_attempt": true,
+    "whole_answer": "pass",
+    "process_exit": 0,
+    "model_requests": 6,
+    "tool_receipts_in_last_request": 10,
+    "turn_seconds": 87.079,
+    "first_visible_seconds": 74.749,
+    "wall_seconds": 93.85,
+    "question_sha256": "4f3ed48b24eec98958fdbdb82ff7e7517e21e59f819bc7dbd9545b9e302b6660",
+    "fixture_containers_after": 0,
+    "answer_sha256": "8ae9f4461f4250da25980586c81f8de615ba4daafca8d6a5ddc3d16ca9ff66e6"
+  },
+  "reader1-simple": {
+    "first_attempt": true,
+    "whole_answer": "pass",
+    "process_exit": 0,
+    "model_requests": 1,
+    "tool_receipts_in_last_request": 0,
+    "turn_seconds": 7.754,
+    "first_visible_seconds": 7.467,
+    "wall_seconds": 12.01,
+    "question_sha256": "7163e6373783c5b3c9fe434deeb4fa698414f9ae274c254a251fc98886f494d7",
+    "fixture_containers_after": 0,
+    "answer_sha256": "ae923c5916480c5f8257756f7f7159ac3c4420327e4998ef48e7d5ce53d3c9a1"
+  },
+  "candidate-decision": {
+    "first_attempt": true,
+    "whole_answer": "fail",
+    "process_exit": 0,
+    "model_requests": 22,
+    "tool_receipts_in_last_request": 24,
+    "turn_seconds": 403.884,
+    "first_visible_seconds": 160.385,
+    "wall_seconds": 409.42,
+    "question_sha256": "e5ac359344702d898beca264254baacf9f6ba1c62d8f04c3edfdf855ef58b811",
+    "fixture_containers_after": 0,
+    "answer_sha256": "99266efb5d9788e1d028fc9c9f9e0cadf7bcf500a3275a4b9a1df86a1654cd3a",
+    "teaching_rows_exact_in_all_requests": true,
+    "prefill_rows_per_request": 10,
+    "teaching_tool_results_excluded": 4,
+    "teaching_markers": {
+      "returned_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "saved_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "final_answer": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      }
+    }
+  },
+  "candidate-transfer": {
+    "first_attempt": true,
+    "whole_answer": "pass",
+    "process_exit": 0,
+    "model_requests": 4,
+    "tool_receipts_in_last_request": 7,
+    "turn_seconds": 102.906,
+    "first_visible_seconds": 96.424,
+    "wall_seconds": 109.85,
+    "question_sha256": "4f3ed48b24eec98958fdbdb82ff7e7517e21e59f819bc7dbd9545b9e302b6660",
+    "fixture_containers_after": 0,
+    "answer_sha256": "0b514d6c6e2c878e563ff148705c54cf1e0fa480a7f206cefdc41f8208373e23",
+    "teaching_rows_exact_in_all_requests": true,
+    "prefill_rows_per_request": 10,
+    "teaching_tool_results_excluded": 4,
+    "teaching_markers": {
+      "returned_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "saved_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "final_answer": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      }
+    }
+  },
+  "candidate-simple": {
+    "first_attempt": true,
+    "whole_answer": "pass",
+    "process_exit": 0,
+    "model_requests": 1,
+    "tool_receipts_in_last_request": 0,
+    "turn_seconds": 7.249,
+    "first_visible_seconds": 7.068,
+    "wall_seconds": 11.48,
+    "question_sha256": "7163e6373783c5b3c9fe434deeb4fa698414f9ae274c254a251fc98886f494d7",
+    "fixture_containers_after": 0,
+    "answer_sha256": "ae923c5916480c5f8257756f7f7159ac3c4420327e4998ef48e7d5ce53d3c9a1",
+    "teaching_rows_exact_in_all_requests": true,
+    "prefill_rows_per_request": 10,
+    "teaching_tool_results_excluded": 4,
+    "teaching_markers": {
+      "returned_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "saved_conversation": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      },
+      "final_answer": {
+        "teaching_ids_found": [],
+        "complete_teaching_texts_found": 0
+      }
+    }
+  }
+}
