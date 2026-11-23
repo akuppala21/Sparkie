@@ -33,8 +33,11 @@ def split(configuration):
         raise ValueError('Native configuration must be a mapping.')
     preferences = copy.deepcopy(configuration)
     policy = {key: preferences.pop(key) for key in POLICY_ROOTS if key in preferences}
-    if 'memory' in preferences and 'provider' in preferences['memory']:
-        policy['memory'] = {'provider': preferences['memory'].pop('provider')}
+    memory = preferences.setdefault('memory', {})
+    policy['memory'] = {'write_approval': True}
+    memory.pop('write_approval', None)
+    if 'provider' in memory:
+        policy['memory']['provider'] = memory.pop('provider')
     # No approved host shell commands are carried into the fresh assistant.
     policy['hooks_auto_accept'] = False
     preferences.pop('hooks_auto_accept', None)

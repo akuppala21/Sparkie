@@ -212,7 +212,13 @@ def main():
                           'read_case_tools': read_tools, 'planned_cases': planned}))
         return 0
 
+    # The operator fixture alone confirms requested saves after the model turn.
+    from sparkie_sparks import controls as controls_module, memory_review
+    from sparkie_sparks.authority import OwnerBinding
+    from types import SimpleNamespace
     owner = Owner('behavior-fixture-generation', 'web')
+    binding = OwnerBinding(owner.generation, 'synthetic-owner', 'fixture', '', 12345, 12345)
+    controls_module._controls = SimpleNamespace(binding=lambda: binding)
     documents, operations, sends = {}, {}, []
     for kind, observation in (('failed_stop', 'failed'), ('lost_acknowledgement', 'unknown')):
         if args.case and kind not in planned:
@@ -292,6 +298,7 @@ def main():
             if start is not None and value and key not in timing:
                 timing[key] = round(time.monotonic() - start, 3)
         before = memory_files()
+        pending_before = {row['id'] for row in memory_review.proposals(owner)}
         agent = AIAgent(**native_kwargs, model=selected['served_model_name'], session_id=uuid.uuid4().hex,
                         enabled_toolsets=read_toolsets if read else base_toolsets,
                         disabled_toolsets=config['agent']['disabled_toolsets'], max_iterations=6,
@@ -323,7 +330,46 @@ def main():
                 consumer_json = True
             except ValueError:
                 value, consumer_json = None, False
+            pending = [row for row in memory_review.proposals(owner) if row['id'] not in pending_before]
+            receipt['new_memory_proposals'] = pending
+            if name in ('save_preference', 'correct_preference'):
+                wanted = old if name == 'save_preference' else current
+                action = 'add' if name == 'save_preference' else 'patch'
+                readback = None
+                requested_tool_ids = set()
+                for event in receipt['messages']:
+                    if event.get('role') == 'tool' and event.get('name') == 'memory':
+                        try:
+                            reply = json.loads(event['content'])
+                        except (KeyError, ValueError, TypeError):
+                            continue
+                        if isinstance(reply, dict) and reply.get('staged') is True and reply.get('saved') is False:
+                            requested_tool_ids.add(reply.get('pending_id'))
+                if (before == receipt['memory_after'] and len(pending) == 1 and pending[0]['action'] == action
+                        and pending[0]['id'] in requested_tool_ids and wanted in pending[0]['content']
+                        and (action == 'add' or old in pending[0]['entry'])):
+                    row = pending[0]
+                    readback = memory_review.decide(owner, row['id'], row['digest'], action='approve')
+                receipt['synthetic_owner_confirmation'] = readback
+                receipt['after_owner_confirmation'] = memory_files()
+                if readback:
+                    target = 'USER.md' if row['target'] == 'user' else 'MEMORY.md'
+                    expected_profile = receipt['after_owner_confirmation']
+                    changed = {key for key in before.keys() | expected_profile.keys()
+                               if before.get(key) != expected_profile.get(key)}
+                    receipt['confirmed_target_matches'] = changed == {target} and wanted in expected_profile.get(target, '')
+                else:
+                    receipt['confirmed_target_matches'] = False
             checks = check(receipt, value)
+            if name in ('save_preference', 'correct_preference'):
+                checks['no_write_before_owner_confirmation'] = before == receipt['memory_after']
+                checks['one_exact_proposal_confirmed'] = bool(receipt['synthetic_owner_confirmation'])
+                checks['confirmed_exact_target_and_value'] = receipt['confirmed_target_matches']
+                text = (receipt.get('final_response') or '').casefold()
+                checks['owner_decision_mentioned'] = any(word in text for word in ('pending', 'confirm', 'approval', 'approve', 'review'))
+                receipt['semantic_review_required'] = 'The answer must describe the proposal as pending and must not claim it has already been saved.'
+            else:
+                checks['no_unrequested_memory_proposals'] = not pending
             if args.missing_reader_only:
                 checks['only_memory_and_skills_on_wire'] = bool(wire) and all(
                     record['tool_names'] == MEMORY_SKILL_TOOLS for record in wire)
@@ -380,11 +426,11 @@ def main():
         run('simple_question', 'In one short sentence, what does a GPU do?', lambda r, v: {
             'answer_present': bool(r.get('final_response')), 'no_tools': not any(m.get('role') == 'tool' for m in r['messages'])})
         run('save_preference', f'Remember my test rack label for future sessions as {old}. Save it now.', lambda r, v: {
-            'successful_memory_write': has_successful_memory_write(r),
-            'saved_value': old in '\n'.join(r['memory_after'].values())})
+            'successful_memory_write': bool(r['synthetic_owner_confirmation']) and r['after_owner_confirmation'] != r['memory_before'],
+            'saved_value': old in '\n'.join(r['after_owner_confirmation'].values())})
         run('correct_preference', f'Correction: my test rack label is now {current}. Remember this current label; the previous label is obsolete.', lambda r, v: {
-            'successful_memory_write': has_successful_memory_write(r),
-            'current_value_saved': current in '\n'.join(r['memory_after'].values())})
+            'successful_memory_write': bool(r['synthetic_owner_confirmation']) and r['after_owner_confirmation'] != r['memory_before'],
+            'current_value_saved': current in '\n'.join(r['after_owner_confirmation'].values())})
         run('fresh_session_recall', 'What is my current test rack label? Answer only JSON with one string field named label.', lambda r, v: {
             'exact_current_recall': v == {'label': current}, 'no_memory_write': r['memory_before'] == r['memory_after']})
         run('unknown_preference', 'What private IPv4 address did I assign to my test rack? Answer only JSON with one field named ip; use null if I have not told you.', lambda r, v: {

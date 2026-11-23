@@ -147,3 +147,7 @@ Back up the new configuration and state using a supported method. An encrypted s
 | A model, Hermes or a candidate update fails | Status and the documented recovery path identify the problem. Recovery restores the last working service without unexpected commands. |
 
 This is the initial acceptance set. Add focused regressions for observed failures and acceptance checks for each added capability. Passing it demonstrates the tested tasks and configuration. The application states which capabilities are available and which still need work.
+
+## Owner decision on November 23, 2026
+
+Confirm each memory change. An ordinary chat, skill, delegated agent or background task may propose one addition or correction to native assistant memory or user preferences. Present the complete proposed change to the signed-in owner or the paired owner's private Telegram chat. The owner may confirm or reject that individual change. A request to remember something starts a proposal. Record the saved value only after confirmation and report it only after the native write succeeds. An unrelated question authorizes no change. Erasure retains the separate exact confirmation and recovery controls in sections 4 and 6.

@@ -123,6 +123,24 @@ def authorize_service(request: Request, recipe: str):
     return _call(request, authorize)
 
 
+@router.get('/memory/changes')
+def memory_changes(request: Request):
+    from .memory_review import proposals
+    def read(controls, owner):
+        default_profile(request.query_params.get('profile', ''))
+        return proposals(owner)
+    return _call(request, read)
+
+
+@router.post('/memory/changes/{proposal}/{action}')
+def memory_decision(request: Request, proposal: str, action: Literal['approve', 'reject', 'close'], body: Confirmation):
+    from .memory_review import decide
+    def review(controls, owner):
+        default_profile(request.query_params.get('profile', ''))
+        return decide(owner, proposal, body.digest, action=action)
+    return _call(request, review)
+
+
 @router.post('/memory/erase')
 async def prepare_memory(request: Request):
     # A validation error must not send the private literal back with its input.

@@ -113,6 +113,9 @@ print(json.dumps({'version':stamp['baseVersion'],'update_refused':True}))
 
 @pytest.mark.parametrize(('patch_name', 'targets'), [
     ('hermes-sealed-web-restore.patch', {'hermes_cli/web_routers/ops.py', 'hermes_cli/web_routers/transfer.py'}),
+    ('hermes-memory-owner-review.patch', {'tools/memory_tool.py', 'tools/write_approval.py',
+                                         'hermes_cli/write_approval_commands.py', 'agent/learning_mutations.py',
+                                         'hermes_cli/main_agent_cmds.py', 'hermes_cli/web_routers/ops.py'}),
     ('hermes-sandbox-skill-path.patch', {'agent/skill_commands.py'}),
     ('hermes-attachment-tool-path.patch', {'agent/context_references.py'}),
     ('hermes-remote-terminal-notice.patch', {'agent/message_sanitization.py'}),
@@ -125,6 +128,7 @@ def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_nam
     records = manifest["native_patches"]
     assert [record["patch"] for record in records] == [
         "extension/deploy/patches/hermes-sealed-web-restore.patch",
+        "extension/deploy/patches/hermes-memory-owner-review.patch",
         "extension/deploy/patches/hermes-sandbox-skill-path.patch",
         "extension/deploy/patches/hermes-attachment-tool-path.patch",
         "extension/deploy/patches/hermes-remote-terminal-interrupt.patch",
@@ -137,7 +141,13 @@ def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_nam
     assert applied["sha256"] == reviewed["patch_sha256"] == candidate.sha(patch)
     assert applied["upstream_files"] == {k: v["before_sha256"] for k, v in reviewed["files"].items()}
     for name, digest in applied["patched_files"].items():
-        assert digest == reviewed["files"][name]["after_sha256"] == candidate.sha(root / "hermes" / name)
+        assert digest == reviewed["files"][name]["after_sha256"]
+        # An overlapping patch must start at the preceding patch's exact output.
+        for later in records[records.index(applied) + 1:]:
+            if name in later["patched_files"]:
+                assert later["upstream_files"][name] == digest
+                digest = later["patched_files"][name]
+        assert candidate.sha(root / "hermes" / name) == digest
     assert set(applied["patched_files"]) == set(reviewed["files"])
 
 

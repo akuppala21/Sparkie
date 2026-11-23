@@ -28,7 +28,7 @@ COMPUTE = {'test_sandbox_ssh.py', 'test_sandbox_provider.py', 'test_workspace_le
            'test_workspace_worker.py', 'test_workspace_idle.py', 'test_workspace_remote.py',
            'test_workspace_service.py', 'test_placement.py', 'test_native_config.py'}
 AUTH = OPERATIONS | {'test_owner_login.py', 'test_native_config.py'}
-MEMORY = {'test_memory_erase.py', 'test_memory_correction_feedback.py', 'test_native_controls.py', 'test_native_integration.py', 'test_broker.py'}
+MEMORY = {'test_memory_owner_review.py', 'test_memory_erase.py', 'test_memory_correction_feedback.py', 'test_native_controls.py', 'test_native_integration.py', 'test_broker.py'}
 CATALOG = {'test_dashboard_packaging.py', 'test_recipes.py'}
 THEME = {'test_dashboard_packaging.py', 'test_managed_config.py', 'test_deployment.py'}
 NATIVE = FLEET | ENERGY | WORKLOADS | POWER | COMPUTE | AUTH | MEMORY
@@ -107,7 +107,9 @@ def selection(paths):
         elif path == 'src/sparkie_sparks/io_budget.py':
             tests.update(POWER | COMPUTE | {'test_io_budget.py', 'test_matter.py'})
             reasons.append(original + ': bounded maintenance I/O, power evidence and workspace transport consumers')
-        elif path in ('src/sparkie_sparks/memory_controls.py', 'src/sparkie_sparks/memory_erase.py'):
+        elif path in ('src/sparkie_sparks/memory_controls.py', 'src/sparkie_sparks/memory_erase.py',
+                       'src/sparkie_sparks/memory_review.py', 'deploy/patches/hermes-memory-owner-review.patch',
+                       'deploy/patches/hermes-memory-owner-review.json', 'tests/test_memory_owner_review.py'):
             tests.update(MEMORY)
             browser = behavior = sessions = True
             reasons.append(original + ': exact-owner erasure, native memory and searchable conversation data')

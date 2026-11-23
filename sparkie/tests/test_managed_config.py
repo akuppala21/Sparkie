@@ -34,6 +34,8 @@ def test_split_preserves_exact_reviewed_policy_without_freezing_ordinary_prefere
     assert preferences['memory']['memory_enabled'] is True
     assert 'provider' not in preferences['memory']
     assert policy['memory']['provider'] == ''
+    assert policy['memory']['write_approval'] is True
+    assert 'write_approval' not in preferences['memory']
     assert policy['hooks_auto_accept'] is False
 
 

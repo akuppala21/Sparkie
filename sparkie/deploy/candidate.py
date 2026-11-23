@@ -168,6 +168,10 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     (destination / roots.pop()).rename(destination / "hermes")
     shutil.copytree(extension, destination / "extension", ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "node_modules"))
     restore_guard = apply_restore_guard(destination / "hermes", destination / "extension")
+    memory_patch = apply_native_patch(destination / "hermes", destination / "extension",
+        Path("deploy/patches/hermes-memory-owner-review.patch"),
+        ("tools/memory_tool.py", "tools/write_approval.py", "hermes_cli/write_approval_commands.py",
+         "agent/learning_mutations.py", "hermes_cli/main_agent_cmds.py", "hermes_cli/web_routers/ops.py"))
     skill_path_patch = apply_native_patch(destination / "hermes", destination / "extension",
                                          Path("deploy/patches/hermes-sandbox-skill-path.patch"),
                                          ("agent/skill_commands.py",))
@@ -230,7 +234,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "schema": 1, "status": "development-candidate-not-approved-for-live-use",
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
-        "native_patches": [restore_guard, skill_path_patch, attachment_patch, interrupt_patch, notice_patch],
+        "native_patches": [restore_guard, memory_patch, skill_path_patch, attachment_patch, interrupt_patch, notice_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

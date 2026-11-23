@@ -75,6 +75,7 @@ delegation:
   subagent_auto_approve: false
 
 memory:
+  write_approval: true
   memory_enabled: true
   user_profile_enabled: true
   provider: ""

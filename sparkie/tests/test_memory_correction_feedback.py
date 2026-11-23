@@ -21,12 +21,25 @@ def test_native_correction_in_original_target(tmp_path, monkeypatch, original_ta
     from agent.agent_runtime_helpers import invoke_tool
     from tools.memory_tool import load_on_disk_store, memory_tool
 
+    from sparkie_sparks import controls, memory_review
+    from sparkie_sparks.authority import Owner, OwnerBinding
+    binding = OwnerBinding('correction-fixture', 'test', 'test', '', 12345, 12345)
+    owner = Owner(binding.generation, 'web')
+    monkeypatch.setattr(controls, '_controls', SimpleNamespace(binding=lambda: binding))
+    def confirm_one(pending):
+        assert pending['success'] is True and pending['staged'] is True and pending['saved'] is False
+        row, = memory_review.proposals(owner)
+        assert row['id'] == pending['pending_id'] and row['target'] == original_target
+        assert memory_review.decide(owner, row['id'], row['digest'], action='approve')['state'] == 'saved'
+
     discover_plugins(force=True)
     agent = SimpleNamespace(session_id='save', _memory_store=load_on_disk_store(), _memory_manager=None)
     alternate = 'user' if original_target == 'memory' else 'memory'
     old, new = 'Prefers PNG chart exports.', 'Prefers SVG chart exports.'
     save = {'target': original_target, 'operations': [{'action': 'add', 'content': old}]}
-    assert json.loads(invoke_tool(agent, 'memory', save, 'save'))['success'] is True
+    first = json.loads(invoke_tool(agent, 'memory', save, 'save'))
+    assert getattr(load_on_disk_store(), original_target + '_entries') == []
+    confirm_one(first)
 
     agent.session_id, agent._memory_store = 'correct', load_on_disk_store()
     wrong = {'target': alternate, 'operations': [{'action': 'patch', 'old_text': old, 'content': new}]}
@@ -39,6 +52,8 @@ def test_native_correction_in_original_target(tmp_path, monkeypatch, original_ta
 
     changed = json.loads(invoke_tool(agent, 'memory', {**wrong, 'target': original_target}, 'correct'))
     assert changed['success'] is True and 'correction_hint' not in changed
+    assert getattr(load_on_disk_store(), original_target + '_entries') == [old]
+    confirm_one(changed)
     fresh = load_on_disk_store()
     assert getattr(fresh, original_target + '_entries') == [new]
     assert getattr(fresh, alternate + '_entries') == []

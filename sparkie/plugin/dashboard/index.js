@@ -213,6 +213,49 @@
         })));
   }
 
+  function MemoryChanges() {
+    const [rows, setRows] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [visible, setVisible] = React.useState(false);
+    const [revision, setRevision] = React.useState(0);
+    React.useEffect(() => {
+      if (!visible) return;
+      let current = true;
+      setRows(null);
+      SDK.fetchJSON("/api/plugins/sparkie-sparks/memory/changes").then(data => {
+        if (current) { setRows(data); setError(""); }
+      }).catch(() => { if (current) setError("Memory changes could not be loaded."); });
+      return () => { current = false; };
+    }, [visible, revision]);
+    async function decide(row, action) {
+      setBusy(true);
+      try {
+        await SDK.fetchJSON("/api/plugins/sparkie-sparks/memory/changes/" + row.id + "/" + action, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({digest: row.digest}),
+        });
+        setError("");
+        setRevision(n => n + 1);
+      } catch (_) { setError("The decision could not be verified. Refresh to check the request."); }
+      finally { setBusy(false); }
+    }
+    return h("details", {onToggle: event => setVisible(event.currentTarget.open)},
+      h("summary", null, "Memory changes"),
+      h("button", {type: "button", disabled: busy, onClick: () => setRevision(n => n + 1)}, "Refresh requests"),
+      error && h("p", {role: "alert"}, error),
+      rows?.length === 0 && h("p", null, "No memory changes are waiting."),
+      rows?.map(row => h("section", {key: row.id},
+        h("h4", null, (row.action === "patch" ? "Correct " : "Add to ") + (row.target === "user" ? "user preferences" : "assistant memory")),
+        row.entry && h("div", null, "Existing entry", h("pre", {style: {whiteSpace: "pre-wrap", overflowWrap: "anywhere"}}, row.entry)),
+        row.find && h("div", null, "Find", h("pre", {style: {whiteSpace: "pre-wrap", overflowWrap: "anywhere"}}, row.find)),
+        h("p", null, "Proposed text"), h("pre", {style: {whiteSpace: "pre-wrap", overflowWrap: "anywhere"}}, row.content),
+        row.state === "held" && h("p", null, "Held request " + row.id + ". Proposed entry currently " +
+          (row.observation.proposed_entry_present ? "present." : "absent.") + " Refresh to check this request again."),
+        row.state === "held" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "close")}, "Close without retry"),
+        row.state === "pending" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "approve")}, "Confirm this change"),
+        row.state === "pending" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "reject")}, "Reject"))));
+  }
+
   function EraseMemory({ controls }) {
     const profile = new URLSearchParams(window.location.search).get("profile");
     if (!controls.data?.memory_erasure || (profile && profile !== "default")) return null;
@@ -237,11 +280,13 @@
   }
 
   function Changes({ controls, regionRef }) {
+    const profile = new URLSearchParams(window.location.search).get("profile");
     const rows = controls.data?.operations || [];
     return h("div", { ref: regionRef, tabIndex: -1, role: "region", "aria-label": "Spark change requests",
       "aria-busy": controls.busy, style: { marginBottom: "1rem" } },
       controls.error ? h("p", { role: "alert" }, controls.error) : null,
       controls.data && !controls.data.available ? h("p", { role: "status" }, controls.data.message) : null,
+      controls.data?.available && (!profile || profile === "default") && h(MemoryChanges, {}),
       h(EraseMemory, { controls }),
       controls.data?.application_updates ? h("details", { style: { marginBottom: "1rem" } },
         h("summary", null, "Update Sparkie"),

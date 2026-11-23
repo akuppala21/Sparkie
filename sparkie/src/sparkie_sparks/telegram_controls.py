@@ -172,6 +172,50 @@ def _require_default_memory_profile():
     default_profile('default' if active == get_process_hermes_home() and active.parent.name != 'profiles' else 'other')
 
 
+async def memory_review_command(update, context):
+    from telegram.ext import ApplicationHandlerStop
+    from .memory_review import decide, proposals
+    message = update.effective_message
+    try:
+        binding = await asyncio.to_thread(configured().binding)
+        owner = binding.telegram(update)
+        if update.message is None or update.edited_message is not None:
+            raise PermissionError('Send a new request in the paired private chat.')
+        _require_default_memory_profile()
+        words = message.text.split()
+        if len(words) == 4 and words[1] in ('approve', 'reject', 'close'):
+            result = await asyncio.to_thread(decide, owner, words[2], words[3], action=words[1])
+            await message.reply_text('Memory change ' + result['state'] + '.')
+        elif len(words) == 1:
+            rows = await asyncio.to_thread(proposals, owner)
+            if not rows:
+                await message.reply_text('No memory changes are waiting.')
+            for row in rows:
+                fields = [('Target', row['target']), ('Change', row['action'])]
+                if 'entry' in row:
+                    fields.extend([('Existing entry', row['entry']), ('Find', row['find'])])
+                fields.append(('Proposed text', row['content']))
+                for label, value in fields:
+                    # Separate plain-text messages preserve every character without Telegram markup.
+                    text = label + '\n' + value
+                    for start in range(0, len(text), 1900):
+                        await message.reply_text(text[start:start + 1900], parse_mode=None)
+                key = row['id'] + ' ' + row['digest']
+                if row['state'] == 'held':
+                    found = row['observation']['proposed_entry_present']
+                    await message.reply_text('Held request ' + row['id'] + '. Proposed entry currently present: ' + str(found) +
+                                             '. This observation cannot verify the earlier dispatch. Refresh with /memoryreview or close without retry: /memoryreview close ' + key)
+                else:
+                    await message.reply_text('/memoryreview approve ' + key + '\n/memoryreview reject ' + key)
+        else:
+            raise ValueError('Use /memoryreview to see the exact change before deciding.')
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        if message is not None:
+            await message.reply_text(str(exc))
+    finally:
+        raise ApplicationHandlerStop
+
+
 async def erase_command(update, context):
     from telegram.ext import ApplicationHandlerStop
 
@@ -238,6 +282,7 @@ async def callback(update, context):
 def register(native, adapter):
     global _delivery
     from telegram.ext import CallbackQueryHandler, CommandHandler
+    native.add_handler(CommandHandler('memoryreview', memory_review_command, block=True), group=-1)
     native.add_handler(CommandHandler('memoryerase', erase_command, block=True), group=-1)
     native.add_handler(CommandHandler(['spark', 'sparks'], command))
     native.add_handler(CallbackQueryHandler(callback, pattern=PATTERN))
