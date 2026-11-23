@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FLEET = {'test_fleet.py', 'test_collector.py', 'test_local_observation.py', 'test_fleet_plugs.py', 'test_network_links.py', 'test_native_integration.py'}
@@ -93,7 +94,7 @@ def selection(paths):
             reasons.append(original + ': fleet producer, native consumers and observation behavior')
         elif path in ('src/sparkie_sparks/energy.py', 'src/sparkie_sparks/energy_history.py'):
             tests.update(ENERGY)
-            panel = browser = True
+            panel = True
             reasons.append(original + ': electricity calculations, history and both consumers')
         elif path == 'src/sparkie_sparks/matter.py':
             tests.update(FLEET | ENERGY | POWER)
@@ -223,8 +224,11 @@ def selection(paths):
             research = compute = True
             reasons.append(original + ': native plugin registration, API and tool schemas')
         elif path.startswith('tests/browser/'):
-            browser = syntax = True
-            panel = panel or path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs')
+            syntax = True
+            if path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs'):
+                panel = True
+            else:
+                browser = True
             reasons.append(original + ': browser validation itself changed')
         elif path.startswith('tests/behavior/'):
             if path == 'tests/behavior/native_acceptance.py':
@@ -343,7 +347,8 @@ def selection(paths):
     # Hand broad collection to pytest so it honors conftest and its discovery configuration.
     targets = ['tests'] if broad else ['tests/' + name for name in sorted(tests)]
     return {'python_tests': targets, 'sparks_panel': panel,
-            'javascript_syntax': syntax, 'desktop_phone_browser': browser,
+            'javascript_syntax': syntax, 'desktop_phone_browser': browser or panel,
+            'other_desktop_phone_browser': browser,
             'compact_local_behavior': behavior, 'native_execution_isolation': isolation,
             'native_compute_workspace': compute, 'enrolled_service_lifecycle': services or broad, 'native_research': research,
             'disposable_workload_stop': workload,
@@ -394,18 +399,41 @@ class PytestOutcome:
                 'native_summary': summary}
 
 
+def run_sparks_panel(baseline):
+    evidence = Path(tempfile.mkdtemp(prefix='sparkie-panel-'))
+    output = evidence / 'sparks'
+    log = evidence / 'browser.log'
+    with log.open('w') as stream:
+        check = subprocess.run([sys.executable, str(ROOT / 'tests/browser/run_sparks.py'),
+                                str(baseline), str(output)], cwd=ROOT,
+                               stdout=stream, stderr=subprocess.STDOUT)
+    report = output / 'result.json'
+    try:
+        passed = json.loads(report.read_text()).get('passed') is True
+    except (OSError, ValueError, AttributeError):
+        passed = False
+    if check.returncode == 0 and not passed:
+        with log.open('a') as stream:
+            print('Browser helper exited successfully without a passing result.json.', file=stream)
+    return {'exit_code': check.returncode, 'passed': check.returncode == 0 and passed,
+            'log': str(log), 'report': str(report) if report.is_file() else None}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--paths', nargs='+', help='Explicit changed paths, including renamed/deleted files.')
     parser.add_argument('--base', default='HEAD', help='Git baseline; includes tracked changes and new files.')
     parser.add_argument('--run-python', action='store_true', help='Run the selected pytest group on this compute Spark.')
+    parser.add_argument('--run-affected', type=Path, metavar='EXPORTED_RELEASE',
+                        help='Run selected pytest and the selected Sparks panel check using this release.')
     args = parser.parse_args()
+    baseline = args.run_affected.resolve() if args.run_affected is not None else None
     try:
         plan = selection(args.paths if args.paths is not None else changed_paths(args.base))
     except (OSError, subprocess.CalledProcessError):
         parser.error('Could not inspect changes. Provide --paths or a valid Git baseline.')
     print(json.dumps(plan, indent=2), flush=True)
-    if not args.run_python:
+    if not args.run_python and baseline is None:
         return 0
     final = {'remaining_check_groups': [name for name in GROUPS if plan[name]], 'release_qualified': False}
     if plan['sparks_panel']:
@@ -438,6 +466,14 @@ def main():
                     print("In a private worker with the extracted release, run "
                           "bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py "
                           "with the same selector arguments.", file=sys.stderr)
+    if baseline is not None and plan['sparks_panel']:
+        browser = run_sparks_panel(baseline)
+        final['sparks_panel_check'].update(browser)
+        if browser['passed']:
+            if not plan['other_desktop_phone_browser']:
+                final['remaining_check_groups'].remove('desktop_phone_browser')
+        else:
+            code = code or browser['exit_code'] or 1
     print(json.dumps(final))
     return code
 

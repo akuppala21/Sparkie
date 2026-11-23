@@ -505,3 +505,58 @@ def test_browser_followup_points_to_the_selected_panel_only():
         if panel:
             assert remaining['sparks_panel_check']['from_extension_checkout'] == 'python3 tests/browser/run_sparks.py "$baseline"'
     assert select(['src/sparkie_sparks/energy.py'])['sparks_panel']
+
+
+def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_path):
+    root = tmp_path / 'checkout'
+    browser = root / 'tests/browser'
+    browser.mkdir(parents=True)
+    (root / 'tools').mkdir()
+    selector = root / 'tools/checks.py'
+    shutil.copyfile(Path(__file__).resolve().parents[1] / 'tools/checks.py', selector)
+    helper = browser / 'run_sparks.py'
+    helper.write_text(
+        "from pathlib import Path\nimport json, sys\n"
+        "baseline, out = map(Path, sys.argv[1:])\nout.mkdir()\n"
+        "code = int((baseline / 'browser-status').read_text())\n"
+        "(out / 'result.json').write_text(json.dumps({'passed': code == 0}))\n"
+        "print('observed browser run')\nraise SystemExit(code)\n")
+    status = tmp_path / 'browser-status'
+
+    def run(*paths):
+        result = subprocess.run([sys.executable, str(selector), '--run-affected', str(tmp_path),
+                                 '--paths', *paths], cwd=root, capture_output=True, text=True,
+                                env=dict(os.environ, TMPDIR=str(tmp_path)), timeout=30)
+        return result.returncode, json.loads(result.stdout.splitlines()[-1])
+
+    status.write_text('7')
+    code, result = run('tests/browser/sparks.mjs')
+    observed = result['sparks_panel_check']
+    assert code == observed['exit_code'] == 7 and not observed['passed']
+    assert json.loads(Path(observed['report']).read_text()) == {'passed': False}
+    assert 'observed browser run' in Path(observed['log']).read_text()
+    assert 'desktop_phone_browser' in result['remaining_check_groups']
+
+    status.write_text('0')
+    code, result = run('tests/browser/sparks.mjs')
+    assert code == 0 and result['sparks_panel_check']['passed']
+    assert result['remaining_check_groups'] == ['javascript_syntax']
+    code, result = run('tests/browser/sparks.mjs', 'tests/browser/controls.mjs')
+    assert code == 0 and result['sparks_panel_check']['passed']
+    assert 'desktop_phone_browser' in result['remaining_check_groups']
+
+    helper.write_text("raise SystemExit('Missing Chromium')\n")
+    code, result = run('tests/browser/sparks.mjs')
+    observed = result['sparks_panel_check']
+    assert code == observed['exit_code'] == 1 and not observed['passed']
+    assert observed['report'] is None and 'Missing Chromium' in Path(observed['log']).read_text()
+    helper.write_text('pass\n')
+    code, result = run('tests/browser/sparks.mjs')
+    observed = result['sparks_panel_check']
+    assert code == 1 and observed['exit_code'] == 0 and not observed['passed']
+    assert 'without a passing result.json' in Path(observed['log']).read_text()
+
+    helper.unlink()
+    code, result = run('tests/browser/controls.mjs')
+    assert code == 0 and 'sparks_panel_check' not in result
+    assert 'desktop_phone_browser' in result['remaining_check_groups']

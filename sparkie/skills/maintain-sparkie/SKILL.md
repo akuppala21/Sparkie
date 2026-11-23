@@ -1,6 +1,6 @@
 ---
 name: maintain-sparkie
-version: 1.0.6
+version: 1.0.7
 description: Diagnose and repair Sparkie in a private checkout, verify its affected callers, or prepare a compatible application update for exact owner review.
 ---
 
@@ -32,27 +32,18 @@ requires the sealed predecessor and steps 3–7.
    those cases through the affected callers. Preserve existing assertions and
    add a focused regression for behavior they missed. If the cause or scope
    remains uncertain, say which observation could settle it.
-   From an exported extension checkout, set `baseline` to the exact path returned
-   in step 1. Substitute the changed paths in this command.
+   From the extension checkout, use the exported release path as `baseline`
+   and pass the changed paths. This runs affected pytest and any selected
+   Sparks panel desktop/phone check. In the private worker, keep its evidence
+   under /workspace alongside the checkout.
 
    ```sh
-   bash tools/dev-python.sh "$baseline" tools/checks.py --paths path/to/changed.py --run-python
+   TMPDIR=/workspace bash tools/dev-python.sh "$baseline" tools/checks.py --paths path/to/changed.py --run-affected "$baseline"
    ```
 
-   The helper uses the pinned Hermes
-   runtime and development tools. For a supplied, preconfigured checkout, use
-   its development Python with the same selector arguments. Read the test
-   runner's actual results and the selector's separately listed checks.
-   For the Sparks panel or electricity UI, use the exported baseline when
-   available and a fresh output directory.
-
-   ```sh
-   python3 tests/browser/run_sparks.py "$baseline" /workspace/sparks-browser-results
-   ```
-
-   The check uses the checkout, an isolated native dashboard and desktop and
-   phone viewports. If a browser dependency is unavailable, report the named
-   dependency with the completed checks and reviewable diff.
+   Read the final JSON for pytest's actual counts, the browser outcome and log
+   or report path, and any remaining check groups. If a dependency is missing,
+   report the blocked check and its diagnostic alongside the completed checks.
 
    For a review-only repair, inspect the final diff and send the owner the result
    as soon as the reproduction and affected checks have outcomes. Include the

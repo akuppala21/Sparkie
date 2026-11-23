@@ -231,13 +231,21 @@ does not enable a workflow, change billing or claim a CI result.
 
 ## Running checks in a prepared worker
 
-For an electricity or Sparks panel change, the final JSON also gives the desktop
-and phone check to run from the extension checkout. Set `baseline` to the
-extracted development release. The browser helper prints a fresh results directory
-for each invocation. Pass a new output path as its second argument to retain the
-report and screenshots in the task workspace. The browser check exercises the
-calendar requests, including the difference between an omitted historical
-selection and an explicitly empty one. Other browser surfaces have their own checks.
+For a private checkout with an exported development release, the following
+command runs the selected pytest targets and the Sparks panel browser smoke
+when the changed paths select it.
+
+```sh
+TMPDIR=/workspace bash tools/dev-python.sh "$baseline" tools/checks.py --paths src/sparkie_sparks/energy.py --run-affected "$baseline"
+```
+
+The final JSON records the browser helper's exit code, its log and the Chromium
+report when produced. Each invocation creates a fresh evidence directory under
+the system temporary directory or `TMPDIR`. A failed group makes the command
+fail. Other selected browser surfaces and model or hardware checks remain in
+`remaining_check_groups`. The calendar smoke checks omitted, historical and
+explicitly empty selections. Use `--run-python` for the existing Python-only
+workflow, or omit both execution options to inspect the plan.
 
 The compact behavior runner checks compute enrollment before creating test
 state, including for cases that use only memory. The same allocated-worker
