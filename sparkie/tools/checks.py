@@ -228,6 +228,8 @@ def selection(paths):
         elif path.startswith('tests/behavior/'):
             if path == 'tests/behavior/native_acceptance.py':
                 tests.add('test_compact_replays.py')
+            if path == 'tests/behavior/research_output.py':
+                tests.add('test_research_output.py')
             tests.update(ADAPTERS | {'test_sandbox_cleanup.py'})
             behavior = True
             reasons.append(original + ': compact behavior evaluation changed')

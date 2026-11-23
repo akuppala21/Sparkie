@@ -22,6 +22,21 @@ import uuid
 FIELDS = {'source', 'setup', 'advantage', 'limitation'}
 
 
+def verify_source_reader(agent, dispatch, sources):
+    tools = sorted(tool['function']['name'] for tool in agent.tools)
+    if 'read_file' not in tools:
+        raise RuntimeError(f'The research agent cannot read its sources. Available tools: {tools}')
+    verified = {}
+    for key, source in sources.items():
+        result = json.loads(dispatch('read_file', {'path': f'/workspace/source-{key}.txt'}))
+        body = '\n'.join((source['title'], source['url'], source['text']))
+        expected = '\n'.join(f'{n}|{line}' for n, line in enumerate(body.splitlines(), 1))
+        if result.get('content') != expected or result.get('truncated') is not False:
+            raise RuntimeError(f'The research fixture could not return the complete source {key}.')
+        verified[key] = hashlib.sha256(body.encode()).hexdigest()
+    return {'available_tools': tools, 'verified_sources': verified}
+
+
 def score_response(text, sources):
     """Consumer validation: never strip fences or extract a convenient substring."""
     try:
@@ -60,7 +75,9 @@ def main():
     args.out.mkdir(parents=True, exist_ok=False)
     home = args.out / 'hermes-home'
     shutil.copytree(root / 'plugin', home / 'plugins/sparkie-sparks')
-    shutil.copyfile(root / 'config/hermes.example.yaml', home / 'config.yaml')
+    sys.path.insert(0, str(root / 'tests'))
+    from native_docker_fixture import configure_compute_docker
+    configure_compute_docker(home, root / 'config/hermes.example.yaml', network=False)
     shutil.copyfile(root / 'SOUL.md', home / 'SOUL.md')
     if args.with_skill:
         import hermes_yaml as yaml
@@ -83,13 +100,14 @@ def main():
                 raise PermissionError('This behavior check permits only the isolated local model endpoint.')
     sys.addaudithook(audit)
     from run_agent import AIAgent
-    from hermes_cli.config import load_config_readonly
+    from hermes_cli.config import apply_terminal_config_to_env, load_config_readonly
     from hermes_cli.plugins import get_plugin_manager
     from tools.registry import discover_builtin_tools, registry
     from toolsets import create_custom_toolset
+    config = load_config_readonly()
+    apply_terminal_config_to_env(config=config, override=True)
     get_plugin_manager().discover_and_load()
     discover_builtin_tools()
-    config = load_config_readonly()
     from native_profile import configured_agent_kwargs, trace_generation_fields
     native_kwargs = configured_agent_kwargs(config, base_url=args.base_url, model=model['served_model_name'])
     skill_evidence = None
@@ -113,13 +131,9 @@ def main():
     entry = registry.get_entry('read_file')
     if entry is None:
         raise RuntimeError('Native read_file was not registered.')
-    if args.prepare_only:
-        print(json.dumps({'prepared': True, 'inference_called': False,
-                          'with_skill': args.with_skill,
-                          'loaded_skills': (skill_evidence or {}).get('loaded_names', [])}))
-        return 0
     original = entry.handler
     trace = []
+    read_journal = None
 
     def fixture_read(arguments, **kwargs):
         key = {'/workspace/source-A.txt': 'A', '/workspace/source-B.txt': 'B'}.get(arguments.get('path'))
@@ -136,7 +150,15 @@ def main():
                       'total_lines': len(lines), 'file_size': len(body.encode()),
                       'truncated': offset - 1 + limit < len(lines), 'is_binary': False,
                       'is_image': False, 'not_found': False}
-        trace.append({'tool': 'read_file', 'arguments': arguments, 'source': key, 'result': result})
+        if read_journal is not None:
+            content = result.get('content', '')
+            read = {'utc': datetime.now(timezone.utc).isoformat(), 'source': key,
+                    'first_line': offset if key else None, 'returned_lines': len(content.splitlines()),
+                    'total_lines': result.get('total_lines'), 'truncated': result.get('truncated'),
+                    'error': result.get('error'), 'content_sha256': hashlib.sha256(content.encode()).hexdigest()}
+            with read_journal.open('a', encoding='utf-8') as log:
+                log.write(json.dumps(read, separators=(',', ':')) + '\n')
+            trace.append({'tool': 'read_file', 'arguments': arguments, 'source': key, 'result': result})
         return json.dumps(result)
 
     entry.handler = fixture_read
@@ -177,6 +199,7 @@ def main():
     try:
         for name, prompt in cases:
             trace.clear()
+            read_journal = None
             start = None
             timing = {}
             def mark_event(kind, value=None):
@@ -192,8 +215,16 @@ def main():
                             tool_gen_callback=lambda tool: mark_event('first_tool_event_seconds', tool),
                             skip_context_files=not args.with_skill, skip_memory=True, skip_background_review=True)
             wire, detach = trace_generation_fields(agent)
-            start = time.monotonic()
             try:
+                verified = verify_source_reader(agent, registry.dispatch, sources)
+                (args.out / f'{name}-reader-preflight.json').write_text(json.dumps(verified, indent=2) + '\n')
+                if args.prepare_only:
+                    print(json.dumps({'prepared': True, 'inference_called': False, 'with_skill': args.with_skill,
+                                      'loaded_skills': (skill_evidence or {}).get('loaded_names', []), **verified}))
+                    return 0
+                read_journal = args.out / f'{name}-source-reads.jsonl'
+                read_journal.touch(exist_ok=False)
+                start = time.monotonic()
                 result = agent.run_conversation(prompt)
                 receipt = {key: result.get(key) for key in ('completed', 'final_response', 'api_calls', 'messages', 'error')}
                 receipt.update(seconds=round(time.monotonic() - start, 3), prompt=prompt, tools=list(trace))
