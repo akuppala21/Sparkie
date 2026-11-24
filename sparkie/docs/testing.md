@@ -50,6 +50,19 @@ not just modifications since the last commit. Compare with a named baseline. Sha
 bring their consumers. Dependency or environment changes can invalidate results without source
 changes. Print the selected groups and reasons before running them.
 
+### Native Hermes browser changes
+
+On a compute Spark, run the upstream workspace preparation after a TypeScript edit. From the pinned Hermes checkout run the first command below. Run the remaining commands in the directory selected by the second. Suites that import upstream fixtures need a read-only copy or mount of the checkout's `tests/fixtures` at `.build/webapp-workspace/tests/fixtures`.
+
+```sh
+node apps/desktop/scripts/build-webapp.mjs --deps-only
+cd .build/webapp-workspace/apps/desktop
+pnpm exec vitest run --project ui src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx --maxWorkers=1
+pnpm exec tsc -p . --noEmit
+```
+
+Select tests for the changed behavior and its callers. For the session-creation fix, nine related suites ran 246 tests in 18.33 seconds. Its integration checks used the actual desktop and phone composer and changed the active chat and profile during a delayed creation. Repeat the static asset rebuild when preparing the release that will serve those files.
+
 ## Python environment for an offline maintenance checkout
 
 In an ordinary private compute workspace, extract the verified release returned by

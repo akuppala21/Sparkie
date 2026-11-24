@@ -35,6 +35,28 @@ def test_candidate_uses_an_independent_copy_of_the_exact_build_tool(tmp_path, mo
     assert not (tmp_path/'another-release').exists()
 
 
+@pytest.mark.parametrize("mismatch", ["stale", "extra", "symlink"])
+def test_webapp_rejects_assets_outside_the_reviewed_build(tmp_path, monkeypatch, mismatch):
+    monkeypatch.syspath_prepend(str(DEPLOY))
+    import candidate
+    source = tmp_path / "webapp"
+    source.mkdir()
+    entry = source / "index.html"
+    entry.write_text("reviewed")
+    members = tmp_path / "members.json"
+    members.write_text(json.dumps({"index.html": candidate.sha(entry)}))
+    if mismatch == "stale":
+        entry.write_text("previous build")
+    elif mismatch == "extra":
+        (source / "unexpected.js").write_text("additional code")
+    else:
+        original = tmp_path / "original"
+        entry.rename(original)
+        entry.symlink_to(original)
+    with pytest.raises(ValueError, match="reviewed build output"):
+        candidate.stage_webapp(source, tmp_path / "release", members)
+
+
 @pytest.mark.parametrize("tree,extra,kind", [
     ("release", "site/__pycache__/finder.pyc", "file"),
     ("base", "lib/__pycache__/startup.pyc", "file"),
@@ -123,6 +145,14 @@ print(json.dumps({'version':stamp['baseVersion'],'update_refused':True}))
     ('hermes-remote-terminal-interrupt.patch', {'tools/terminal_tool_result.py', 'agent/replay_cleanup.py',
                                                 'tools/terminal_tool.py', 'locales/en.yaml'}),
     ('hermes-skill-stage-applicability.patch', {'tools/skill_manager_tool.py', 'tools/skill_manager_batch.py'}),
+    ('hermes-webapp-first-slash.patch', {
+        'apps/desktop/src/app/session/hooks/use-prompt-actions/slash.ts',
+        'apps/desktop/src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx',
+        'apps/desktop/src/app/session/hooks/use-session-actions/index.ts',
+        'apps/desktop/src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx',
+        'apps/desktop/src/store/session-states.ts',
+        'apps/desktop/src/types/hermes.ts',
+    }),
 ])
 def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_name, targets):
     root, candidate, _ = prepared
@@ -136,6 +166,7 @@ def test_reviewed_patch_provenance_matches_installed_targets(prepared, patch_nam
         "extension/deploy/patches/hermes-remote-terminal-interrupt.patch",
         "extension/deploy/patches/hermes-remote-terminal-notice.patch",
         "extension/deploy/patches/hermes-skill-stage-applicability.patch",
+        "extension/deploy/webapp/hermes-webapp-first-slash.patch",
     ]
     applied, = [record for record in records if Path(record["patch"]).name == patch_name]
     assert set(applied["patched_files"]) == targets

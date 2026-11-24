@@ -1,0 +1,274 @@
+--- a/apps/desktop/src/app/session/hooks/use-prompt-actions/slash.ts
++++ b/apps/desktop/src/app/session/hooks/use-prompt-actions/slash.ts
+@@ -36,7 +36,8 @@
+   $newChatProfile,
+   captureNewChatSource,
+   ensureGatewayProfile,
+-  normalizeProfileKey
++  normalizeProfileKey,
++  resolveNewChatOwnerRoute
+ } from '@/store/profile'
+ import {
+   $connection,
+@@ -51,7 +52,7 @@
+   setSessions,
+   setYoloActive
+ } from '@/store/session'
+-import { $sessionStates } from '@/store/session-states'
++import { $sessionStates, knownOwnerForSession, sameSessionOwner } from '@/store/session-states'
+ import {
+   applyWakeStartResult,
+   applyWakeStatus,
+@@ -227,10 +228,11 @@
+           ? ($sessionStates.get()[options.sessionId]?.storedSessionId ?? null)
+           : (initialRoutedId ?? initialSelectedId))
+ 
+-      const destination =
++      let destination =
+         options?.destination ?? captureSubmissionDestination(initialStoredId ?? initialRuntimeId, ambientRequestGateway)
+ 
+-      const requestGateway = destination.requestGateway
++      let requestGateway = destination.requestGateway
++      const draftOwner = initialStoredId || initialRuntimeId ? null : resolveNewChatOwnerRoute()
+ 
+       const retryOptions = { ...options, retryText: rawCommand }
+ 
+@@ -282,7 +284,20 @@
+       const ensureSessionId = async (sessionHint?: string, preview?: null | string) =>
+         resolveTargetSessionId({
+           activeRuntimeId: initialRuntimeId,
+-          createSession: () => createBackendSessionForSend(preview),
++          createSession: async () => {
++            const createdId = await createBackendSessionForSend(preview)
++            if (createdId && draftOwner && !destination.owner) {
++              // Only adopt the route published by this creation for its own
++              // runtime, and only when it matches the draft's entry owner.
++              const owner = knownOwnerForSession(createdId)
++              if (owner && !sameSessionOwner(draftOwner, owner)) return null
++              if (owner) {
++                destination = captureSubmissionDestination(createdId, ambientRequestGateway, { owner })
++                requestGateway = destination.requestGateway
++              }
++            }
++            return createdId
++          },
+           explicitRuntimeId: sessionHint,
+           getRuntimeIdForStoredSession,
+           requestGateway,
+--- a/apps/desktop/src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx
++++ b/apps/desktop/src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx
+@@ -3,7 +3,7 @@
+ 
+ import { en } from '@/i18n/en'
+ import { createClientSessionState } from '@/lib/chat-runtime'
+-import { $activeGatewayProfile } from '@/store/profile'
++import { $activeGatewayProfile, $newChatRoute } from '@/store/profile'
+ import { $connection, $sessions } from '@/store/session'
+ import { $sessionStates } from '@/store/session-states'
+ 
+@@ -497,6 +497,48 @@
+     }
+   })
+ 
++  it.each(['same', 'other-connection', 'other-profile', 'unknown'] as const)(
++    'dispatches the first slash only to the draft owner that its creation published (%s)', async scenario => {
++      const { deps, requestGateway } = setup()
++      deps.activeSessionIdRef.current = null
++      deps.selectedStoredSessionIdRef.current = null
++      const draft = { connectionId: 'owner-a', profile: 'alice' }
++      $newChatRoute.set(draft)
++      deps.createBackendSessionForSend.mockImplementation(async () => {
++        $activeGatewayProfile.set('alice')
++        $connection.set({ ...draft, mode: 'remote' } as never)
++        deps.activeSessionIdRef.current = 'runtime-new'
++        deps.selectedStoredSessionIdRef.current = 'stored-new'
++        if (scenario !== 'unknown') {
++          const owner = scenario === 'other-connection' ? 'owner-b' : 'owner-a'
++          const profile = scenario === 'other-profile' ? 'bob' : 'alice'
++          $sessionStates.set({ 'runtime-new': { ...createClientSessionState(), storedSessionId: 'stored-new' } })
++          $sessions.set([{ id: 'stored-new', connection_id: owner, profile }] as never)
++        }
++        return 'runtime-new' as never
++      })
++      try {
++        const { result } = renderHook(() =>
++          useSlashCommand({
++            ...deps, submitPromptText: vi.fn(), appendSessionTextMessage: vi.fn(),
++            branchCurrentSession: async () => true, handleSkinCommand: () => '',
++            handoffSession: async () => ({ ok: true }), openMemoryGraph: vi.fn(),
++            refreshSessions: async () => undefined, startFreshSessionDraft: vi.fn()
++          })
++        )
++        await act(async () => { await result.current('/checked-comparison sample') })
++        const routed = wire.request.mock.calls.filter(call => call[2] === 'slash.exec')
++        const fallback = requestGateway.mock.calls.filter(call => ['slash.exec','command.dispatch'].includes(call[0]))
++        expect(fallback).toHaveLength(0)
++        expect(routed).toHaveLength(scenario === 'same' ? 1 : 0)
++        if (routed.length) {
++          expect(routed[0].slice(0, 2)).toEqual(['owner-a','alice'])
++          expect(routed[0][3]).toMatchObject({ session_id: 'runtime-new' })
++        }
++      } finally { $newChatRoute.set(null) }
++    }
++  )
++
+   it('pins slash fallback and generated kickoff to the entry owner and stored session', async () => {
+     const { deps } = setup()
+     $sessions.set([{ id: 'stored-a', connection_id: 'owner-a', profile: 'alice' }] as never)
+--- a/apps/desktop/src/app/session/hooks/use-session-actions/index.ts
++++ b/apps/desktop/src/app/session/hooks/use-session-actions/index.ts
+@@ -53,6 +53,7 @@
+   type AgentProfileRoute,
+   ensureGatewayAgent,
+   ensureGatewayProfile,
++  currentNewChatIntent,
+   isLegacyNewChatProfile,
+   normalizeProfileKey,
+   resolveActiveSourceOwnerRoute,
+@@ -592,6 +593,7 @@
+     async (preview: string | null = null, createOverrides?: SessionCreateOverrides): Promise<string | null> => {
+       const startingStoredSessionId = selectedStoredSessionIdRef.current
+       const startingRouteToken = getRouteToken()
++      const startingProfileIntent = currentNewChatIntent()
+       const createIntent = (createIntentRef.current ??= randomUuid())
+ 
+       creatingSessionRef.current = true
+@@ -689,17 +691,26 @@
+           submitTargetStoredId: stored
+         })
+ 
+-        if (drift) {
+-          console.warn('[submit-drift-abort]', drift, { phase: 'mid-create' })
++        // Switching profiles can leave a fresh chat at the same URL. Honor a
++        // newer explicit draft intent before publishing this runtime or sending.
++        if (drift || currentNewChatIntent() !== startingProfileIntent) {
++          console.warn('[submit-drift-abort]', drift ?? 'profile-intent', { phase: 'mid-create' })
+ 
+           // Close on the backend that minted the session: the ambient socket
+           // is a different machine/profile for a routed create and would
+           // 4001 while the orphan lives on (and later ws-orphan-reaps) there.
++          // Authority creates include this socket's viewer subscription. Hand
++          // back that exact subscription; the authority verifies its actor and
++          // session before ending the idle row if nobody else is viewing it.
++          const subscription = created.subscription_id
++          const detach = capturedRoute && stored === created.session_id && typeof subscription === 'string' && subscription.length > 0
++          const method = detach ? 'session.detach' : 'session.close'
++          const params = detach
++            ? { session_id: created.session_id, subscription_id: subscription, end_reason: 'resumed_other' }
++            : { session_id: created.session_id }
+           const closeCreated = capturedRoute
+-            ? requestGatewayForAgent(capturedRoute.connectionId, capturedRoute.profile, 'session.close', {
+-                session_id: created.session_id
+-              })
+-            : requestGateway('session.close', { session_id: created.session_id })
++            ? requestGatewayForAgent(capturedRoute.connectionId, capturedRoute.profile, method, params)
++            : requestGateway('session.close', params)
+ 
+           await closeCreated.catch(() => undefined)
+ 
+--- a/apps/desktop/src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx
++++ b/apps/desktop/src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx
+@@ -3,7 +3,8 @@
+ import { useEffect } from 'react'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ 
+-import { $activeGatewayProfile, $newChatProfile } from '@/store/profile'
++import { requestGatewayForAgent } from '@/store/gateway'
++import { $activeGatewayProfile, $newChatProfile, $newChatRoute, captureNewChatSource } from '@/store/profile'
+ import { setCurrentCwd, setNewChatWorkspaceTarget } from '@/store/session'
+ 
+ import type { ClientSessionState } from '../../types'
+@@ -166,6 +167,72 @@
+     expect(creatingSessionRef.current).toBe(false)
+   })
+ 
++  it('keeps a newly chosen profile when an old creation returns on the same chat route', async () => {
++    const navigate = vi.fn()
++    const selection = { current: null } as MutableRefObject<string | null>
++    const requestGateway = vi.fn(async (method: string) => {
++      if (method === 'session.create') {
++        // Profile picks record explicit new-chat intent without changing the
++        // fresh chat URL. Ordinary activation of the original owner does not.
++        $newChatProfile.set('peer')
++        captureNewChatSource(null)
++        return { session_id: 'rt-original', stored_session_id: 'stored-original' }
++      }
++      return {}
++    })
++    let create: (() => Promise<string | null>) | null = null
++    render(
++      <GuardHarness
++        creatingSessionRef={{ current: false }}
++        navigate={navigate}
++        onReady={fn => (create = fn)}
++        requestGateway={requestGateway as never}
++        routeId={null}
++        selectedStoredSessionIdRef={selection}
++      />
++    )
++    await waitFor(() => expect(create).not.toBeNull())
++    await act(async () => { expect(await create!()).toBeNull() })
++    expect(navigate).not.toHaveBeenCalled()
++    expect(selection.current).toBeNull()
++    expect(requestGateway).toHaveBeenCalledWith('session.close', { session_id: 'rt-original' })
++  })
++
++  it('releases only the subscription returned for the created session on its original route', async () => {
++    const route = { connectionId: 'gateway-a', profile: 'original' }
++    const next = { connectionId: 'gateway-b', profile: 'peer' }
++    const routed = vi.mocked(requestGatewayForAgent)
++    const ambient = vi.fn()
++    const navigate = vi.fn()
++    let create: (() => Promise<string | null>) | null = null
++    $newChatRoute.set(route)
++    routed.mockImplementation(async (_connection, _profile, method) => {
++      if (method === 'session.create') {
++        $newChatRoute.set(next)
++        captureNewChatSource(next.connectionId)
++        return { session_id: 'created', stored_session_id: 'created', subscription_id: 'original-viewer' }
++      }
++      return {}
++    })
++    try {
++      render(<GuardHarness creatingSessionRef={{ current: false }} navigate={navigate}
++        onReady={fn => (create = fn)} requestGateway={ambient} routeId={null}
++        selectedStoredSessionIdRef={{ current: null }} />)
++      await waitFor(() => expect(create).not.toBeNull())
++      await act(async () => { expect(await create!()).toBeNull() })
++      expect(routed).toHaveBeenCalledWith('gateway-a', 'original', 'session.detach', {
++        session_id: 'created', subscription_id: 'original-viewer', end_reason: 'resumed_other'
++      })
++      expect(routed.mock.calls.filter(call => call[2] === 'session.detach')).toHaveLength(1)
++      expect(ambient).not.toHaveBeenCalled()
++      expect(navigate).not.toHaveBeenCalled()
++    } finally {
++      $newChatRoute.set(null)
++      captureNewChatSource(null)
++      routed.mockReset()
++    }
++  })
++
+   it('clears creatingSessionRef when navigate throws', async () => {
+     const creatingSessionRef: MutableRefObject<boolean> = { current: false }
+     const selectedStoredSessionIdRef: MutableRefObject<null | string> = { current: null }
+--- a/apps/desktop/src/store/session-states.ts
++++ b/apps/desktop/src/store/session-states.ts
+@@ -1476,7 +1476,7 @@
+   saveTiles($sessionTiles.get().map(t => (t.storedSessionId === storedSessionId ? { ...t, ...patch } : t)))
+ }
+ 
+-function sameSessionOwner(left: SessionOwnerScope, right: SessionOwnerScope): boolean {
++export function sameSessionOwner(left: SessionOwnerScope, right: SessionOwnerScope): boolean {
+   if (isSessionOwnerRoute(left) && isSessionOwnerRoute(right)) {
+     return (
+       left.connectionId.trim() === right.connectionId.trim() &&
+--- a/apps/desktop/src/types/hermes.ts
++++ b/apps/desktop/src/types/hermes.ts
+@@ -552,6 +552,7 @@
+   messages_omitted?: boolean
+   session_id: string
+   stored_session_id?: string
++  subscription_id?: string
+ }
+ 
+ export interface SessionInfo {

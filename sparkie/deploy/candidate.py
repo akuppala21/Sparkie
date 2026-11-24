@@ -19,6 +19,16 @@ import zipapp
 RESTORE_PATCH = Path("deploy/patches/hermes-sealed-web-restore.patch")
 RESTORE_ROUTERS = ("hermes_cli/web_routers/ops.py", "hermes_cli/web_routers/transfer.py")
 
+WEBAPP_PATCH = Path("deploy/webapp/hermes-webapp-first-slash.patch")
+WEBAPP_TARGETS = (
+    "apps/desktop/src/app/session/hooks/use-prompt-actions/slash.ts",
+    "apps/desktop/src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx",
+    "apps/desktop/src/app/session/hooks/use-session-actions/index.ts",
+    "apps/desktop/src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx",
+    "apps/desktop/src/store/session-states.ts",
+    "apps/desktop/src/types/hermes.ts",
+)
+
 
 def sha(path):
     with Path(path).open("rb") as stream:
@@ -120,6 +130,13 @@ def inventory(root, *, release=False):
     return dict(sorted(regular.items())), dict(sorted(links.items()))
 
 
+def stage_webapp(source, destination, reviewed_members):
+    shutil.copytree(source, destination, symlinks=True)
+    expected = json.loads(reviewed_members.read_text())
+    if inventory(destination) != (expected, {}):
+        raise ValueError("The packaged Webapp differs from its reviewed build output")
+
+
 def verify(root):
     root = Path(root).resolve(strict=True)
     manifest_path = root / "candidate.json"
@@ -189,7 +206,8 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     skill_stage_patch = apply_native_patch(destination / "hermes", destination / "extension",
         Path("deploy/patches/hermes-skill-stage-applicability.patch"),
         ("tools/skill_manager_tool.py", "tools/skill_manager_batch.py"))
-    shutil.copytree(webapp, destination / "webapp")
+    webapp_patch = apply_native_patch(destination / "hermes", destination / "extension", WEBAPP_PATCH, WEBAPP_TARGETS)
+    stage_webapp(webapp, destination / "webapp", destination / "extension/deploy/webapp/members.json")
     shutil.copytree(dashboard, destination / "dashboard")
     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
     packaging = importlib.util.module_from_spec(spec)
@@ -239,7 +257,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
         "native_patches": [restore_guard, memory_patch, skill_path_patch, attachment_patch, interrupt_patch, notice_patch,
-                           skill_stage_patch],
+                           skill_stage_patch, webapp_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

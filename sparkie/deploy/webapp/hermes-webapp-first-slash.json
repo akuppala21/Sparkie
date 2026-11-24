@@ -1,0 +1,29 @@
+{
+  "patch_sha256": "8798ccd2fcabffa005bf2b46636b89483e57f1cf024073a2ed98d0c178342f3c",
+  "files": {
+    "apps/desktop/src/app/session/hooks/use-prompt-actions/slash.ts": {
+      "before_sha256": "38821ea3b22d59e1c835c41f7fe254bd99bb4412842c971c4dbaf7b875967fc7",
+      "after_sha256": "372978670af811aff4788bfa3b445aadbd8dfe3577f806fc3484a92518a04447"
+    },
+    "apps/desktop/src/app/session/hooks/use-prompt-actions/submission-destination.test.tsx": {
+      "before_sha256": "d7c0a354ab3b3d6bd57d80716b201d5abdccf7c3f058aa44f83828db04511fa9",
+      "after_sha256": "430550ba809009c02f9cebb37b63c1e03c7d9d59359a7f6187ea44a503b3dd0b"
+    },
+    "apps/desktop/src/app/session/hooks/use-session-actions/index.ts": {
+      "before_sha256": "3064220abc8686a2f909dfc89beeafd207b80994d41cad92d9331c0c1826b04f",
+      "after_sha256": "14f73212a99231486653fe36ef7bdcb7ec94c0649588d6a14bd94f2fcd0a0764"
+    },
+    "apps/desktop/src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx": {
+      "before_sha256": "7261df7cfff30b064c1f5d23f230b5dc7db9662a4aafeefbcb2153fa30cb47ff",
+      "after_sha256": "507fa65b447ea43f9e473866566dd1a28ac589e727501731dba4432fa19fe03f"
+    },
+    "apps/desktop/src/store/session-states.ts": {
+      "before_sha256": "89a4dcf0e1c25ef2dd0baea18a7015ecdb8a35ccd5f9b39265411627a0720e35",
+      "after_sha256": "60a6ebf22f89786bb7d84ea532c0ba03eb85a5b5f372148efc6646bdec1f384d"
+    },
+    "apps/desktop/src/types/hermes.ts": {
+      "before_sha256": "01c93939ad7c786fe1b4c7d9ea842ebe7341785045de3bac4c89727325928e46",
+      "after_sha256": "0f34c1a32c6951d19d41ae84f75177cd8049613b3e6537e3241f15d0d0d94f32"
+    }
+  }
+}
