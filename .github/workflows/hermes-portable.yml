@@ -61,7 +61,8 @@ jobs:
             tests/test_authority.py tests/test_operations.py tests/test_fleet.py \
             tests/test_energy.py tests/test_energy_history.py tests/test_energy_periods.py tests/test_energy_power.py \
             tests/test_forum_reader.py tests/test_github_readme.py tests/test_manual_reader.py tests/test_research_claims.py \
-            tests/test_placement.py tests/test_serve_route.py tests/test_application_upgrade.py tests/test_application_updates.py \
+            tests/test_placement.py tests/test_serve_route.py tests/test_promote.py tests/test_promotion_preservation.py \
+            tests/test_application_upgrade.py tests/test_application_updates.py \
             tests/test_checked_comparison.py::test_malformed_or_oversize_sources_are_rejected \
             tests/test_checked_comparison.py::test_bad_verdicts_never_render \
             tests/test_checked_comparison.py::test_metadata_inside_pasted_source_is_part_of_the_evidence \
