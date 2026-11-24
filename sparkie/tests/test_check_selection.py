@@ -60,6 +60,37 @@ def test_webapp_unknown_files_and_combined_deployment_keep_their_own_scope():
     assert combined['enrolled_service_lifecycle'] and combined['native_webapp_renderer']
 
 
+@pytest.mark.parametrize('name', [
+    'plugin.js', 'recipes-entry.js', 'common.js', 'sparks-panel.js',
+    'recipes-panel.js', 'cold-landing.js',
+])
+def test_webapp_plugin_changes_require_the_served_shell_and_shared_consumers(name):
+    plan = select(['webapp_plugin/' + name])
+    assert plan['webapp_cold_landing'] == (name in ('plugin.js', 'cold-landing.js'))
+    assert plan['native_webapp_renderer'] and plan['webapp_rebuild_and_export']
+    assert plan['desktop_phone_browser'] and plan['native_candidate']
+    assert {'tests/test_deployment.py', 'tests/test_dashboard_packaging.py',
+            'tests/test_recipes.py'} <= set(plan['python_tests'])
+    assert plan['sparks_panel'] == (name in ('common.js', 'sparks-panel.js'))
+    if name in ('common.js', 'sparks-panel.js'):
+        assert {'tests/test_native_controls.py', 'tests/test_controls_availability.py',
+                'tests/test_application_updates.py', 'tests/test_service_access.py'} <= set(plan['python_tests'])
+    assert not any(plan[group] for group in ('broad_qualification', 'compact_local_behavior',
+                   'native_compute_workspace', 'private_broker_stop', 'compute_power_validation'))
+
+
+def test_webapp_plugin_build_and_browser_checks_cannot_be_replaced_by_dashboard_only():
+    for path in ('deploy/webapp/plugin_sources.py', 'deploy/webapp/plugin-inputs.json', 'tools/package_plugins.py',
+                 'tests/browser/webapp_sparks.mjs', 'tests/browser/webapp_sparks_fixture.py'):
+        plan = select([path])
+        assert plan['native_webapp_renderer'] and plan['desktop_phone_browser']
+        assert not plan['broad_qualification'] and not plan['compact_local_behavior']
+    assert select(['webapp_plugin/unknown-runtime.py'])['broad_qualification']
+    combined = select(['webapp_plugin/plugin.js', 'src/sparkie_sparks/authority.py'])
+    assert combined['native_webapp_renderer'] and combined['private_broker_stop']
+    assert combined['compact_local_behavior'] and combined['native_shared_sessions']
+
+
 def test_energy_edit_does_not_select_model_comparison_or_power_cycles():
     plan = select(['sparkie/src/sparkie_sparks/energy.py'])
     assert 'tests/test_energy.py' in plan['python_tests']
@@ -653,6 +684,23 @@ def affected_checkout(tmp_path):
         return result.returncode, json.loads(result.stdout.splitlines()[-1])
 
     return browser, run
+
+
+def test_affected_landing_regression_runs_without_fleet_or_model_checks(affected_checkout):
+    path = checks['COLD_LANDING_TEST']
+    plan = select([path])
+    assert not plan['python_tests']
+    assert {group for group in checks['GROUPS'] if plan[group]} == {'javascript_syntax', 'webapp_cold_landing'}
+    browser, run = affected_checkout
+    regression = browser.parent.parent / path
+    regression.parent.mkdir()
+    for status in (0, 1):
+        regression.write_text(f"import test from 'node:test';\ntest('landing', () => {{ if ({status}) throw Error('failed'); }});")
+        code, result = run(path)
+        observed = result['webapp_cold_landing_check']
+        assert observed['command'] == ['node', '--test', '--', path]
+        assert code == observed['exit_code'] == status
+        assert result['remaining_check_groups'] == ([] if status == 0 else ['webapp_cold_landing'])
 
 
 def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_path, affected_checkout):

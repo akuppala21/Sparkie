@@ -296,3 +296,25 @@ A change to the reviewed renderer patch, source fingerprints, build driver, styl
 - For `webapp_rebuild_and_export`, follow the rebuild recipe in `sparkie/deploy/webapp/README.md` (release path `extension/deploy/webapp/README.md`). Build from the pinned upstream checkout, compare the complete served-file inventory, prepare the candidate, then exercise `spark_update_source` in a private enrolled compute workspace. Use its exported release to repeat the documented offline build and compare its output with the candidate's served Webapp.
 
 A Webapp README edit selects only the rebuild/export group. Run its offline shell block against a fresh source export, setting the release placeholder to that export. Keep the populated pnpm store on the build volume so pnpm uses it offline. Verify all three compiler fingerprints and compare every rebuilt served file with the exported Webapp. A notices-only edit selects document review. An unclassified file in the kit selects full qualification. A change to the package builder or an authority control keeps its own checks when submitted with a renderer change.
+
+The native Webapp renderer checks also cover the bundled Sparks and Recipes
+plugin. Exercise the actual Webapp bundle selected by the gateway at its public
+root. A passing Dashboard-plugin fixture covers the separate Dashboard renderer;
+it does not establish that the owner's Webapp has those pages. In a fresh browser,
+verify the bare entry opens Sparks, both sidebar pages work, and native New session
+still opens chat. Explicit chat/session links, profile changes and reloads must
+retain their intended destination. Check power and memory confirmation cards,
+electricity history and rates, workload details and Recipes at desktop and phone
+sizes. Keep the existing Dashboard checks for shared panel factories.
+
+Changes under the reviewed `webapp_plugin` inputs select this native renderer
+group, its reproducible build/export and the affected API consumers. Shared Sparks
+factories also select the Dashboard panel smoke. These presentation changes do
+not request model evaluations or physical power cycles. Unknown plugin inputs
+still broaden selection, and a combined authority or model edit retains its own
+required checks.
+
+An edit to `tests/webapp/cold-landing.test.mjs` alone selects its Node syntax
+check and its four routing cases. The fleet entry point and landing helper also
+select these cases. `--run-affected` executes them with `node --test` and records
+the result under `webapp_cold_landing_check`.

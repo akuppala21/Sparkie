@@ -20,9 +20,10 @@ The candidate virtualenv includes a plain `sparkie-extension.pth` pointing at it
 sealed extension source. The generated native launcher uses Python isolated
 mode, and the package check exercises plugin registration with that mode.
 
-Build the two native frontend bundles with upstream's build tooling first. The
-Webapp build uses `hermes_cli.webapp.prepare_webapp_renderer(..., explicit=True)`;
-it must be an actual successful build of the pinned source, not a placeholder.
+Build the two native frontend bundles first. For the Webapp, run the
+[pinned build recipe](webapp/README.md) to compile the native chat and bundled
+Sparks and Recipes plugins. The candidate copies those same plugin sources into
+Hermes so its exported source reproduces the served application.
 Then use the reviewed base Python and the aarch64 GNU uv binary identified in
 `build-tools.json` on the compute Spark. The builder checks the SHA-256, seals
 that executable as `tools/uv` in the candidate, and uses it for the frozen sync.

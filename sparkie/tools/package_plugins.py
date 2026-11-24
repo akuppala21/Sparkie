@@ -9,6 +9,17 @@ from pathlib import Path
 import shutil
 
 
+def prepare_dashboard_entry(directory: Path, panels: Path, name: str):
+    # The Dashboard loads a classic script. Its Webapp sibling imports the same
+    # ESM component. Assemble the former in its own scope for the root alias.
+    factory = (panels / f"{name}-panel.js").read_text()
+    if not factory.startswith(f"export function create{name.title()}Panel("):
+        raise ValueError(f"Unexpected {name} panel export")
+    entry = directory / "dashboard/index.js"
+    entry.write_text('(function () {\n  "use strict";\n' + factory.removeprefix("export ")
+                     + entry.read_text() + '})();\n')
+
+
 def prepare_bundle(upstream_plugins: Path, destination: Path, extension: Path):
     upstream_plugins = upstream_plugins.resolve(strict=True)
     extension = extension.resolve(strict=True)
@@ -34,6 +45,8 @@ def prepare_bundle(upstream_plugins: Path, destination: Path, extension: Path):
                     ignore=shutil.ignore_patterns("__pycache__", ".git"))
     # The root override and the visible /sparks entry share one component.
     # Only the original plugin owns API routes and registers agent capabilities.
+    panels = extension.parent / "webapp_plugin"
+    prepare_dashboard_entry(destination / "sparkie-sparks", panels, "sparks")
     dashboard = destination / "sparkie-sparks/dashboard"
     alias = destination / "sparkie-home/dashboard"
     alias.mkdir(parents=True)
@@ -48,6 +61,7 @@ def prepare_bundle(upstream_plugins: Path, destination: Path, extension: Path):
     if recipes.is_dir():
         shutil.copytree(recipes, destination / "sparkie-recipes",
                         ignore=shutil.ignore_patterns("__pycache__", ".git"))
+        prepare_dashboard_entry(destination / "sparkie-recipes", panels, "recipes")
     return destination
 
 

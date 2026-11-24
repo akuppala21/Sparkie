@@ -6,13 +6,17 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 KIT = Path(__file__).resolve().parent
 REFERENCE = "cf2671eb38ea4d06789e81e06d5648d946c82229f3ee90db912cc7f287a72373"
 CORRECTED = "be406d73e90ab7fa2d980e6dfdec6f257508f6445faf57019985f7f1f2f7f248"
+WITH_SPARKS = "cb395b8ffdcab6358fb191ff1807a3e700d6d6486ca656e67422f70ad6235770"
 CONTROL_OUTPUT = "447cbd194f91106dc301c37abd7ba0a14322284a98a9afab1eaad708e6591d58"
 RAW_OUTPUT = "6381b77c14dc14775e5094e4ed11807fdfa30c2d63dfe5dd3e3a3ee0ab4291f8"
 SERVED_OUTPUT = "235b2a54a334e1d74cb4250f1989abd4e80918ea643171d6e5a78d61a90e6920"
+SPARKS_RAW_OUTPUT = "73a84f0dd5318d9efb778007a2859518f4413c5339ff0eff842df7d075109839"
+SPARKS_SERVED_OUTPUT = "c1dfaf84f3440bb1662fee8c5ee6baac0352cfff3c8e4c1c831355f9b94014e4"
 
 
 def sha(path):
@@ -86,9 +90,13 @@ def build(upstream, destination):
     for name, hashes in manifest.items():
         require(sha(source / name) == hashes["after_sha256"], "Incorrect patched source: " + name)
     prepare(CORRECTED)
-    compile_webapp(source, destination / "ordinary", RAW_OUTPUT, False)
+    compile_webapp(source, destination / "first-slash-ordinary", RAW_OUTPUT, False)
+    compile_webapp(source, destination / "first-slash", SERVED_OUTPUT, True)
+    subprocess.run([sys.executable, "-IB", str(KIT / "plugin_sources.py"), str(source)], check=True)
+    prepare(WITH_SPARKS)
+    compile_webapp(source, destination / "ordinary", SPARKS_RAW_OUTPUT, False)
     served = destination / "webapp"
-    compile_webapp(source, served, SERVED_OUTPUT, True)
+    compile_webapp(source, served, SPARKS_SERVED_OUTPUT, True)
     members = list(served.rglob("*"))
     require(not any(f.is_symlink() for f in members), "Unexpected symlink in Webapp")
     measured = {str(f.relative_to(served)): sha(f) for f in members if f.is_file()}

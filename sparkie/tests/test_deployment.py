@@ -57,6 +57,35 @@ def test_webapp_rejects_assets_outside_the_reviewed_build(tmp_path, monkeypatch,
         candidate.stage_webapp(source, tmp_path / "release", members)
 
 
+def test_exported_webapp_plugins_match_the_served_build_and_restore_only_reviewed_sources(tmp_path, monkeypatch):
+    import shutil
+    monkeypatch.syspath_prepend(str(DEPLOY / "webapp"))
+    from plugin_sources import stage
+    extension, native = tmp_path / "extension", tmp_path / "hermes"
+    plugins = native / "apps/desktop/src/plugins"
+    plugins.mkdir(parents=True)
+    (extension / "deploy/webapp").mkdir(parents=True)
+    shutil.copy(DEPLOY / "webapp/plugin-inputs.json", extension / "deploy/webapp")
+    shutil.copytree(DEPLOY.parent / "webapp_plugin", extension / "webapp_plugin")
+    stage(extension, native)
+    fleet = plugins / "sparkie-fleet/plugin.js"
+    recipes = plugins / "sparkie-recipes/plugin.js"
+    assert fleet.read_bytes() == (extension / "webapp_plugin/plugin.js").read_bytes()
+    assert recipes.read_bytes() == (extension / "webapp_plugin/recipes-entry.js").read_bytes()
+    extra = recipes.with_name("user.js")
+    extra.touch()
+    with pytest.raises(ValueError, match="exported plugin directory"):
+        stage(extension, native, restore=True)
+    assert fleet.is_file() and extra.is_file()
+    extra.unlink()
+    stage(extension, native, restore=True)
+    assert not list(plugins.iterdir())
+    (extension / "webapp_plugin/common.js").write_text("// Source from another revision")
+    with pytest.raises(ValueError, match="differs from the reviewed build"):
+        stage(extension, native)
+    assert not list(plugins.iterdir())
+
+
 @pytest.mark.parametrize("tree,extra,kind", [
     ("release", "site/__pycache__/finder.pyc", "file"),
     ("base", "lib/__pycache__/startup.pyc", "file"),

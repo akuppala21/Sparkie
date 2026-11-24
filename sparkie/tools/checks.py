@@ -37,8 +37,15 @@ WEBAPP_INPUTS = {
     'deploy/webapp/hermes-webapp-first-slash.patch', 'deploy/webapp/hermes-webapp-first-slash.json',
     'deploy/webapp/build.py', 'deploy/webapp/retain-stylesheet.mjs',
     'deploy/webapp/original-main.css.gz', 'deploy/webapp/members.json',
+    'deploy/webapp/plugin_sources.py', 'deploy/webapp/plugin-inputs.json',
 }
-GROUPS = ('javascript_syntax', 'desktop_phone_browser', 'compact_local_behavior',
+WEBAPP_PLUGIN_INPUTS = {
+    'webapp_plugin/plugin.js', 'webapp_plugin/recipes-entry.js',
+    'webapp_plugin/common.js', 'webapp_plugin/sparks-panel.js',
+    'webapp_plugin/recipes-panel.js', 'webapp_plugin/cold-landing.js',
+}
+COLD_LANDING_TEST = 'tests/webapp/cold-landing.test.mjs'
+GROUPS = ('javascript_syntax', 'webapp_cold_landing', 'desktop_phone_browser', 'compact_local_behavior',
           'native_execution_isolation', 'native_compute_workspace', 'enrolled_service_lifecycle', 'native_research',
           'disposable_workload_stop', 'private_broker_stop', 'native_shared_sessions',
           'compute_power_validation', 'native_candidate', 'native_webapp_renderer', 'webapp_rebuild_and_export',
@@ -49,7 +56,7 @@ def selection(paths):
     tests, reasons = set(), []
     javascript_files, unresolved_syntax = set(), set()
     browser = behavior = broad = isolation = workload = sessions = broker = False
-    webapp_renderer = webapp_rebuild = caddy_edge = False
+    webapp_renderer = webapp_rebuild = cold_landing = caddy_edge = False
     compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
@@ -107,6 +114,18 @@ def selection(paths):
                 tests.add('test_application_upgrade.py')
             webapp_renderer = webapp_rebuild = candidate = browser = True
             reasons.append(original + ': native renderer tests and typecheck, first-submit and navigation races, reproducible build and packaged export')
+        elif path in WEBAPP_PLUGIN_INPUTS:
+            tests.update(CATALOG | {'test_deployment.py'})
+            if path in ('webapp_plugin/cold-landing.js', 'webapp_plugin/plugin.js'):
+                cold_landing = True
+            if path in ('webapp_plugin/common.js', 'webapp_plugin/sparks-panel.js'):
+                tests.update(SERVICES | UPDATES | ADAPTERS | {'test_native_controls.py', 'test_controls_availability.py'})
+                panel = True
+            webapp_renderer = webapp_rebuild = candidate = browser = True
+            reasons.append(original + ': packaged native Webapp sidebar, landing, chat navigation and panel consumers; shared factories also keep Dashboard checks')
+        elif path == COLD_LANDING_TEST:
+            cold_landing = True
+            reasons.append(original + ': run the focused native landing regression')
         elif path.startswith('deploy/webapp/'):
             broad = syntax = True
             reasons.append(original + ': unknown Webapp input; include full qualification')
@@ -241,6 +260,7 @@ def selection(paths):
             if path == 'tools/package_plugins.py':
                 tests.update(CATALOG)
                 panel = syntax = True
+                webapp_renderer = webapp_rebuild = candidate = True
             browser = sessions = True
             reasons.append(original + ': native owner login, packaged providers, HTTP/API/WebSocket admission, provider reload and private controls')
         elif path in ('src/sparkie_sparks/power.py', 'src/sparkie_sparks/power_worker.py',
@@ -292,7 +312,10 @@ def selection(paths):
             reasons.append(original + ': native plugin registration, API and tool schemas')
         elif path.startswith('tests/browser/'):
             syntax = True
-            if path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs'):
+            if path in ('tests/browser/webapp_sparks.mjs', 'tests/browser/webapp_sparks_fixture.py'):
+                tests.update(CATALOG | {'test_deployment.py'})
+                webapp_renderer = browser = True
+            elif path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs'):
                 panel = True
             elif path in ('tests/browser/dashboard_fixture.py', 'tests/browser/package.json',
                           'tests/browser/package-lock.json'):
@@ -429,6 +452,7 @@ def selection(paths):
     targets = ['tests'] if broad else ['tests/' + name for name in sorted(tests)]
     return {'python_tests': targets, 'sparks_panel': panel,
             'javascript_syntax': bool(javascript_files or unresolved_syntax),
+            'webapp_cold_landing': cold_landing or broad,
             'javascript_files': sorted(javascript_files), 'unresolved_syntax_paths': sorted(unresolved_syntax),
             'desktop_phone_browser': browser or panel,
             'other_desktop_phone_browser': browser,
@@ -503,13 +527,20 @@ def run_sparks_panel(baseline):
             'log': str(log), 'report': str(report) if report.is_file() else None}
 
 
+def run_node(command):
+    try:
+        return {'command': command, 'exit_code': subprocess.run(command, cwd=ROOT).returncode}
+    except OSError as error:
+        return {'command': command, 'exit_code': None, 'error': str(error)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--paths', nargs='+', help='Explicit changed paths, including renamed/deleted files.')
     parser.add_argument('--base', default='HEAD', help='Git baseline; includes tracked changes and new files.')
     parser.add_argument('--run-python', action='store_true', help='Run the selected pytest group on this compute Spark.')
     parser.add_argument('--run-affected', type=Path, metavar='EXPORTED_RELEASE',
-                        help='Run selected pytest, changed JavaScript syntax and the selected Sparks panel check.')
+                        help='Run selected pytest, JavaScript checks and the selected Sparks panel check.')
     args = parser.parse_args()
     baseline = args.run_affected.resolve() if args.run_affected is not None else None
     try:
@@ -551,20 +582,26 @@ def main():
                           "bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py "
                           "with the same selector arguments.", file=sys.stderr)
     if baseline is not None and plan['javascript_files']:
-        checks = []
-        for path in plan['javascript_files']:
-            command = ['node', '--check', '--', path]
-            try:
-                result = subprocess.run(command, cwd=ROOT)
-                checks.append({'command': command, 'exit_code': result.returncode})
-                code = code or result.returncode
-            except OSError as error:
-                checks.append({'command': command, 'exit_code': None, 'error': str(error)})
-                code = code or 1
+        checks = [run_node(['node', '--check', '--', path]) for path in plan['javascript_files']]
+        for check in checks:
+            if check['exit_code'] != 0:
+                code = code or check['exit_code'] or 1
         final['javascript_syntax_checks'] = checks
         if (all(check['exit_code'] == 0 for check in checks) and not plan['unresolved_syntax_paths']
                 and not plan['broad_qualification']):
             final['remaining_check_groups'].remove('javascript_syntax')
+    if baseline is not None and plan['webapp_cold_landing']:
+        source = ROOT / COLD_LANDING_TEST
+        command = ['node', '--test', '--', COLD_LANDING_TEST]
+        if source.is_file() and source.resolve().is_relative_to(ROOT):
+            result = run_node(command)
+        else:
+            result = {'command': command, 'exit_code': None, 'error': 'The native landing test file is unavailable.'}
+        final['webapp_cold_landing_check'] = result
+        if result['exit_code'] == 0:
+            final['remaining_check_groups'].remove('webapp_cold_landing')
+        else:
+            code = code or result['exit_code'] or 1
     if baseline is not None and plan['sparks_panel']:
         browser = run_sparks_panel(baseline)
         final['sparks_panel_check'].update(browser)

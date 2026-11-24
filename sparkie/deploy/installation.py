@@ -166,7 +166,12 @@ def mutable_paths(settings):
         values.append(Path(compute['credentials_dir']))
     if '..' in root.parts or any('..' in path.parts or not path.is_relative_to(root) for path in values):
         raise ValueError('Controller state must stay under the reviewed private state root.')
-    return sorted(set([root, *values]), key=lambda value: (len(value.parts), str(value)))
+    directories = {root}
+    for path in values:
+        while path not in directories:
+            directories.add(path)
+            path = path.parent
+    return sorted(directories, key=lambda value: (len(value.parts), str(value)))
 
 
 def render(settings, output):
@@ -351,6 +356,8 @@ def stage(directory, expected_hash):
                  soul=root / 'extension/SOUL.md', skills=root / 'extension/skills')
     for path in directories:
         path.mkdir(mode=0o700)
+    # Hold the private root until every child is created and assigned.
+    for path in reversed(directories):
         os.chown(path, plan['uid'], plan['gid'])
     cache.mkdir(mode=0o700)
     os.chown(cache, plan['uid'], plan['gid'])

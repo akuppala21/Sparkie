@@ -1,4 +1,5 @@
 """Check the real systemd parser for the protected owner environment directive."""
+import json
 from pathlib import Path
 import subprocess
 
@@ -54,7 +55,17 @@ def test_model_cache_is_group_writable_and_runtime_state_stays_private(monkeypat
         'base_python': str(tmp_path / 'python'), 'base_root': str(tmp_path / 'sealed-python')}})
     monkeypatch.setattr(installation, 'protected_ancestry', lambda path: None)
     monkeypatch.setattr(installation, 'config_files', lambda settings: ())
-    monkeypatch.setattr(installation, 'mutable_paths', lambda settings: (state, state / 'credentials'))
+    # Production layout: control and operations files sit directly in state, while
+    # only the relay and credentials settings name nested directories.
+    relay = state / 'controller' / 'relays'
+    credentials = state / 'credentials' / 'workers' / 'private'
+    compute = tmp_path / 'compute.json'
+    compute.write_text(json.dumps({'credentials_dir': str(credentials)}))
+    controller = tmp_path / 'controller.json'
+    controller.write_text(json.dumps({'operations': str(state / 'operations.sqlite3'),
+                                      'service_relay': {'directory': str(relay)}, 'compute_config': str(compute)}))
+    plan['settings'].update(controller_config=str(controller), control_socket=str(state / 'control.sock'),
+                            fleet_snapshot=str(state / 'fleet.json'), energy_database=str(state / 'energy.sqlite3'))
     monkeypatch.setattr(installation, 'prepare_home', lambda *args, **kwargs: None)
     monkeypatch.setattr(installation.subprocess, 'run', lambda *args, **kwargs: None)
     monkeypatch.setattr(installation.os, 'geteuid', lambda: 0)
@@ -70,7 +81,20 @@ def test_model_cache_is_group_writable_and_runtime_state_stays_private(monkeypat
     assert (cache, plan['uid'], plan['gid']) in ownership
     assert stat.S_IMODE(cache.stat().st_mode) == 0o770
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
-    assert stat.S_IMODE((state / 'credentials').stat().st_mode) == 0o700
+    expected = {state, state / 'controller', relay, state / 'credentials', credentials.parent, credentials}
+    assert {path for path in state.rglob('*')} == expected - {state}
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o700 for path in expected)
+    assert {entry for entry in ownership if entry[0] != cache} == {
+        (path, plan['uid'], plan['gid']) for path in expected}
+    assert [path for path, _, _ in ownership if path in expected][-1] == state
+
+    # A second staging attempt must preserve the existing runtime tree.
+    ownership.clear()
+    marker = relay / 'existing'
+    marker.write_text('preserve')
+    with pytest.raises(FileExistsError, match='fresh reviewed runtime paths'):
+        installation.stage(tmp_path, 'fixture-plan')
+    assert marker.read_text() == 'preserve' and not ownership
 
 
 def test_app_updates_require_matching_private_configuration_and_native_notice_selector(monkeypatch, tmp_path):

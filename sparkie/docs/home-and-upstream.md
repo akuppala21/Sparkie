@@ -7,10 +7,20 @@ dashboard, agent loop or memory store, or create an official fork.
 
 ## Implemented composition
 
+- The owner's gateway serves the native Hermes Webapp selected by
+  `HERMES_WEBAPP_DIST`. Its Sparks and Recipes sidebar entries load the fleet and
+  recipe panels inside the same shell as native chat and sessions. A fresh bare
+  root opens `#/sparks`. If this browser remembers a session or another page
+  for any profile, Hermes chooses the starting page after loading the active
+  connection. The Sparks sidebar entry remains available. Explicit chat links
+  use native navigation. The Models link opens Hermes's model settings. Power and memory
+  requests use their existing authenticated plugin endpoints.
+  [Webapp build and source pins](../deploy/webapp/README.md)
 - Hermes v0.23.2 (`ae2a81ccc00e9b7c06301523e5bb09608397149c`) supplies
   the responsive sidebar, authentication, chat, sessions, Models, settings, theme
   loader and plugin components. Its source and runtime remain pinned.
-- The root extension lands on `/sparks`, the canonical Home tab. The pinned
+- In the separately packaged Hermes Dashboard, the root extension lands on
+  `/sparks`, the canonical Home tab. The pinned
   native title resolver labels literal `/` as Sessions; using the supported tab
   gives Home the correct phone header and active navigation without changing
   Hermes's shell. The redirect preserves the native base path and selected profile.

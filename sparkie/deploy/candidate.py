@@ -211,6 +211,8 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         ("agent/conversation_loop.py", "agent/history_commentary.py", "agent/stream_delivery.py", "agent/turn_finalizer.py",
          "gateway/run_turn_runner.py", "tui_gateway/prompt_turn.py"))
     webapp_patch = apply_native_patch(destination / "hermes", destination / "extension", WEBAPP_PATCH, WEBAPP_TARGETS)
+    subprocess.run([sys.executable, "-IB", str(destination / "extension/deploy/webapp/plugin_sources.py"),
+                    str(destination / "hermes")], check=True)
     stage_webapp(webapp, destination / "webapp", destination / "extension/deploy/webapp/members.json")
     shutil.copytree(dashboard, destination / "dashboard")
     spec = importlib.util.spec_from_file_location("sparkie_package_plugins", extension / "tools/package_plugins.py")
