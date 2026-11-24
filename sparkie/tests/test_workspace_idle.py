@@ -211,3 +211,13 @@ def test_release_cannot_race_allocation_acquire(tmp_path):
         assert acquired
         assert leases.release(SCOPE, lease).state == 'unknown'
     assert leases.get(SCOPE, REQUEST.task_id).release_id is None
+
+
+@pytest.mark.parametrize('auto_remove', [True, None, 'false'])
+def test_retirement_keeps_workspace_with_unverified_retention_running(tmp_path, auto_remove):
+    _, docker, worker, leases, _, release = released(tmp_path)
+    docker.process_state = 'idle'
+    docker.container['HostConfig']['AutoRemove'] = auto_remove
+    retire(leases, worker, release)
+    assert docker.container['State']['Running']
+    assert docker.count(['stop']) == 0 and leases.get(SCOPE, REQUEST.task_id).resources_held

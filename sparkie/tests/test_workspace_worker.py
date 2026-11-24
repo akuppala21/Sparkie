@@ -72,7 +72,7 @@ class Docker:
             self.container = {'Id': 'c' * 64, 'Name': '/' + name, 'Image': IMAGE,
                 'Config': {'User': 'sandbox', 'WorkingDir': '/workspace', 'Cmd': ['sleep', 'infinity'], 'Entrypoint': None,
                            'Labels': labels, 'Env': ['HOME=/home/sandbox']},
-                'HostConfig': {'Mounts': [{'Type':'volume','Source':name+'-workspace','Target':'/opt/sparkie','VolumeOptions':{'NoCopy':True}}], 'Privileged': False, 'ReadonlyRootfs': True, 'NetworkMode': 'bridge', 'CapDrop': ['ALL'],
+                'HostConfig': {'AutoRemove': False, 'Mounts': [{'Type':'volume','Source':name+'-workspace','Target':'/opt/sparkie','VolumeOptions':{'NoCopy':True}}], 'Privileged': False, 'ReadonlyRootfs': True, 'NetworkMode': 'bridge', 'CapDrop': ['ALL'],
                     'CapAdd': None, 'SecurityOpt': ['no-new-privileges'], 'Memory': REQUEST.memory_mb * 1024**2,
                     'MemorySwap': REQUEST.memory_mb * 1024**2, 'NanoCpus': 1000000000, 'PidsLimit': 128,
                     'Binds': None, 'Devices': [], 'DeviceRequests': None,

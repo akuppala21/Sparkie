@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 from .collector import USER
-from .operations import NotDispatched
+from .operations import CannotRetainContainer, NotDispatched
 from .io_budget import remaining_io
 from .workspace_leases import Allocation, WorkspaceObservation
 from .worker_network import physical_ssh_options, private_address, worker_interface
@@ -271,6 +271,8 @@ def main():
             from .service_worker import ServiceWorker
             try:
                 value = ServiceWorker(private_json(args.service_config)).handle(request)
+            except CannotRetainContainer as exc:
+                value = {'not_dispatched': True, 'stop_refusal': exc.reason}
             except NotDispatched:
                 value = {'not_dispatched': True}
             result = {'operation': request['operation'], 'result': value}

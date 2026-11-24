@@ -266,6 +266,43 @@ def test_complete_large_review_crosses_real_private_socket(rig, tmp_path, letter
             server.shutdown(); thread.join(2)
 
 
+def test_clean_repair_review_retains_empty_patch_but_requires_check_output(tmp_path, monkeypatch):
+    import zipfile
+    from types import SimpleNamespace
+    from sparkie_sparks import update_proposals
+
+    workspace = tmp_path / 'workspace'
+    review = workspace / 'sparkie-review'
+    cache = tmp_path / 'cache'
+    review.mkdir(parents=True)
+    cache.mkdir()
+    patch = review / 'repair.patch.txt'
+    patch.touch()
+    checks = review / 'checks.txt'
+    checks.write_bytes(b'50 passed\n')
+    # Run the real isolated reader and transfer locally against this temporary workspace.
+    original = "os.open('/workspace',"
+    assert update_proposals.READ.count(original) == 1
+    monkeypatch.setattr(update_proposals, 'READ', update_proposals.READ.replace(original, f'os.open({str(workspace)!r},'))
+    environment = SimpleNamespace(_build_ssh_command=lambda: ['sh', '-c'])
+    hashes = {'patch': hashlib.sha256(b'').hexdigest(), 'checks': hashlib.sha256(checks.read_bytes()).hexdigest()}
+    result = update_proposals.save_review_files(environment, hashes, cache)
+    with zipfile.ZipFile(result['file']) as archive:
+        assert archive.read('repair.patch') == b''
+        assert archive.read('checks.txt') == checks.read_bytes()
+
+    checks.write_bytes(b'')
+    with pytest.raises(RuntimeError, match='could not be read'):
+        update_proposals.save_review_files(environment, {**hashes, 'checks': hashes['patch']}, cache)
+    for name in ('review.json', 'release.tar'):
+        (review / name).touch()
+        with pytest.raises(RuntimeError, match='could not be read'):
+            update_proposals.fetch(environment, '/workspace/sparkie-review/' + name, tmp_path / name, 1024)
+    patch.unlink()
+    with pytest.raises(RuntimeError, match='could not be read'):
+        update_proposals.save_review_files(environment, hashes, cache)
+
+
 def test_saved_repair_review_is_exact_complete_and_atomic(tmp_path, monkeypatch):
     import zipfile
     from sparkie_sparks import update_proposals

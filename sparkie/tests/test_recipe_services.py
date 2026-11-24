@@ -1,5 +1,6 @@
 """One owner operation, durable admission, fresh loopback endpoints and exact retirement."""
 
+import json
 import os
 from pathlib import Path
 import pwd
@@ -11,7 +12,7 @@ import pytest
 from sparkie_sparks.authority import Owner, OwnerBinding
 from sparkie_sparks.composition import compose
 from sparkie_sparks.idle import IdlePower
-from sparkie_sparks.operations import NotDispatched, OperationStore, intent
+from sparkie_sparks.operations import CannotRetainContainer, NotDispatched, OperationStore, intent
 from sparkie_sparks.recipe_services import RecipeServices, ServiceObservation, service_holds_node
 from sparkie_sparks.service_definitions import ARTIFACTS, GLM, compose_file, recipe
 from sparkie_sparks.service_remote import RemoteServices
@@ -262,3 +263,58 @@ def test_service_requested_wake_requires_exact_reservation_and_live_owner(tmp_pa
     )
     assert controls.confirm(OWNER, sleep['id'], sleep['digest'])['state'] == 'failed'
     assert 'sleep' not in transport.calls
+
+
+@pytest.mark.parametrize('auto_remove', [True, None, 'false', False])
+def test_enrolled_service_checks_retention_before_recording_or_sending_stop(tmp_path, monkeypatch, auto_remove):
+    instance, operation = 'b' * 32, 'c' * 32
+    cfg = {'schema': 1, 'controller': 'a'*32, 'spark': NODE.spark_id, 'machine': NODE.machine_id,
+           'hub_machine': '1'*32, 'state_dir': str(tmp_path/'private'), 'data': {ARTIFACTS: str(tmp_path)}}
+    commands = []
+    def run(args, **kwargs):
+        commands.append(args)
+        return ''
+    worker = ServiceWorker(cfg, identity=lambda: NODE.machine_id, run=run)
+    request = {k: cfg[k] for k in ('spark','controller','machine')}
+    request.update(instance=instance, workload='sparkie-'+instance, recipe=ARTIFACTS, revision=recipe(ARTIFACTS, ()).revision)
+    folder = Path(cfg['state_dir'])/instance
+    folder.mkdir(mode=0o700)
+    path = folder/'receipt.json'
+    record = dict(request, container='d'*64)
+    path.write_text(json.dumps(record))
+    path.chmod(0o600)
+    monkeypatch.setattr(worker, '_container', lambda rec: {'Id': rec['container'], 'HostConfig': {'AutoRemove': auto_remove}})
+    if auto_remove is False:
+        worker.handle(dict(request, method='stop', operation=operation))
+        assert commands == [['/usr/bin/docker', 'stop', '--time', '15', record['container']]]
+        assert json.loads(path.read_text())['stop'] == operation
+    else:
+        with pytest.raises(CannotRetainContainer) as error:
+            worker.handle(dict(request, method='stop', operation=operation))
+        assert error.value.reason == ('auto_remove' if auto_remove is True else 'retention_unknown')
+        assert commands == [] and json.loads(path.read_text()) == record
+
+
+def test_remote_service_stop_accepts_only_an_exact_refusal_receipt():
+    table = {'user': 'fixture', 'executable': '/fixture/worker.pyz', 'config': '/fixture/worker.json'}
+    operation, instance = 'c' * 32, 'b' * 32
+    receipt = {'operation': operation, 'result': {'not_dispatched': True, 'stop_refusal': 'auto_remove'}}
+
+    def run(command, **kwargs):
+        assert json.loads(kwargs['input'])['operation'] == operation
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(receipt))
+
+    remote = RemoteServices('a' * 32, [(NODE, table)], run=run)
+
+    def stop():
+        remote.stop(recipe(ARTIFACTS, (NODE.spark_id,)), NODE, instance, 'sparkie-' + instance, operation=operation)
+
+    with pytest.raises(CannotRetainContainer) as refused:
+        stop()
+    assert refused.value.reason == 'auto_remove'
+    receipt['operation'] = 'd' * 32
+    with pytest.raises(RuntimeError):
+        stop()
+    receipt.update(operation=operation, result={'not_dispatched': True, 'stop_refusal': 'unrecognized'})
+    with pytest.raises(RuntimeError):
+        stop()

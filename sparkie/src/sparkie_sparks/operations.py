@@ -27,6 +27,27 @@ _NO_APPROVAL = object()
 class NotDispatched(Exception):
     """Trusted adapter refused before sending any change; never raise after a send."""
 
+STOP_RETENTION_MESSAGES = {
+    'auto_remove': 'Docker would delete this container and its writable files when it stops. No stop was sent.',
+    'retention_unknown': 'Docker did not verify that it would keep this container and its writable files. No stop was sent.',
+}
+
+
+class CannotRetainContainer(NotDispatched):
+    """Only fixed worker outcomes may reach the owner. Never expose raw Docker output."""
+
+    def __init__(self, reason):
+        super().__init__(STOP_RETENTION_MESSAGES[reason])
+        self.reason = reason
+
+
+def require_retained_container(item):
+    config = item.get('HostConfig') if isinstance(item, dict) else None
+    removal = config.get('AutoRemove') if isinstance(config, dict) else None
+    if removal is not False:
+        raise CannotRetainContainer('auto_remove' if removal is True else 'retention_unknown')
+
+
 SCHEMA = '''
 CREATE TABLE operations (
  id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL, intent TEXT NOT NULL,
@@ -188,6 +209,9 @@ class OperationStore:
     def _view(row):
         row['intent'] = json.loads(row['intent'])
         row['cancel_requested'] = bool(row['cancel_requested'])
+        if row['state'] == 'failed' and row.get('outcome') in STOP_RETENTION_MESSAGES:
+            row['stop_refusal'] = row['outcome']
+            row['outcome'] = 'failed'
         return row
 
     @staticmethod
@@ -308,6 +332,8 @@ class OperationStore:
             verified = None
             try:
                 verified = dispatch(operation, target)
+            except CannotRetainContainer as exc:
+                return self._finish(operation, 'failed', stop_refusal=exc.reason)
             except NotDispatched:
                 return self._finish(operation, 'failed')
             except Exception:
@@ -341,11 +367,11 @@ class OperationStore:
             outcome = 'unknown'
         return self._finish(operation, outcome)
 
-    def _finish(self, operation, outcome):
+    def _finish(self, operation, outcome, *, stop_refusal=None):
         state = 'uncertain' if outcome == 'unknown' else outcome
         with self._db() as db:
             db.execute('UPDATE operations SET state=?,outcome=?,updated=? WHERE id=?',
-                       (state, outcome, self.clock(), operation))
+                       (state, stop_refusal or outcome, self.clock(), operation))
             if state in TERMINAL:
                 db.execute('DELETE FROM claims WHERE operation=?', (operation,))
         return self.get(operation)

@@ -45,7 +45,7 @@ finally:
  os.close(parent)
 with os.fdopen(fd, 'rb') as source:
  s = os.fstat(source.fileno())
- assert stat.S_ISREG(s.st_mode) and 0 < s.st_size <= int(sys.argv[2])
+ assert stat.S_ISREG(s.st_mode) and int(sys.argv[3]) <= s.st_size <= int(sys.argv[2])
  remaining = s.st_size
  while remaining:
   chunk = source.read(min(remaining, 1024 * 1024))
@@ -79,7 +79,9 @@ def existing_offer(destination, expected_review, expected_archive):
 
 def fetch(environment, source, destination, limit):
     """Native pinned SSH options; parent enforces byte and time bounds too."""
-    command = environment._build_ssh_command() + [shlex.join(['python3', '-I', '-c', READ, source, str(limit)])]
+    # A clean checkout has an empty diff. Checks and install inputs still require bytes.
+    minimum = 0 if source == '/workspace/sparkie-review/repair.patch.txt' else 1
+    command = environment._build_ssh_command() + [shlex.join(['python3', '-I', '-c', READ, source, str(limit), str(minimum)])]
     total, deadline = 0, time.monotonic() + 180
     with destination.open('xb') as out, subprocess.Popen(command, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
@@ -97,7 +99,7 @@ def fetch(environment, source, destination, limit):
                     if total > limit:
                         raise ValueError('The prepared update exceeds the transfer limit.')
                     out.write(chunk)
-            if process.wait(timeout=max(.1, deadline - time.monotonic())) != 0 or total == 0:
+            if process.wait(timeout=max(.1, deadline - time.monotonic())) != 0 or total < minimum:
                 raise RuntimeError('The prepared update could not be read from its compute workspace.')
             out.flush()
             os.fsync(out.fileno())

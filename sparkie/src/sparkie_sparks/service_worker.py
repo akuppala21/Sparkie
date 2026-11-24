@@ -12,7 +12,7 @@ import socket
 import stat
 import subprocess
 
-from .operations import NotDispatched
+from .operations import NotDispatched, require_retained_container
 from .recipe_services import COMPUTE, INSTANCE, REVISION
 from .service_definitions import ARTIFACTS, DEFINITIONS, GLM, MODEL, compose_file, recipe
 from .workspace_worker import _private_dir, _read, _write, machine_identity
@@ -326,6 +326,7 @@ class ServiceWorker:
                     if record['stop'] == request['operation']:
                         return None
                     raise NotDispatched('The service already has a different stop request.')
+                require_retained_container(item)
                 record['stop'] = request['operation']
                 _write(path, json.dumps(record))
                 self._docker('stop', '--time', '15', item['Id'], timeout=25)

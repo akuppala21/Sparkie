@@ -67,6 +67,21 @@ def test_unexpected_preview_identity_is_refused_without_control(monkeypatch):
     with pytest.raises(RuntimeError, match='identity changed'): host.preview_running(False)
 
 
+@pytest.mark.parametrize('target', ['old_brain', 'preview_running'])
+@pytest.mark.parametrize('host_config', [{'AutoRemove': True}, {}, None, {'AutoRemove': 0}])
+def test_stop_requires_a_retained_rollback_container(monkeypatch, target, host_config):
+    identifier, image = 'a' * 64, 'sha256:' + 'b' * 64
+    host = object.__new__(promote.Host)
+    host.settings = {'legacy_brain_id': identifier, 'legacy_brain_image_id': image,
+                     'preview_dashboard': {'container_id': identifier, 'image_id': image}}
+    row = {'Id': identifier, 'Image': image, 'State': {'Running': True},
+           'Config': {'Labels': {'sparkie.role': 'native-dashboard'}}, 'HostConfig': host_config}
+    monkeypatch.setattr(promote, 'inspect_container', lambda _: row)
+    monkeypatch.setattr(promote, 'docker', lambda *a, **kw: pytest.fail('Unsafe stop was dispatched'))
+    with pytest.raises(RuntimeError, match='survive a stop'):
+        getattr(host, target)(False)
+
+
 def test_failed_preference_copy_restarts_preview_and_keeps_archive(tmp_path):
     source = tmp_path/'preview'; source.mkdir(); (source/'config.yaml').write_text('dashboard:\n  theme: dark\n')
     host = object.__new__(promote.Host)
@@ -230,6 +245,7 @@ def test_preview_identity_binds_the_ordinary_home_and_readonly_database(tmp_path
         {'Type': 'bind', 'Source': str(Path(preview['energy_database']).parent), 'Destination': '/data/observations', 'RW': False},
     ]
     row = {'Id': preview['container_id'], 'Image': preview['image_id'], 'Mounts': mounts, 'State': {'Running': True},
+           'HostConfig': {'AutoRemove': False},
            'Config': {'Labels': {'sparkie.role': 'native-dashboard'}, 'User': '1000:1000',
                       'Env': ['HERMES_HOME=/home/owner/.hermes', 'SPARKIE_ENERGY_DATABASE=' + environment]}}
     monkeypatch.setattr(promote, 'inspect_container', lambda *args: row)

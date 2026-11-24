@@ -21,7 +21,7 @@ import subprocess
 import time
 
 from .workspace_leases import Allocation, WorkspaceLeases, WorkspaceObservation
-from .operations import NotDispatched
+from .operations import NotDispatched, require_retained_container
 from .worker_network import worker_interface
 from .workspace_types import ComputeNode, WorkspaceLease
 
@@ -498,6 +498,7 @@ class DockerWorkspaceWorker:
             # inspection. The allocation lock excludes admitted reacquisition.
             if self._idle_activity(allocation, item) != []:
                 raise NotDispatched('The workspace became active; nothing was stopped.')
+            require_retained_container(item)
             record['retirement_id'] = operation
             self._save(allocation, record)
             self._docker('stop', '--time', '10', item['Id'], timeout=15)

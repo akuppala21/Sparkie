@@ -45,6 +45,13 @@ LEGACY_EDITORS = (('compute2-endpoint.invalid', 'spark-portal-spark4-tunnel.serv
                   ('compute4-endpoint.invalid', 'spark-portal-editor.service'))
 
 
+def require_retained_container(row):
+    config = row.get('HostConfig')
+    if not isinstance(config, dict) or config.get('AutoRemove') is not False:
+        raise RuntimeError('Rollback requires this container to survive a stop. '
+                           'Docker automatic removal must be confirmed off.')
+
+
 class Journal:
     def __init__(self, directory, *, plan_hash=None):
         self.directory = Path(directory)
@@ -155,6 +162,7 @@ class Host:
         row = inspect_container(identity)
         if row.get('Id') != identity or row.get('Image') != self.settings['legacy_brain_image_id']:
             raise RuntimeError('The retained old brain identity changed; no container was acted on.')
+        require_retained_container(row)
         return row['State']['Running']
 
     def archive(self, destination):
@@ -183,6 +191,7 @@ class Host:
         if (row.get('Id') != preview['container_id'] or row.get('Image') != preview['image_id']
                 or row.get('Config', {}).get('Labels', {}).get('sparkie.role') != 'native-dashboard'):
             raise RuntimeError('The retained native dashboard identity changed; nothing was stopped.')
+        require_retained_container(row)
         running = row['State']['Running']
         if running and uses_preview_route(self.settings.get('expected_route', {})):
             published = row.get('NetworkSettings', {}).get('Ports') or {}

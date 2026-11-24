@@ -6,6 +6,7 @@ the native routes report unavailable. Never register confirmation as an LLM tool
 """
 
 from .authority import Owner
+from .operations import STOP_RETENTION_MESSAGES
 from .memory_controls import ERASE_ACTION, describe
 from .application_updates import ACTION as UPDATE_ACTION
 
@@ -126,9 +127,11 @@ class Controls:
                 'wake': f'Wake {spark}.',
                 'sleep': f'Shut down {spark} only if its work is safely idle.',
                 'start_service': f'Start {target.get("recipe")} revision {target.get("revision")} on {spark}.',
-                'stop_service': f'Stop {target.get("recipe")} instance {target.get("instance")} on {spark}. Keep its files.',
-                'stop_workload': f'Stop container {target.get("container", "")} on {spark}. Keep its files.',
+                'stop_service': f'Stop {target.get("recipe")} instance {target.get("instance")} on {spark}.',
+                'stop_workload': f'Stop container {target.get("container", "")} on {spark}.',
             }[target['action']]
+            if target['action'] in ('stop_service', 'stop_workload'):
+                description += ' Container files and volumes stay. Temporary in-memory files and running processes are lost.'
             if callable(self.action_description):
                 description = self.action_description(target) or description
         state = row['state']
@@ -166,6 +169,9 @@ class Controls:
                 update = {'state': 'unknown', 'message': 'The update result could not be checked. Keep this request; do not install it again.'}
             message = update['message']
         disposition = _recovery(state, target['action'], expired=expired)
+        if state == 'failed' and row.get('stop_refusal') in STOP_RETENTION_MESSAGES:
+            message = STOP_RETENTION_MESSAGES[row['stop_refusal']]
+            disposition['message'] = 'Preserve the needed files in persistent storage before considering a new stop request.'
         if update and update['state'] == 'awaiting_owner_check':
             disposition['message'] = 'Check the installed version, then keep it or restore the previous release using this request. No new installation is needed.'
         return {key: row[key] for key in ('id', 'digest', 'expires', 'state', 'cancel_requested')} | {

@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from .worker_network import physical_ssh_options
-from .operations import NotDispatched, intent
+from .operations import CannotRetainContainer, NotDispatched, STOP_RETENTION_MESSAGES, intent
 from .collector import HOST, USER, NAME, SPARK_IDS
 
 
@@ -57,7 +57,10 @@ class StopWorkload:
         return row['status']
 
     def dispatch(self, operation, target):
-        if self._request(target, 'stop') == 'refused':
+        status = self._request(target, 'stop')
+        if status in STOP_RETENTION_MESSAGES:
+            raise CannotRetainContainer(status)
+        if status == 'refused':
             raise NotDispatched('The exact workload was refused before any stop was sent.')
 
     def observe(self, operation, target):

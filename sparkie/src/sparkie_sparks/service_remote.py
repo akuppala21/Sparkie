@@ -7,7 +7,7 @@ import subprocess
 
 from .worker_network import physical_ssh_options
 from .collector import HOST, USER
-from .operations import NotDispatched
+from .operations import CannotRetainContainer, NotDispatched, STOP_RETENTION_MESSAGES
 from .io_budget import remaining_io
 from .recipe_services import COMPUTE, INSTANCE, RecipeServices, ServiceObservation
 from .service_definitions import DEFINITIONS, recipe
@@ -65,9 +65,15 @@ class RemoteServices:
             result = json.loads(reply.stdout)
             if set(result) != {'operation', 'result'} or result['operation'] != operation:
                 raise ValueError('Changed operation identity.')
+            value = result['result']
+            if (method == 'stop' and isinstance(value, dict) and value.get('not_dispatched') is True
+                    and set(value) == {'not_dispatched', 'stop_refusal'} and value['stop_refusal'] in STOP_RETENTION_MESSAGES):
+                raise CannotRetainContainer(value['stop_refusal'])
             if result['result'] == {'not_dispatched': True} and method in ('start', 'stop'):
                 raise NotDispatched('The exact service action was refused before dispatch.')
-            return result['result']
+            if method == 'stop' and value is not None:
+                raise ValueError('Invalid stop receipt.')
+            return value
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             raise RuntimeError('The enrolled service worker could not be verified.') from None
 

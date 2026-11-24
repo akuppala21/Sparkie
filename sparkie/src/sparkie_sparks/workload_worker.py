@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-FORMAT = '{{json .Id}}\n{{json .Name}}\n{{json .State.Running}}\n{{json (index .Config.Labels "sparkie.protected")}}'
+FORMAT = '{{json .Id}}\n{{json .Name}}\n{{json .State.Running}}\n{{json (index .Config.Labels "sparkie.protected")}}\n{{json .HostConfig.AutoRemove}}'
 
 
 def _docker(runner, *arguments, timeout=8):
@@ -44,9 +44,9 @@ def handle(request, *, hostname=None, runner=subprocess.run):
         if info.returncode or len(info.stdout) > 8192:
             return {'status': 'unknown', 'hostname': hostname}
         lines = info.stdout.strip().splitlines()
-        if len(lines) != 4:
+        if len(lines) not in (4, 5):
             return {'status': 'unknown', 'hostname': hostname}
-        identity, name, running, protected_label = [json.loads(line) for line in lines]
+        identity, name, running, protected_label = [json.loads(line) for line in lines[:4]]
         if identity != container or not isinstance(name, str) or type(running) is not bool:
             return refused
         if request['mode'] == 'observe':
@@ -55,6 +55,11 @@ def handle(request, *, hostname=None, runner=subprocess.run):
             return refused
         if not running:
             return {'status': 'stopped', 'hostname': hostname, 'container': identity}
+        # Docker's immutable removal setting belongs to this exact container ID.
+        # Only the JSON boolean false establishes that stopping it retains it.
+        if lines[4:] != ['false']:
+            status = 'auto_remove' if lines[4:] == ['true'] else 'retention_unknown'
+            return {'status': status, 'hostname': hostname, 'container': identity}
         # From here any timeout/error is uncertain. Never report "refused" after
         # Docker may have received a stop. The caller must inspect the exact ID.
         try:

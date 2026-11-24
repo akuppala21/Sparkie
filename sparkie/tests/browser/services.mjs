@@ -139,7 +139,7 @@ try {
   assert.equal(modelRedirect.headers().location, modelAlias + "v1/models");
 
   const stop = await prepare(app, "Review stop", { action: "stop_service", spark: "spark2", ...appTarget, instance: start.id });
-  await rowCard(stop).getByText(`Stop artifact-browser instance ${start.id} on Spark 2. Keep its files.`, { exact: true }).waitFor();
+  await rowCard(stop).getByText(`Stop artifact-browser instance ${start.id} on Spark 2. Container files and volumes stay. Temporary in-memory files and running processes are lost.`, { exact: true }).waitFor();
   const modelStart = { action: "start", recipe: "glm-flash", spark: "spark4", instance: startModel.id };
   assert.deepEqual(await effects(), [appStart, modelStart]);
   await runOnce(stop);
