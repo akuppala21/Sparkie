@@ -13,7 +13,7 @@ sys.path.remove(str(DEPLOY))
 
 
 class Host:
-    def __init__(self, fail=None): self.events, self.fail = [], fail
+    def __init__(self, fail=None): self.events, self.fail, self.editors = [], fail, {}
     def event(self, *event):
         self.events.append(event)
         if event[0] == self.fail: raise RuntimeError('fixture interrupted effect')
@@ -23,8 +23,17 @@ class Host:
     def old_brain(self, running): self.event('old_brain', running)
     def old_brain_state(self): return True
     def editor(self, target, action):
-        if action == 'observe': return {'ActiveState': 'active', 'UnitFileState': 'enabled'}
+        state = self.editors.setdefault(target, {'ActiveState': 'active', 'UnitFileState': 'enabled'})
+        if action == 'observe': return state.copy()
+        if action == 'retire':
+            state.update(ActiveState='inactive', UnitFileState='disabled')
+        elif action == 'enable':
+            state['UnitFileState'] = 'enabled'
+        elif action == 'start':
+            state['ActiveState'] = 'active'
+        # Fail after systemd acted to simulate a lost SSH acknowledgement.
         self.event('editor', target, action)
+        return state.copy()
     def archive(self, path): self.event('archive', path.name)
     def private_gateway(self): self.event('gate')
     def systemctl(self, *args, **kwargs): self.event('systemctl', args, kwargs)
@@ -108,6 +117,97 @@ def test_rollback_does_not_start_a_previously_stopped_model(tmp_path):
     promote.rollback(plan, journal, host=host, api=api)
     assert ('old_brain', True) not in host.events
     assert host.events[0] == ('stop', ('spark-console-watchdog.timer', 'spark-console-watchdog.service', 'spark-console-api.service'), True)
+
+
+def test_rollback_before_editor_retirement_never_contacts_workers(tmp_path):
+    plan, journal, api = setup(tmp_path)
+    host = Host(fail='archive')
+    with pytest.raises(RuntimeError):
+        promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    host.events.clear()
+    host.fail = 'editor'
+    assert promote.rollback(plan, journal, host=host, api=api) == promote.ROLLBACK_COMPLETE
+    assert ('start', ('spark-console-api.service',), True) in host.events
+    assert all(entry[0] != 'editor' for entry in host.events)
+
+
+def test_uncertain_editor_restore_leaves_hub_available_and_reconciles_same_journal(tmp_path, monkeypatch):
+    plan, journal, api = setup(tmp_path)
+    host = Host()
+    # Lose the reply to the first retirement. Later workers were never touched.
+    host.fail = 'editor'
+    with pytest.raises(RuntimeError):
+        promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    target = promote.LEGACY_EDITORS[0]
+    assert journal.data['events'][-1]['state'] == 'dispatching'
+    # The first restore's acknowledgement is lost before rollback can verify it.
+    host.events.clear()
+    with pytest.raises(RuntimeError):
+        promote.rollback(plan, journal, host=host, api=api)
+    assert ('start', ('spark-console-api.service',), True) in host.events
+    assert host.events[-1] == ('editor', target, 'enable')
+    assert journal.data['state'] != promote.ROLLBACK_COMPLETE
+    assert api.config['Web'][serve_route.HOST] == plan['settings']['expected_route']
+
+    # Reopen the persisted journal. The worker applied enable before losing its
+    # reply. Reconnect, observe that result, and restore only its missing start.
+    host.events.clear()
+    def returned(worker, action):
+        assert worker == target
+        host.events.append(('editor', worker, action))
+        if action == 'observe':
+            return {'UnitFileState': 'enabled', 'ActiveState': 'inactive'}
+        return {'UnitFileState': 'enabled', 'ActiveState': 'active'}
+    host.editor = returned
+    monkeypatch.setattr(promote, 'protected_ancestry', lambda path: None)
+    reopened = promote.reviewed_rollback(journal.directory, 'a'*64)
+    assert promote.rollback(plan, reopened, host=host, api=api) == promote.ROLLBACK_COMPLETE
+    assert host.events == [('editor', target, 'observe'), ('editor', target, 'start')]
+
+
+def test_offline_worker_does_not_block_other_retired_editors(tmp_path):
+    plan, journal, api = setup(tmp_path)
+    host = Host()
+    promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    original = host.editor
+    offline = promote.LEGACY_EDITORS[-1]
+    def reachable(target, action):
+        if target == offline:
+            raise promote.subprocess.TimeoutExpired('ssh', 5)
+        return original(target, action)
+    host.editor = reachable
+    with pytest.raises(RuntimeError, match='Hub services restored'):
+        promote.rollback(plan, journal, host=host, api=api)
+    assert journal.data['state'] == promote.ROLLBACK_EDITORS_PENDING
+    assert [target for target, state in host.editors.items() if state['ActiveState'] == 'inactive'] == [offline]
+    host.events.clear()
+    host.editor = original
+    assert promote.rollback(plan, journal, host=host, api=api) == promote.ROLLBACK_COMPLETE
+    assert host.events == [('editor', offline, 'enable'), ('editor', offline, 'start')]
+
+
+def test_cutover_refuses_a_transient_editor_before_stopping_hub(tmp_path):
+    plan, journal, api = setup(tmp_path)
+    host = Host()
+    host.editors[promote.LEGACY_EDITORS[2]] = {'ActiveState': 'reloading', 'UnitFileState': 'enabled'}
+    with pytest.raises(RuntimeError, match='unsupported state'):
+        promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    assert not host.events and not journal.data['events'] and api.writes == 0
+
+
+def test_rollback_preserves_an_editor_someone_started_after_retirement(tmp_path):
+    plan, journal, api = setup(tmp_path)
+    host = Host()
+    target = promote.LEGACY_EDITORS[-1]
+    host.editors[target] = {'ActiveState': 'inactive', 'UnitFileState': 'disabled'}
+    promote.promote(plan, 'a'*64, journal, host=host, api=api)
+    host.editors[target]['ActiveState'] = 'active'
+    host.events.clear()
+    with pytest.raises(RuntimeError, match='outside this retirement'):
+        promote.rollback(plan, journal, host=host, api=api)
+    assert journal.data['state'] == promote.ROLLBACK_EDITORS_PENDING
+    assert host.editors[target] == {'ActiveState': 'active', 'UnitFileState': 'disabled'}
+    assert not any(event[:2] == ('editor', target) for event in host.events)
 
 
 def test_editor_retirement_includes_spark2_and_records_each_machine_separately(tmp_path):

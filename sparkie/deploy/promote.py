@@ -30,6 +30,7 @@ from serve_route import (ServeAPI, change, replacement, route, change_services,
 OLD_UNITS = ('spark-console-watchdog.timer', 'spark-console-watchdog.service', 'spark-console-api.service')
 NEW_UNITS = ('sparkie-main-brain.service', 'sparkie-fleet.service', 'hermes-gateway.service', 'sparkie-collector.timer')
 ROLLBACK_COMPLETE = 'old-services-restored-owner-path-needs-verification'
+ROLLBACK_EDITORS_PENDING = 'old-hub-restored-editors-pending'
 PREVIEW_TIMER = 'sparkie-ui-observations.timer'
 PREVIEW_COLLECTOR = 'sparkie-ui-observations.service'
 LEGACY_EDITORS = (('compute2-endpoint.invalid', 'spark-portal-spark4-tunnel.service'),
@@ -116,6 +117,7 @@ class Host:
             key, expected = ('UnitFileState', 'enabled') if action == 'enable' else ('ActiveState', 'active')
             if observed[key] != expected:
                 raise RuntimeError('The old editor restoration was not verified.')
+            return observed
 
     def unit_state(self, name, *, legacy=False):
         return {kind: self.systemctl('is-' + kind, name, legacy=legacy, check=False).stdout.strip()
@@ -443,6 +445,8 @@ def promote(plan, plan_hash, journal, *, host, api):
         journal.data['preview_energy'] = host.preview_energy_state()
     journal.data['old_editors'] = [{'host': target[0], 'unit': target[1], 'state': host.editor(target, 'observe')}
                                  for target in LEGACY_EDITORS]
+    for entry in journal.data['old_editors']:
+        check_editor_predecessor(entry['state'])
     if journal.data['old_units']['spark-console-api.service']['active'] != 'active':
         raise RuntimeError('The expected legacy application is not active; inspect before replacing it.')
     # Captured state has no credentials. The separate archive remains private.
@@ -514,11 +518,7 @@ def promote(plan, plan_hash, journal, *, host, api):
     return journal.data['state']
 
 
-def rollback(plan, journal, *, host, api):
-    if journal.data['state'] == ROLLBACK_COMPLETE:
-        return ROLLBACK_COMPLETE
-    if 'old_route' not in journal.data or 'old_units' not in journal.data:
-        raise ValueError('This operation did not save a predecessor; nothing is restored automatically.')
+def restore_hub(plan, journal, host, api):
     journal.data['state'] = 'rolling-back'
     journal.save()
     if plan['settings'].get('application_updates'):
@@ -545,12 +545,6 @@ def rollback(plan, journal, *, host, api):
     journal.step('stop-new-brain-and-controller', lambda: host.stop(('sparkie-main-brain.service', 'sparkie-fleet.service')))
     journal.step('disable-new-autostart', lambda: host.systemctl('disable', *boot_units))
     journal.step('restore-retained-old-brain-state', lambda: host.old_brain(journal.data['old_brain_running']))
-    for entry in reversed(journal.data.get('old_editors', [])):
-        target = (entry['host'], entry['unit'])
-        if entry['state']['UnitFileState'] == 'enabled':
-            journal.step('restore-enable-' + target[0] + '-' + target[1], lambda target=target: host.editor(target, 'enable'))
-        if entry['state']['ActiveState'] == 'active':
-            journal.step('restore-running-' + target[0] + '-' + target[1], lambda target=target: host.editor(target, 'start'))
     for name in reversed(OLD_UNITS):
         saved = journal.data['old_units'][name]
         if saved['enabled'] == 'enabled':
@@ -559,6 +553,61 @@ def rollback(plan, journal, *, host, api):
         # captured mid-run oneshot could duplicate the prior check.
         if saved['active'] == 'active' and name != 'spark-console-watchdog.service':
             journal.step('restore-running-' + name, lambda name=name: host.start((name,), legacy=True))
+    journal.data['state'] = ROLLBACK_EDITORS_PENDING
+    journal.save()
+
+
+def check_editor_predecessor(saved):
+    if (saved['UnitFileState'] not in ('enabled', 'disabled')
+            or saved['ActiveState'] not in ('active', 'inactive', 'failed')):
+        raise RuntimeError('The old editor has a transient or unsupported state. Review it before handover.')
+
+
+def restore_editor(host, journal, target, saved):
+    # An SSH reply can be lost after systemd acted. Read both properties before
+    # deciding which part, if any, is still needed on this specific worker.
+    check_editor_predecessor(saved)
+    observed = host.editor(target, 'observe')
+    label = '-'.join(target)
+    if ((saved['UnitFileState'] == 'disabled' and observed['UnitFileState'] != 'disabled')
+            or (saved['ActiveState'] != 'active' and observed['ActiveState'] not in ('inactive', 'failed'))):
+        raise RuntimeError('The editor gained a running or boot state outside this retirement. Review it before recovery.')
+    if saved['UnitFileState'] == 'enabled' and observed['UnitFileState'] != 'enabled':
+        if observed['UnitFileState'] != 'disabled':
+            raise RuntimeError('The editor boot policy changed. Inspect it before recovery.')
+        observed = journal.step('restore-enable-' + label, lambda: host.editor(target, 'enable'))
+    if saved['ActiveState'] == 'active' and observed['ActiveState'] != 'active':
+        if observed['ActiveState'] not in ('inactive', 'failed'):
+            raise RuntimeError('The editor has not reached a stable state. Recheck before recovery.')
+        observed = journal.step('restore-running-' + label, lambda: host.editor(target, 'start'))
+    expected_active = ('active',) if saved['ActiveState'] == 'active' else ('inactive', 'failed')
+    if observed['UnitFileState'] != saved['UnitFileState'] or observed['ActiveState'] not in expected_active:
+        raise RuntimeError('The observed editor state differs from its recorded predecessor.')
+
+
+def rollback(plan, journal, *, host, api):
+    if journal.data['state'] == ROLLBACK_COMPLETE:
+        return ROLLBACK_COMPLETE
+    if 'old_route' not in journal.data or 'old_units' not in journal.data:
+        raise ValueError('This operation did not save a predecessor; nothing is restored automatically.')
+    if journal.data['state'] != ROLLBACK_EDITORS_PENDING:
+        restore_hub(plan, journal, host, api)
+    # A saved observation is not an attempted retirement. A dispatch with a
+    # lost reply does count. Recover reachable workers even if another is off.
+    phases = {event['phase']: event['state'] for event in journal.data['events']}
+    pending = []
+    for entry in reversed(journal.data.get('old_editors', [])):
+        target = (entry['host'], entry['unit'])
+        label = '-'.join(target)
+        check = 'reconcile-editor-' + label
+        if 'retire-' + label not in phases or phases.get(check) == 'observed_complete':
+            continue
+        try:
+            journal.step(check, lambda: restore_editor(host, journal, target, entry['state']))
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            pending.append(f'{label} ({error})')
+    if pending:
+        raise RuntimeError('Hub services restored. Recheck the same rollback for ' + ', '.join(pending))
     journal.data['state'] = ROLLBACK_COMPLETE
     journal.save()
     return journal.data['state']
