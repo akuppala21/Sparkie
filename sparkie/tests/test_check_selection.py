@@ -345,6 +345,24 @@ def test_service_consumers_follow_shared_control_deploy_runtime_and_browser_chan
             assert plan['javascript_syntax'] and plan['desktop_phone_browser']
 
 
+@pytest.mark.parametrize('unit', ['docker.service', 'docker.socket', 'containerd.service'])
+def test_ingress_parser_fixtures_select_only_the_parser_and_registration_smoke(unit):
+    plan = select(['tests/fixtures/systemd/' + unit])
+    assert set(plan['python_tests']) == {
+        'tests/test_service_ingress_deployment.py', 'tests/test_native_integration.py',
+        'tests/test_energy_integration.py'}
+    assert not plan['broad_qualification'] and not plan['enrolled_service_lifecycle']
+
+
+@pytest.mark.parametrize('name', ['LICENSE', 'NOTICE', 'README.md'])
+def test_ingress_parser_attribution_selects_document_review_only(name):
+    path = 'tests/fixtures/systemd/' + name
+    plan = select([path])
+    assert plan.pop('reasons') == [path + ': document review']
+    assert not any(plan.values())
+    assert select(['tests/fixtures/systemd/other.service'])['broad_qualification']
+
+
 def test_update_boundaries_include_owner_and_recovery_consumers():
     for path in ('src/sparkie_sparks/application_updates.py', 'src/sparkie_sparks/update_proposals.py',
                  'deploy/upgrade.py', 'deploy/upgrade_installation.py', 'deploy/build-tools.json'):
@@ -524,6 +542,8 @@ def test_browser_followup_points_to_the_selected_panel_only():
         output = subprocess.check_output([sys.executable, str(script), '--paths', path, '--run-python'], text=True)
         remaining = json.loads(output.splitlines()[-1])
         assert 'desktop_phone_browser' in remaining['remaining_check_groups']
+        assert 'javascript_syntax' in remaining['remaining_check_groups']
+        assert 'javascript_syntax_checks' not in remaining
         assert ('sparks_panel_check' in remaining) is panel
         if panel:
             assert remaining['sparks_panel_check']['from_extension_checkout'] == 'python3 tests/browser/run_sparks.py "$baseline"'
@@ -556,13 +576,26 @@ def test_shared_dashboard_fixture_failure_reaches_maintenance_command(tmp_path):
     assert 'desktop_phone_browser' in receipt['remaining_check_groups']
 
 
-def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_path):
+@pytest.fixture
+def affected_checkout(tmp_path):
     root = tmp_path / 'checkout'
     browser = root / 'tests/browser'
     browser.mkdir(parents=True)
     (root / 'tools').mkdir()
     selector = root / 'tools/checks.py'
     shutil.copyfile(Path(__file__).resolve().parents[1] / 'tools/checks.py', selector)
+
+    def run(*paths):
+        result = subprocess.run([sys.executable, str(selector), '--run-affected', str(tmp_path),
+                                 '--paths', *paths], cwd=root, capture_output=True, text=True,
+                                env=dict(os.environ, TMPDIR=str(tmp_path)), timeout=30)
+        return result.returncode, json.loads(result.stdout.splitlines()[-1])
+
+    return browser, run
+
+
+def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_path, affected_checkout):
+    browser, run = affected_checkout
     helper = browser / 'run_sparks.py'
     helper.write_text(
         "from pathlib import Path\nimport json, sys\n"
@@ -571,12 +604,6 @@ def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_pa
         "(out / 'result.json').write_text(json.dumps({'passed': code == 0}))\n"
         "print('observed browser run')\nraise SystemExit(code)\n")
     status = tmp_path / 'browser-status'
-
-    def run(*paths):
-        result = subprocess.run([sys.executable, str(selector), '--run-affected', str(tmp_path),
-                                 '--paths', *paths], cwd=root, capture_output=True, text=True,
-                                env=dict(os.environ, TMPDIR=str(tmp_path)), timeout=30)
-        return result.returncode, json.loads(result.stdout.splitlines()[-1])
 
     status.write_text('7')
     code, result = run('tests/browser/sparks.mjs')
@@ -609,3 +636,35 @@ def test_run_affected_records_browser_failures_and_preserves_other_groups(tmp_pa
     code, result = run('tests/browser/controls.mjs')
     assert code == 0 and 'sparks_panel_check' not in result
     assert 'desktop_phone_browser' in result['remaining_check_groups']
+
+
+@pytest.mark.skipif(shutil.which('node') is None, reason='Node is required to exercise its syntax checker')
+def test_affected_syntax_checks_changed_sources_and_keeps_unverified_groups(affected_checkout):
+    browser, run = affected_checkout
+    paths = ['tests/browser/controls.mjs', 'tests/browser/space name.cjs']
+    for path in paths:
+        (browser / Path(path).name).write_text("throw new Error('must not execute');\n")
+    code, result = run('sparkie/' + paths[0], *paths)
+    checks = result['javascript_syntax_checks']
+    assert code == 0 and result['remaining_check_groups'] == ['desktop_phone_browser']
+    assert checks == [{'command': ['node', '--check', '--', path], 'exit_code': 0} for path in paths]
+
+    code, result = run(*paths, 'tests/browser/shared.py', 'tests/browser/deleted.js')
+    assert code == 0 and result['javascript_syntax_checks'] == checks
+    assert result['remaining_check_groups'] == ['javascript_syntax', 'desktop_phone_browser']
+
+    (browser / 'controls.mjs').write_text('const broken = ;\n')
+    code, result = run(*paths)
+    failed, passed = result['javascript_syntax_checks']
+    assert failed['exit_code'] == code != 0 and passed == checks[1]
+    assert result['remaining_check_groups'] == ['javascript_syntax', 'desktop_phone_browser']
+
+
+def test_affected_syntax_reports_an_unavailable_node(affected_checkout, monkeypatch):
+    browser, run = affected_checkout
+    (browser / 'controls.mjs').write_text('const valid = 1;\n')
+    monkeypatch.setenv('PATH', '')
+    code, result = run('tests/browser/controls.mjs')
+    check, = result['javascript_syntax_checks']
+    assert code != 0 and check['exit_code'] is None and 'node' in check['error']
+    assert 'javascript_syntax' in result['remaining_check_groups']

@@ -1,5 +1,6 @@
 """Scoped workload route, native gate-before-publication and exact rollback."""
 from copy import deepcopy
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -111,8 +112,13 @@ def test_ingress_rejects_main_origin_or_ambiguous_unreviewed_route(origin):
 def test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit(tmp_path):
     unit = tmp_path / service_ingress.UNIT
     unit.write_text(service_ingress.render_unit('fixture', 1000, 1000))
-    result = subprocess.run(['/usr/bin/systemd-analyze', 'verify', str(unit)],
-                            capture_output=True, text=True, timeout=15)
+    # Prefer the host's units. A development worker can resolve the Docker
+    # dependencies from the same packaged unit files without installing Docker.
+    analyzer = '/usr/bin/systemd-analyze'
+    search = subprocess.check_output([analyzer, 'unit-paths'], text=True, timeout=15).splitlines()
+    packaged_units = Path(__file__).parent / 'fixtures' / 'systemd'
+    env = {**os.environ, 'SYSTEMD_UNIT_PATH': os.pathsep.join([*search, str(packaged_units.resolve())])}
+    result = subprocess.run([analyzer, 'verify', str(unit)], env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     assert not result.stderr.strip()
 

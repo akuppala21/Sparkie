@@ -242,14 +242,17 @@ Hermes media or Telegram delivery run with the installed runtime on compute Spar
 ## Running checks in a prepared worker
 
 For a private checkout with an exported development release, the following
-command runs the selected pytest targets and the Sparks panel browser smoke
-when the changed paths select it.
+command runs selected pytest targets, checks changed JavaScript with Node, and
+runs the Sparks panel browser smoke when the changed paths select it.
 
 ```sh
 TMPDIR=/workspace bash tools/dev-python.sh "$baseline" tools/checks.py --paths src/sparkie_sparks/energy.py --run-affected "$baseline"
 ```
 
-The final JSON records the browser helper's exit code, its log and the Chromium
+The final JSON records each `node --check` command and its exit code. Syntax
+remains pending for indirect or unclassified changes and missing source files.
+Node must be on the worker's `PATH` to run these checks. The JSON also records
+the browser helper's exit code, its log and the Chromium
 report when produced. Each invocation creates a fresh evidence directory under
 the system temporary directory or `TMPDIR`. A failed group makes the command
 fail. Other selected browser surfaces and model or hardware checks remain in

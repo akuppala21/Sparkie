@@ -41,11 +41,14 @@ GROUPS = ('javascript_syntax', 'desktop_phone_browser', 'compact_local_behavior'
 
 def selection(paths):
     tests, reasons = set(), []
-    browser = behavior = broad = syntax = isolation = workload = sessions = broker = False
+    javascript_files, unresolved_syntax = set(), set()
+    browser = behavior = broad = isolation = workload = sessions = broker = False
     compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
         relative = Path(path)
+        javascript = relative.suffix in ('.js', '.mjs', '.cjs')
+        syntax = javascript
         is_test = (relative.is_relative_to('tests') and '..' not in relative.parts
                    and (relative.match('test_*.py') or relative.match('*_test.py'))
                    and (ROOT / relative).is_file())
@@ -90,7 +93,7 @@ def selection(paths):
             tests.update(FLEET | ENERGY)
             behavior = True
             reasons.append(original + ': agent instructions or runtime prompt changed')
-        elif path.endswith('.md'):
+        elif path.endswith('.md') or path in ('tests/fixtures/systemd/LICENSE', 'tests/fixtures/systemd/NOTICE'):
             reasons.append(original + ': document review')
         elif path in ('src/sparkie_sparks/fleet.py', 'src/sparkie_sparks/collector.py', 'src/sparkie_sparks/probe.py'):
             tests.update(FLEET)
@@ -140,6 +143,10 @@ def selection(paths):
             tests.update(SERVICES | {'test_dashboard_packaging.py'})
             browser = syntax = True
             reasons.append(original + ': Services browser interactions, owner gates, data interfaces and proxy')
+        elif path in ('tests/fixtures/systemd/docker.service', 'tests/fixtures/systemd/docker.socket',
+                      'tests/fixtures/systemd/containerd.service'):
+            tests.add('test_service_ingress_deployment.py')
+            reasons.append(original + ': systemd parser dependencies for the service ingress unit')
         elif path in ('src/sparkie_sparks/recipe_services.py', 'src/sparkie_sparks/service_remote.py',
                       'src/sparkie_sparks/service_worker.py', 'src/sparkie_sparks/service_definitions.py',
                       'src/sparkie_sparks/service_access.py', 'src/sparkie_sparks/endpoint_relay.py',
@@ -359,6 +366,13 @@ def selection(paths):
             broad = browser = behavior = syntax = isolation = workload = sessions = broker = True
             compute = research = power = candidate = True
             reasons.append(original + ': impact is not classified; include all extension tests and integration checks')
+        if syntax:
+            source = ROOT / relative
+            if (javascript and not relative.is_absolute() and '..' not in relative.parts
+                    and source.is_file() and source.resolve().is_relative_to(ROOT)):
+                javascript_files.add(relative.as_posix())
+            else:
+                unresolved_syntax.add(path)
     if broad:
         panel = candidate = True
     # Even a small functional change gets the existing native registration/API smoke.
@@ -367,7 +381,9 @@ def selection(paths):
     # Hand broad collection to pytest so it honors conftest and its discovery configuration.
     targets = ['tests'] if broad else ['tests/' + name for name in sorted(tests)]
     return {'python_tests': targets, 'sparks_panel': panel,
-            'javascript_syntax': syntax, 'desktop_phone_browser': browser or panel,
+            'javascript_syntax': bool(javascript_files or unresolved_syntax),
+            'javascript_files': sorted(javascript_files), 'unresolved_syntax_paths': sorted(unresolved_syntax),
+            'desktop_phone_browser': browser or panel,
             'other_desktop_phone_browser': browser,
             'compact_local_behavior': behavior, 'native_execution_isolation': isolation,
             'native_compute_workspace': compute, 'enrolled_service_lifecycle': services or broad, 'native_research': research,
@@ -445,7 +461,7 @@ def main():
     parser.add_argument('--base', default='HEAD', help='Git baseline; includes tracked changes and new files.')
     parser.add_argument('--run-python', action='store_true', help='Run the selected pytest group on this compute Spark.')
     parser.add_argument('--run-affected', type=Path, metavar='EXPORTED_RELEASE',
-                        help='Run selected pytest and the selected Sparks panel check using this release.')
+                        help='Run selected pytest, changed JavaScript syntax and the selected Sparks panel check.')
     args = parser.parse_args()
     baseline = args.run_affected.resolve() if args.run_affected is not None else None
     try:
@@ -486,6 +502,21 @@ def main():
                     print("In a private worker with the extracted release, run "
                           "bash tools/dev-python.sh EXPORTED_RELEASE tools/checks.py "
                           "with the same selector arguments.", file=sys.stderr)
+    if baseline is not None and plan['javascript_files']:
+        checks = []
+        for path in plan['javascript_files']:
+            command = ['node', '--check', '--', path]
+            try:
+                result = subprocess.run(command, cwd=ROOT)
+                checks.append({'command': command, 'exit_code': result.returncode})
+                code = code or result.returncode
+            except OSError as error:
+                checks.append({'command': command, 'exit_code': None, 'error': str(error)})
+                code = code or 1
+        final['javascript_syntax_checks'] = checks
+        if (all(check['exit_code'] == 0 for check in checks) and not plan['unresolved_syntax_paths']
+                and not plan['broad_qualification']):
+            final['remaining_check_groups'].remove('javascript_syntax')
     if baseline is not None and plan['sparks_panel']:
         browser = run_sparks_panel(baseline)
         final['sparks_panel_check'].update(browser)
