@@ -69,7 +69,10 @@ requires the sealed predecessor and steps 3–7.
    and pass the exported baseline's `tools/uv` as `--uv`. Its exact pinned build
    runs `uv sync --frozen`. Keep the exported base Python
    and unchanged native UI bundles when the edit does not affect them. Rebuild
-   changed UI bundles using the pinned native build. Report a missing dependency
+   changed UI bundles using the pinned native build. When the release includes
+   `deploy/webapp/members.json`, a change to the native Hermes Webapp needs a
+   separately reviewed administrator update with its matching source and build.
+   The Spark dashboard plugins can use the ordinary presentation update. Report a missing dependency
    rather than claiming a build. Do not relocate a virtualenv or skip verification.
 4. The ordinary application-update path accepts backward-compatible presentation,
    existing skill guidance and the enrolled sandbox forum reader with the same base,

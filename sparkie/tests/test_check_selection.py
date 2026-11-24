@@ -12,6 +12,31 @@ import pytest
 select = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/checks.py'))['selection']
 
 
+@pytest.mark.parametrize('name', [
+    'hermes-webapp-first-slash.patch', 'hermes-webapp-first-slash.json', 'build.py',
+    'retain-stylesheet.mjs', 'original-main.css.gz', 'members.json',
+])
+def test_webapp_build_inputs_require_native_renderer_and_export_without_physical_work(name):
+    plan = select(['sparkie/deploy/webapp/' + name])
+    assert plan['native_webapp_renderer'] and plan['webapp_rebuild_and_export']
+    assert plan['desktop_phone_browser'] and plan['native_candidate'] and not plan['sparks_panel']
+    assert 'tests/test_deployment.py' in plan['python_tests']
+    assert plan['javascript_syntax'] == (name == 'retain-stylesheet.mjs')
+    assert ('tests/test_application_upgrade.py' in plan['python_tests']) == (name == 'members.json')
+    assert not any(plan[group] for group in ('broad_qualification', 'compact_local_behavior',
+                   'enrolled_service_lifecycle', 'private_broker_stop', 'compute_power_validation'))
+
+
+def test_webapp_docs_unknown_files_and_combined_deployment_keep_their_own_scope():
+    docs = select(['deploy/webapp/README.md', 'deploy/webapp/NOTICES.txt'])
+    assert not docs['python_tests'] and not docs['webapp_rebuild_and_export']
+    unknown = select(['deploy/webapp/new-source.json'])
+    assert unknown['broad_qualification'] and unknown['enrolled_service_lifecycle']
+    assert unknown['native_webapp_renderer'] and unknown['webapp_rebuild_and_export']
+    combined = select(['deploy/webapp/build.py', 'deploy/candidate.py'])
+    assert combined['enrolled_service_lifecycle'] and combined['native_webapp_renderer']
+
+
 def test_energy_edit_does_not_select_model_comparison_or_power_cycles():
     plan = select(['sparkie/src/sparkie_sparks/energy.py'])
     assert 'tests/test_energy.py' in plan['python_tests']

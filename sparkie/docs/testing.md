@@ -283,3 +283,12 @@ The compact behavior runner checks compute enrollment before creating test
 state, including for cases that use only memory. The same allocated-worker
 identity check applies on Sparks 2–4. Use each worker's local test model and
 keep the installed owner endpoint available.
+
+## Native Webapp build inputs
+
+A change to the reviewed renderer patch, source fingerprints, build driver, stylesheet, compiler hook or served-file inventory selects two manual groups. A passing Python run leaves both in `remaining_check_groups`.
+
+- For `native_webapp_renderer`, use the patched upstream renderer with its locked dependencies. From the prepared workspace's `apps/desktop` directory run `pnpm exec tsc -p . --noEmit` and `pnpm exec vitest run --project ui src/app/session/hooks/use-prompt-actions src/app/session/hooks/use-session-actions.test.tsx src/app/session/hooks/use-session-actions.creating-session-hold.test.tsx src/app/session/hooks/profile-rail-fresh-chat-owner.test.tsx --maxWorkers=1`. Exercise the packaged Webapp at desktop and phone widths. Submit a slash command once in a fresh chat and verify one request and one visible reply. While session creation is pending, separately switch chat and profile. Verify the selected destination survives, zero stale commands dispatch and the original gateway acknowledges detaching the original subscription.
+- For `webapp_rebuild_and_export`, follow the rebuild recipe in `sparkie/deploy/webapp/README.md` (release path `extension/deploy/webapp/README.md`). Build from the pinned upstream checkout, compare the complete served-file inventory, prepare the candidate, then exercise `spark_update_source` in a private enrolled compute workspace. Use its exported release to repeat the documented offline build and compare its output with the candidate's served Webapp.
+
+The Webapp README and notices select document review. An unclassified file in the kit selects full qualification. A change to the package builder or an authority control keeps its own checks when submitted with a renderer change.

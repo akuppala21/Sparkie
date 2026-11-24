@@ -173,6 +173,51 @@ class ApplicationUpgrade(unittest.TestCase):
         self.assertEqual(self.current.resolve(),self.base)
         self.restart.assert_not_called()
 
+    def test_sealed_webapp_update_keeps_the_source_kit_and_served_files_together(self):
+        for root in (self.base, self.build):
+            webapp = root / 'webapp'
+            webapp.mkdir()
+            asset = webapp / 'index.html'
+            asset.write_text('built from the reviewed renderer')
+            inventory = root / 'extension/deploy/webapp/members.json'
+            inventory.parent.mkdir(parents=True)
+            inventory.write_text(json.dumps({'index.html': up.file_hash(asset)}))
+            self.manifest(root)
+
+        # The ordinary guidance change in this fixture still qualifies.
+        up.prepare(self.build, self.base, self.details, self.inbox)
+        asset.write_text('edited output with no matching source')
+        self.manifest(self.build)
+        (self.work / 'prepare-only').mkdir()
+        with self.subTest(path='preparation'), self.assertRaisesRegex(ValueError, 'Webapp'):
+            up.prepare(self.build, self.base, self.details, self.work / 'prepare-only')
+
+        # The privileged receiver rechecks even an offer prepared by another tool.
+        with patch.object(up, 'checked_manifest'):
+            self.offer = up.prepare(self.build, self.base, self.details, self.inbox)
+        self.assertEqual(self.invoke('apply')['state'], 'failed')
+        self.assertEqual(self.current.resolve(), self.base)
+        self.restart.assert_not_called()
+
+    def test_webapp_inventory_covers_the_entire_served_tree_and_is_bound_to_the_predecessor(self):
+        name = 'webapp/index.html'
+        index = 'extension/deploy/webapp/members.json'
+        inventory = self.base / index
+        inventory.parent.mkdir(parents=True)
+        inventory.write_text(json.dumps({'index.html': up.digest(b'compiled')}))
+        self.manifest(self.base)
+        before = json.loads((self.base / 'candidate.json').read_text())
+        before['files'][name] = up.digest(b'compiled')
+        after = {**before, 'runtime': {**before['runtime'], 'python': str(self.target / 'hermes/.venv/bin/python')}}
+        original = {name: before['files'][name]}
+        for served in ({}, {**original, 'webapp/app.js': up.digest(b'extra')}, {'webapp/moved.html': original[name]}):
+            with self.subTest(served=served), self.assertRaisesRegex(ValueError, 'Webapp'):
+                files = {k: v for k, v in before['files'].items() if k != name} | served
+                up.checked_manifest({**after, 'files': files}, before, self.target, self.base)
+        inventory.write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'Webapp build inventory changed'):
+            up.checked_manifest(after, before, self.target, self.base)
+
     def test_malformed_approved_tar_and_path_never_escape(self):
         original = up.review_for(self.offer)
         for kind, name in ((tarfile.SYMTYPE,'inside'),(tarfile.LNKTYPE,'hard'),(tarfile.REGTYPE,'../outside'),

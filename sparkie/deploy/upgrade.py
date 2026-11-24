@@ -164,7 +164,7 @@ def application_file(name):
     return name in APP_FILES or name.startswith(APP_DIRS)
 
 
-def checked_manifest(new, old, target):
+def checked_manifest(new, old, target, previous):
     require(set(new) == set(old) and all(new[k] == old[k] for k in old if k not in ('files','runtime')),
             'Model, patches, runtime links or upstream changed; use a separately reviewed upgrade.')
     require(new['runtime'] == {**old['runtime'], 'python': str(target / 'hermes/.venv/bin/python')},
@@ -172,6 +172,19 @@ def checked_manifest(new, old, target):
     files = new['files']
     require(isinstance(files, dict) and len(files) <= MAX_FILES and
             all(safe_name(k) and HEX.fullmatch(v) for k,v in files.items()), 'Invalid file manifest.')
+    index = 'extension/deploy/webapp/members.json'
+    if index in old['files']:
+        source = previous / index
+        require(not source.is_symlink() and source.is_file() and source.stat().st_size <= MAX_MANIFEST,
+                'The installed Webapp build inventory is unavailable.')
+        raw = source.read_bytes()
+        require(digest(raw) == old['files'][index] == files.get(index),
+                'The installed Webapp build inventory changed.')
+        reviewed = json.loads(raw)
+        for manifest in (old, new):
+            served = {k.removeprefix('webapp/'): v for k, v in manifest['files'].items() if k.startswith('webapp/')}
+            require(served == reviewed and not any(k.startswith('webapp/') for k in manifest['symlinks']),
+                    'The native Webapp differs from its reviewed source build. Prepare an administrator update.')
     for name in files.keys() ^ old['files'].keys():
         require(application_file(name) and name not in PLUGIN_MANIFESTS,
                 'An added or removed file requires a separately reviewed upgrade.')
@@ -273,7 +286,7 @@ def materialize(archive, temporary, review, previous, target):
         require(digest(raw) == review['candidate'], 'The candidate manifest changed.')
         new = json.loads(raw)
         require(previous == selector(), 'The active predecessor changed.')
-        checked_manifest(new, old, target)
+        checked_manifest(new, old, target, previous)
         (temporary / 'candidate.json').write_bytes(raw)
         names = set()
         total = first.size
@@ -638,7 +651,7 @@ def prepare(candidate, baseline, details, destination):
     manifest = json.loads((candidate/'candidate.json').read_bytes())
     old = json.loads((baseline/'candidate.json').read_bytes())
     target = baseline.parent/candidate.name
-    checked_manifest(manifest, old, target)
+    checked_manifest(manifest, old, target, baseline)
     destination = Path(destination)
     with tempfile.TemporaryDirectory(dir=destination, prefix='.prepare-') as work:
         out = Path(work)

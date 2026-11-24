@@ -33,16 +33,23 @@ CATALOG = {'test_dashboard_packaging.py', 'test_recipes.py'}
 THEME = {'test_dashboard_packaging.py', 'test_managed_config.py', 'test_deployment.py'}
 NATIVE = FLEET | ENERGY | WORKLOADS | POWER | COMPUTE | AUTH | MEMORY
 DEPLOY = NATIVE | {'test_deployment.py', 'test_installation_paths.py', 'test_model_unit.py', 'test_brain_switch.py', 'test_serve_route.py', 'test_promote.py', 'test_promotion_preservation.py', 'test_managed_config.py', 'test_worker_stage.py'}
+WEBAPP_INPUTS = {
+    'deploy/webapp/hermes-webapp-first-slash.patch', 'deploy/webapp/hermes-webapp-first-slash.json',
+    'deploy/webapp/build.py', 'deploy/webapp/retain-stylesheet.mjs',
+    'deploy/webapp/original-main.css.gz', 'deploy/webapp/members.json',
+}
 GROUPS = ('javascript_syntax', 'desktop_phone_browser', 'compact_local_behavior',
           'native_execution_isolation', 'native_compute_workspace', 'enrolled_service_lifecycle', 'native_research',
           'disposable_workload_stop', 'private_broker_stop', 'native_shared_sessions',
-          'compute_power_validation', 'native_candidate', 'broad_qualification')
+          'compute_power_validation', 'native_candidate', 'native_webapp_renderer', 'webapp_rebuild_and_export',
+          'broad_qualification')
 
 
 def selection(paths):
     tests, reasons = set(), []
     javascript_files, unresolved_syntax = set(), set()
     browser = behavior = broad = isolation = workload = sessions = broker = False
+    webapp = False
     compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
@@ -89,6 +96,17 @@ def selection(paths):
         elif path == 'tools/check_research_evidence.py':
             tests.add('test_research_claims.py')
             reasons.append(original + ': developer-only quote and arithmetic utility; not loaded in agent conversations')
+        elif path in ('deploy/webapp/README.md', 'deploy/webapp/NOTICES.txt'):
+            reasons.append(original + ': Webapp build documentation and notices review')
+        elif path in WEBAPP_INPUTS:
+            tests.add('test_deployment.py')
+            if path == 'deploy/webapp/members.json':
+                tests.add('test_application_upgrade.py')
+            webapp = candidate = browser = True
+            reasons.append(original + ': native renderer tests and typecheck, first-submit and navigation races, reproducible build and packaged export')
+        elif path.startswith('deploy/webapp/'):
+            broad = syntax = True
+            reasons.append(original + ': unknown Webapp input; include full qualification')
         elif Path(path).name in ('SOUL.md', 'AGENTS.md', 'USER.md', 'MEMORY.md', 'SKILL.md') or path.startswith(('prompts/', 'skills/')):
             tests.update(FLEET | ENERGY)
             behavior = True
@@ -374,7 +392,8 @@ def selection(paths):
             else:
                 unresolved_syntax.add(path)
     if broad:
-        panel = candidate = True
+        panel = browser = behavior = isolation = workload = sessions = broker = True
+        compute = research = power = candidate = True
     # Even a small functional change gets the existing native registration/API smoke.
     if tests:
         tests.update(ADAPTERS)
@@ -391,6 +410,7 @@ def selection(paths):
             'private_broker_stop': broker, 'native_shared_sessions': sessions,
             'compute_power_validation': power,
             'native_candidate': candidate,
+            'native_webapp_renderer': webapp or broad, 'webapp_rebuild_and_export': webapp or broad,
             'broad_qualification': broad, 'reasons': reasons}
 
 
