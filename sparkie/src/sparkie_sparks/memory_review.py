@@ -22,8 +22,8 @@ POLL_SECONDS = 0.15
 
 
 @contextmanager
-def owner_memory_turn(session_id, *, on_pending=None, cancelled=None, on_outcome=None):
-    token = _owner_turn.set((session_id, on_pending, cancelled, on_outcome))
+def owner_memory_turn(session_id, *, on_pending=None, cancelled=None, on_outcome=None, matches_owner=None):
+    token = _owner_turn.set((session_id, on_pending, cancelled, on_outcome, matches_owner))
     try:
         yield
     finally:
@@ -70,6 +70,7 @@ def _receipt(state, request=None, observation=None):
         'timed_out': 'The chat stopped waiting. A staged proposal remains available in Memory changes until the owner decides.',
         'interrupted': 'The chat wait was interrupted. Check Memory changes for the current outcome before proposing this again.',
         'enrollment_changed': 'The owner enrollment changed while waiting.',
+        'owner_unverified': 'Owner verification is unavailable for this memory change. Nothing was staged or saved.',
     }
     receipt = dict(success=state == 'saved', saved=state == 'saved', state=state,
                            pending_id=request, message=messages[state],
@@ -217,7 +218,16 @@ def propose(store, payload):
         if isinstance(item, dict) and not item.get('content') and item.get('new_text'):
             item['content'] = item['new_text']
     op = _operation(payload)
-    generation = configured().binding().generation
+    # Look up the owner only when an actual write needs it. Chat transport and
+    # ordinary tools work independently of the private fleet control socket.
+    try:
+        binding = configured().binding()
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError):
+        return _receipt('owner_unverified')
+    turn = _owner_turn.get()
+    if turn and turn[4] is not None and not turn[4](binding):
+        return _receipt('owner_unverified')
+    generation = binding.generation
     payload['sparkie_owner_generation'] = generation
     scope = _tool_wait.get()
     deadline = time.monotonic() + WAIT_SECONDS
@@ -250,7 +260,7 @@ def propose(store, payload):
                                             'digest': view['digest'], 'entry_check': _entry_check(view)}, mode=0o600, fsync_dir=True)
     if scope:
         return _await_decision(directory, view, generation, scope, deadline)
-    return json.dumps({'success': True, 'staged': True, 'saved': False, 'pending_id': row['id'],
+    return json.dumps({'status': 'pending_approval', 'success': True, 'staged': True, 'saved': False, 'pending_id': row['id'],
                        'message': 'Awaiting owner confirmation. Open Memory changes on Home or send /memoryreview in the paired Telegram chat. This change has not been saved to memory.'})
 
 

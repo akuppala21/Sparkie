@@ -362,3 +362,55 @@ def test_unverified_draft_write_failure_keeps_checked_reply(rig, monkeypatch, st
     reply = checked_reply(agent, 'I already saved it.')
     assert reply.startswith('Checked outcome.') and 'could not be attached' in reply
     assert 'I already saved it' not in reply and 'MEDIA:' not in reply
+
+
+@pytest.mark.parametrize('channel', ['web', 'telegram'])
+@pytest.mark.parametrize('situation', ['fresh', 'offline', 'other_user', 'no_memory'])
+def test_chat_runs_without_a_binding_and_refuses_unverified_memory(rig, monkeypatch, tmp_path, channel, situation):
+    from gateway.config import Platform
+    from sparkie_sparks import controls, memory_delivery, memory_review
+    from test_memory_owner_review import attempt, saved
+
+    notices = []
+    owner = 'fixture-owner' if situation != 'other_user' else 'different-user'
+    user = str(USER) if situation != 'other_user' else str(USER + 1)
+    if situation in ('fresh', 'offline', 'no_memory'):
+        monkeypatch.setattr(controls, '_controls', None)
+        monkeypatch.delenv('SPARKIE_CONTROL_SOCKET', raising=False)
+        if situation == 'offline':
+            monkeypatch.setenv('SPARKIE_CONTROL_SOCKET', str(tmp_path / 'offline.sock'))
+    lookups = []
+    original = controls.configured
+    def observed_controls():
+        lookups.append(True)
+        return original()
+    monkeypatch.setattr(memory_review, 'configured', observed_controls)
+
+    agent = SimpleNamespace(session_id='isolated-chat', valid_tool_names={'terminal'} if
+                            situation == 'no_memory' else {'tool_call', 'memory'})
+    if channel == 'web':
+        transport = SimpleNamespace(auth_identity={'user_id': owner, 'provider': 'basic', 'issuer': ''})
+        context = memory_delivery.web_turn(agent, transport, True, notices.append, lambda: False)
+    else:
+        source = SimpleNamespace(platform=Platform.TELEGRAM, chat_type='dm', is_bot=False, user_id=user, chat_id=user)
+        ctx = SimpleNamespace(source=source, persist_user_display_kind=False, scheduled_heartbeat=False,
+                              mute_notification_reply=False, _run_still_current=lambda: True)
+        runner = SimpleNamespace(_ctx=ctx, _runner=SimpleNamespace(_deliver_platform_notice=lambda src, text: text),
+                                 _schedule=lambda text, name: notices.append(text))
+        context = memory_delivery.gateway_turn(agent, runner)
+    before = saved()
+    with context:
+        assert memory_review.memory_execution('terminal', lambda: 'ordinary result') == 'ordinary result'
+        assert lookups == [] and notices == []
+        if situation != 'no_memory':
+            result = json.loads(memory_review.memory_execution('memory', lambda: json.dumps(attempt()),
+                                session_id=agent.session_id, turn_id='one', tool_call_id='two'))
+            assert len(lookups) == 1
+            assert result['state'] == 'owner_unverified' and result['saved'] is False
+            assert result['pending_id'] is None
+            assert notices == [result['message']]
+            assert memory_delivery.checked_reply(agent, 'I saved the private label.') == result['message']
+        else:
+            assert not getattr(agent, '_sparkie_memory_chat', False)
+    assert saved() == before
+    assert not list((memory_review.default_home() / 'pending' / 'memory').glob('*.json'))

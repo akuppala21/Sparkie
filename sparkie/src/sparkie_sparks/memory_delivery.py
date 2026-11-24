@@ -4,7 +4,6 @@ from io import BytesIO
 
 from starlette.exceptions import HTTPException
 
-from .controls import configured
 from .memory_review import default_home, owner_memory_turn
 
 PENDING = "A memory change is waiting for your decision. Open Memory changes on Home or send /memoryreview in the paired Telegram chat."
@@ -25,7 +24,7 @@ def project_held_row(row):
 
 
 @contextmanager
-def _turn(agent, channel, notify, cancelled):
+def _turn(agent, channel, notify, cancelled, matches_owner):
     if not {'memory', 'tool_call'}.intersection(getattr(agent, 'valid_tool_names', ())):
         yield
         return
@@ -38,7 +37,8 @@ def _turn(agent, channel, notify, cancelled):
         notify(message)
 
     try:
-        with owner_memory_turn(agent.session_id, on_pending=lambda _: notify(PENDING), cancelled=cancelled, on_outcome=checked):
+        with owner_memory_turn(agent.session_id, on_pending=lambda _: notify(PENDING), cancelled=cancelled,
+                               on_outcome=checked, matches_owner=matches_owner):
             yield
     finally:
         agent._sparkie_memory_chat = False
@@ -50,6 +50,8 @@ def checked_reply(agent, text):
     if not outcomes:
         return text
     checked = '\n'.join(message for _, message in outcomes)
+    if any(state in ('owner_unverified', 'enrollment_changed') for state, _ in outcomes):
+        return checked
     if not text or not text.strip() or text.strip() == checked:
         return checked
     if all(state == 'saved' for state, _ in outcomes):
@@ -75,11 +77,10 @@ def web_turn(agent, transport, is_foreground, notify, cancelled):
     identity = getattr(transport, 'auth_identity', None)
     if not is_foreground or not isinstance(identity, dict):
         return nullcontext()
-    binding = configured().binding()
-    if (identity.get('user_id'), identity.get('provider'), identity.get('issuer') or '') != (
-            binding.web_user, binding.web_provider, binding.web_issuer):
-        return nullcontext()
-    return _turn(agent, 'web', notify, cancelled)
+    subject = (identity.get('user_id'), identity.get('provider'), identity.get('issuer') or '')
+    def matches_owner(binding):
+        return subject == (binding.web_user, binding.web_provider, binding.web_issuer)
+    return _turn(agent, 'web', notify, cancelled, matches_owner)
 
 
 def gateway_turn(agent, runner):
@@ -92,11 +93,11 @@ def gateway_turn(agent, runner):
     if ctx.persist_user_display_kind or ctx.scheduled_heartbeat or ctx.mute_notification_reply:
         return nullcontext()
     viewer = viewer_turn.get()
+    matches_owner = None
     if source.platform == Platform.TELEGRAM:
-        binding = configured().binding()
-        if (source.chat_type, source.is_bot, source.user_id, source.chat_id) != (
-                'dm', False, str(binding.telegram_user), str(binding.telegram_chat)):
-            return nullcontext()
+        subject = (source.chat_type, source.is_bot, source.user_id, source.chat_id)
+        def matches_owner(binding):
+            return subject == ('dm', False, str(binding.telegram_user), str(binding.telegram_chat))
     elif source.platform != Platform.LOCAL or viewer is None or source.user_id != host_owner_subject():
         return nullcontext()
     if viewer is not None:
@@ -107,4 +108,4 @@ def gateway_turn(agent, runner):
         channel = 'telegram'
         def notify(text):
             runner._schedule(runner._runner._deliver_platform_notice(source, text), 'Memory review notice delivery failed')
-    return _turn(agent, channel, notify, lambda: not ctx._run_still_current() or bool(getattr(agent, '_interrupt_requested', False)))
+    return _turn(agent, channel, notify, lambda: not ctx._run_still_current() or bool(getattr(agent, '_interrupt_requested', False)), matches_owner)

@@ -793,3 +793,25 @@ def test_recovers_preexisting_retired_rejection_without_inventing_owner_audit(ri
     assert rig['client'].get(API).json() == []
     assert rig['client'].post(f'{API}/{request}/approve',json={'digest':row['digest']}).status_code == 400
     assert not (root/(request+'.decision')).exists() and saved() == {}
+
+
+def test_native_compaction_preserves_pending_memory_approval(rig):
+    from agent.context_compressor import _summarize_tool_result
+
+    old = saved()
+    args = {'action': 'add', 'target': 'memory', 'content': 'Separate fixture entry'}
+    pending = attempt()
+    row, = rig['client'].get(API).json()
+    assert pending['pending_id'] == row['id']
+    assert pending['success'] is True and pending['staged'] is True and pending['saved'] is False
+    assert saved() == old
+
+    summary = _summarize_tool_result('memory', json.dumps(args), json.dumps(pending))
+    assert 'awaiting' in summary and 'approval' in summary and 'not run' in summary, summary
+
+    rejected = rig['client'].post(f"{API}/{row['id']}/reject", json={'digest': row['digest']}).json()
+    assert rejected['state'] == 'rejected'
+    assert rig['client'].get(API).json() == [] and saved() == old
+    failed = attempt(operations=[{'action': 'patch', 'old_text': 'absent', 'content': 'replacement'}])
+    assert failed['success'] is False and failed.get('status') != 'pending_approval'
+    assert rig['client'].get(API).json() == [] and saved() == old
