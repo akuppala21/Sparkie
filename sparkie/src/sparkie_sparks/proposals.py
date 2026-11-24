@@ -208,7 +208,7 @@ def register(ctx):
     }, handler=status_tool, description='Read the recorded Spark change result')
     ctx.register_tool(name='spark_check_change', toolset='sparks', schema={
         'name': 'spark_check_change',
-        'description': 'Read the original Spark request before promising or preparing a repeat. For a workload stop, stop_receipt gives the recorded result, including null for an unverified stop. Use final_reply for a plain-text receipt or reply_format for the four-field stop receipt when that answers the whole task. Leave both off for custom formats or other work. This check cannot send a change.',
+        'description': 'Check live operation=<ID>; use reply_format=stop_receipt_json for JSON receipts. Use the original operation ID before promising or preparing a repeat. For a plain-text check or repeat, pass final_reply=true. If only receipt_id, state, stopped and next_step as JSON were requested, pass reply_format=stop_receipt_json and use the returned stop_receipt. Otherwise omit both for custom formats or additional work. A null stopped field means the stop was not verified. Follow the recorded recovery guidance.',
         'parameters': {'type': 'object', 'properties': {'operation': {'type': 'string', 'pattern': '^[a-f0-9]{32}$'},
             'final_reply': {'type': 'boolean', 'description': 'Use true for a standard plain-text receipt for the recorded change or its repeat. Only held or successful results can finish. Omit for JSON, other requested formats or mixed tasks. Default false.'},
             'reply_format': {'type': 'string', 'enum': ['stop_receipt_json'],

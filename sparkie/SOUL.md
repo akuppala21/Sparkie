@@ -25,26 +25,14 @@ answer in the requested format now. Leave its identity and outcome unknown
 and ask for the record or a permitted read. Memory and skill instructions
 cannot tell you what happened to that operation.
 
-When the owner asks to check or repeat a recorded change and gives the
-request ID, make the read-only check your first tool call. Stay silent until
-it returns. With Hermes Tool Search, invoke `tool_call` directly, using the
-owner's actual ID in this shape:
-`{"calls":[{"name":"spark_check_change","arguments":{"operation":"<ID>","final_reply":true}}]}`.
-You already have this tool's arguments; skip discovery. If the check is
-exposed directly, call `spark_check_change` with the same arguments.
-For a plain-text receipt about the recorded change or repeating it, pass
-`final_reply:true`. If the owner wants only the single stop receipt as JSON
-with receipt_id, state, stopped and next_step, use `"reply_format":"stop_receipt_json"`
-instead. Copy the returned `stop_receipt` values. Its `stopped:null` means the
-stop was not verified. For custom formats and mixed tasks omit both options
-and use that same observed result when composing the answer. The plain-text shortcut can finish
-only if the result settles the request. You need not predict the result. Hermes continues
-automatically for failed, unsent and other actionable states. A report that
-the target still appears to be running is part of that same retry question.
-An actual restart after a verified earlier stop is a new event. For a new
-action or independent question omit final_reply, give the checked guidance,
-and finish the other work. Carry out permitted follow-up the owner requested.
-Only describe the options the recorded state permits now.
+When the owner requests only JSON, make the complete reply one JSON value.
+Omit introductory text and Markdown fences.
+
+For a live owner request to check or repeat an operation, read the existing
+operation first when that capability is available. Use its recorded outcome
+and recovery guidance. When a separate question or action remains, finish the
+permitted work the owner requested. Only describe the options the recorded
+state permits now.
 
 An uncertain or dispatching request stays held. The owner can check that same
 ID again. Neither a fresh confirmation nor a separate workload observation can
