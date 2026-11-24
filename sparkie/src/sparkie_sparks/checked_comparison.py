@@ -55,6 +55,11 @@ def parse_sources(raw):
         if len(parts) != 3 or not parts[0].strip() or not parts[1].startswith("URL: ") or not parts[2].strip():
             raise ValueError(USAGE)
         title, link, body = parts[0].strip(), parts[1][5:].strip(), parts[2].strip("\n")
+        # The native Webapp serializes pasted URL chips in this form. Only
+        # the structural link field is a reference. The source remains literal.
+        reference = re.fullmatch(r"@url:`([^`]+)`", link)
+        if reference:
+            link = reference.group(1)
         try:
             url = urlsplit(link)
             valid = (url.scheme in ("https", "http") and url.hostname and url.username is None
@@ -122,21 +127,26 @@ def quoted_passages(body, quotes):
         start = body.index(quote)
         first = bisect_right(offsets, start) - 1
         last = bisect_right(offsets, start + len(quote) - 1) - 1
-        repeated = body.find(quote, start + 1) >= 0
-        if repeated and any(quote in body[offsets[h]:offsets[end] - 1] for h, (end, _) in tables.items()):
-            raise AmbiguousTableQuote("A table quotation occurs more than once in its source, so its row or columns are uncertain.")
-        header = row_table.get(first)
-        if header is not None and row_table.get(last) == header:
-            # The Markdown parser pads or discards cells on ragged rows. Preserve
-            # source alignment rather than presenting a normalized cell as evidence.
+        if body.find(quote, start + 1) >= 0:
+            # An occurrence can start before a table and end inside it.
+            for header, (end, _) in tables.items():
+                occurrence = body.find(quote, max(0, offsets[header] - len(quote) + 1))
+                if 0 <= occurrence < offsets[end] - 1:
+                    raise AmbiguousTableQuote("A table quotation occurs more than once in its source, so its row or columns are uncertain.")
+        touched = {row_table[i] for i in range(first, last + 1) if i in row_table}
+        for header in touched:
+            end, _ = tables[header]
+            rows = range(max(header, first), min(end, last + 1))
             columns = _column_count(lines[header])
-            if any(_column_count(lines[i]) != columns for i in range(first, last + 1)):
+            if any(_column_count(lines[i]) != columns for i in rows):
                 raise AmbiguousTableQuote("A quoted row has a different number of cells from its table header.")
-            selected_rows.setdefault(header, set()).update(range(first, last + 1))
+            selected_rows.setdefault(header, set()).update(rows)
+        if touched and row_table.get(first) is not None and row_table.get(first) == row_table.get(last):
             continue
         containing = [block for block in paragraphs if quote in block]
         passage = containing[0] if len(containing) == 1 and len(containing[0]) <= 700 else quote
-        passages.add((body.index(passage), passage))
+        position = body.index(passage)
+        passages.add((position, position + len(passage)))
 
     for header, rows in selected_rows.items():
         end, headings = tables[header]
@@ -153,11 +163,20 @@ def quoted_passages(body, quotes):
         first = previous = indices[0]
         for current in indices[1:]:
             if any(line.strip() for line in lines[previous + 1:current]):
-                passages.add((offsets[first], body[offsets[first]:offsets[previous + 1] - 1]))
+                passages.add((offsets[first], offsets[previous + 1] - 1))
                 first = current
             previous = current
-        passages.add((offsets[first], body[offsets[first]:offsets[previous + 1] - 1]))
-    return [passage for _, passage in sorted(passages)]
+        passages.add((offsets[first], offsets[previous + 1] - 1))
+
+    # A quoted heading or caption can overlap a row's expanded context.
+    # Union only spans that actually overlap, preserving all source gaps.
+    merged = []
+    for start, end in sorted(passages):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return [body[start:end] for start, end in merged]
 
 
 def display_assessment(parsed, sources):

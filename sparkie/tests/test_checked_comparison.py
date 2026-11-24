@@ -40,6 +40,22 @@ def test_malformed_or_oversize_sources_are_rejected(alteration):
         comparison.parse_sources(alteration(supplied()))
 
 
+def test_native_pasted_url_headers_retain_sources_and_literal_body():
+    body = "The command recorded @url:`https://example.org/quoted`."
+    plain = supplied(body)
+    native = plain.replace("URL: https://example.org/a", "URL: @url:`https://example.org/a`")
+    native = native.replace("URL: https://example.org/b", "URL: @url:`https://example.org/b`")
+    assert comparison.parse_sources(native) == comparison.parse_sources(plain)
+    assert comparison.parse_sources(native)[1]["B"]["text"] == body
+
+
+@pytest.mark.parametrize("link", ["@url:`file:///etc/passwd`", "@url:`https://user@host.example/`",
+                                  "@url:`https://example.org/` extra", "@url:`https://example.org/``"])
+def test_invalid_native_url_headers_are_rejected(link):
+    with pytest.raises(ValueError):
+        comparison.parse_sources(supplied().replace("https://example.org/a", link))
+
+
 def test_dispatch_declines_unavailable_model_and_invalid_evidence(monkeypatch):
     calls = []
     def complete(**fields):
@@ -179,3 +195,37 @@ def test_ragged_row_cannot_assign_an_extra_value_to_a_named_column():
     report = "| Run | Cold | Warm |\n|---|---|---|\n| Third | 5 s | 7 s | 8 s |"
     with pytest.raises(comparison.AmbiguousTableQuote, match="number of cells"):
         comparison.quoted_passages(report, ["8 s"])
+
+
+def test_row_and_caption_retain_column_labels_and_show_a_heading_once():
+    heading = "## Timings"
+    header = "| Setup | One Spark | Two Sparks |"
+    alignment = "|---|---:|---:|"
+    row = "| Selected | 26 | 41 |"
+    caption = "Only warm runs are included."
+    data = [header, alignment, *[f"| Other {i} | 8 | 14 |" for i in range(55)], row]
+    source = heading + "\n\n" + "\n".join(data) + "\n\n" + caption
+    witness = row + "\n\n" + caption
+    assert comparison.quoted_passages(source, [heading, witness]) == [
+        heading + "\n\n" + header + "\n" + alignment, witness]
+
+
+def test_spanning_excerpt_rejects_an_ambiguous_caption_and_a_ragged_row():
+    table = "| Setup | One | Two |\n|---|---|---|\n"
+    witness = "| Sample | 5 | 7 |\n\nMeasured in the field."
+    source = table + witness + "\n\n## Another location\n\n" + table + witness
+    with pytest.raises(comparison.AmbiguousTableQuote, match="occurs more than once"):
+        comparison.quoted_passages(source, [witness])
+    ragged = "| Sample | 5 | 7 | 11 |\n\nMeasured in the field."
+    with pytest.raises(comparison.AmbiguousTableQuote, match="number of cells"):
+        comparison.quoted_passages(table + ragged, [ragged])
+
+
+def test_quote_crossing_two_tables_keeps_original_prose_and_both_schemas():
+    first = "## First test\n\n| Lot | Kilograms |\n|--|--|\n| A | 9 |"
+    note = "A second instrument reported pressure."
+    second = "## Second test\n\n| Lot | Pascals |\n|--|--|\n| A | 11 |"
+    source = "\n\n".join((first, note, second))
+    witness = source[source.index("| A | 9 |"):source.index("11") + 2]
+    excerpts = comparison.quoted_passages(source, [witness])
+    assert excerpts == [source]
