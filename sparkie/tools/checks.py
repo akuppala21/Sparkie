@@ -49,7 +49,7 @@ def selection(paths):
     tests, reasons = set(), []
     javascript_files, unresolved_syntax = set(), set()
     browser = behavior = broad = isolation = workload = sessions = broker = False
-    webapp = False
+    webapp_renderer = webapp_rebuild = False
     compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
@@ -96,13 +96,16 @@ def selection(paths):
         elif path == 'tools/check_research_evidence.py':
             tests.add('test_research_claims.py')
             reasons.append(original + ': developer-only quote and arithmetic utility; not loaded in agent conversations')
-        elif path in ('deploy/webapp/README.md', 'deploy/webapp/NOTICES.txt'):
-            reasons.append(original + ': Webapp build documentation and notices review')
+        elif path == 'deploy/webapp/README.md':
+            webapp_rebuild = True
+            reasons.append(original + ': execute the documented recovery and rebuild from an exported release')
+        elif path == 'deploy/webapp/NOTICES.txt':
+            reasons.append(original + ': Webapp notices review')
         elif path in WEBAPP_INPUTS:
             tests.add('test_deployment.py')
             if path == 'deploy/webapp/members.json':
                 tests.add('test_application_upgrade.py')
-            webapp = candidate = browser = True
+            webapp_renderer = webapp_rebuild = candidate = browser = True
             reasons.append(original + ': native renderer tests and typecheck, first-submit and navigation races, reproducible build and packaged export')
         elif path.startswith('deploy/webapp/'):
             broad = syntax = True
@@ -410,7 +413,7 @@ def selection(paths):
             'private_broker_stop': broker, 'native_shared_sessions': sessions,
             'compute_power_validation': power,
             'native_candidate': candidate,
-            'native_webapp_renderer': webapp or broad, 'webapp_rebuild_and_export': webapp or broad,
+            'native_webapp_renderer': webapp_renderer or broad, 'webapp_rebuild_and_export': webapp_rebuild or broad,
             'broad_qualification': broad, 'reasons': reasons}
 
 

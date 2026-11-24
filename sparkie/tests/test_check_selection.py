@@ -9,7 +9,8 @@ from xml.etree import ElementTree
 
 import pytest
 
-select = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/checks.py'))['selection']
+checks = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/checks.py'))
+select = checks['selection']
 
 
 @pytest.mark.parametrize('name', [
@@ -27,9 +28,18 @@ def test_webapp_build_inputs_require_native_renderer_and_export_without_physical
                    'enrolled_service_lifecycle', 'private_broker_stop', 'compute_power_validation'))
 
 
-def test_webapp_docs_unknown_files_and_combined_deployment_keep_their_own_scope():
-    docs = select(['deploy/webapp/README.md', 'deploy/webapp/NOTICES.txt'])
-    assert not docs['python_tests'] and not docs['webapp_rebuild_and_export']
+@pytest.mark.parametrize(('paths', 'expected'), [
+    (['README.md'], {'webapp_rebuild_and_export'}),
+    (['NOTICES.txt'], set()),
+    (['README.md', 'NOTICES.txt'], {'webapp_rebuild_and_export'}),
+])
+def test_webapp_export_instructions_and_notices_select_only_their_own_checks(paths, expected):
+    plan = select(['deploy/webapp/' + path for path in paths])
+    assert not plan['python_tests']
+    assert {group for group in checks['GROUPS'] if plan[group]} == expected
+
+
+def test_webapp_unknown_files_and_combined_deployment_keep_their_own_scope():
     unknown = select(['deploy/webapp/new-source.json'])
     assert unknown['broad_qualification'] and unknown['enrolled_service_lifecycle']
     assert unknown['native_webapp_renderer'] and unknown['webapp_rebuild_and_export']
