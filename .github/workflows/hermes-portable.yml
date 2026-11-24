@@ -54,6 +54,17 @@ jobs:
           echo "$(jq -er .uv.sha256 "$tool")  $RUNNER_TEMP/uv" | sha256sum --check
           chmod 700 "$RUNNER_TEMP/uv"
           "$RUNNER_TEMP/uv" sync --project upstream-hermes --frozen --only-group dev --no-install-project --no-build --python 3.14.10
+          # Table quotations use Hermes's Markdown parser. Install its two locked
+          # pure-Python wheels without pulling in the serving runtime.
+          python3 - <<'PY' > "$RUNNER_TEMP/table-requirements.txt"
+          import pathlib, tomllib
+          packages = tomllib.loads(pathlib.Path("upstream-hermes/uv.lock").read_text())["package"]
+          for name in ("markdown-it-py", "mdurl"):
+              package, = [p for p in packages if p["name"] == name]
+              wheel, = [w for w in package["wheels"] if w["url"].endswith("-py3-none-any.whl")]
+              print(f"{name}=={package['version']} --hash={wheel['hash']}")
+          PY
+          "$RUNNER_TEMP/uv" pip install --python upstream-hermes/.venv/bin/python --only-binary :all: --require-hashes -r "$RUNNER_TEMP/table-requirements.txt"
       - name: Check portable fleet, electricity, research and recovery behavior
         working-directory: sparkie
         run: |
@@ -63,8 +74,16 @@ jobs:
             tests/test_forum_reader.py tests/test_github_readme.py tests/test_manual_reader.py tests/test_research_claims.py \
             tests/test_placement.py tests/test_serve_route.py tests/test_promote.py tests/test_promotion_preservation.py \
             tests/test_application_upgrade.py tests/test_application_updates.py \
+            tests/test_check_selection.py::test_affected_syntax_checks_changed_sources_and_keeps_unverified_groups \
+            tests/test_check_selection.py::test_affected_syntax_reports_an_unavailable_node \
+            tests/test_service_ingress_deployment.py::test_real_systemd_parser_accepts_nonroot_pinned_ingress_unit \
             tests/test_checked_comparison.py::test_malformed_or_oversize_sources_are_rejected \
             tests/test_checked_comparison.py::test_bad_verdicts_never_render \
             tests/test_checked_comparison.py::test_metadata_inside_pasted_source_is_part_of_the_evidence \
             tests/test_checked_comparison.py::test_dispatch_declines_unavailable_model_and_invalid_evidence \
-            tests/test_checked_comparison.py::test_short_paragraph_keeps_qualification_and_deduplicates_context
+            tests/test_checked_comparison.py::test_short_paragraph_keeps_qualification_and_deduplicates_context \
+            tests/test_checked_comparison.py::test_long_table_uses_original_headings_columns_and_selected_rows_in_source_order \
+            tests/test_checked_comparison.py::test_short_table_keeps_adjoining_qualification \
+            tests/test_checked_comparison.py::test_repeated_cells_require_an_unambiguous_witness \
+            tests/test_checked_comparison.py::test_non_tables_do_not_borrow_headings \
+            tests/test_checked_comparison.py::test_ragged_row_cannot_assign_an_extra_value_to_a_named_column

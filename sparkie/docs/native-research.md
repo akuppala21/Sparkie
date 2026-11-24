@@ -298,10 +298,17 @@ Paste the second report here.
 
 Hermes asks the selected local model which source demonstrates the full
 requirement and which passages support each judgment. Sparkie checks that each
-quoted passage occurs in its assigned text. It displays the verdict, both
-source links, quoted evidence and an optional next test directly. Short
-paragraphs retain their surrounding context. The renderer escapes backticks in
-source fences and checks the result with Hermes’s attachment parsers. A passage
+quoted passage occurs in its assigned text. It labels eligibility as the local
+model’s assessment and displays both source links, quoted evidence and an
+optional next test directly. Short
+paragraphs retain their surrounding context. A quotation from a top-level Markdown
+table includes its section headings, original column labels and alignment line.
+Long tables show the selected rows in source order. When a heading or row is
+separated by other source text, it appears in a separate quoted block. A
+repeated table quotation that could refer to different positions, or a quoted
+row with a different number of cells from its header, leaves the verdict
+unresolved. The renderer escapes backticks in source fences and checks the
+result with Hermes’s attachment parsers. A passage
 that would send an attachment, an invalid quotation, or an unavailable local
 model produces a message without a verdict. Ordinary chat makes no
 automatic comparison request.

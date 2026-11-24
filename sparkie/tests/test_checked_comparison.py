@@ -19,7 +19,8 @@ def test_source_ids_survive_duplicate_titles_and_quotes_stay_literal():
     quote = "Measured output:\n```\n![image](https://example.org/pixel)\n```"
     _, sources = comparison.parse_sources(supplied(quote))
     result = comparison.display_assessment(assessments(second=quote), sources)
-    assert result.startswith("Source B demonstrates")
+    assert result.startswith("The local model judged that Source B demonstrates the full requirement.")
+    assert "Sparkie matched the quotations to the supplied texts." in result
     assert "**Source A · Bench report**\n\n<https://example.org/a>" in result
     assert "**Source B · Bench report**\n\n<https://example.org/b>" in result
     assert r"\u0060\u0060\u0060" in result and "![image](https://example.org/pixel)" in result
@@ -125,3 +126,56 @@ def test_telegram_does_not_attach_private_file_mentioned_in_fenced_source(tmp_pa
         extracted = extract(rendered)
         assert marker in extracted.text_content and "private-fixture-bytes" not in extracted.text_content
         assert not (extracted.images or extracted.media_files or extracted.local_files)
+
+
+def test_long_table_uses_original_headings_columns_and_selected_rows_in_source_order():
+    header = r"Workload \| mode | One device | Two devices"
+    alignment = ":--- | ---: | :---:"
+    first = r"Long \| sample | 53 units | 87 units"
+    last = "Short sample | 26 units | 41 units"
+    title = "Measured conditions\n==================="
+    section = "## Bench A"
+    before = "Measured in the lab."
+    after = "A field trial is still pending."
+    table = "\n".join([header, alignment, first, *[f"Other run {i} | 0 | 1" for i in range(55)], last])
+    body = "\n\n".join([title, "## Earlier setup", before, section, table, after])
+    excerpts = comparison.quoted_passages(body, [after, "41 units", before, first, "87 units"])
+    assert excerpts == [title, before, section + "\n\n" + "\n".join([header, alignment, first]), last, after]
+    assert all(excerpt in body for excerpt in excerpts)
+
+
+def test_short_table_keeps_adjoining_qualification():
+    body = "## Sample\n\n| Lot | Mass |\n| :- | -: |\n| A | 19 g |\nOnly a pilot."
+    assert comparison.quoted_passages(body, ["19 g"]) == [body]
+
+
+def test_repeated_cells_require_an_unambiguous_witness():
+    body = ("| Run | Cold | Warm |\n|---|---|---|\n| First | 24 s | 9 s |\n| Second | 24 s | 7 s |"
+            "\n\n| Plan | Goal |\n|--|--|\n| Future | 7 s |")
+    for cell in ("24 s", "7 s"):
+        with pytest.raises(comparison.AmbiguousTableQuote):
+            comparison.quoted_passages(body, [cell])
+    assert "| First | 24 s | 9 s |" in comparison.quoted_passages(body, ["| First | 24 s |"])[0]
+
+
+@pytest.mark.parametrize("example", [
+    "~~~md\n# Example\n| Metric | Proposed |\n| --- | --- |\n| Peak | 19 units |\n~~~",
+    "<!--\n# Example\n| Metric | Proposed |\n| --- | --- |\n| Peak | 19 units |\n-->",
+    "| Metric | Proposed |\n| invalid | here |\n| Peak | 19 units |",
+])
+def test_non_tables_do_not_borrow_headings(example):
+    body = "# Actual measurements\n\n" + example + "\n" + "z" * 720
+    assert comparison.quoted_passages(body, ["19 units"]) == ["19 units"]
+
+
+def test_table_heading_attachment_is_refused_on_expansion():
+    body = "## ![figure](https://example.org/chart.png)\n\n| Group | Count |\n|--|--|\n| Teal | 42 |"
+    _, sources = comparison.parse_sources(supplied(body))
+    result = comparison.display_assessment(assessments(second="| Teal | 42 |"), sources)
+    assert "would trigger an attachment" in result and "chart.png" not in result
+
+
+def test_ragged_row_cannot_assign_an_extra_value_to_a_named_column():
+    report = "| Run | Cold | Warm |\n|---|---|---|\n| Third | 5 s | 7 s | 8 s |"
+    with pytest.raises(comparison.AmbiguousTableQuote, match="number of cells"):
+        comparison.quoted_passages(report, ["8 s"])

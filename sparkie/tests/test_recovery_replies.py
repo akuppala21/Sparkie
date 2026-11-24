@@ -2,6 +2,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 import shutil
 
 import pytest
@@ -73,8 +74,12 @@ def test_native_bridge_carries_the_same_identity_to_the_following_provider_round
                                             model='local', platform=platform, **ids) == 'normal stream'
 
 
-def test_session_turn_call_id_and_actual_tool_bind_receipts(rig):
-    controls, *_ = rig
+@pytest.mark.parametrize('observer, contender', [
+    (('first', 'a'), ('second', 'b')),
+    (('second', 'b'), ('first', 'a')),
+])
+def test_session_turn_call_id_and_actual_tool_bind_receipts(rig, observer, contender):
+    controls, effects, *_ = rig
     row = uncertain(controls)
     args = {'operation': row['id'], 'final_reply': True}
     req = turn('Check request ' + row['id'], [('spark_check_change', args, 'call')])
@@ -85,11 +90,28 @@ def test_session_turn_call_id_and_actual_tool_bind_receipts(rig):
                                session_id=session, turn_id=turn_id, tool_call_id='call')
     def render(session, turn_id):
         return replies.reply(req, normal, session_id=session, turn_id=turn_id, api_mode='chat_completions', model='local', platform='cli')
+    # Hold the observation lock while the other session reads the pending row.
+    observing, release = Event(), Event()
+    def observe(*_):
+        observing.set()
+        assert release.wait(timeout=10)
+        return 'succeeded'
+    controls.observe = observe
     with ThreadPoolExecutor(max_workers=2) as pool:
-        jobs = [pool.submit(arrange, s, t) for s, t in [('first', 'a'), ('second', 'b')]]
-        for job in jobs:
-            assert json.loads(job.result())['available']
-    assert 'succeeded' in render('first', 'a').choices[0].message.content
+        active = pool.submit(arrange, *observer)
+        try:
+            assert observing.wait(timeout=10)
+            pending = pool.submit(arrange, *contender).result(timeout=10)
+        finally:
+            release.set()
+        completed = active.result(timeout=10)
+    for identity, raw, state in ((observer, completed, 'succeeded'), (contender, pending, 'uncertain')):
+        result = json.loads(raw)
+        assert result['available'] and result['change_dispatched'] is False
+        assert result['request']['id'] == row['id'] and result['request']['state'] == state
+        text = render(*identity).choices[0].message.content
+        assert text.splitlines()[0] == 'Recorded state: ' + state and row['id'] in text
+    assert controls.store.get(row['id'])['state'] == 'succeeded' and not effects
     assert render('first', 'b') == render('second', 'a') == 'continue normally'
     replies.clear('first', 'a')
     assert render('first', 'a') == 'continue normally'

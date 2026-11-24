@@ -224,6 +224,12 @@ portable CPU selection for electricity, fleet state, source readers, owner contr
 and update recovery. Hardware, the selected local model, native browser sign-in and
 the installed system have their own qualification records. [Workflow](../../.github/workflows/hermes-portable.yml)
 
+The table-quotation regressions for `/checked-comparison` use `markdown-it-py`
+4.2.0 from Hermes’s pinned runtime. Run them in that environment on a compute
+Spark. A portable test environment that runs these cases also needs the locked
+Markdown parser and its `mdurl` dependency. The native delivery cases additionally
+use Hermes’s command and messaging adapters.
+
 In Actions, select **Hermes portable release checks** and enter the exact
 source commit in **Run workflow**. A maintainer can also start the checks
 by advancing the dedicated `codex/hermes-portable-release` branch to a

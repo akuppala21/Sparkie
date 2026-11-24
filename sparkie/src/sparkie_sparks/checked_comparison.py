@@ -1,4 +1,5 @@
 """Explicit two-source comparison returned by the native Hermes command dispatcher."""
+from bisect import bisect_right
 import json
 import re
 import unicodedata
@@ -67,17 +68,96 @@ def parse_sources(raw):
     return sections[0].strip(), sources
 
 
+class AmbiguousTableQuote(ValueError):
+    """A witness cannot identify a particular table cell or its columns."""
+
+
+def _source_tables(body, lines):
+    """Locate top-level Markdown tables and their enclosing source headings."""
+    if "|" not in body:
+        return {}
+    from markdown_it import MarkdownIt  # Locked with the native Hermes runtime.
+
+    parser = MarkdownIt("commonmark").enable("table")
+    tokens = []
+    parser.block.parse(body, parser, {}, tokens)
+    headings = {}
+    tables = {}
+    for token in tokens:
+        if token.level or token.map is None:
+            continue
+        start, end = token.map
+        if token.type == "heading_open":
+            depth = int(token.tag[1:])
+            headings = {n: span for n, span in headings.items() if n < depth}
+            headings[depth] = range(start, end)
+        elif token.type == "table_open":
+            # Markdown permits implicit cells on following prose lines. Only expand
+            # explicitly delimited rows, retaining the original spelling and spacing.
+            end = next((i for i in range(start + 2, end) if "|" not in lines[i]), end)
+            if end > start + 2:
+                tables[start] = (end, tuple(i for span in headings.values() for i in span))
+    return tables
+
+
+def _column_count(line):
+    from markdown_it.rules_block.table import escapedSplit
+
+    cells = escapedSplit(line.strip())
+    return len(cells) - (cells[0] == "") - (cells[-1] == "")
+
+
 def quoted_passages(body, quotes):
-    """Keep short original paragraphs around witnesses, including nearby qualifiers."""
+    """Expand verified witnesses in document order using only original source text."""
+    lines = body.split("\n")
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line) + 1)
+    tables = _source_tables(body, lines)
+    row_table = {i: start for start, (end, _) in tables.items() for i in range(start, end)}
     paragraphs = re.split(r"\n[ \t]*\n", body)
-    passages = []
-    for quote in quotes:
-        # Ambiguous repeats and cross-paragraph excerpts retain their exact supplied text.
+    passages = set()
+    selected_rows = {}
+    for quote in dict.fromkeys(quotes):
+        start = body.index(quote)
+        first = bisect_right(offsets, start) - 1
+        last = bisect_right(offsets, start + len(quote) - 1) - 1
+        repeated = body.find(quote, start + 1) >= 0
+        if repeated and any(quote in body[offsets[h]:offsets[end] - 1] for h, (end, _) in tables.items()):
+            raise AmbiguousTableQuote("A table quotation occurs more than once in its source, so its row or columns are uncertain.")
+        header = row_table.get(first)
+        if header is not None and row_table.get(last) == header:
+            # The Markdown parser pads or discards cells on ragged rows. Preserve
+            # source alignment rather than presenting a normalized cell as evidence.
+            columns = _column_count(lines[header])
+            if any(_column_count(lines[i]) != columns for i in range(first, last + 1)):
+                raise AmbiguousTableQuote("A quoted row has a different number of cells from its table header.")
+            selected_rows.setdefault(header, set()).update(range(first, last + 1))
+            continue
         containing = [block for block in paragraphs if quote in block]
         passage = containing[0] if len(containing) == 1 and len(containing[0]) <= 700 else quote
-        if passage not in passages:
-            passages.append(passage)
-    return passages
+        passages.add((body.index(passage), passage))
+
+    for header, rows in selected_rows.items():
+        end, headings = tables[header]
+        table = body[offsets[header]:offsets[end] - 1]
+        if len(table) <= 700:
+            rows.update(range(header, end))
+            # Keep adjoining qualifications that fit the original short-paragraph rule.
+            block = next((p for p in paragraphs if len(p) <= 700 and table in p), None)
+            if block is not None:
+                first = header - block[:block.index(table)].count("\n")
+                rows.update(range(first, first + block.count("\n") + 1))
+        rows.update((header, header + 1))
+        indices = sorted(rows.union(headings))
+        first = previous = indices[0]
+        for current in indices[1:]:
+            if any(line.strip() for line in lines[previous + 1:current]):
+                passages.add((offsets[first], body[offsets[first]:offsets[previous + 1] - 1]))
+                first = current
+            previous = current
+        passages.add((offsets[first], body[offsets[first]:offsets[previous + 1] - 1]))
+    return [passage for _, passage in sorted(passages)]
 
 
 def display_assessment(parsed, sources):
@@ -96,19 +176,23 @@ def display_assessment(parsed, sources):
         if row["qualifies"]:
             eligible.append(key)
         title = re.sub(r"([^\w\s])", r"\\\1", source["title"])
-        label = "Demonstrated" if row["qualifies"] else "Full requirement unconfirmed"
-        paragraphs.append(f"**Source {key} · {title}**\n\n<{source['url']}>\n\n{label}. Evidence from the supplied text")
-        for quote in quoted_passages(source["text"], quotes):
+        label = "demonstrated" if row["qualifies"] else "full requirement unconfirmed"
+        paragraphs.append(f"**Source {key} · {title}**\n\n<{source['url']}>\n\nModel assessment · {label}.")
+        excerpts = quoted_passages(source["text"], quotes)
+        if len(excerpts) > 1:
+            paragraphs.append("Each block is a separate excerpt. Intervening source text may be omitted.")
+        for quote in excerpts:
             # Hermes v0.23.2 protects triple fences in its attachment scanners. A longer
             # Markdown fence with an inner triple can expose the rest of the quote to delivery.
             if "```" in quote:
                 quote = re.sub(r"`{3,}", lambda match: r"\u0060" * len(match[0]), quote)
                 paragraphs.append(r"Backticks in source fences are displayed as \u0060.")
             paragraphs.append(f"```\n{quote}\n```")
-    summary = {(): "Neither supplied source demonstrates the full requirement.",
+    finding = {(): "neither supplied source demonstrates the full requirement.",
                ("A",): "Source A demonstrates the full requirement.",
                ("B",): "Source B demonstrates the full requirement.",
-               ("A", "B"): "Both supplied sources demonstrate the full requirement."}[tuple(eligible)]
+               ("A", "B"): "both supplied sources demonstrate the full requirement."}[tuple(eligible)]
+    summary = f"The local model judged that {finding} Sparkie matched the quotations to the supplied texts."
     if len(eligible) < 2:
         paragraphs.append("**What to test next**\n\nFor any unconfirmed option, run one trial with all required conditions together and record the observed result.")
     rendered = "\n\n".join([summary, *paragraphs])
@@ -162,6 +246,8 @@ def register(ctx):
             return FAILED
         try:
             return display_assessment(response.parsed, sources)
+        except AmbiguousTableQuote as exc:
+            return f"No comparison verdict is available. {exc}"
         except (TypeError, ValueError, AttributeError):
             return "No comparison verdict is available. The source assessments or quoted passages could not be verified."
 
