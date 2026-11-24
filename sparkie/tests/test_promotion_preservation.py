@@ -43,7 +43,7 @@ def test_preferences_and_monthly_totals_are_preserved_before_native_services(tmp
     assert journal.data['electricity_history']['monthly_totals'] == 4
     promote.rollback(plan, journal, host=host, api=api)
     assert ('preview', True) in host.events
-    assert promote.route(api.config) == plan['settings']['expected_route']
+    assert promote.ingress_routes(plan['settings'], api).current(promote.DASHBOARD) == plan['settings']['expected_route']
 
 
 def test_history_failure_blocks_model_switch_and_public_route(tmp_path):

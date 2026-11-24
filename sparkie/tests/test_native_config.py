@@ -130,6 +130,11 @@ def test_native_web_and_telegram_build_uncapped_initial_chat_requests(configured
     from run_agent import AIAgent
     from tui_gateway import server
 
+    # The native gateway captures its launch home on import. Give this simulated
+    # launch its own configured home even if an earlier chat imported the gateway.
+    launch_home = Path(os.environ['HERMES_HOME'])
+    monkeypatch.setattr(server, '_hermes_home', launch_home)
+    assert server._active_config_path() == launch_home / 'config.yaml'
     monkeypatch.setenv('HERMES_DISABLE_LAZY_INSTALLS', '1')
     model = configured['model']
     requests = []
