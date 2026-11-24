@@ -203,8 +203,9 @@ async def memory_review_command(update, context):
                 key = row['id'] + ' ' + row['digest']
                 if row['state'] == 'held':
                     found = row['observation']['proposed_entry_present']
-                    await message.reply_text('Held request ' + row['id'] + '. Proposed entry currently present: ' + str(found) +
-                                             '. This observation cannot verify the earlier dispatch. Refresh with /memoryreview or close without retry: /memoryreview close ' + key)
+                    prior = ' The original entry is still present.' if row['observation']['prior_entry_present'] else ''
+                    await message.reply_text('Held request ' + row['id'] + '. Proposed entry currently present: ' + str(found) + '.' + prior +
+                                             ' This observation cannot verify the earlier dispatch. Refresh with /memoryreview or close without retry: /memoryreview close ' + key)
                 else:
                     await message.reply_text('/memoryreview approve ' + key + '\n/memoryreview reject ' + key)
         else:

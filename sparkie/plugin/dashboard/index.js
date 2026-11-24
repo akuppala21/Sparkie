@@ -250,7 +250,9 @@
         row.find && h("div", null, "Find", h("pre", {style: {whiteSpace: "pre-wrap", overflowWrap: "anywhere"}}, row.find)),
         h("p", null, "Proposed text"), h("pre", {style: {whiteSpace: "pre-wrap", overflowWrap: "anywhere"}}, row.content),
         row.state === "held" && h("p", null, "Held request " + row.id + ". Proposed entry currently " +
-          (row.observation.proposed_entry_present ? "present." : "absent.") + " Refresh to check this request again."),
+          (row.observation.proposed_entry_present ? "present." : "absent.") +
+          (row.observation.prior_entry_present ? " The original entry is still present." : "") +
+          " Refresh to check this request again."),
         row.state === "held" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "close")}, "Close without retry"),
         row.state === "pending" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "approve")}, "Confirm this change"),
         row.state === "pending" && h("button", {type: "button", disabled: busy, onClick: () => decide(row, "reject")}, "Reject"))));

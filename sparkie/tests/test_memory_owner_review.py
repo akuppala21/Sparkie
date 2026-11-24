@@ -281,6 +281,47 @@ def test_native_failed_verification_remains_held_and_cannot_replay(rig, monkeypa
     assert len(calls) == 1 and saved() == before
 
 
+def test_patch_stays_held_when_native_store_keeps_both_entries(rig, monkeypatch):
+    from tools import memory_tool
+    client = rig['client']
+    before, after = 'Fixture uses blue stock.', 'Fixture uses green stock.'
+    attempt(operations=[{'action': 'add', 'content': before}])
+    addition, = client.get(API).json()
+    assert client.post(f"{API}/{addition['id']}/approve", json={'digest': addition['digest']}).json()['state'] == 'saved'
+    attempt(operations=[{'action': 'patch', 'old_text': 'blue', 'content': 'green'}])
+    correction, = client.get(API).json()
+    dispatches = []
+
+    def partial_write(payload, store):
+        dispatches.append(payload['target'])
+        return store.add(payload['target'], after)
+
+    monkeypatch.setattr(memory_tool, 'apply_memory_pending', partial_write)
+    url = f"{API}/{correction['id']}/approve"
+    response = client.post(url, json={'digest': correction['digest']})
+    assert response.status_code == 400
+    held, = client.get(API).json()
+    assert held['id'] == correction['id'] and held['state'] == 'held'
+    assert held['observation'] == {'proposed_entry_present': True, 'prior_entry_present': True}
+    assert client.post(url, json={'digest': held['digest']}).status_code == 400
+    assert dispatches == ['memory']
+    assert memory_tool.load_on_disk_store().memory_entries == [before, after]
+
+    from sparkie_sparks.telegram_controls import memory_review_command
+    from telegram.ext import ApplicationHandlerStop
+    replies = []
+
+    async def reply(text, **kwargs):
+        replies.append(text)
+
+    msg = NS(text='/memoryreview', reply_text=reply)
+    update = NS(message=msg, effective_message=msg, edited_message=None,
+                effective_user=NS(id=USER, is_bot=False), effective_chat=NS(id=USER, type='private'))
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(memory_review_command(update, None))
+    assert any('The original entry is still present.' in text and held['id'] in text for text in replies)
+
+
 def test_native_web_reset_requires_separate_erasure(rig):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

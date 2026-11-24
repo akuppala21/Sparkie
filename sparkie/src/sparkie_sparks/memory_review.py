@@ -191,6 +191,8 @@ def decide(owner, request, digest, *, action):
             raise RuntimeError('The memory outcome is uncertain. Check the same held request.') from exc
         if not result.get('success') or not observed['proposed_entry_present']:
             raise ValueError('The native store did not verify this change. Check the same held request.')
+        if observed['prior_entry_present']:
+            raise ValueError('The original memory entry is still present alongside the proposed correction. Check the same held request.')
         atomic_json_write(final, dict(record, state='saved', observation=observed), mode=0o600, fsync_dir=True)
         held.unlink()
         return {'id': request, 'state': 'saved'}
