@@ -48,6 +48,12 @@ only; all AI inference stays on the Sparks. The public HTTPS route, dashboard en
 owner-only access and recovery still need qualification. Existing private fleet management
 stays in place during preparation.
 
+On November 24, 2026, the owner extended this requirement to the whole fleet. The final release must install, run, update and recover with Tailscale uninstalled on Sparks 1–4. Use an owner-controlled public HTTPS address for Hermes and its Nous sign-in. Keep worker SSH, model endpoints, power controls and the administrative recovery path private. Enroll the workers by their verified LAN addresses, host keys and machine identities.
+
+Qualify the replacement from outside the home network and from Spark 1 to a real compute worker with Tailscale absent. Verify owner sign-in, API and WebSocket chat, private workload links, and restart and rollback on the replacement network. Retiring the existing route is a separate live access change and requires an independently verified way back.
+
+For Anurag’s home installation, keep Tailscale Funnel on Spark 1 for the existing public links and keep its private SSH access for remote recovery. Normal worker jobs and local self-repair use the authenticated wired LAN. Before retiring any worker’s overlay connection, verify an actual job and a sleep/wake cycle on Ethernet. The standalone installation option above remains available for sites that supply their own HTTPS route.
+
 Progress is concise. Report results, meaningful blockers, required decisions and the status of requested scheduled work. Further unsolicited monitoring or digests follow the owner's preferences.
 
 ## 4. Memory, skills and research
@@ -55,6 +61,8 @@ Progress is concise. Report results, meaningful blockers, required decisions and
 Use Hermes memory, conversation retrieval and skills. Preferences and corrections are available in a fresh session. New corrections take precedence over earlier preferences. An obsolete value may remain as clearly marked history. “Forget” removes its use in future answers. “Erase” asks for confirmation and removes the named item from active memory and searchable copies, with any limits on retained records explained first.
 
 The owner can ask what is remembered, correct it and see where it came from. A successful save is reported after the write succeeds. Live machine state takes precedence over stored observations. A failed tool call never becomes a success through its wording in memory.
+
+When a chat proposes a long-term memory change, pause that chat and show the exact change for owner review. Other chats can continue. The signed-in web owner or paired private Telegram owner can decide the same proposal. Keep any other part of the request, then finish the reply with the verified result. Show a save only after the confirmed value is read back from native memory. If the wait ends first, tell the owner where to review the existing proposal. If a write has an uncertain outcome, keep it held for reconciliation.
 
 Work and personal material keep separate retrieval and tool scopes when the owner uses both. Verify the boundary with the configured Hermes deployment. A profile name alone is insufficient proof of separation.
 

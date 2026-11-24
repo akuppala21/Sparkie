@@ -5,14 +5,17 @@ owner enrollment, qualification and exact installation approval still apply.
 """
 import argparse
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+from sparkie_sparks.worker_network import private_address
+
 EXAMPLE = 'config/site.example.json'
 DNS_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?')
 FIELDS = ('spark1', 'spark2', 'spark3', 'spark4')
@@ -47,9 +50,9 @@ def substitutions(example, site):
         seen_ids.add(identity)
         seen_hosts.add(hostname)
         if name != 'spark1':
-            address = ipaddress.IPv4Address(node['address'])
-            if address not in ipaddress.IPv4Network('100.64.0.0/10') or address in seen_addresses:
-                raise ValueError('Supply distinct, verified compute Tailscale IPv4 addresses.')
+            address = node['address']
+            if not private_address(address) or address in seen_addresses:
+                raise ValueError('Supply distinct, verified private compute IPv4 addresses.')
             seen_addresses.add(address)
         mapping.update({marker: node[key] for key, marker in template.items()})
     return mapping

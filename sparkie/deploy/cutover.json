@@ -3,9 +3,16 @@
   "status": "plan-only-not-approved-for-live-execution",
   "host": "spark1",
   "machine_id": "UNENROLLED_HUB_MACHINE_ID",
-  "public_url": "https://hub.example.invalid:8443/",
-  "callback": "https://hub.example.invalid:8443/auth/callback",
-  "leave_untouched": ["Spark 1 power", "unrelated.example.invalid:443 -> 127.0.0.1:8100", "model weights", "projects", "workloads", "personal files"],
+  "public_url": "https://hub.example.invalid/",
+  "callback": "https://hub.example.invalid/auth/callback",
+  "leave_untouched": [
+    "Spark 1 power",
+    "unrelated sites on port 443",
+    "model weights",
+    "projects",
+    "workloads",
+    "personal files"
+  ],
   "legacy": {
     "unit": "spark-console-api.service",
     "scope": "user",
@@ -18,23 +25,23 @@
     "Finish owner-only native Nous enrollment and protected subject/client configuration; verify real cookie, API and WebSocket access on an operator-only route.",
     "Generate the native unit with service_unit.py under the final runtime identity; enforce reviewed OS protections for code, config, scripts and all plugin roots.",
     "Render the separate collector oneshot and 60-second systemd timer with protected inventory, plug, electricity and checked-control paths; do not enable power actions whose physical proof is missing.",
-    "Keep the real Telegram token out of staging. Verify the exact old poller owner before handover.",
-    "Save existing Tailscale serve configuration and legacy service definition in a protected host-only rollback directory; archive old assistant state outside active retrieval without erasure.",
+    "Record the site’s reviewed dashboard and workload routes using its selected edge. Preserve the retained predecessor and independent operator access. Archive old assistant state outside active retrieval.",
+    "Retain the legacy service definition and its existing access path for rollback. At the home site retain the existing Funnel and private SSH on Spark 1.",
     "Present immutable candidate hash, diff, complete applicable evidence, expected interruption and rollback for exact owner approval."
   ],
   "approved_cutover": [
     "Obtain the owner's approval for the exact candidate and rendered installation plan, then use the operator-only promote.py CLI with that plan hash and its protected operation journal. The installed checked controller has no update or promotion action; preparing the plan does not authorize execution.",
     "Stop the verified old Telegram poller, then start the native gateway with the paired owner configuration; never run both pollers.",
     "If a native preview is enrolled, keep its appearance settings available during brain warmup. Pause its old observation timer and collector before archiving the inherited electricity database, then stop the preview and import the latest validated appearance just before starting the gateway.",
-    "Verify the new gateway privately before switching only the existing 8443 route to its loopback listener.",
+    "Verify the dashboard and workload authorization gates privately. Publish each corresponding enrolled site route using conditional updates. Read the actual result back.",
     "Exercise owner browser/API/WebSocket, Telegram reply/approval, local model and changed fleet action through actual entry points.",
     "Keep the old service, state archive and saved route available until the owner path is verified."
   ],
   "rollback": [
     "Stop the new native gateway first so its Telegram poller is gone.",
-    "Stop the new observation writer before restoring the preview observation timer's saved state. Both use the same retained electricity database, including samples collected after promotion.",
-    "Restore only the saved 8443 route, preserving the unrelated 443 mapping.",
+    "Restore each enrolled site handler to the saved predecessor recorded in the journal. Preserve unrelated routes and hold if the owner changed the same route.",
     "Start the retained user spark-console-api.service and verify its owner path and bot polling.",
     "Retain new Hermes state and candidate logs for diagnosis; never delete or import them into the old assistant automatically."
-  ]
+  ],
+  "workload_origin": "https://hub.example.invalid:10000"
 }

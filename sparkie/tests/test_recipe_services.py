@@ -1,5 +1,9 @@
 """One owner operation, durable admission, fresh loopback endpoints and exact retirement."""
 
+import os
+from pathlib import Path
+import pwd
+import subprocess
 import uuid
 
 import pytest
@@ -10,12 +14,34 @@ from sparkie_sparks.idle import IdlePower
 from sparkie_sparks.operations import NotDispatched, OperationStore, intent
 from sparkie_sparks.recipe_services import RecipeServices, ServiceObservation, service_holds_node
 from sparkie_sparks.service_definitions import ARTIFACTS, GLM, compose_file, recipe
+from sparkie_sparks.service_remote import RemoteServices
 from sparkie_sparks.service_worker import ServiceWorker
 from sparkie_sparks.workspace_types import ComputeNode
 
 OWNER = Owner('owner-generation', 'web')
 BINDING = OwnerBinding(OWNER.generation, 'owner', 'test', '', 101, 101)
 NODE = ComputeNode('spark4', '4' * 32, '192.0.2.4')
+
+
+def test_service_worker_checks_the_enrolled_address_despite_ambient_ssh_settings(tmp_path):
+    table = {'user': 'fixture', 'executable': '/fixture/worker.pyz', 'config': '/fixture/worker.json'}
+    remote = RemoteServices('a' * 32, [(NODE, table)])
+    config = tmp_path / 'ssh_config'
+    config.write_text('Host *\n  HostName elsewhere.invalid\n  HostKeyAlias elsewhere\n'
+                      '  UserKnownHostsFile /wrong/file\n  GlobalKnownHostsFile /other/file\n'
+                      '  Port 2222\n  ForwardAgent yes\n  ControlPath /wrong/socket\n'
+                      '  ProxyCommand false\n  LocalForward 127.0.0.1:23456 localhost:22\n')
+    command = remote.commands[NODE]
+    result = subprocess.run([command[0], '-F', str(config), '-G', *command[1:]],
+                            check=True, capture_output=True, text=True)
+    fields = dict(line.split(' ', 1) for line in result.stdout.splitlines() if ' ' in line)
+    assert fields['hostname'] == fields['hostkeyalias'] == NODE.host
+    user_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    assert fields['userknownhostsfile'] in {'~/.ssh/known_hosts', str(user_home / '.ssh/known_hosts')}
+    assert fields['globalknownhostsfile'] == '/dev/null'
+    assert fields['port'] == '22' and fields['forwardagent'] == 'no'
+    assert fields.get('proxycommand', 'none') == fields.get('controlpath', 'none') == 'none'
+    assert 'localforward' not in fields
 
 
 class Effects:

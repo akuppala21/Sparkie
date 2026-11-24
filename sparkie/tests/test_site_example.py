@@ -44,3 +44,22 @@ def test_example_credentials_and_root_are_rejected():
     for site in (copy.deepcopy(EXAMPLE), dict(fixture(), token='forbidden'), dict(fixture(), account='root')):
         with pytest.raises(ValueError):
             substitutions(EXAMPLE, site)
+
+
+def test_site_accepts_distinct_private_lan_addresses():
+    site = fixture()
+    for number, address in enumerate(('10.1.2.4', '172.20.2.4', '192.168.2.4'), 2):
+        site['nodes'][f'spark{number}']['address'] = address
+    values = substitutions(EXAMPLE, site)
+    for number in range(2, 5):
+        spark = f'spark{number}'
+        assert values[EXAMPLE['nodes'][spark]['address']] == site['nodes'][spark]['address']
+
+
+@pytest.mark.parametrize('address', ['0.0.0.0', '8.8.8.8', '172.32.4.1', '169.254.1.1',
+                                      '224.0.0.1', '192.0.2.3', '::1', 'bad-host', 167772161])
+def test_site_refuses_non_lan_endpoints(address):
+    site = fixture()
+    site['nodes']['spark3']['address'] = address
+    with pytest.raises(ValueError, match='private compute'):
+        substitutions(EXAMPLE, site)

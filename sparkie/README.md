@@ -11,7 +11,7 @@ Sparkie adds fleet, electricity, workload and owner-approved operations to the p
 
 ## Operator enrollment
 
-The public source contains disabled site examples. To prepare a separate private source tree, copy `config/site.example.json` outside this checkout and fill in the independently verified Linux machine IDs, hostnames, enrolled Tailscale IPv4 addresses, dashboard hostname and non-root service account. The permanent hub and all compute identities must be distinct. Keep owner bindings, keys and tokens in the installation's separately provisioned protected files. Existing machine, authenticated owner, approval, journal and rollback checks still apply.
+The public source contains disabled site examples. To prepare a separate private source tree, copy `config/site.example.json` outside this checkout and fill in the independently verified Linux machine IDs, hostnames, enrolled private LAN IPv4 addresses, dashboard hostname and non-root service account. The permanent hub and all compute identities must be distinct. In each protected compute worker configuration, set `interface` to the Ethernet or Wi-Fi device carrying its enrolled address. Keep owner bindings, keys and tokens in the installation's separately provisioned protected files. Existing machine, authenticated owner, approval, journal and rollback checks still apply.
 
 From a clean reviewed Git checkout, run this offline source preparation command. It reads only tracked regular Git index blobs and writes a new private directory. It neither connects to a Spark nor installs a service.
 
@@ -19,7 +19,7 @@ From a clean reviewed Git checkout, run this offline source preparation command.
 python sparkie/tools/prepare_site.py --site /private/operator/site.json --output /private/operator/sparkie-source
 ```
 
-Review the enrolled source and target-specific operator files, build a fresh package, and qualify it before considering a candidate-bound approval. The migration code assumes a matching legacy predecessor and protected Tailscale routes on 8443 and 10000. A site with different services or recovery requirements needs its own reviewed plan. The default identity sentinels cannot match a Linux machine ID. [First-cutover example](deploy/cutover.json) · [Checked application updates](docs/application-updates.md)
+Review the enrolled source and target-specific operator files, build a fresh package, and qualify it before considering a candidate-bound approval. The new site uses public HTTPS on Spark 1 and pinned SSH over the private LAN. Existing installations keep their saved route and rollback records during migration. The default identity sentinels cannot match a Linux machine ID. [Site network and initial setup](docs/site-network.md) · [Checked application updates](docs/application-updates.md)
 
 ## Reproducibility and redistribution
 

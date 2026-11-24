@@ -28,7 +28,7 @@ COMPUTE = {'test_sandbox_ssh.py', 'test_sandbox_provider.py', 'test_workspace_le
            'test_workspace_worker.py', 'test_workspace_idle.py', 'test_workspace_remote.py',
            'test_workspace_service.py', 'test_placement.py', 'test_native_config.py'}
 AUTH = OPERATIONS | {'test_owner_login.py', 'test_native_config.py'}
-MEMORY = {'test_memory_owner_review.py', 'test_memory_erase.py', 'test_memory_correction_feedback.py', 'test_native_controls.py', 'test_native_integration.py', 'test_broker.py'}
+MEMORY = {'test_memory_owner_review.py', 'test_memory_chat_delivery.py', 'test_memory_erase.py', 'test_memory_correction_feedback.py', 'test_native_controls.py', 'test_native_integration.py', 'test_broker.py'}
 CATALOG = {'test_dashboard_packaging.py', 'test_recipes.py'}
 THEME = {'test_dashboard_packaging.py', 'test_managed_config.py', 'test_deployment.py'}
 NATIVE = FLEET | ENERGY | WORKLOADS | POWER | COMPUTE | AUTH | MEMORY
@@ -42,14 +42,14 @@ GROUPS = ('javascript_syntax', 'desktop_phone_browser', 'compact_local_behavior'
           'native_execution_isolation', 'native_compute_workspace', 'enrolled_service_lifecycle', 'native_research',
           'disposable_workload_stop', 'private_broker_stop', 'native_shared_sessions',
           'compute_power_validation', 'native_candidate', 'native_webapp_renderer', 'webapp_rebuild_and_export',
-          'broad_qualification')
+          'caddy_edge_rehearsal', 'broad_qualification')
 
 
 def selection(paths):
     tests, reasons = set(), []
     javascript_files, unresolved_syntax = set(), set()
     browser = behavior = broad = isolation = workload = sessions = broker = False
-    webapp_renderer = webapp_rebuild = False
+    webapp_renderer = webapp_rebuild = caddy_edge = False
     compute = services = research = power = candidate = panel = False
     for original in sorted(set(paths)):
         path = original.removeprefix('sparkie/')
@@ -133,6 +133,11 @@ def selection(paths):
         elif path == 'src/sparkie_sparks/io_budget.py':
             tests.update(POWER | COMPUTE | {'test_io_budget.py', 'test_matter.py'})
             reasons.append(original + ': bounded maintenance I/O, power evidence and workspace transport consumers')
+        elif path in ('src/sparkie_sparks/memory_delivery.py', 'tests/test_memory_chat_delivery.py',
+                      'deploy/patches/hermes-owner-memory-delivery.patch', 'deploy/patches/hermes-owner-memory-delivery.json'):
+            tests.update(MEMORY | {'test_deployment.py', 'test_owner_login.py'})
+            candidate = browser = behavior = sessions = True
+            reasons.append(original + ': packaged owner chat, first visible text, memory decisions and concurrent sessions')
         elif path in ('src/sparkie_sparks/memory_controls.py', 'src/sparkie_sparks/memory_erase.py',
                        'src/sparkie_sparks/memory_review.py', 'src/sparkie_sparks/memory_paths.py',
                        'deploy/patches/hermes-memory-owner-review.patch',
@@ -159,6 +164,11 @@ def selection(paths):
             browser = path.endswith(('controls.py', 'broker.py')) or browser
             sessions = path.endswith(('authority.py', 'web_controls.py', 'telegram_controls.py')) or sessions
             reasons.append(original + ': owner identity, exact approvals, duplicate prevention and restart recovery; live transport qualification remains separate')
+        elif path in ('deploy/caddy_routes.py', 'deploy/caddy_site.py', 'tests/hardware/caddy_edge.py'):
+            tests.update({'test_caddy_public_ingress.py', 'test_caddy_site_bootstrap.py',
+                          'test_service_ingress_deployment.py', 'test_promote.py'})
+            caddy_edge = candidate = True
+            reasons.append(original + ': enrolled public listeners, real private admin API and rollback')
         elif path in ('tests/browser/services.mjs', 'tests/browser/services_fixture.py',
                       'tests/browser/artifact_ingress.mjs', 'tests/browser/artifact_ingress_fixture.py'):
             tests.update(SERVICES | {'test_dashboard_packaging.py'})
@@ -241,12 +251,24 @@ def selection(paths):
                 tests.update(COMPUTE)
             power = True
             reasons.append(original + ': physical identity, exact confirmation, wake and shutdown evidence; qualify affected hardware behavior before enabling it')
-        elif path in ('src/sparkie_sparks/sandbox_ssh.py', 'src/sparkie_sparks/sandbox_provider.py',
+        elif path in ('tools/prepare_site.py', 'config/site.example.json'):
+            tests.add('test_site_example.py')
+            reasons.append(original + ': render and validate explicit site enrollment')
+        elif path == 'deploy/worker_stage.py':
+            tests.update({'test_worker_stage.py', 'test_workspace_remote.py', 'test_workspace_worker.py'})
+            compute = candidate = True
+            reasons.append(original + ': stage the reviewed worker on its enrolled interface and verify a real workspace')
+        elif path in ('src/sparkie_sparks/worker_network.py', 'src/sparkie_sparks/sandbox_ssh.py', 'src/sparkie_sparks/sandbox_provider.py',
                       'src/sparkie_sparks/workspace_types.py', 'src/sparkie_sparks/workspace_leases.py',
                       'src/sparkie_sparks/workspace_worker.py', 'src/sparkie_sparks/workspace_remote.py',
                       'src/sparkie_sparks/workspace_service.py', 'src/sparkie_sparks/placement.py',
                       'src/sparkie_sparks/release_hints.py'):
             tests.update(COMPUTE)
+            if path.endswith('worker_network.py'):
+                tests.update({'test_site_example.py', 'test_collector.py', 'test_local_observation.py',
+                              'test_power.py', 'test_workloads.py', 'test_recipe_services.py',
+                              'test_endpoint_relay.py'})
+                power = workload = services = True
             if path.endswith(('workspace_remote.py', 'workspace_service.py')):
                 tests.update(OPERATIONS)
             compute = True
@@ -330,6 +352,9 @@ def selection(paths):
             reasons.append(original + ': native managed settings, owner-editable preferences, local routing and protected host execution paths')
         elif path.startswith('deploy/'):
             tests.update(DEPLOY)
+            if path in ('deploy/promote.py', 'deploy/installation.py', 'deploy/serve_route.py'):
+                tests.update({'test_caddy_public_ingress.py', 'test_caddy_site_bootstrap.py', 'test_service_ingress_deployment.py'})
+                caddy_edge = True
             if path == 'deploy/candidate.py':
                 tests.update({'test_native_restore_guard.py', 'test_skill_terminal_paths.py', 'test_attachment_tool_paths.py', 'test_remote_terminal_interrupt.py', 'test_native_skill_staging.py'})
             services = True
@@ -414,7 +439,7 @@ def selection(paths):
             'compute_power_validation': power,
             'native_candidate': candidate,
             'native_webapp_renderer': webapp_renderer or broad, 'webapp_rebuild_and_export': webapp_rebuild or broad,
-            'broad_qualification': broad, 'reasons': reasons}
+            'caddy_edge_rehearsal': caddy_edge or broad, 'broad_qualification': broad, 'reasons': reasons}
 
 
 def changed_paths(base):

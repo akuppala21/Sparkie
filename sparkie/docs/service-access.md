@@ -21,10 +21,10 @@ confirmation; model text cannot confirm it.
 
 ## Access and native authentication
 
-The reviewed workload origin is `https://hub.example.invalid:10000`.
-Port 8443 remains the Hermes application. The existing, unrelated 443 service is
-outside this change. These are proposed release routes; preparing a configuration
-does not publish a port or install a service.
+The home site uses its existing dashboard on port 8443 and the authenticated
+workload proxy on port 10000. A standalone Caddy edge uses ports 443 and 10000
+on its enrolled public hostname. Each site keeps the two browser origins
+separate. See [public access and the private Spark LAN](site-network.md).
 
 Stable paths are `/services/artifact-browser/` and `/services/glm-flash/v1`.
 The latter exposes GET `/v1/models` and POST `/v1/chat/completions` or
@@ -71,10 +71,12 @@ stops and stable routing separately. All first-attempt failures remain recorded.
 
 Installation includes the exact Caddyfile and unit in the reviewed plan hash.
 It refuses an existing unreviewed unit or configuration. Promotion checks the
-private native gate before publishing the separate workload origin. Route edits
-use the Tailscale configuration ETag and reconcile lost acknowledgements. The
-same operation journal restores the previously observed port-10000 state during
-rollback while preserving unrelated route edits and all workload data.
+private native gate before publishing the separate workload origin. The home
+Funnel and standalone Caddy adapters check the current route and submit their
+updates conditionally using the observed ETag. If the acknowledgement is lost,
+the installer reads the route again. Rollback uses the same operation journal
+to restore the previously observed workload route and preserve unrelated routes
+and workload data.
 
 Upstream references: [Caddy reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy),
 [Caddy license](https://github.com/caddyserver/caddy/blob/v2.11.9/LICENSE),

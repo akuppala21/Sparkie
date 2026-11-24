@@ -23,12 +23,13 @@ PRIVATE_KEY = 'synthetic-sandbox-only-private-key'
 @pytest.fixture
 def rig(tmp_path):
     calls = []
-    config = {'schema': 1, 'controller': 'b' * 32, 'node': asdict(NODE),
+    config = {'schema': 1, 'controller': 'b' * 32, 'node': asdict(NODE), 'interface': 'enp2s0',
               'hub_machine_id': '1' * 32, 'image_id': IMAGE, 'state_dir': str(tmp_path / 'worker'),
               'maximum': {'cpu': 4, 'memory_mb': 8192, 'disk_mb': 16384}}
 
     class Worker:
         def __init__(self, store, *, authorize, **kwargs):
+            assert kwargs['interface'] == 'enp2s0'
             self.authorize = authorize
             self.root = Path(kwargs['state_dir'])
 
@@ -65,6 +66,11 @@ def rig(tmp_path):
     store = OperationStore(tmp_path / 'controller.sqlite')
     def runner(args, *, input, **kwargs):
         assert args[0] == 'ssh' and 'StrictHostKeyChecking=yes' in args
+        assert 'HostName=' + NODE.host in args and 'HostKeyAlias=' + NODE.host in args
+        assert 'ControlPath=none' in args and 'ClearAllForwardings=yes' in args
+        assert 'UserKnownHostsFile=~/.ssh/known_hosts' in args and 'GlobalKnownHostsFile=/dev/null' in args
+        assert 'KnownHostsCommand=none' in args and 'VerifyHostKeyDNS=no' in args
+        assert 'HostKeyAlgorithms=-*-cert-v01@openssh.com' in args
         assert 'ForwardAgent=no' in args and kwargs['timeout'] == 55
         assert PRIVATE_KEY not in input and PRIVATE_KEY not in ' '.join(args)
         result = endpoint.handle(json.loads(input))

@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 
+from .worker_network import physical_ssh_options
 from .collector import HOST, USER
 
 
@@ -109,10 +110,8 @@ class EndpointRelay:
                 control = self.directory / name
                 if control.exists() or control.is_symlink():
                     raise RuntimeError('A previous service connection needs controller recovery.')
-                args = ['ssh', '-N', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-                        '-o', 'ConnectTimeout=5', '-o', 'ConnectionAttempts=1', '-o', 'ForwardAgent=no',
-                        '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=10',
-                        '-o', 'ServerAliveCountMax=2', '-o', 'ControlPersist=no',
+                args = ['ssh', '-N', '-T', *physical_ssh_options(node['address'], relay=True),
+                        '-o', 'ExitOnForwardFailure=yes', '-o', 'ControlPersist=no',
                         '-o', 'ForkAfterAuthentication=no', '-M', '-S', str(control),
                         '-L', f'127.0.0.1:{port}:127.0.0.1:{endpoint["port"]}',
                         node['user'] + '@' + node['address']]

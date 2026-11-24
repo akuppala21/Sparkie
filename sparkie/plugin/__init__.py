@@ -21,6 +21,8 @@ def register(ctx, *, compute_provider=None):
     from sparkie_sparks.checked_comparison import register as register_comparison
     register_comparison(ctx)
     from sparkie_sparks.memory_controls import correction_feedback, guard
+    from sparkie_sparks.memory_review import memory_execution
+    ctx.register_middleware('tool_execution', memory_execution)
     ctx.register_hook('pre_tool_call', guard)
     ctx.register_hook('transform_tool_result', correction_feedback)
     from sparkie_sparks.owner_login import register as register_owner_login

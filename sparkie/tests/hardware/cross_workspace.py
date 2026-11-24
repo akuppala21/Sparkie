@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--image', required=True)
+    parser.add_argument('--worker-interface', required=True, help='Verified interface on Spark 4 that owns the enrolled private address.')
     parser.add_argument('--hub-machine-id-file', type=Path, required=True)
     parser.add_argument('--compute-machine-id-file', type=Path, required=True)
     parser.add_argument('--power-config', type=Path, help='Explicit private physical-test profile; absent means zero power actions')
@@ -71,7 +72,7 @@ def main():
             bundle.write(path, 'sparkie_sparks/' + path.name)
         bundle.writestr('__main__.py', 'from sparkie_sparks.workspace_remote import main\nraise SystemExit(main())\n')
     worker_config = {'schema': 1, 'controller': nonce, 'node': asdict(node), 'hub_machine_id': hub,
-        'image_id': args.image, 'state_dir': remote_root + '/state',
+        'interface': args.worker_interface, 'image_id': args.image, 'state_dir': remote_root + '/state',
         'maximum': {'cpu': 2, 'memory_mb': 8192, 'disk_mb': 16384}}
     config_path = private / 'worker.json'
     config_path.write_text(json.dumps(worker_config))

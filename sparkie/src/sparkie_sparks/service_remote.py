@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
+from .worker_network import physical_ssh_options
 from .collector import HOST, USER
 from .operations import NotDispatched
 from .io_budget import remaining_io
@@ -33,22 +34,7 @@ class RemoteServices:
                 raise ValueError('Configure the protected compute worker endpoint.')
             self.commands[node] = [
                 'ssh',
-                '-o',
-                'BatchMode=yes',
-                '-o',
-                'StrictHostKeyChecking=yes',
-                '-o',
-                'ConnectTimeout=5',
-                '-o',
-                'ForwardAgent=no',
-                '-o',
-                'ClearAllForwardings=yes',
-                '-o',
-                'ConnectionAttempts=1',
-                '-o',
-                'ServerAliveInterval=5',
-                '-o',
-                'ServerAliveCountMax=1',
+                *physical_ssh_options(node.host),
                 row['user'] + '@' + node.host,
                 shlex.join(['python3', '-I', row['executable'], '--service-config', row['config']]),
             ]

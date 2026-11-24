@@ -1,0 +1,132 @@
+--- a/tui_gateway/prompt_turn.py
++++ b/tui_gateway/prompt_turn.py
+@@ -824,7 +824,11 @@
+     _usage_stop, _usage_thread = _start_usage_ticker(sid, agent)
+     try:
+         from agent.notification_presentation import notification_turn, event_presentation_muted
+-        with notification_turn(agent, muted=event_presentation_muted("message.delta", sid), session_id=sid):
++        from sparkie_sparks.memory_delivery import web_turn
++        def memory_notice(text):
++            _emit("status.update", sid, {"kind": "memory", "text": text})
++        with web_turn(agent, session.get("transport"), not display_kind and not turn_author,
++                      memory_notice, lambda: session.get("_closing") or bool(getattr(agent, "_interrupt_requested", False))), notification_turn(agent, muted=event_presentation_muted("message.delta", sid), session_id=sid):
+             st.result = agent.run_conversation(run_message, **st.run_kwargs)
+             # A held last line that never became a marker is part of the reply: deliver it.
+             if hold is not None and (rest := hold.finish()) and not getattr(agent, "_mute_notification_reply", False):
+--- a/gateway/run_turn_runner.py
++++ b/gateway/run_turn_runner.py
+@@ -1123,7 +1123,8 @@
+             captured = execution_result.get()
+             before = (getattr(agent, 'session_prompt_tokens', 0) or 0,
+                       getattr(agent, 'session_completion_tokens', 0) or 0)
+-            with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
++            from sparkie_sparks.memory_delivery import gateway_turn
++            with gateway_turn(agent, self), notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+                 from gateway.response_filters import silence_allowed
+                 # Where a bare marker would become the "needed a reply" warning, the agent ends a
+                 # marker that follows a written reply on that reply, before transform/persistence.
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1694,7 +1694,9 @@
+     # by the transforms live now (a plugin reload mid-turn cannot drop them before the final). Set
+     # before any exit, so an early one never reads the previous turn's hold.
+     agent._held_transforms = held_stream_transforms()
+-    agent._hold_stream = bool(agent._held_transforms)
++    # Hermes can discover or call memory after earlier tool rounds. Keep unclassified
++    # model prose out of interim events and resumable history across this owner turn.
++    agent._hold_stream = bool(agent._held_transforms) or bool(getattr(agent, "_sparkie_memory_chat", False))
+-
++
+     # Per-turn setup: build_turn_context mutates ``agent`` and returns the locals the loop reads.
+     try:
+--- a/agent/turn_finalizer.py
++++ b/agent/turn_finalizer.py
+@@ -535,7 +535,7 @@
+     if isinstance(recorded, tuple) and len(recorded) == 3 and recorded[0] == turn_id:
+         _, transformed, pre_transform = recorded
+         return final_response, transformed, pre_transform
+-    if not final_response:
++    if not final_response and not getattr(agent, "_sparkie_memory_outcomes", None):
+         return final_response, False, None
+     if platform is None:
+         platform = getattr(agent, "platform", None) or ""
+@@ -549,6 +549,12 @@
+         # First hook to return a string wins; None/empty leaves the text unchanged.
+         rewrite = next((r for r in _invoke_hook_safely("transform_llm_output", logger, **payload)
+                         if isinstance(r, str) and r), None)
++    if getattr(agent, "_sparkie_memory_outcomes", None):
++        # Apply the verified receipt last so other presentation hooks cannot replace it.
++        from sparkie_sparks.memory_delivery import checked_reply
++        rewritten = checked_reply(agent, rewrite or final_response or "")
++        if rewritten != final_response:
++            rewrite = rewritten
+     if rewrite:
+         pre_transform, final_response, transformed = final_response, rewrite, True
+     agent._llm_output_transform = (turn_id, transformed, pre_transform)
+@@ -816,7 +822,7 @@
+-
++
+     result = {
+         "final_response": final_response,
+-        "last_reasoning": _last_turn_reasoning(messages),
++        "last_reasoning": None if getattr(agent, "_sparkie_memory_outcomes", None) else _last_turn_reasoning(messages),
+         "messages": messages,
+         "api_calls": api_call_count,
+         "completed": completed,
+--- a/agent/stream_delivery.py
++++ b/agent/stream_delivery.py
+@@ -28,6 +28,12 @@
+     The test is on the stored text before the memory-context fence: the fence decides what interim
+     delivery shows, and a row whose commentary fences to nothing can still hold a partial answer."""
+     if getattr(agent, "_hold_stream", False) is not True or assistant_msg.get("display_kind"):
++        return assistant_msg
++    if getattr(agent, "_sparkie_memory_chat", False):
++        # A later tool round can ask for review. Mark before Hermes's first DB flush,
++        # including rows carrying only reasoning. Its replay fields stay intact.
++        assistant_msg["display_metadata"] = {**(assistant_msg.get("display_metadata") or {}), "sparkie_memory_display": True}
++        assistant_msg["display_kind"] = "hidden"
+         return assistant_msg
+     texts = [*_codex_commentary_texts(agent, assistant_msg), flatten_message_text(assistant_msg.get("content"))]
+     if any(agent._strip_think_blocks(text).strip() for text in texts):
+@@ -43,6 +49,16 @@
+         return
+     if final_msg.get("display_kind") == "hidden":
+         del final_msg["display_kind"]
++    if getattr(agent, "_sparkie_memory_chat", False):
++        if getattr(agent, "_sparkie_memory_outcomes", None):
++            # Even when reasoning promotion leaves content empty, the reopened
++            # chat shows the checked reply. Keep the native model replay sidecar.
++            final_msg["content"] = final_response
++        else:
++            meta = final_msg.get("display_metadata") or {}
++            meta.pop("sparkie_memory_display", None)
++            if not meta:
++                final_msg.pop("display_metadata", None)
+     if commentary_items(final_msg):  # Codex commentary rides the row's items, for replay only
+         final_msg["display_metadata"] = {**(final_msg.get("display_metadata") or {}), COMMENTARY_WITHHELD: True}
+     if joined and final_msg.get("content") and final_msg["content"] != final_response:
+@@ -408,6 +424,8 @@
+             # content deltas.
+             self._note_dropped_stream_writer("_fire_reasoning_delta")
+             return
++        if getattr(self, "_sparkie_memory_chat", False) and getattr(self, "_hold_stream", False):
++            return
+         self._call_quietly(self.reasoning_callback, text)
+         # Resolve the opt-in once per stream, not per token: each lookup took _CONFIG_LOCK and
+         # serialized every streaming thread in the process behind a config cache hit.
+--- a/agent/history_commentary.py
++++ b/agent/history_commentary.py
+@@ -158,6 +158,12 @@
+-
++
+ def project_history_commentary(messages: list[dict], *, home: Any = None) -> list[dict]:
+     """Project a batch inside the owning profile's config and redaction scope."""
++    if any(isinstance(row, dict) and isinstance(row.get("display_metadata"), dict)
++           and row["display_metadata"].get("sparkie_memory_display") for row in messages):
++        # Both native history transports call here. Project copies only, keeping
++        # the provider's original tool-call/reasoning pairs for continuation.
++        from sparkie_sparks.memory_delivery import project_held_row
++        messages = [project_held_row(row) for row in messages]
+     if not any(
+         isinstance(message, dict) and message.get("codex_message_items")
+         for message in messages

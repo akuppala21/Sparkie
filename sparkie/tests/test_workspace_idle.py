@@ -129,8 +129,8 @@ def test_workspace_endpoint_never_binds_public_wildcard_or_unenrolled_network(tm
         rig(tmp_path, node=replace(NODE, host=host))
 
 
-def test_tailscale_endpoint_must_be_local_before_any_docker_or_key_effect(tmp_path):
-    store, docker, worker, leases = rig(tmp_path, node=replace(NODE, host='100.64.0.4'), local_addresses=lambda: set())
+def test_enrolled_endpoint_must_be_local_before_any_docker_or_key_effect(tmp_path):
+    store, docker, worker, leases = rig(tmp_path, node=replace(NODE, host='100.64.0.4'), interface='eth1', local_addresses=lambda: set())
     with pytest.raises(RuntimeError, match='not verified ready'):
         leases.acquire(SCOPE, REQUEST)
     assert docker.calls == []

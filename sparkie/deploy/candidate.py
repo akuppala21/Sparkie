@@ -206,6 +206,10 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
     skill_stage_patch = apply_native_patch(destination / "hermes", destination / "extension",
         Path("deploy/patches/hermes-skill-stage-applicability.patch"),
         ("tools/skill_manager_tool.py", "tools/skill_manager_batch.py"))
+    memory_delivery_patch = apply_native_patch(destination / "hermes", destination / "extension",
+        Path("deploy/patches/hermes-owner-memory-delivery.patch"),
+        ("agent/conversation_loop.py", "agent/history_commentary.py", "agent/stream_delivery.py", "agent/turn_finalizer.py",
+         "gateway/run_turn_runner.py", "tui_gateway/prompt_turn.py"))
     webapp_patch = apply_native_patch(destination / "hermes", destination / "extension", WEBAPP_PATCH, WEBAPP_TARGETS)
     stage_webapp(webapp, destination / "webapp", destination / "extension/deploy/webapp/members.json")
     shutil.copytree(dashboard, destination / "dashboard")
@@ -257,7 +261,7 @@ def prepare(archive, destination, webapp, dashboard, *, uv, python, extension):
         "upstream": lock, "model": json.loads((extension / "models/main-model.json").read_text()),
         "build_tools": {"uv": uv_pin},
         "native_patches": [restore_guard, memory_patch, skill_path_patch, attachment_patch, interrupt_patch, notice_patch,
-                           skill_stage_patch, webapp_patch],
+                           skill_stage_patch, webapp_patch, memory_delivery_patch],
         "runtime": {"python": str(runtime), "base_python": str(Path(python).resolve()),
                     "base_python_sha256": sha(Path(python).resolve()),
                     'base_root': str(base_root),

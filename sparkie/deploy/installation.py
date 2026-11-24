@@ -19,14 +19,14 @@ from candidate import sha, verify
 from protected_home import prepare as prepare_home
 from service_unit import render as gateway_unit, render_collector, render_collector_timer, _literal
 from model_unit import render as model_unit
-from serve_route import replacement
+from serve_route import HOST as FUNNEL_HOST, replacement
 
 UNITS = ('hermes-gateway.service', 'sparkie-fleet.service', 'sparkie-collector.service',
          'sparkie-collector.timer', 'sparkie-main-brain.service')
 KEYS = {'candidate', 'home', 'user', 'controller_config', 'inventory', 'plugs', 'fleet_snapshot',
         'energy_database', 'control_socket', 'model_weights', 'model_cache', 'environment', 'gateway_port',
         'legacy_brain_id', 'legacy_brain_image_id', 'legacy_state', 'expected_route', 'state_root'}
-OPTIONAL_KEYS = {'preview_dashboard', 'service_ingress', 'application_updates'}
+OPTIONAL_KEYS = {'preview_dashboard', 'service_ingress', 'application_updates', 'public_ingress'}
 PREVIEW_ROUTE_PORT = 32130
 
 
@@ -44,6 +44,17 @@ def installation_files(settings):
     return (*files, 'service-ingress.Caddyfile') if 'service_ingress' in settings else files
 
 
+def dashboard_origin(settings):
+    if 'public_ingress' in settings:
+        from caddy_routes import check_settings
+        check_settings(settings)
+        return settings['public_ingress']['origin']
+    snapshot = settings.get('expected_route')
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get('Handlers'), dict) or '/' not in snapshot['Handlers']:
+        raise ValueError('Review the current Funnel dashboard handler before preparing the existing site.')
+    return 'https://' + FUNNEL_HOST
+
+
 def validate_ingress(settings):
     from service_ingress import render as render_ingress
     selected = settings.get('service_ingress')
@@ -51,10 +62,16 @@ def validate_ingress(settings):
         return None
     if not isinstance(selected, dict) or set(selected) != {'origin', 'port', 'expected_route'}:
         raise ValueError('Review the complete separate workload ingress settings.')
-    if (not isinstance(selected['expected_route'], dict)
+    if 'public_ingress' in settings:
+        from caddy_routes import check_settings
+        check_settings(settings)
+        dashboard_origin = settings['public_ingress']['origin']
+    elif (not isinstance(selected['expected_route'], dict)
             or set(selected['expected_route']) != {'tcp', 'web', 'funnel'}):
         raise ValueError('Record the existing workload route, including its absence.')
-    return render_ingress(dashboard_origin='https://hub.example.invalid:8443',
+    else:
+        dashboard_origin = 'https://' + FUNNEL_HOST
+    return render_ingress(dashboard_origin=dashboard_origin,
                           services_origin=selected['origin'], dashboard_port=settings['gateway_port'],
                           listen_port=selected['port'])
 
@@ -69,7 +86,9 @@ def environment_file(path):
 
 
 def uses_preview_route(handlers):
-    return handlers.get('Handlers', {}).get('/') == replacement(PREVIEW_ROUTE_PORT)['Handlers']['/']
+    if isinstance(handlers, dict):
+        return handlers.get('Handlers', {}).get('/') == replacement(PREVIEW_ROUTE_PORT)['Handlers']['/']
+    return handlers == PREVIEW_ROUTE_PORT
 
 
 def require_distinct_preview_port(settings):
@@ -155,6 +174,7 @@ def render(settings, output):
     if (not isinstance(settings, dict) or not KEYS <= set(settings)
             or set(settings) - KEYS - OPTIONAL_KEYS):
         raise ValueError('Use the complete reviewed first-installation settings.')
+    origin = dashboard_origin(settings)
     root = Path(settings['candidate']).resolve(strict=True)
     verify(root)
     if Path(__file__).resolve().parent != root / 'extension/deploy':
@@ -237,10 +257,10 @@ def render(settings, output):
         (output / name).write_text(content)
     config = YAML().load(root / 'extension/config/hermes.example.yaml')
     config['webapp'] = {'enabled': True, 'host': '127.0.0.1', 'port': settings['gateway_port'],
-                        'public_url': 'https://hub.example.invalid:8443'}
+                        'public_url': origin}
     with (output / 'config.yaml').open('w') as stream:
         YAML().dump(config, stream)
-    plan = {'schema': 1, 'status': 'prepared-not-installed', 'candidate_sha256': sha(root / 'candidate.json'),
+    plan = {'schema': 2 if 'public_ingress' in settings else 1, 'status': 'prepared-not-installed', 'candidate_sha256': sha(root / 'candidate.json'),
             'host_machine_id': 'UNENROLLED_HUB_MACHINE_ID', 'uid': user.pw_uid, 'gid': user.pw_gid,
             'settings': settings, 'private_files': private,
             'files': {name: sha(output / name) for name in installation_files(settings)}}
@@ -254,7 +274,10 @@ def read_plan(directory, expected_hash):
     if hashlib.sha256(raw).hexdigest() != expected_hash:
         raise ValueError('The exact reviewed installation plan changed.')
     plan = json.loads(raw)
-    if plan['schema'] != 1 or set(plan['files']) != set(installation_files(plan['settings'])):
+    if plan['schema'] == 2:
+        from caddy_routes import check_settings
+        check_settings(plan['settings'])
+    if plan['schema'] not in (1, 2) or ('public_ingress' in plan['settings']) != (plan['schema'] == 2) or set(plan['files']) != set(installation_files(plan['settings'])):
         raise ValueError('Unsupported first-installation plan.')
     require_distinct_preview_port(plan['settings'])
     validate_ingress(plan['settings'])

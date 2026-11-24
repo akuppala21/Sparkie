@@ -57,6 +57,23 @@ def test_real_plugin_registration_shows_unconfigured_backend_unavailable(tmp_pat
         _create_environment('spark_compute', None, '/workspace', 30, task_id='owner-work')
 
 
+def test_native_prompt_describes_compute_without_allocating_another_workspace(configured, tmp_path, monkeypatch):
+    from agent import prompt_builder
+    from agent.terminal_env_registry import register_provider
+    from tools.terminal_tool_backends import _create_environment
+    provider, calls, _ = configured
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
+    monkeypatch.setenv('TERMINAL_ENV', 'spark_compute')
+    monkeypatch.setenv('TERMINAL_CWD', '/workspace')
+    register_provider(provider, scope=str(tmp_path))
+    hint = prompt_builder._remote_backend_hint('spark_compute')
+    assert provider.env_description in hint
+    assert calls['acquire'] == [] and calls['ssh'] == []
+    actual = _create_environment('spark_compute', None, '/workspace', 30, task_id='owner-work')
+    assert actual.lease.request.task_id == 'owner-work'
+    assert [request.task_id for request in calls['acquire']] == ['owner-work']
+
+
 def test_real_factory_preserves_native_backend_and_reconnects_exact_task(configured, tmp_path, monkeypatch):
     from agent.terminal_env_registry import register_provider
     from tools.terminal_tool_backends import _create_environment

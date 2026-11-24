@@ -39,7 +39,7 @@ def render(*, dashboard_origin, services_origin, dashboard_port, listen_port):
     if (any(url.scheme != 'https' or not url.hostname or url.username or url.password
             or url.path or url.query or url.fragment or not re.fullmatch('[A-Za-z0-9.-]+', url.hostname)
             for url in (dashboard, services)) or dashboard.hostname != services.hostname
-            or dashboard.port != 8443 or services.port != 10000
+            or dashboard.port not in (None, 443, 8443) or services.port != 10000
             or any(type(port) is not int or not 1024 <= port <= 65535 for port in (dashboard_port, listen_port))
             or dashboard_port == listen_port):
         raise ValueError('Use the separate reviewed HTTPS service origin and distinct loopback listeners.')

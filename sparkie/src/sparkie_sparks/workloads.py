@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 
+from .worker_network import physical_ssh_options
 from .operations import NotDispatched, intent
 from .collector import HOST, USER, NAME, SPARK_IDS
 
@@ -43,8 +44,7 @@ class StopWorkload:
         if node.get('local', False):
             args = [sys.executable, '-c', source, payload]
         else:
-            args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5',
-                    '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+            args = ['ssh', *physical_ssh_options(node['address']),
                     node['user'] + '@' + node['address'], 'python3 -c ' + shlex.quote(source) + ' ' + shlex.quote(payload)]
         result = self.runner(args, capture_output=True, text=True, timeout=40 if mode == 'stop' else 15, check=False)
         if result.returncode or len(result.stdout) > 16384:

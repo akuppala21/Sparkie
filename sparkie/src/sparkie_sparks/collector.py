@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 
+from .worker_network import physical_ssh_options
 from .fleet import read_status
 
 SPARK_IDS = frozenset({'spark1', 'spark2', 'spark3', 'spark4'})
@@ -59,9 +60,7 @@ def load_inventory(path):
 def collect_one(node, *, runner=subprocess.run, clock=None):
     clock = clock or (lambda: datetime.now(timezone.utc))
     row = {'id': node['id'], 'observed_at': clock().isoformat(), 'state': 'unreachable'}
-    args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-            '-o', 'ConnectTimeout=5', '-o', 'ConnectionAttempts=1',
-            '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+    args = ['ssh', *physical_ssh_options(node['address']),
             node['user'] + '@' + node['address'], 'python3', '-']
     if node.get('local', False):
         args = [sys.executable, '-']

@@ -124,11 +124,9 @@ fixed selected Docker recipe and bounded systemd lifecycle, and provides a
 model-independent readiness check. It does not install a service or approve a
 model switch. Keep the native gateway accessible while that service recovers.
 
-`cutover.json` records the observed Spark 1 identity, old user service, existing
-8443 URL and unaffected443 route. Before live approval, bind this plan to a
-concrete immutable candidate, reviewed diff, full applicable checks, expected
-interruption, protected state archive and saved routing/service rollback.
-Archive old assistant state outside active retrieval; do not delete it.
+`cutover.json` describes the first handover. Bind it to the actual Spark 1
+identity, the candidate and private installation hashes, the two enrolled HTTPS
+routes, the retained services and their rollback before asking for approval.
 
 Native Nous owner enrollment is private host state, outside package/evidence.
 Use a separate staging OAuth client for actual browser verification. Never
@@ -176,23 +174,55 @@ catalog and per-worker fixed configuration from the existing compute identities.
 protected content-addressed paths. The reviewed data directories and model
 weights remain external to the candidate. See [recipe services](../docs/recipe-services.md).
 
-An installation with `service_ingress` adds the pinned standard Caddy unit and
-configuration to the exact installation hash. The proposed workload origin uses
-10000; it does not replace the application on 8443 or the unrelated service on
-443. Promotion verifies the private native authentication gate before publishing
-the workload route. Same-journal rollback restores its previous observed route
-independently, preserving unrelated changes. These prepared paths still require
-candidate qualification and owner approval. See [service access](../docs/service-access.md).
+For a home site keeping its enrolled Funnel, supply the existing dashboard handler snapshot and omit `public_ingress`. This renders a schema-1 plan with the enrolled HTTPS origin and preserves private host SSH. The reviewed worker addresses are independent of this choice.
 
-After the owner approves the concrete candidate, `promote.py` requires its
-exact plan hash and a fresh root-owned operation directory. Every effect is
-recorded before dispatch. It stops the old watchdog timer, its actual triggered
-oneshot and the API/Telegram poller; archives old assistant state privately;
-retains the exact old model container for rollback; and starts native services.
-It observes the owner sign-in/API gate before conditionally replacing the whole
-8443 handler set through Tailscale's native versioned LocalAPI. Unrelated443
-routes and Funnel settings are preserved. Interrupted promotion cannot be
-repeated blindly; the same journal supplies rollback and diagnosis.
+Sites with a dedicated Caddy public edge use schema 2. Supply the dashboard origin, such as
+`https://fleet.example.org`, in `public_ingress.origin`. The dashboard uses
+443. Workload links use the same hostname on 10000, so the host-only Hermes
+login cookie reaches both origins. The application gateway and the workload
+authorization proxy both listen on distinct loopback ports.
+
+```json
+{
+  "public_ingress": {
+    "origin": "https://fleet.example.org",
+    "admin_socket": "/run/sparkie-caddy/admin.sock"
+  },
+  "expected_route": null,
+  "gateway_port": 32131,
+  "service_ingress": {
+    "origin": "https://fleet.example.org:10000",
+    "port": 32390,
+    "expected_route": null
+  }
+}
+```
+
+The snippet shows private installation settings for an initially disabled
+pair of routes. Each `expected_route` is the previously reviewed loopback
+backend port or `null` for the enrolled HTTP 503 handler. Public DNS, TLS and
+the edge listeners belong to site enrollment. The operator must reserve the two
+site listeners and configure the native Nous callback for that dashboard origin.
+Keep the native Caddy admin socket at mode 0600 under its protected directory.
+The Caddy process may run under the distribution's caddy account.
+
+Promotion checks the HTTPS listener, first route, exact host and handler on both origins before
+stopping any old service. It records each old backend in the protected operation
+journal. It verifies the new gateway's private sign-in gate and the separate
+workload authorization gate before publishing their corresponding backends.
+The Caddy request updates only the enrolled first route. It supplies the listener's
+ETag in If-Match so a changed port, TLS setting or routing order invalidates the write. It reads the
+result back. A lost response triggers an observation of that route. A changed
+route needs an operator review before recovery. Preserve and resume Caddy's
+saved configuration on restart. The application update steward continues
+using the installation's reviewed gateway port and URL.
+
+`promote.py` requires the approved plan hash and a fresh root-owned operation
+directory. It records each effect before dispatch. It stops the old watchdog
+and poller, archives the old assistant state privately, and retains the old
+model for rollback. Older schema-1 packets keep their separate original
+route recovery procedure. Retirement of the incumbent route is an independent
+owner decision. [Caddy configuration API](https://caddyserver.com/docs/api)
 
 The concrete approval also retires the unused old editor connections:
 Spark2's `spark-portal-spark4-tunnel.service` and Spark4's
@@ -201,7 +231,7 @@ Their files stay intact and prior enabled/running states are recorded for
 rollback. These services can keep an otherwise idle compute Spark awake.
 Spark3's earlier retired tunnel on Spark2 is separate and is not changed.
 
-Rollback stops the new poller first, restores only8443, restores the old model's
+Rollback restores the reviewed workload and dashboard backends, the old model's
 actual previous running state, restores the old editor connections and the old
 API/watchdog boot policy. It preserves new state/logs. The operation remains
 labelled as awaiting actual owner browser/WebSocket/Telegram verification;

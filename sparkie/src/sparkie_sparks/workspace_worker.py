@@ -1,14 +1,14 @@
 """Fixed local Docker workspace provisioner; production routing is disconnected.
 
 Runs only on its physically verified compute Spark. The sole published endpoint
-is loopback or an enrolled local Tailscale address into a non-root container. There is no owner shell/exec RPC,
+is loopback or an enrolled private LAN address into a non-root container. There is no owner shell/exec RPC,
 arbitrary Docker configuration, host mount, deletion, power or privilege setup.
 """
 from contextlib import contextmanager
 from dataclasses import asdict
 import fcntl
 import hashlib
-import ipaddress
+from ipaddress import IPv4Interface
 import json
 import math
 import os
@@ -22,6 +22,7 @@ import time
 
 from .workspace_leases import Allocation, WorkspaceLeases, WorkspaceObservation
 from .operations import NotDispatched
+from .worker_network import worker_interface
 from .workspace_types import ComputeNode, WorkspaceLease
 
 LABEL = 'sparkie.workspace'
@@ -108,23 +109,19 @@ class DockerWorkspaceWorker:
 
     def __init__(self, store, *, node, hub_machine_id, image_id, state_dir,
                  runner=subprocess.run, identity=machine_identity, capacity=None,
-                 ready=None, local_addresses=None, authorize=None,
+                 ready=None, local_addresses=None, interface=None, authorize=None,
                  memory_reserve_mb=8192, disk_reserve_mb=8192, ready_wait=8):
-        try:
-            address = ipaddress.ip_address(node.host)
-            endpoint_allowed = str(address) == '127.0.0.1' or address in ipaddress.ip_network('100.64.0.0/10')
-        except (AttributeError, ValueError, TypeError):
-            endpoint_allowed = False
         if (not isinstance(node, ComputeNode) or node.spark_id not in ('spark2', 'spark3', 'spark4')
                 or not re.fullmatch('[a-f0-9]{32}', node.machine_id)
                 or not isinstance(hub_machine_id, str) or not re.fullmatch('[a-f0-9]{32}', hub_machine_id)
-                or node.machine_id == hub_machine_id or not endpoint_allowed
+                or node.machine_id == hub_machine_id
                 or not isinstance(image_id, str) or not re.fullmatch('sha256:[a-f0-9]{64}', image_id)):
             raise ValueError('Use one verified local compute identity and exact sandbox image ID.')
         if (type(memory_reserve_mb) is not int or memory_reserve_mb < 0
                 or type(disk_reserve_mb) is not int or disk_reserve_mb < 0
                 or type(ready_wait) not in (int, float) or not 0 <= ready_wait <= 30):
             raise ValueError('Use bounded trusted resource reserves and readiness time.')
+        self.interface = worker_interface(node.host, interface)
         self.store, self.node, self.hub_machine_id, self.image_id = store, node, hub_machine_id, image_id
         self.root = Path(state_dir)
         if not self.root.is_absolute():
@@ -158,10 +155,24 @@ class DockerWorkspaceWorker:
         return self._run(['docker', '--config', str(self.docker_config), '--host', 'unix:///var/run/docker.sock', *args], **kwargs)
 
     def _local_addresses(self):
-        data = json.loads(self._run(['ip', '-j', 'address', 'show', 'dev', 'tailscale0'], timeout=5))
-        if not isinstance(data, list) or len(data) != 1 or data[0].get('ifname') != 'tailscale0':
-            raise RuntimeError('The enrolled Tailscale interface is unavailable.')
-        return {item.get('local') for item in data[0].get('addr_info', []) if item.get('family') == 'inet'}
+        data = json.loads(self._run(['ip', '-j', '-4', 'address', 'show', 'dev', self.interface], timeout=5))
+        if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+            raise RuntimeError('The enrolled LAN interface is unavailable.')
+        link = data[0]
+        flags = link.get('flags', [])
+        if (link.get('ifname') != self.interface or 'UP' not in flags or 'LOOPBACK' in flags
+                or link.get('operstate') not in ('UP', 'UNKNOWN')):
+            raise RuntimeError('The enrolled LAN interface is unavailable.')
+        addresses = set()
+        for item in link.get('addr_info', []):
+            if (item.get('family') != 'inet' or item.get('scope') != 'global'
+                    or item.get('tentative') or item.get('dadfailed') or item.get('deprecated')):
+                continue
+            local = IPv4Interface((item['local'], item['prefixlen']))
+            if local.network.prefixlen < 31 and local.ip in (local.network.network_address, local.network.broadcast_address):
+                continue
+            addresses.add(str(local.ip))
+        return addresses
 
     def _verify(self, allocation, *, dispatch=False, retirement=None):
         if (not isinstance(allocation, Allocation) or allocation.node != self.node

@@ -204,6 +204,10 @@ must not take over the real Telegram bot's polling.
 
 ## Evidence, reuse and releases
 
+For an ingress or worker-network change, record the public dashboard and workload origins, the enrolled worker identity and the network used for each check. Qualify a clean installation with the Tailscale software absent. From a client outside the home LAN, use normal public DNS and certificate verification and sign in with Nous. Exercise an authenticated API call, a WebSocket chat and a private workload link. Check that an anonymous client cannot open the private API or workload. From Spark 1, run a disposable workspace on a compute Spark using its pinned SSH key and machine identity. Exercise an interrupted route switch and recover through the approved LAN path. An HTTP 200 or a successful SSH connection alone does not cover these checks. Repeat this set when routing, enrollment or the shared identity boundary changes.
+
+For the home installation, keep Spark 1’s existing Funnel and remote recovery access during the wired worker trial. Verify both ends of the worker connection use Ethernet and exercise the real worker job and sleep/wake path. Evaluate a local repair in an isolated checkout with a failing reproduction, an independently verified fix and worker cleanup. A trial through a maintenance SSH session proves only the steps actually exercised. Qualify standalone HTTPS separately when exercising that installation option.
+
 A result records its group, outcome, relevant source/test hashes, Hermes and dependency versions,
 runtime configuration/environment, runner, timestamp and duration. Prefer native reports plus a
 small manifest, without an evidence service. Exclude secrets from reports and fingerprints. A

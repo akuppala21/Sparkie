@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 
+from .worker_network import physical_ssh_options
 from .collector import HOST, USER
 from .matter import MatterReader, validate_mapping
 from .operations import NotDispatched, intent
@@ -95,8 +96,7 @@ class PowerTransport:
         if node.get('local', False):
             args = [sys.executable, '-I', '-c', source, payload]
         else:
-            args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=5',
-                    '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+            args = ['ssh', *physical_ssh_options(node['address']),
                     node['user'] + '@' + node['address'], 'python3 -I -c ' + shlex.quote(source) + ' ' + shlex.quote(payload)]
         result = self.runner(args, capture_output=True, text=True, timeout=remaining_io(55), check=False)
         if result.returncode or len(result.stdout) > 16384:

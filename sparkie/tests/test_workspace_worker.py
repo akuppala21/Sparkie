@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import socket
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -263,3 +264,46 @@ def test_changed_private_docker_config_refuses_commands_and_never_uses_host_defa
     with pytest.raises(RuntimeError, match='not verified ready'):
         manager.acquire(SCOPE, REQUEST)
     assert docker.count(['create']) == docker.count(['volume', 'create']) == 0
+
+
+@pytest.mark.parametrize(('address', 'interface'), [
+    ('10.42.1.5', None), ('100.111.1.5', None), ('192.168.3.5', 'lo'),
+    ('192.168.3.5', '-all'), ('192.168.3.5', '../wlan0'), ('8.8.8.8', 'eth0'),
+])
+def test_worker_requires_an_explicit_enrolled_lan_interface(tmp_path, address, interface):
+    with pytest.raises(ValueError, match='interface|private IPv4'):
+        rig(tmp_path, node=replace(NODE, host=address), interface=interface)
+    assert not (tmp_path / 'private').exists()
+
+
+@pytest.mark.parametrize(('name', 'address', 'state', 'available'), [
+    ('enp2s0', '192.168.8.21', 'UP', True),
+    ('enp2s0', '192.168.8.20', 'UP', False),
+    ('wlan0', '192.168.8.21', 'UP', False),
+    ('enp2s0', '192.168.8.21', 'DOWN', False),
+])
+def test_lan_binding_requires_the_exact_active_address_and_interface(tmp_path, monkeypatch, name, address, state, available):
+    node = replace(NODE, host='192.168.8.21')
+    _, docker, worker, leases = rig(tmp_path, node=node, interface='enp2s0')
+    def run(args, **kwargs):
+        if args[0] == 'ip':
+            assert args == ['ip', '-j', '-4', 'address', 'show', 'dev', 'enp2s0']
+            link = {'ifname': name, 'operstate': state, 'flags': ['UP', 'LOWER_UP'],
+                    'addr_info': [{'family': 'inet', 'scope': 'global', 'local': address, 'prefixlen': 24}]}
+            return SimpleNamespace(returncode=0, stdout=json.dumps([link]), stderr='')
+        return docker.run(args, **kwargs)
+    worker.runner = run
+    if available:
+        reservation = MagicMock()
+        reservation.__enter__.return_value = reservation
+        reservation.getsockname.return_value = (node.host, 34123)
+        monkeypatch.setattr(socket, 'socket', lambda: reservation)
+        lease = leases.acquire(SCOPE, REQUEST)
+        reservation.bind.assert_called_once_with((node.host, 0))
+        assert lease.host == node.host
+        assert docker.container['HostConfig']['PortBindings']['2222/tcp'] == [
+            {'HostIp': node.host, 'HostPort': str(lease.port)}]
+    else:
+        with pytest.raises(RuntimeError, match='not verified ready'):
+            leases.acquire(SCOPE, REQUEST)
+        assert docker.calls == []

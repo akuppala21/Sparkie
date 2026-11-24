@@ -123,3 +123,24 @@ def change_services(api, *, expected, target):
     if services_route(api.read()[0]) != target:
         raise RuntimeError('The workload route result is uncertain. Reconcile before another write.')
     return {'changed': True, 'already_observed': False}
+
+
+class LegacyRoutes:
+    """Read schema-1 route records while recovering an existing installation."""
+
+    def __init__(self, api=None):
+        self.api = ServeAPI() if api is None else api
+
+    def current(self, route_id):
+        from caddy_routes import DASHBOARD
+        config, _ = self.api.read()
+        return route(config) if route_id == DASHBOARD else services_route(config)
+
+    def target(self, route_id, port):
+        from caddy_routes import DASHBOARD
+        return replacement(port) if route_id == DASHBOARD else services_replacement(port)
+
+    def change(self, route_id, expected, target):
+        from caddy_routes import DASHBOARD
+        switch = change if route_id == DASHBOARD else change_services
+        return switch(self.api, expected=expected, target=target)

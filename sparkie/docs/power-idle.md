@@ -98,11 +98,11 @@ concrete approved cutover. See `power-configuration.md` for protected settings.
 
 ## Private cross-Spark endpoint
 
-The fixed sandbox worker can publish SSH on loopback or one explicitly enrolled
-Tailscale IPv4 address in `100.64.0.0/10`. It checks that address is assigned to
-its local `tailscale0` before provision and observation, and uses that exact
-address for bind, inspection and readiness. Public, LAN and wildcard bindings
-are refused. This does not change host SSH or network settings.
+The fixed sandbox worker publishes SSH on its enrolled private IPv4 address.
+Before provisioning or observing a workspace, it verifies its machine identity
+and checks that its configured LAN interface is up and owns that address.
+It uses the same address for the bind, inspection and readiness checks.
+Local fixtures may use loopback. See [worker enrollment](compute-native-ssh.md#private-lan-worker-enrollment).
 
 The optional trusted `authorize(allocation, dispatch=False, retirement=None)`
 callback supports the existing authenticated SSH controller transport without

@@ -24,8 +24,14 @@ from candidate import sha
 from installation import (PREVIEW_ROUTE_PORT, UNITS, inherited_energy_path, protected_ancestry,
                           read_plan, require_distinct_preview_port, uses_preview_route)
 from model_unit import docker, inspect_container
-from serve_route import (ServeAPI, change, replacement, route, change_services,
-                         services_replacement, services_route)
+from caddy_routes import DASHBOARD, WORKLOADS, CaddyRoutes
+from serve_route import LegacyRoutes, replacement
+
+
+def ingress_routes(settings, api=None):
+    if 'public_ingress' in settings:
+        return CaddyRoutes(settings) if api is None else CaddyRoutes(settings, transport=api)
+    return LegacyRoutes(api)
 
 OLD_UNITS = ('spark-console-watchdog.timer', 'spark-console-watchdog.service', 'spark-console-api.service')
 NEW_UNITS = ('sparkie-main-brain.service', 'sparkie-fleet.service', 'hermes-gateway.service', 'sparkie-collector.timer')
@@ -417,19 +423,20 @@ def validate(plan, directory):
                 raise ValueError('The staged workload ingress differs from the approved plan.')
 
 
-def promote(plan, plan_hash, journal, *, host, api):
+def promote(plan, plan_hash, journal, *, host, api=None):
     settings = plan['settings']
     preview = settings.get('preview_dashboard')
     inherited_energy = inherited_energy_path(settings)
-    before, _ = api.read()
-    previous_route = route(before)
+    routes = ingress_routes(settings, api)
+    previous_route = routes.current(DASHBOARD)
     if previous_route != settings['expected_route']:
-        raise RuntimeError('The reviewed old8443 handlers changed; no service was stopped.')
+        raise RuntimeError('The reviewed dashboard route changed; no service was stopped.')
     ingress = settings.get('service_ingress')
     if ingress is not None:
-        if services_route(before) != ingress['expected_route']:
+        old_services = routes.current(WORKLOADS)
+        if old_services != ingress['expected_route']:
             raise RuntimeError('The reviewed workload route changed; no service was stopped.')
-        journal.data['old_services_route'] = services_route(before)
+        journal.data['old_services_route'] = old_services
     require_distinct_preview_port(settings)
     serving_preview = uses_preview_route(previous_route)
     if not preview and serving_preview:
@@ -461,7 +468,7 @@ def promote(plan, plan_hash, journal, *, host, api):
     for target in LEGACY_EDITORS:
         journal.step('retire-' + target[0] + '-' + target[1], lambda target=target: host.editor(target, 'retire'))
     def switch_route():
-        return change(api, expected=journal.data['old_route'], target=replacement(settings['gateway_port']))
+        return routes.change(DASHBOARD, journal.data['old_route'], routes.target(DASHBOARD, settings['gateway_port']))
 
     if preview:
         brain, fleet, gateway, collector = NEW_UNITS
@@ -483,9 +490,9 @@ def promote(plan, plan_hash, journal, *, host, api):
             journal.step('start-native-gateway', lambda: host.start((gateway,)))
             journal.step('verify-private-owner-gate', host.private_gateway)
             switching_route = True
-            journal.step('switch-only8443', switch_route)
+            journal.step('switch-dashboard-route' if 'public_ingress' in settings else 'switch-only8443', switch_route)
         except Exception:
-            if not switching_route or route(api.read()[0]) == journal.data['old_route']:
+            if not switching_route or routes.current(DASHBOARD) == journal.data['old_route']:
                 if launching_gateway:
                     journal.step('stop-native-gateway-after-failed-swap', lambda: host.stop((gateway,)))
                 if journal.data['preview_running']:
@@ -498,13 +505,13 @@ def promote(plan, plan_hash, journal, *, host, api):
     else:
         journal.step('start-native-services', lambda: host.start(NEW_UNITS))
         journal.step('verify-private-owner-gate', host.private_gateway)
-        journal.step('switch-only8443', switch_route)
+        journal.step('switch-dashboard-route' if 'public_ingress' in settings else 'switch-only8443', switch_route)
     if ingress is not None:
         from service_ingress import UNIT
         journal.step('start-authenticated-workload-ingress', lambda: host.start((UNIT,)))
         journal.step('verify-private-workload-gate', host.private_service_ingress)
-        journal.step('publish-authenticated-workload-origin', lambda: change_services(
-            api, expected=journal.data['old_services_route'], target=services_replacement(ingress['port'])))
+        journal.step('publish-authenticated-workload-origin', lambda: routes.change(
+            WORKLOADS, journal.data['old_services_route'], routes.target(WORKLOADS, ingress['port'])))
         journal.step('enable-workload-ingress', lambda: host.systemctl('enable', UNIT))
     if settings.get('application_updates'):
         from upgrade_installation import SOCKET
@@ -519,6 +526,8 @@ def promote(plan, plan_hash, journal, *, host, api):
 
 
 def restore_hub(plan, journal, host, api):
+    settings = plan['settings']
+    routes = ingress_routes(settings, api)
     journal.data['state'] = 'rolling-back'
     journal.save()
     if plan['settings'].get('application_updates'):
@@ -527,9 +536,8 @@ def restore_hub(plan, journal, host, api):
         journal.step('disable-reviewed-update-socket', lambda: host.systemctl('disable', SOCKET))
     if 'old_services_route' in journal.data:
         from service_ingress import UNIT
-        journal.step('restore-workload-origin', lambda: change_services(
-            api, expected=services_replacement(plan['settings']['service_ingress']['port']),
-            target=journal.data['old_services_route']))
+        journal.step('restore-workload-origin', lambda: routes.change(
+            WORKLOADS, routes.target(WORKLOADS, settings['service_ingress']['port']), journal.data['old_services_route']))
         journal.step('stop-workload-ingress', lambda: host.stop((UNIT,)))
         journal.step('disable-workload-ingress', lambda: host.systemctl('disable', UNIT))
     # Stop the new poller before restoring the old service. Keep all new state.
@@ -541,7 +549,8 @@ def restore_hub(plan, journal, host, api):
         journal.step('restore-preview-electricity-writer', lambda: host.restore_preview_energy(journal.data['preview_energy']))
     if 'preview_running' in journal.data:
         journal.step('restore-native-preview-state', lambda: host.preview_running(journal.data['preview_running']))
-    journal.step('restore-only8443', lambda: change(api, expected=replacement(plan['settings']['gateway_port']), target=journal.data['old_route']))
+    journal.step('restore-dashboard-route' if 'public_ingress' in settings else 'restore-only8443',
+                 lambda: routes.change(DASHBOARD, routes.target(DASHBOARD, settings['gateway_port']), journal.data['old_route']))
     journal.step('stop-new-brain-and-controller', lambda: host.stop(('sparkie-main-brain.service', 'sparkie-fleet.service')))
     journal.step('disable-new-autostart', lambda: host.systemctl('disable', *boot_units))
     journal.step('restore-retained-old-brain-state', lambda: host.old_brain(journal.data['old_brain_running']))
@@ -585,7 +594,7 @@ def restore_editor(host, journal, target, saved):
         raise RuntimeError('The observed editor state differs from its recorded predecessor.')
 
 
-def rollback(plan, journal, *, host, api):
+def rollback(plan, journal, *, host, api=None):
     if journal.data['state'] == ROLLBACK_COMPLETE:
         return ROLLBACK_COMPLETE
     if 'old_route' not in journal.data or 'old_units' not in journal.data:
@@ -645,8 +654,8 @@ if __name__ == '__main__':
     with lock:
         if args.action == 'promote':
             journal = Journal(args.operation, plan_hash=args.approved_plan_sha256)
-            result = promote(plan, args.approved_plan_sha256, journal, host=Host(plan), api=ServeAPI())
+            result = promote(plan, args.approved_plan_sha256, journal, host=Host(plan))
         else:
             journal = reviewed_rollback(args.operation, args.approved_plan_sha256)
-            result = rollback(plan, journal, host=Host(plan), api=ServeAPI())
+            result = rollback(plan, journal, host=Host(plan))
     print(result)

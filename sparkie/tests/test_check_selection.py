@@ -13,6 +13,19 @@ checks = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tools/checks.
 select = checks['selection']
 
 
+def test_physical_ssh_changes_cover_their_consumers_and_worker_staging_is_focused():
+    plan = select(['src/sparkie_sparks/worker_network.py'])
+    assert {'tests/test_site_example.py', 'tests/test_collector.py', 'tests/test_power.py',
+            'tests/test_workloads.py', 'tests/test_recipe_services.py', 'tests/test_endpoint_relay.py',
+            'tests/test_workspace_remote.py'} <= set(plan['python_tests'])
+    for group in ('native_compute_workspace', 'disposable_workload_stop', 'compute_power_validation',
+                  'enrolled_service_lifecycle'):
+        assert plan[group]
+    stage = select(['deploy/worker_stage.py'])
+    assert 'tests/test_worker_stage.py' in stage['python_tests']
+    assert stage['native_candidate'] and stage['native_compute_workspace'] and not stage['broad_qualification']
+
+
 @pytest.mark.parametrize('name', [
     'hermes-webapp-first-slash.patch', 'hermes-webapp-first-slash.json', 'build.py',
     'retain-stylesheet.mjs', 'original-main.css.gz', 'members.json',
@@ -138,6 +151,19 @@ def test_cache_measurement_changes_select_the_benchmark_and_ordinary_agent():
         assert 'tests/test_cache_measurement.py' in plan['python_tests']
         assert plan['native_research'] and plan['compact_local_behavior']
         assert not plan['compute_power_validation'] and not plan['broad_qualification']
+
+
+@pytest.mark.parametrize('path', [
+    'src/sparkie_sparks/memory_delivery.py', 'tests/test_memory_chat_delivery.py',
+    'deploy/patches/hermes-owner-memory-delivery.patch', 'deploy/patches/hermes-owner-memory-delivery.json',
+])
+def test_owner_memory_delivery_selects_both_channels_and_first_visible_reply(path):
+    plan = select([path])
+    assert {'tests/test_memory_chat_delivery.py', 'tests/test_memory_owner_review.py',
+            'tests/test_deployment.py', 'tests/test_owner_login.py'} <= set(plan['python_tests'])
+    assert plan['compact_local_behavior'] and plan['native_shared_sessions'] and plan['native_candidate']
+    assert plan['desktop_phone_browser']
+    assert not plan['compute_power_validation'] and not plan['broad_qualification']
 
 
 @pytest.mark.parametrize('memory_path', ['memory_controls.py', 'memory_paths.py'])
@@ -703,3 +729,11 @@ def test_affected_syntax_reports_an_unavailable_node(affected_checkout, monkeypa
     check, = result['javascript_syntax_checks']
     assert code != 0 and check['exit_code'] is None and 'node' in check['error']
     assert 'javascript_syntax' in result['remaining_check_groups']
+
+
+@pytest.mark.parametrize('path', ['deploy/caddy_routes.py', 'deploy/caddy_site.py', 'tests/hardware/caddy_edge.py'])
+def test_caddy_edits_select_the_real_edge_and_both_route_checks(path):
+    plan = select([path])
+    assert plan['caddy_edge_rehearsal'] and plan['native_candidate']
+    assert {'tests/test_caddy_public_ingress.py', 'tests/test_caddy_site_bootstrap.py'} <= set(plan['python_tests'])
+    assert not plan['broad_qualification'] and not plan['compact_local_behavior']

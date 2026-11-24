@@ -491,3 +491,305 @@ def test_named_profile_memory_remains_behind_default_owner_review(isolated_profi
     assert client.delete("/api/profiles/blank").status_code == 200
     renamed = profiles.rename_profile("alternate", "renamed")
     assert (renamed / "memories" / "USER.md").read_text() == "Retained preference"
+
+
+@pytest.mark.parametrize('action,expected', [('approve', 'saved'), ('reject', 'rejected')])
+def test_chat_receives_exact_fast_owner_decision_once(rig, action, expected):
+    from sparkie_sparks.memory_review import memory_execution, owner_memory_turn
+    client = rig['client']
+    callbacks = []
+    def review(request):
+        callbacks.append(request)
+        row, = client.get(API).json()
+        assert row['id'] == request
+        assert client.post(f'{API}/{request}/{action}', json={'digest': row['digest']}).status_code == 200
+
+    def call():
+        return json.loads(memory_execution('memory', lambda: json.dumps(attempt()),
+                                           session_id='chat', turn_id='turn', tool_call_id='call'))
+
+    outcomes = []
+    with owner_memory_turn('chat', on_pending=review, on_outcome=outcomes.append):
+        result = call()
+        assert result['state'] == expected and result['saved'] == (action == 'approve')
+        assert call() == result
+    assert outcomes == [result, result]
+    assert callbacks == [result['pending_id']]
+    assert client.get(API).json() == []
+
+
+def test_memory_wait_timeout_releases_lock_and_later_owner_can_decide(rig, monkeypatch):
+    from sparkie_sparks import memory_review as review
+    monkeypatch.setattr(review, 'WAIT_SECONDS', 0.02)
+    with review.chat_memory_wait('one', 'turn', 'call'):
+        result = attempt()
+    assert result['state'] == 'timed_out' and result['saved'] is False
+    row, = rig['client'].get(API).json()
+    assert row['id'] == result['pending_id']
+    assert rig['client'].post(f"{API}/{row['id']}/approve", json={'digest': row['digest']}).json()['state'] == 'saved'
+
+
+def test_cancelled_wait_and_other_chat_stage_independently(rig):
+    from sparkie_sparks import memory_review as review
+    with review.owner_memory_turn('original', cancelled=lambda: True):
+        other = json.loads(review.memory_execution('memory', lambda: json.dumps(attempt()),
+                           session_id='other', turn_id='turn', tool_call_id='call'))
+        result = json.loads(review.memory_execution('memory', lambda: json.dumps(attempt()),
+                            session_id='original', turn_id='turn', tool_call_id='call'))
+    assert other['staged'] and result['state'] == 'interrupted'
+    assert other['pending_id'] != result['pending_id']
+    assert saved() == {}
+
+
+def test_two_concurrent_waits_resolve_by_id_on_paired_telegram_and_web(rig):
+    from concurrent.futures import ThreadPoolExecutor
+    from queue import Queue
+    from sparkie_sparks import memory_review as review
+    from sparkie_sparks.telegram_controls import memory_review_command
+    from telegram.ext import ApplicationHandlerStop
+    pending = Queue()
+    client = rig['client']
+
+    def run(session):
+        with review.owner_memory_turn(session, on_pending=lambda request: pending.put((session, request))):
+            return json.loads(review.memory_execution('memory', lambda: json.dumps(attempt(
+                operations=[{'action': 'add', 'content': session}])), session_id=session,
+                turn_id='turn', tool_call_id='same-model-call-id'))
+
+    async def reply(*args, **kwargs):
+        pass
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = pool.submit(run, 'first'), pool.submit(run, 'second')
+        ids = dict([pending.get(timeout=5), pending.get(timeout=5)])
+        rows = {row['id']: row for row in client.get(API).json()}
+        request = ids['second']
+        msg = NS(text='/memoryreview approve '+request+' '+rows[request]['digest'], reply_text=reply)
+        update = NS(message=msg, effective_message=msg, edited_message=None, effective_user=NS(id=USER,is_bot=False),
+                    effective_chat=NS(id=USER,type='private'))
+        with pytest.raises(ApplicationHandlerStop):
+            asyncio.run(memory_review_command(update, None))
+        assert b.result(5)['state'] == 'saved' and not a.done()
+        request = ids['first']
+        assert client.post(f'{API}/{request}/reject', json={'digest': rows[request]['digest']}).status_code == 200
+        assert a.result(5)['state'] == 'rejected'
+    assert saved()['MEMORY.md'] == 'second'
+
+
+def test_uncertain_native_write_keeps_original_chat_held(rig, monkeypatch):
+    from sparkie_sparks import memory_review as review
+    from tools import memory_tool
+    native = memory_tool.apply_memory_pending
+    def lose_ack(*args):
+        native(*args)
+        raise RuntimeError('lost acknowledgement')
+    monkeypatch.setattr(memory_tool, 'apply_memory_pending', lose_ack)
+    client = rig['client']
+    def decide(request):
+        row, = client.get(API).json()
+        response = client.post(f'{API}/{request}/approve', json={'digest': row['digest']})
+        assert response.status_code >= 400
+    with review.chat_memory_wait('original', 'turn', 'call', on_pending=decide):
+        result = attempt()
+    assert result['state'] == 'held' and not result['saved']
+    assert saved()['MEMORY.md'] == 'Separate fixture entry'
+
+
+@pytest.mark.parametrize('mutation,expected', [
+    ('changed_digest', 'interrupted'), ('stale_disk', 'held'), ('new_enrollment', 'enrollment_changed'),
+])
+def test_chat_revalidates_identity_and_saved_postcondition(rig, mutation, expected):
+    from sparkie_sparks import memory_review as review
+    from sparkie_sparks.authority import OwnerBinding
+    client = rig['client']
+    def alter(request):
+        row, = client.get(API).json()
+        assert client.post(f'{API}/{request}/approve', json={'digest': row['digest']}).status_code == 200
+        if mutation == 'new_enrollment':
+            old = rig['binding'][0]
+            rig['binding'][0] = OwnerBinding('replacement', old.web_user, old.web_provider, old.web_issuer, USER, USER)
+        elif mutation == 'stale_disk':
+            (review.default_home() / 'memories/MEMORY.md').write_text('Later replacement')
+        else:
+            path = review.default_home() / 'pending/memory' / (request + '.decision')
+            record = json.loads(path.read_bytes())
+            path.write_text(json.dumps(dict(record, content_hash='a'*64)))
+    with review.chat_memory_wait('chat', 'turn', 'call', on_pending=alter):
+        result = attempt()
+    assert result['state'] == expected and not result['saved']
+
+
+def test_chat_staging_lock_wait_has_deadline(rig, monkeypatch):
+    from sparkie_sparks import memory_review as review
+    monkeypatch.setattr(review, 'WAIT_SECONDS', 0.025)
+    with review._locked(), review.chat_memory_wait('chat', 'turn', 'blocked'):
+        result = attempt()
+    assert result['state'] == 'timed_out' and not result['pending_id']
+    assert rig['client'].get(API).json() == []
+
+
+@pytest.mark.parametrize('crash_during_write', [True, False])
+def test_fresh_process_recovers_staging_and_native_outcome_without_dispatch(rig, crash_during_write):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    from sparkie_sparks import memory_review as review
+    home = review.default_home()
+    probe = """
+import json, os, sys
+from types import SimpleNamespace
+from pathlib import Path
+from tools import memory_tool as mt, write_approval as wa
+from sparkie_sparks import controls, memory_review as review
+from sparkie_sparks.authority import Owner
+from test_memory_owner_review import attempt
+controls._controls = SimpleNamespace(binding=lambda: SimpleNamespace(generation='generation-1'))
+mode = sys.argv[1]
+home = review.default_home()
+native_stage = wa.stage_write
+def stage(*args, **kwargs):
+    with (home / 'stage-attempts').open('a') as out:
+        out.write('stage\\n')
+    result = native_stage(*args, **kwargs)
+    if mode == 'stage-crash':
+        os._exit(61)
+    raise AssertionError('Replayed native staging')
+wa.stage_write = stage
+if mode == 'write-crash':
+    native_apply = mt.apply_memory_pending
+    def apply(*args, **kwargs):
+        with (home / 'write-attempts').open('a') as out:
+            out.write('apply\\n')
+        result = native_apply(*args, **kwargs)
+        assert result['success']
+        os._exit(62)
+    mt.apply_memory_pending = apply
+    review.decide(Owner(channel='web', generation='generation-1'), sys.argv[2], sys.argv[3], action='approve')
+else:
+    with review.chat_memory_wait('chat', 'turn', 'id'):
+        print(json.dumps(attempt()))
+"""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(Path(__file__).parent), *sys.path]))
+    def invoke(*args, code=0):
+        child = subprocess.run([sys.executable, '-c', probe, *args], capture_output=True,
+                               text=True, timeout=15, env=env)
+        assert child.returncode == code, child.stderr
+        return json.loads(child.stdout.splitlines()[-1]) if code == 0 else None
+
+    invoke('stage-crash', code=61)
+    row, = rig['client'].get(API).json()
+    replay = invoke('replay')
+    assert replay['state'] == 'interrupted' and replay['pending_id'] == row['id']
+    if not crash_during_write:
+        assert rig['client'].post(f"{API}/{row['id']}/approve", json={'digest': row['digest']}).json()['state'] == 'saved'
+        after = invoke('replay')
+        assert after['state'] == 'saved' and after['observation']['proposed_entry_present']
+        assert saved()['MEMORY.md'] == 'Separate fixture entry'
+        assert (home / 'stage-attempts').read_text().splitlines() == ['stage']
+        return
+    invoke('write-crash', row['id'], row['digest'], code=62)
+    held = invoke('replay')
+    assert held['state'] == 'held' and not held['saved'] and held['pending_id'] == row['id']
+    assert saved()['MEMORY.md'] == 'Separate fixture entry'
+    current, = rig['client'].get(API).json()
+    assert current['id'] == row['id'] and current['state'] == 'held'
+    assert current['observation']['proposed_entry_present']
+    assert rig['client'].post(f"{API}/{row['id']}/close", json={'digest': current['digest']}).json()['state'] == 'closed_without_retry'
+    assert invoke('replay')['state'] == 'closed_without_retry'
+    assert (home / 'stage-attempts').read_text().splitlines() == ['stage']
+    assert (home / 'write-attempts').read_text().splitlines() == ['apply']
+
+
+def test_wait_replay_refuses_changed_enrollment_or_arguments(rig):
+    from sparkie_sparks import memory_review as review
+    from sparkie_sparks.authority import OwnerBinding
+    with review.chat_memory_wait('chat', 'turn', 'id', cancelled=lambda: True):
+        staged = attempt()
+        changed = attempt(operations=[{'action': 'add', 'content': 'something else'}])
+        assert changed['state'] == 'interrupted' and changed['pending_id'] is None
+        old = rig['binding'][0]
+        rig['binding'][0] = OwnerBinding('new', old.web_user, old.web_provider, old.web_issuer, USER, USER)
+        assert attempt()['state'] == 'enrollment_changed'
+        rig['binding'][0] = old
+    row, = rig['client'].get(API).json()
+    assert row['id'] == staged['pending_id']
+
+
+@pytest.mark.parametrize('edge,terminal', [('reject-before', 'rejected'), ('reject-after', 'rejected'),
+                                           ('saved-unlink', 'saved'), ('close-unlink', 'closed_without_retry')])
+def test_committed_decision_survives_cleanup_crash_and_refuses_second_owner_action(rig, edge, terminal):
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    from sparkie_sparks import memory_review as review
+    with review.chat_memory_wait('chat', 'turn', 'call', cancelled=lambda: True):
+        staged = attempt()
+    client = rig['client']
+    row, = client.get(API).json()
+    original = row['id']
+    probe = """
+import os, sys
+from pathlib import Path
+from types import SimpleNamespace
+from sparkie_sparks import controls, memory_review as review
+from sparkie_sparks.authority import Owner
+from tools import memory_tool as mt
+controls._controls = SimpleNamespace(binding=lambda: SimpleNamespace(generation='generation-1'))
+edge, request, digest = sys.argv[1:]
+rename, unlink = Path.rename, Path.unlink
+def stop_rename(source, dest):
+    if dest.suffix == '.rejected' and edge == 'reject-before':
+        os._exit(63)
+    result = rename(source, dest)
+    if dest.suffix == '.rejected' and edge == 'reject-after':
+        os._exit(63)
+    return result
+def stop_unlink(source, *args, **kwargs):
+    if source.suffix == '.held' and edge.endswith('-unlink'):
+        os._exit(63)
+    return unlink(source,*args,**kwargs)
+Path.rename, Path.unlink = stop_rename, stop_unlink
+owner = Owner('generation-1','web')
+if edge == 'close-unlink':
+    mt.apply_memory_pending = lambda *args: {'success':False}
+    try: review.decide(owner,request,digest,action='approve')
+    except ValueError: pass
+    row, = review.proposals(owner)
+    review.decide(owner,request,row['digest'],action='close')
+else:
+    review.decide(owner,request,digest,action='reject' if edge.startswith('reject') else 'approve')
+"""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(Path(__file__).parent), *sys.path]))
+    child = subprocess.run([sys.executable,'-c',probe,edge,original,row['digest']],
+                           capture_output=True,text=True,timeout=15,env=env)
+    assert child.returncode == 63, child.stderr
+    with review.chat_memory_wait('chat', 'turn', 'call', cancelled=lambda: True):
+        replay = attempt()
+    assert replay['pending_id'] == staged['pending_id'] == original
+    assert replay['state'] == terminal
+    for operation in ('approve','reject','close'):
+        assert client.post(f'{API}/{original}/{operation}', json={'digest':row['digest']}).status_code == 400
+    assert client.get(API).json() == []
+    assert not any((review.default_home()/'pending/memory'/(original+suffix)).exists() for suffix in ('.held','.rejected','.json'))
+    final = json.loads((review.default_home()/'pending/memory'/(original+'.decision')).read_bytes())
+    assert final['state'] == terminal
+    assert (saved().get('MEMORY.md') == 'Separate fixture entry') == (terminal == 'saved')
+
+
+def test_recovers_preexisting_retired_rejection_without_inventing_owner_audit(rig):
+    from sparkie_sparks import memory_review as review
+    with review.chat_memory_wait('chat','turn','call',cancelled=lambda:True):
+        request = attempt()['pending_id']
+    row, = rig['client'].get(API).json()
+    root = review.default_home()/'pending/memory'
+    # Persist exactly the older release's just-renamed proposal. Its owner
+    # channel was not yet durably recorded and cannot be reconstructed.
+    (root/(request+'.json')).rename(root/(request+'.rejected'))
+    with review.chat_memory_wait('chat','turn','call'):
+        result = attempt()
+    assert result['state'] == 'rejected' and result['pending_id'] == request
+    assert rig['client'].get(API).json() == []
+    assert rig['client'].post(f'{API}/{request}/approve',json={'digest':row['digest']}).status_code == 400
+    assert not (root/(request+'.decision')).exists() and saved() == {}

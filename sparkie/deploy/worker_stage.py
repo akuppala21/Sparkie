@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -37,6 +38,22 @@ def create_public_parents(path):
         directory.chmod(0o755)
 
 
+def check_interface(config, *, run=subprocess.run):
+    """Catch an obsolete or mismatched private enrollment before installing it."""
+    interface = config.get('interface')
+    if not isinstance(interface, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}', interface) or interface == 'lo':
+        raise ValueError('Set interface to the verified LAN device before staging this worker.')
+    result = run(['/usr/sbin/ip', '-j', '-4', 'address', 'show', 'dev', interface],
+                 capture_output=True, text=True, timeout=5, check=True)
+    links = json.loads(result.stdout)
+    if (len(links) != 1 or links[0].get('ifname') != interface or 'UP' not in links[0].get('flags', [])
+            or links[0].get('operstate') not in ('UP', 'UNKNOWN')
+            or not any(row.get('family') == 'inet' and row.get('scope') == 'global'
+                       and row.get('local') == config['node']['host']
+                       for row in links[0].get('addr_info', []))):
+        raise ValueError('The enrolled private address is not active on this LAN interface.')
+
+
 def stage(archive, configuration, *, archive_hash, config_hash, user):
     if os.geteuid() != 0: raise PermissionError('Protected worker staging needs the administrator.')
     archive_bytes, config_bytes = Path(archive).read_bytes(), Path(configuration).read_bytes()
@@ -50,6 +67,7 @@ def stage(archive, configuration, *, archive_hash, config_hash, user):
             or config['node']['machine_id'] != Path('/etc/machine-id').read_text().strip()
             or config['node']['machine_id'] == config['hub_machine_id'] or Path(config['state_dir']) != STATE):
         raise ValueError('This worker configuration does not name this exact compute Spark.')
+    check_interface(config)
     image = config['image_id']
     if not isinstance(image, str) or len(image) != 71 or not image.startswith('sha256:'):
         raise ValueError('Use the qualified sandbox image identity.')

@@ -4,6 +4,10 @@ Source review of pinned Hermes v0.23.2, with focused owner-login integration
 evidence below. This is preparation, not an installed service, tested cutover
 or authorization for a live candidate.
 
+The public routing proposal recorded below predates the owner’s November 24
+network decision. For the current Caddy and worker enrollment procedure, use
+[public access and the private Spark LAN](site-network.md).
+
 ## Recommended packaging
 
 Use a sealed, versioned Hermes release directory containing the locked upstream

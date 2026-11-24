@@ -149,3 +149,10 @@ fixed lease through the real private allocator and exercise a native coding task
 - [Supported terminal provider hook](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/agent/terminal_env_provider.py)
 - [Native process and stream routing](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/tools/environments/streams.py)
 - [Native idle and background-process checks](https://github.com/NousResearch/hermes-agent/blob/v0.23.2/tools/terminal_tool_lifecycle.py)
+
+
+## Private LAN worker enrollment
+
+Read the Linux machine ID, SSH host-key fingerprint, LAN address and interface name on each compute Spark using a trusted connection. On Spark 1, enroll the host key under that exact numeric address in the controller account’s `~/.ssh/known_hosts` file. Use the verified individual host key. The controller checks the key on every physical SSH connection. Sandbox SSH uses its own verified per-workspace key.
+
+Set the compute identity’s `host` to the private address on both sides. In the worker’s protected `/etc/sparkie/worker.json`, set the top-level `interface` field to the Ethernet or Wi-Fi device that owns that address. Existing non-loopback worker files need this field before staging the updated worker. The public site input accepts distinct RFC 1918 or operator-managed shared-range IPv4 addresses. The worker probes only its enrolled interface, verifies the address and machine identity, and publishes the authenticated sandbox SSH port on that address. Reachability between Spark 1 and the enrolled LAN is required.

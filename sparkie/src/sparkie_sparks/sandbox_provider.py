@@ -57,6 +57,7 @@ class LeasedSandboxSSH(PinnedSandboxSSH):
 class SparkComputeProvider(TerminalEnvironmentProvider):
     name = 'spark_compute'
     display_name = 'Spark compute workspace'
+    env_description = 'a Linux container on an enrolled compute Spark'
     is_remote = True
     is_container = True
     supports_streams = True
@@ -112,6 +113,10 @@ class SparkComputeProvider(TerminalEnvironmentProvider):
             raise ValueError('Compute allocation does not match its exact request and verified identity.')
 
     def create_environment(self, *, cwd, timeout, task_id='default', image=None, container_config=None, **kwargs):
+        if task_id == 'prompt-backend-probe':
+            # Hermes 0.23.2 falls back to env_description when its optional
+            # uname probe is unavailable. That probe must never wake a Spark.
+            raise RuntimeError('Workspace details are available when an actual task uses compute.')
         if not self.is_available():
             raise RuntimeError(self.probe()[1])
         if kwargs.get('scope') is not None or kwargs.get('sandbox') is not None:

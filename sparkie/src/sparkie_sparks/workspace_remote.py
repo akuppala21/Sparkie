@@ -18,10 +18,11 @@ import shlex
 import subprocess
 import sys
 
-from .collector import HOST, USER
+from .collector import USER
 from .operations import NotDispatched
 from .io_budget import remaining_io
 from .workspace_leases import Allocation, WorkspaceObservation
+from .worker_network import physical_ssh_options, private_address, worker_interface
 from .workspace_types import ComputeNode, WorkspaceLease, WorkspaceRequest
 from .workspace_worker import DockerWorkspaceWorker, _private_dir, _read, _write
 
@@ -70,7 +71,7 @@ class RemoteWorkspaceWorker:
     def __init__(self, store, *, node, user, executable, config_path, controller_id,
                  credentials_dir, runner=subprocess.run):
         if (not isinstance(node, ComputeNode) or node.spark_id not in ('spark2', 'spark3', 'spark4')
-                or not HOST.fullmatch(node.host) or not IDENTITY.fullmatch(node.machine_id)
+                or not private_address(node.host) or not IDENTITY.fullmatch(node.machine_id)
                 or not isinstance(user, str) or not USER.fullmatch(user)
                 or not isinstance(controller_id, str) or not IDENTITY.fullmatch(controller_id)):
             raise ValueError('Configure the verified remote compute identity.')
@@ -102,9 +103,7 @@ class RemoteWorkspaceWorker:
         payload = json.dumps(request, allow_nan=False)
         if len(payload.encode()) > LIMIT:
             raise ValueError('The compute request is too large.')
-        args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-                '-o', 'ConnectTimeout=5', '-o', 'ConnectionAttempts=1', '-o', 'ForwardAgent=no',
-                '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=1',
+        args = ['ssh', *physical_ssh_options(self.node.host),
                 self.user + '@' + self.node.host, self.command]
         try:
             result = self.runner(args, input=payload + '\n', capture_output=True, text=True,
@@ -176,11 +175,12 @@ class RemoteWorkspaceWorker:
 class WorkerEndpoint:
     """One fixed local worker, reached only through operator-authenticated SSH."""
     def __init__(self, config, *, factory=DockerWorkspaceWorker):
-        if (not isinstance(config, dict) or set(config) != {
+        if (not isinstance(config, dict) or set(config) - {'interface'} != {
                 'schema', 'controller', 'node', 'hub_machine_id', 'image_id', 'state_dir', 'maximum'}
                 or config['schema'] != 1 or not IDENTITY.fullmatch(config['controller'])):
             raise ValueError('Invalid protected compute-worker configuration.')
         self.config, self.node, self.factory = config, ComputeNode(**config['node']), factory
+        self.interface = worker_interface(self.node.host, config.get('interface'))
         self.root = Path(config['state_dir'])
         if not self.root.is_absolute():
             raise ValueError('Use an absolute private worker state directory.')
@@ -233,7 +233,7 @@ class WorkerEndpoint:
                         and (retirement is None or method == 'retire' and retirement == request['retirement']))
 
             worker = self.factory(None, node=self.node, hub_machine_id=config['hub_machine_id'],
-                image_id=config['image_id'], state_dir=self.root, authorize=authorize)
+                image_id=config['image_id'], state_dir=self.root, interface=self.interface, authorize=authorize)
             if method == 'observe':
                 observation = worker.observe(allocation)
                 credentials = worker.export_credentials(allocation) if observation.lease is not None else None
