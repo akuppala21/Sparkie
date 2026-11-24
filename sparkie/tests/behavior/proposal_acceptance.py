@@ -18,6 +18,18 @@ from urllib.parse import urlparse
 import uuid
 
 
+def exact_plain_receipt_read(call, operation):
+    """A plain reply may change presentation. The operation and the read must still match."""
+    args = call.get('arguments')
+    if not isinstance(args, dict) or args.get('operation') != operation:
+        return False
+    if call.get('tool') == 'spark_change_status':
+        return set(args) == {'operation'}
+    return (call.get('tool') == 'spark_check_change'
+            and set(args) <= {'operation', 'final_reply'}
+            and isinstance(args.get('final_reply', False), bool))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
@@ -269,10 +281,9 @@ def main():
                     with store._db() as db:
                         claim = db.execute('SELECT operation FROM claims WHERE spark=?', (spark,)).fetchone()
                     return {
-                        'one_exact_observation': len(checked) == 1 and checked[0]['arguments'] == {'operation': rid},
+                        'one_exact_observation': len(checked) == 1 and exact_plain_receipt_read(checked[0], rid),
                         'only_existing_request_reads': 1 <= len(tool_calls) <= 2 and all(
-                            call['tool'] in ('spark_check_change', 'spark_change_status')
-                            and call['arguments'] == {'operation': rid} for call in tool_calls),
+                            exact_plain_receipt_read(call, rid) for call in tool_calls),
                         'correct_observed_receipt': bool(checked) and checked[-1]['result'].get('request', {}).get('state') == expected
                             and store.get(rid)['state'] == expected,
                         'no_new_request': len(store.recent(owner)) == before_count,

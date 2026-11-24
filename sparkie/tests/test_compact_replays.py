@@ -80,3 +80,21 @@ def test_read_tool_selection_requires_the_seeded_observations():
     assert has_fixture_evidence('electricity', month, expected)
     assert not has_fixture_evidence('electricity', dict(month, available=False), expected)
     assert not has_fixture_evidence('electricity', dict(month, recorded_kwh=None), expected)
+
+
+def test_recovery_grader_binds_plain_presentation_to_the_exact_read():
+    from behavior.proposal_acceptance import exact_plain_receipt_read
+
+    operation = 'a' * 32
+    def read(tool, **options):
+        return exact_plain_receipt_read({'tool': tool, 'arguments': {'operation': operation, **options}}, operation)
+
+    assert read('spark_change_status') and read('spark_check_change')
+    assert read('spark_check_change', final_reply=True)
+    assert read('spark_check_change', final_reply=False)
+    assert not read('spark_check_change', operation='b' * 32)
+    assert not read('spark_check_change', final_reply=1)
+    assert not read('spark_check_change', reply_format='stop_receipt_json')
+    assert not read('spark_check_change', approve=True)
+    assert not read('spark_change_status', final_reply=True)
+    assert not read('spark_propose_change')
