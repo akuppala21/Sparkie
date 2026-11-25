@@ -23,6 +23,7 @@ UPDATES = {'test_application_updates.py', 'test_application_upgrade.py', 'test_u
 OPERATIONS = SERVICES | UPDATES | {'test_operations.py', 'test_authority.py', 'test_native_authority.py', 'test_native_controls.py', 'test_controls_availability.py', 'test_composition_review.py', 'test_broker.py', 'test_proposals.py', 'test_proposal_reconciliation.py', 'test_recovery_replies.py', 'test_notices.py'}
 WORKLOADS = {'test_workloads.py'} | OPERATIONS
 POWER = {'test_power.py', 'test_power_worker.py', 'test_power_sequence.py', 'test_power_activity.py',
+         'test_power_host_unreachable.py',
          'test_power_maintenance.py', 'test_idle.py'} | OPERATIONS
 COMPUTE = {'test_sandbox_ssh.py', 'test_sandbox_provider.py', 'test_workspace_leases.py',
            'test_workspace_worker.py', 'test_workspace_idle.py', 'test_workspace_remote.py',
@@ -312,7 +313,10 @@ def selection(paths):
             reasons.append(original + ': native plugin registration, API and tool schemas')
         elif path.startswith('tests/browser/'):
             syntax = True
-            if path in ('tests/browser/webapp_sparks.mjs', 'tests/browser/webapp_sparks_fixture.py'):
+            if path == 'tests/browser/sparks_power_states.mjs':
+                tests.update(CATALOG | {'test_deployment.py'})
+                panel = webapp_renderer = browser = True
+            elif path in ('tests/browser/webapp_sparks.mjs', 'tests/browser/webapp_sparks_fixture.py'):
                 tests.update(CATALOG | {'test_deployment.py'})
                 webapp_renderer = browser = True
             elif path in ('tests/browser/run_sparks.py', 'tests/browser/sparks.mjs'):

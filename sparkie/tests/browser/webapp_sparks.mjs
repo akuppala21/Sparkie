@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { verifyPowerStates } from "./sparks_power_states.mjs";
 const { chromium } = createRequire(import.meta.url)("playwright-core");
 const base = new URL(process.env.SPARKIE_TEST_URL);
 const output = process.env.SPARKIE_BROWSER_OUTPUT;
@@ -18,12 +19,12 @@ function installFleetFixture(page) {
   const writes = [];
   const unexpected = [];
   let operation;
-  const bySpark = { spark2: { actions: ["wake"] } };
+  const bySpark = Object.fromEntries([2, 3, 4].map(n => ["spark" + n, { actions: ["wake", "sleep"] }]));
   const period = ["2026-11", "2026-10"];
   const observed = "2026-11-01T12:00:00Z";
   const sparks = [1, 2, 3, 4].map(n => ({
     id: "spark" + n, name: "Spark " + n, host: n === 1,
-    observed_at: observed, observed_state: n === 1 || n === 3 ? "online" : "off",
+    observed_at: observed, observed_state: n === 1 || n === 3 ? "online" : "off", stale: false,
     workloads: n === 1 || n === 3 ? [] : null, network_links: null,
     metrics: n === 1 || n === 3 ? { memory_available_bytes: (n === 1 ? 24 : 116) * 2 ** 30,
       disk_free_bytes: (n === 1 ? 948 : 1213) * 2 ** 30, gpu_utilization_percent: n === 1 ? 7 : 0 } : {},
@@ -65,7 +66,7 @@ function installFleetFixture(page) {
     }
     return route.fulfill({ json: result });
   };
-  return { writes, unexpected, ready: page.route(url => url.origin === base.origin && url.pathname.includes(api + "/"), tour) };
+  return { writes, unexpected, sparks, bySpark, ready: page.route(url => url.origin === base.origin && url.pathname.includes(api + "/"), tour) };
 }
 
 let activePage;
@@ -99,6 +100,7 @@ try {
     assert.equal(new URL(page.url()).hash, "#/sparks");
     assert.equal(await fleet.getByRole("button", { name: /(?:Wake|Shut down) Spark 1/ }).count(), 0);
     await fleet.getByRole("region", { name: "Models and apps" }).waitFor();
+    await verifyPowerStates(page, fleet, fixture.sparks, fixture.bySpark);
 
     const cost = fleet.getByRole("region", { name: "Electricity" });
     await cost.getByLabel("Electricity month", { exact: true }).selectOption("2026-10");
@@ -163,6 +165,7 @@ try {
     await page.close();
   }
   receipt.checks.push("Cold root opens the native Sparks workspace", "Both viewport widths fit and show the host",
+    "Power buttons follow fresh observations and capabilities, retaining checked recovery for stale or uncertain status without writes",
     "Historical usage prices update on the client", "Owner request and digest confirmation stay separate",
     "Selected and previous recipes read through the actual scoped backend");
   await writeFile(output + "/webapp-sparks-result.json", JSON.stringify(receipt, null, 2) + "\n");

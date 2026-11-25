@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { verifyPowerStates } from "./sparks_power_states.mjs";
 const { chromium, request } = createRequire(import.meta.url)("playwright-core");
 const base = process.env.SPARKIE_TEST_URL;
 const output = process.env.SPARKIE_BROWSER_OUTPUT;
@@ -131,6 +132,9 @@ try {
     fixtureReads++;
     return route.fulfill({ json: fixtureFleet });
   });
+  const fixtureControls = await (await page.request.get(base + "/api/plugins/sparkie-sparks/controls")).json();
+  await page.route(url => url.pathname === "/api/plugins/sparkie-sparks/controls", route => route.fulfill({ json: fixtureControls }));
+  await verifyPowerStates(page, panel, fixtureFleet.sparks, fixtureControls.by_spark);
   const energyRefresh = page.waitForResponse(response => new URL(response.url()).pathname === "/api/plugins/sparkie-sparks/energy");
   await panel.getByRole("button", { name: "Refresh", exact: true }).click();
   assert.equal((await energyRefresh).status(), 200, "Refresh must update electricity as well as fleet status");
@@ -145,6 +149,8 @@ try {
   report.checks.push("Physical network readings show link state/speed without guessing a cable peer");
   report.checks.push("Explicit workload fixture opens details; supporting services have a separate group");
   await page.setViewportSize({ width: 390, height: 844 });
+  await verifyPowerStates(page, panel, fixtureFleet.sparks, fixtureControls.by_spark);
+  report.checks.push("Desktop and phone power buttons follow fresh observations and capabilities, retaining checked recovery for stale or uncertain status without writes");
   await panel.getByRole("heading", { name: "Sparks", exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Phone layout must not overflow horizontally");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();

@@ -277,6 +277,20 @@ def test_power_changes_include_native_owner_consumers_without_model_benchmark():
                 'tests/test_controls_availability.py', 'tests/test_native_controls.py'} <= set(plan['python_tests'])
 
 
+def test_power_transport_selects_host_unreachable_sequence_regression():
+    plan = select(['src/sparkie_sparks/power.py'])
+    assert 'tests/test_power_host_unreachable.py' in plan['python_tests']
+
+
+def test_shared_power_button_fixture_selects_both_native_shells():
+    plan = select(['tests/browser/sparks_power_states.mjs'])
+    assert plan['sparks_panel'] and plan['native_webapp_renderer']
+    assert plan['desktop_phone_browser'] and plan['javascript_syntax']
+    assert not plan['compute_power_validation']
+    assert not plan['compact_local_behavior']
+    assert not plan['broad_qualification']
+
+
 def test_native_ssh_source_and_real_fixture_require_same_execution_proof():
     for path in ('src/sparkie_sparks/sandbox_ssh.py', 'tests/hardware/native_ssh.py',
                  'tests/hardware/ssh-sandbox.Dockerfile', 'src/sparkie_sparks/sandbox_provider.py',

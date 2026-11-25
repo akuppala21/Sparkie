@@ -5,6 +5,7 @@ sequence can cut/restart only after durable shutdown and fresh standby proof.
 No path installs privilege or changes host access. Spark 1 is never a target.
 """
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -83,8 +84,11 @@ class PowerTransport:
                 return True
         except (TimeoutError, ConnectionRefusedError):
             return False
-        except OSError:
-            return None
+        except OSError as exc:
+            # Host-unreachable is a failed TCP probe, never shutdown proof by
+            # itself. The qualified sequence still requires its recorded
+            # shutdown and fresh, sustained standby meter observations.
+            return False if exc.errno == errno.EHOSTUNREACH else None
 
     def request(self, node, hub_machine_id, mode):
         request = {'mode': mode, 'spark': node['id'], 'hostname': node['hostname'],

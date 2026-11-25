@@ -30,8 +30,8 @@ python3 build.py /path/to/hermes-agent /path/to/new-build-directory
 | Original source with original CSS in `control/` | `447cbd194f91106dc301c37abd7ba0a14322284a98a9afab1eaad708e6591d58` |
 | First-slash correction in `first-slash-ordinary/` | `6381b77c14dc14775e5094e4ed11807fdfa30c2d63dfe5dd3e3a3ee0ab4291f8` |
 | First-slash correction with original CSS in `first-slash/` | `235b2a54a334e1d74cb4250f1989abd4e80918ea643171d6e5a78d61a90e6920` |
-| Fleet and recipe plugins in `ordinary/` | `73a84f0dd5318d9efb778007a2859518f4413c5339ff0eff842df7d075109839` |
-| Fleet and recipe plugins with original CSS in `webapp/` | `c1dfaf84f3440bb1662fee8c5ee6baac0352cfff3c8e4c1c831355f9b94014e4` |
+| Fleet and recipe plugins in `ordinary/` | `1140f9298321a15336dfe4b2569693f7922dd1e1ecba06bffa8f1b6f28fd8818` |
+| Fleet and recipe plugins with original CSS in `webapp/` | `5f134bdc26aee5360578d699c1bb91873351312d94b53f3b0e814787e9136a1b` |
 
 Supply the resulting `webapp/` tree to the candidate preparer as its Webapp input. It contains 1,079 files, including the native build receipt. Fleet configuration, credentials, model weights and a running gateway are unnecessary for this build.
 
